@@ -184,9 +184,6 @@ class ResNet(tf.keras.Model):
     # returning in order of policy and value
     return self.policy_head(x), self.value_head(x)
 
-
-
-
 # classes
 
 
