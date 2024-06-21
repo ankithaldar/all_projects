@@ -39,6 +39,9 @@ class TicTacToe:
 
 
   def check_win(self, state, action):
+    if action is None:
+      return False
+
     row, column = self.get_row_column_for_action(action=action)
     player = state[row, column]
 
@@ -47,6 +50,13 @@ class TicTacToe:
       or np.sum(state[:, column]) == player * self.row_count
       or np.sum(np.diag(state)) == player * self.row_count
       or np.sum(np.diag(np.flip(state, axis=0))) == player * self.row_count
+    )
+
+
+  def get_row_column_for_action(self, action):
+    return (
+      action // self.column_count, # row
+      action % self.column_count # column
     )
 
 
@@ -62,11 +72,12 @@ class TicTacToe:
     return -player
 
 
-  def get_row_column_for_action(self, action):
-    return (
-      action // self.column_count, # row
-      action % self.column_count # column
-    )
+  def get_opponent_value(self, value):
+    return -value
+
+
+  def change_perspective(self, state, player):
+    return state * player
 
 
 # classes
