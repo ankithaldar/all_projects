@@ -22,6 +22,7 @@ class TicTacToe:
     self.row_count = 3
     self.column_count = 3
     self.action_size = self.row_count * self.column_count
+    self.game_name = self.__class__.__name__
 
 
   def get_initial_state(self):
