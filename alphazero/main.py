@@ -47,17 +47,16 @@ def test_self_play():
 
   model = ResNet(tictactoe, 4, 64)
 
-  optimizer = None
-
   args = {
     'C': 2,
     'num_searches': 60,
     'num_iterations': 3,
     'num_selfPlay_iterations': 10,
-    'num_epochs': 4
+    'num_epochs': 4,
+    'batch_size': 64
   }
 
-  alpha_zero = AlphaZero(model, optimizer, tictactoe, args)
+  alpha_zero = AlphaZero(model, tictactoe, args)
   alpha_zero.learn()
 # functions
 
