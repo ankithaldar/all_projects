@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "any_project_template"
+version = "0.1.0"
+description = ""
+authors = ["Ankit Haldar <ankithaldar@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pytest = "^8.2.0"
+numpy = "^1.26.4"
+tensorflow = "^2.16.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
