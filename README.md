@@ -1,9 +1,7 @@
-# All projects that I'll be working on
-Each project has its own main branch and sub branches in format
+# World Of Supply
 
-```
-<project_name>/main
-<project_name>/<testing branch name>
-```
 
-*Note: Please change the .vscode/launch.json accordingly.*
+Supply chain optimization using reinforcement learning
+DQN learns how to control procurement and logistics in a simulated environment:
+
+Implementation from https://github.com/ikatsov/tensor-house
