@@ -1,0 +1,128 @@
+materials:
+  - item_name: string
+    req_unit_raw:
+      cotton: 3
+    init_cost: 50
+    time: 5
+
+  - item_name: wood
+    req_unit_raw:
+      tree: 3
+    init_cost: 50
+    time: 5
+
+  - item_name: metal
+    req_unit_raw:
+      rock: 3
+    init_cost: 100
+    time: 15
+
+  - item_name: bronze
+    req_unit_raw:
+      rock: 4
+    init_cost: 200
+    time: 30
+
+  - item_name: amethyst
+    req_unit_raw:
+      quartz: 10
+    init_cost: 300
+    time: 60
+
+  - item_name: orb
+    req_unit_raw:
+      quartz: 20
+    init_cost: 300
+    time: 60
+
+  - item_name: ribbon
+    req_unit_raw:
+      string: 2
+      wood: 2
+    init_cost: 100
+    time: 15
+
+  - item_name: needles
+    req_unit_raw:
+      metal: 4
+      ribbon: 1
+    init_cost: 200
+    time: 30
+
+  - item_name: sparkles
+    req_unit_raw:
+      needles: 2
+      ribbon: 2
+    init_cost: 300
+    time: 60
+
+  - item_name: silver
+    req_unit_raw:
+      bronze: 3
+      sparkles: 1
+    init_cost: 300
+    time: 120
+
+  - item_name: gold
+    req_unit_raw:
+      silver: 2
+      sparkles: 2
+    init_cost: 500
+    time: 360
+
+  - item_name: pendant
+    req_unit_raw:
+      amethyst: 7
+      silver: 2
+    init_cost: 500
+    time: 180
+
+  - item_name: necklace
+    req_unit_raw:
+      pendant: 3
+      gold: 2
+    init_cost: 800
+    time: 760
+
+  - item_name: water
+    req_unit_raw:
+      orb: 2
+      silver: 1
+    init_cost: 800
+    time: 360
+
+  - item_name: fire
+    req_unit_raw:
+      orb: 6
+      gold: 1
+    init_cost: 1000
+    time: 720
+
+  - item_name: waterstone
+    req_unit_raw:
+      water: 2
+      ribbon: 10
+    init_cost: 1500
+    time: 720
+
+  - item_name: firestone
+    req_unit_raw:
+      fire: 1
+      sparkles: 2
+    init_cost: 1500
+    time: 720
+
+  - item_name: elementstone
+    req_unit_raw:
+      waterstone: 1
+      firestone: 1
+    init_cost: 5000
+    time: 1440
+
+  - item_name: artifact
+    req_unit_raw:
+      necklace: 1
+      elementstone: 1
+    init_cost: 10000
+    time: 4320
+
