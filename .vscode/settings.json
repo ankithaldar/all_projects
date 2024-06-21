@@ -1,0 +1,11 @@
+{
+  "python.venvPath": "~/.cache/pypoetry/virtualenvs/any-project-template-18SrI9Sa-py3.12",
+  "python.defaultInterpreterPath": "~/.cache/pypoetry/virtualenvs/any-project-template-18SrI9Sa-py3.12/bin/python",
+
+  // Python linter extension settings
+  "pylint.args": [
+    "--rcfile=${workspaceFolder}/.pylintrc",
+    "--disable=E0015",
+    "--max-line-length=120"
+  ],
+}
