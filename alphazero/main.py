@@ -7,6 +7,7 @@
 # imports
 #    script imports
 from src.tictactoe import TicTacToe
+from src.mcts import MCTS
 from tests.test_tictactoe import test_tictactoe
 # imports
 
@@ -21,7 +22,19 @@ from tests.test_tictactoe import test_tictactoe
 
 # functions
 def run_tests():
-  test_tictactoe(game=TicTacToe())
+  tictactoe = TicTacToe()
+  mcts = MCTS(
+    game=tictactoe,
+    args={
+      'C': 1.41,
+      'num_searches': 1000
+    }
+  )
+
+  test_tictactoe(
+    game=tictactoe,
+    mcts=mcts
+  )
 # functions
 
 
