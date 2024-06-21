@@ -1,0 +1,183 @@
+% Original Dates: OriginalDates | False Dates: FalseDates
+% SeniorAssociate | DataScientist | SeniorAnalyst
+%------------------------------------------------------------------------------
+% PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%------------------------------------------------------------------------------
+\documentclass[a4paper]{resume_001} % a4paper for A4
+%------------------------------------------------------------------------------
+%  PERSONAL INFORMATION
+%------------------------------------------------------------------------------
+% If you don't need one or more of the below, just remove the content leaving
+% the command, e.g. \cvnumberphone{}
+
+\cvname{Ankit} % Your name
+\cvjobtitle{Haldar} % Job title/career
+\cvdate{} % Date of birth
+\cvmail{ankithaldar@gmail.com} % email
+\cvnumberphone{(+91) 9742293728} % Phone number
+\cvsite{haldarankit} % Personal website
+\cvaddress{Bengaluru, \textit{Karnataka}}
+
+%------------------------------------------------------------------------------
+\begin{document}
+%------------------------------------------------------------------------------
+%  Education
+%------------------------------------------------------------------------------
+\education{
+{\boldcolor{MBA - PGP Business Management}}\\ Praxis B-School | \textit{2014 - 2016}\\ %FalseDates
+% {\boldcolor{MBA - PGP Business Management}}\\ Praxis B-School | \textit{2013 - 2015}\\ % OriginalDates
+\smallskip
+{\boldcolor{B.Sc (IT)}} | \textit{2008 - 2011} % FalseDates
+% {\boldcolor{B.Sc (IT)}}\\ Kuvempu Univ | \textit{2007 - 2011} % OriginalDates
+}
+\bigskip
+%------------------------------------------------------------------------------
+% Skill bar section, each skill must have a value between 0 an 6 (float)
+%------------------------------------------------------------------------------
+\skills{
+{\boldcolor{Hard Skills}}: Statistics, Machine Learning, A/B Testing\\
+{\boldcolor{Languages}}: SQL, Python, VBA, Google App Script, C, C++, \LaTeX\\
+{\boldcolor{Databases}}: Hive, Google-BigQuery, Snowflake, Oracle, MSSQL, SQLite\\
+{\boldcolor{ETL Tools}}: Apace-Airflow\\
+{\boldcolor{Visualization}}: Tableau, Periscope, PowerBI\\
+{\boldcolor{Others}}: Web Scraping, Google Office Suites, MS Office Suites, Advanced Excel, Git, Github\\
+{\boldcolor{OS}}: Ubuntu, Fedora\\
+}
+\bigskip
+
+\interests{}
+% \interests{\textit{Participating and learning from \boldcolor{Kaggle} competitions}}
+\bigskip
+
+\orginitiatives{\boldcolor{{Leading}} a team of 7, with resource allocation, ensuring error free deliverables.\\
+\smallskip
+\boldcolor{{Mentor}} two batches of interns on summer project (Affine, Tesco).\\
+\smallskip
+Conduct \boldcolor{{training}} sessions for freshers on analytical tools (\boldcolor{SQL, Python, Advanced Excel \& VBA})\\
+\smallskip
+\boldcolor{{Interview}} potential candidates (Affine, Tesco).
+% \smallskip
+% ITC Project in one line
+}
+\bigskip
+
+\awards{
+\textit{\boldcolor{Star of the Month}} at Tesco Business Services - Enterprise Analytics\\
+\textit{\boldcolor{Transformer of the Month}} at Affine Analytics Pvt. Ltd.\\
+\textit{\boldcolor{Fast Start Star}} at Ipsos Research Pvt. Ltd.}
+\bigskip
+
+\hobbies{Football (\textit{College Captain}), Swimming, Cycling}
+\bigskip
+
+\languages{
+English: Read | Write | Speak\\
+Hindi  : Read | Write | Speak\\
+Bengali: Read | Speak
+}
+%------------------------------------------------------------------------------
+% Skill text section, each skill must have a value between 0 an 6
+%------------------------------------------------------------------------------
+\makeprofile % Print the sidebar
+%------------------------------------------------------------------------------
+% \section{Profile}
+% \textit{Data Analyst with proven expertise in business problem solutioning, dash-boarding, reporting and stakeholder management.}
+
+\section{Work Experiences}
+
+\begin{twenty} % Environment for a list with descriptions
+    %\twentyitem{<dates>}{<title>}{<location>}{<description>}
+
+    \twentyitem{\small Dec 2020\\\small Present}{Lead Decision Analyst}{Tesco, \textit{Bengaluru}}{
+    % {\textbf{Senior Decision Analyst (Dec'20 - May'20)}}\\
+    \vspace{-3mm}
+    \begin{itemize}[leftmargin=*]
+        \item Analysed the \bold{Hypermarket de-growth} in CE region to reduce loss due to Customer switching amd increase of competition in various demographics.
+        \item Develop decision enabling \textbf{Tableau} dashboards and underlying automations for the dashboard to be self updatable.
+        \item Create automations to enable automated reporting so as the decrease the time taken to generate the reports.
+        \item Understanding drivers of loss unknown to retailer, and minimze them using a driver model generating higher profits of £2 million (GBP) for combined stores in Central Europe.
+    \end{itemize}
+    \textit{\small Tools: \boldcolor{Tableau, SQL (Hadoop, Hive, spark), Python, PySpark}}
+
+    }
+
+    \twentyitem{\small Jul 2019\\\small Dec 2020}{Senior Analyst}{Affine Analytics, \textit{Bengaluru}}{ %SeniorAssociate OriginalDates
+    % \twentyitem{\small Jul 2019\\\small Dec 2020}{Data Scientist}{Affine Analytics, \textit{Bengaluru}}{ %DataScientist FalseDates
+    % \twentyitem{\small Jul 2019\\\small Dec 2020}{Senior Analyst}{Affine Analytics, \textit{Bengaluru}}{%SeniorAnalyst  FalseDates
+    {\textbf{Mobile Game developer (May'20 - Dec'20)}}\\
+    \vspace{-3mm}
+    \begin{itemize}[leftmargin=*]
+        \item Develop \textit{Apache-Airflow} based ETL process in \textit{Google Cloud Platform (GCP)} for tracking in-game metrics. Analysed GCP usage and modified ETL process to reduce GCP costs by almost 50\%.
+        \item Built highly customised \textit{Periscope} dashboards for stakeholders to understand game performance.
+        \item Conceptualize new in-game features and run \textit{A/B Tests}. Analyse \textit{A/B Test} impact and suggest implementation of feature.
+        \item Undertake adhoc investigations to understand player behaviour. Discover new customer segments with monetization potential.
+        \item Implement new algorithm to track and eliminate/block cheaters from the game.
+    \end{itemize}
+    \textit{\small Tools: \boldcolor{SQL (BigQuery), Apache-Airflow, Python, Periscope, Google Docs Suite, Google Apps Script}}
+    \medskip\\
+    {\textbf{Gaming Console Manufacturer (Jul'19 - May'20)}}\\
+    \vspace{-3mm}
+    \begin{itemize}[leftmargin=*]
+        % \item Implemented a regression model for forecasting of sales for upcoming major games with MAPE less than 15\% and used Time series in forecasting sales of franchise games which further helped in deciding partnership with major game studios.
+        \item Apply regression modeling techniques to prioritize advertisement banners on store website to capture consumer attention boosting sales.
+        \item Implement model into product to simulate revenue based on advertisement priority.
+        % \item Create reports on requests like used console and disk analysis, product churn and analyse performance and impact of promotions.
+        \item Analyse potential customer targeting strategies for upcoming titles by defining and quantifying different segments of potential audience.
+        % \item Create \textit{Tableau} dashboards for various business verticals that enabled clients to analyse business performance.
+    \end{itemize}
+    \textit{\small Tools: \boldcolor{SQL (Snowflake), Python, VBA, Excel, Tableau}}
+    }
+
+    \twentyitem{\small Dec 2018\\\small Jun 2019}{Asst. Manager - \textit{Analytics}}{WNS Global Services, \textit{Bengaluru}}{
+    \vspace{-3mm}
+    \begin{itemize}[leftmargin=*]
+        \item Analysis of daily operations through dash-boarding for a Food \& Beverage chain.
+        \item Plan campaigns and build post-campaign analysis reports to understand ROIs, sales growth, customer turnover and channel performance.
+        \item Identifying potential customers to upscale by creating customized offers through machine learning techniques (\textit{Linear Regression, SVM, Neural Networks}).
+    \end{itemize}
+    \textit{\small Tools: \boldcolor{SQL (Oracle), Python, Tableau, Advanced Excel}}
+    }
+
+    \twentyitem{\small Jun 2016\\\small Nov 2018}{Analyst}{Ipsos Research Pvt. Ltd., \textit{Bengaluru}}{
+    \vspace{-3mm}
+    \begin{itemize}[leftmargin=*]
+        \item Market Mix Modeling projects on leading US CPG, Retail, E-Business, Restaurant, Pharmaceuticals, Sports Goods, Automobile to allocate investment in different marketing attributes to optimize effectiveness, ROI of each vehicle.
+        \item Implement client deliverable products based on pricing models for simulation of price change leading to changes in units and revenue.
+    \end{itemize}
+    \textit{\small Tools: \boldcolor{SQL (MSSQL), Python, Tableau, VBA, Advanced Excel}}
+    }
+
+    % \twentyitem{\small Jul 2010\\\small May 2013}{Asst. Systems Admin}{Master Engg. Concern, \textit{Kolkata}}{% OriginalDates
+    \twentyitem{\small Jul 2011\\\small May 2014}{Asst. Systems Admin}{Master Engg. Concern, \textit{Kolkata}}{% FalseDates
+    \vspace{-3mm}
+    % \begin{itemize}[leftmargin=*]
+    %     \item Built \textit{Python and SQLite} based automated letter tracking system.
+    %     \item Collect daily project status from field supervisors and engineers to generate reports stake-holders.
+    %     % \item Create project initiation \& project consumable purchase reports.
+    %     % \item Act as a Liaison between different departments.
+    %     % \item Keeping the clients informed monthly about the progress and collect updates on change in project scope.
+    %     % \item Attend project meetings, minute the meetings and pass on information to all relevant departments.
+    % \end{itemize}
+    \textit{\small Tools: \boldcolor{SQL (SQLite), Python, Excel}}
+    }
+
+\end{twenty}
+% \section{Internships}
+% \begin{twenty} % Environment for a list with descriptions
+%   \twentyitem{Summer\\2014}{Summer Intern}{ITC Sonar Hotels, \textit{Kolkata}}{% OriginalDates
+%   \twentyitem{Summer\\2015}{Summer Intern}{ITC Sonar Hotels, \textit{Kolkata}}{% FalseDates
+%   \begin{itemize}[leftmargin=*]
+%     \item Summer Intern in quality management applying Six Sigma Techniques to improve laid out hotel processes.
+%     \item Breakdown processes into measurable parameters to analyse performance of each process.
+%   \end{itemize}
+%   }
+% \end{twenty}
+%----------------------------------------------------------------------------------------
+%  OTHER INFORMATION
+%----------------------------------------------------------------------------------------
+%\section{Projects}
+%\subsection{\textit{Affine Analytics}}
+%\\
+%\subsection{\textit{Ipsos Research Pvt. Ltd}}
+%----------------------------------------------------------------------------------------
+\end{document}
