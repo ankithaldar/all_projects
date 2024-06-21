@@ -8,6 +8,7 @@
 #    script imports
 from src.tictactoe import TicTacToe
 from src.mcts import MCTS
+from src.model import ResNet
 from tests.test_tictactoe import test_tictactoe
 # imports
 
@@ -23,13 +24,16 @@ from tests.test_tictactoe import test_tictactoe
 # functions
 def run_tests():
   tictactoe = TicTacToe()
+  model = ResNet(game=tictactoe, num_res_blocks=4, num_hidden=64)
   mcts = MCTS(
     game=tictactoe,
     args={
-      'C': 1.41,
+      'C': 2,
       'num_searches': 1000
-    }
+    },
+    model=model
   )
+
 
   test_tictactoe(
     game=tictactoe,
