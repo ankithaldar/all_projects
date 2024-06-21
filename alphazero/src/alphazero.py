@@ -22,12 +22,15 @@ from src.mcts import MCTS
 class AlphaZero:
   '''Self Play'''
 
-  def __init__(self, model, optimizer, game, args):
+  def __init__(self, model, game, args):
     self.model = model
-    self.optimizer = optimizer
     self.game = game
     self.args = args
     self.mcts = MCTS(game, args, model)
+
+
+  def define_optimizer_loss(self):
+    self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 
 
   def self_play(self):
