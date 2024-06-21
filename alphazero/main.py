@@ -9,6 +9,7 @@
 from src.tictactoe import TicTacToe
 from src.mcts import MCTS
 from src.model import ResNet
+from src.alphazero import AlphaZero
 from tests.test_tictactoe import test_tictactoe
 # imports
 
@@ -39,12 +40,32 @@ def run_tests():
     game=tictactoe,
     mcts=mcts
   )
+
+
+def test_self_play():
+  tictactoe = TicTacToe()
+
+  model = ResNet(tictactoe, 4, 64)
+
+  optimizer = None
+
+  args = {
+    'C': 2,
+    'num_searches': 60,
+    'num_iterations': 3,
+    'num_selfPlay_iterations': 10,
+    'num_epochs': 4
+  }
+
+  alpha_zero = AlphaZero(model, optimizer, tictactoe, args)
+  alpha_zero.learn()
 # functions
 
 
 # main
 def main():
-  run_tests()
+  # run_tests()
+  test_self_play()
 
 
 # if main script
