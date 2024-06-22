@@ -11,6 +11,7 @@ from bill_of_materials import BillOfMaterials
 from game_clock import GameClock
 from game_economy import GameEconomy
 from manufacturing_unit import ManufacturingUnit
+from rewards import RewardCalculation
 # imports
 
 
@@ -36,6 +37,7 @@ class ItemFacility:
     self.is_crafting = False
     self.current_stash = self.get_current_count_in_stash()
     self.manufacturing = ManufacturingUnit(self)
+    self.reward_calc = RewardCalculation(self)
 
     # self.define_item_production_level()
 
@@ -59,6 +61,7 @@ class ItemFacility:
       self.manufacturing.act(batch_size)
 
     self.current_stash = self.get_current_count_in_stash()
+    return self.reward_calc.calculate_reward()
 
 # classes
 
