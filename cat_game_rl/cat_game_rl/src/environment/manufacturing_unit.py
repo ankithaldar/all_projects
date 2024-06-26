@@ -93,6 +93,11 @@ class ManufacturingUnit(Agent):
     else:
       self.end_time = self.start_time + self.item.bom.req_time
 
+    # add start crafting reward to memory
+    self.item.reward_memory.append(
+      self.item.reward_calc.start_crafting_reward()
+    )
+
 
   # this happens when you hit the collect button
   def stop_crafting(self):

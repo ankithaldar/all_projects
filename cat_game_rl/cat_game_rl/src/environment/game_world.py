@@ -11,6 +11,7 @@ from bill_of_materials import BillOfMaterials
 from game_clock import GameClock
 from game_economy import GameEconomy
 from item_facilities import ItemFacility
+from rewards import RewardBalanceSheet
 from utils import (BASE_ITEMS, BATCH_SIZE, INIT_ECONOMY,
                    ITEM_DEFAULTS, TARGET_ITEM_COUNTS, RUN_TIME, get_total_counts,
                    parse_materials, yaml_reader)
@@ -40,8 +41,22 @@ class CatGameWorld:
       for _, facility in self.item_facilities.items()
     )
 
-  def is_one_min_crafting(self):
+  @property
+  def world_reward_memory(self) -> dict:
+    return {
+      item_name: facility.reward_memory
+      for item_name, facility in self.item_facilities.items()
+    }
 
+  @property
+  def total_rewards(self) -> RewardBalanceSheet:
+    return sum(
+      rewards.total()
+      for _, facility in self.item_facilities.items()
+      for rewards in facility.reward_memory
+    )
+
+  def is_one_min_crafting(self):
     # if one minute crafting is happening in the event
     if self.clock.flag_one_min_crafting:
 
@@ -58,8 +73,6 @@ class CatGameWorld:
       # move clock ahead by 1
       self.is_one_min_crafting()
       self.clock.tick()
-    else:
-      return 'time over'
 
 # classes
 
@@ -133,13 +146,15 @@ def main():
     for item, _ in world.item_facilities.items():
       world.item_facilities[item].act(BATCH_SIZE[item])
 
-    world.act()
+    if world.clock.is_within_runtime():
+      world.act()
+    else:
+      break
 
   print(
     world.clock.time,
     world.economy.items_in_stash,
-    world.economy.used_coins,
-    world.economy.gained_coins,
+    world.total_rewards,
     # sum(final_reward)
   )
 
