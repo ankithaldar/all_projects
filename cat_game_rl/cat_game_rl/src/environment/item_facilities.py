@@ -11,7 +11,7 @@ from bill_of_materials import BillOfMaterials
 from game_clock import GameClock
 from game_economy import GameEconomy
 from manufacturing_unit import ManufacturingUnit
-# from rewards import RewardCalculation
+from rewards import RewardCalculation
 # imports
 
 
@@ -27,7 +27,7 @@ class ItemFacility:
   name: str
   bom: BillOfMaterials
   target_count: int # final number that is needed for decor crafting
-  total_target_count: int # total number of pirces needed to fulfil
+  total_target_count: int # total number of pieces needed to fulfil
   total_crafted_count: int
   sources: list
   game_economy: GameEconomy
@@ -37,7 +37,8 @@ class ItemFacility:
     self.is_crafting = False
     self.current_stash = self.get_current_count_in_stash()
     self.manufacturing = ManufacturingUnit(self)
-    # self.reward_calc = RewardCalculation(self)
+    self.reward_calc = RewardCalculation(self)
+    self.reward_memory = []
 
     # self.define_item_production_level()
 
@@ -61,7 +62,7 @@ class ItemFacility:
       self.manufacturing.act(batch_size)
 
     self.current_stash = self.get_current_count_in_stash()
-    # return self.reward_calc.calculate_reward()
+    self.reward_calc.calculate_reward()
 
 # classes
 
