@@ -40,13 +40,15 @@ class ItemFacility:
     self.reward_calc = RewardCalculation(self)
     self.reward_memory = []
 
-    # self.define_item_production_level()
+    self.crafting_level = self.define_item_production_level()
 
-  # def define_item_production_level(self):
-  #   if len(self.sources) == 0:
-  #     self.crafting_level = 1
-  #   else:
-  #     self.crafting_level = max([i.crafting_level for i in self.sources]) + 1
+  def define_item_production_level(self):
+    if len(self.sources) == 0:
+      crafting_level = 1
+    else:
+      crafting_level = max([i.crafting_level for i in self.sources]) + 1
+
+    return crafting_level
 
   def get_current_count_in_stash(self) -> int:
     return self.game_economy.items_in_stash[self.name]

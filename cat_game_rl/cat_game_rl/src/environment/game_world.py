@@ -12,7 +12,8 @@ from game_clock import GameClock
 from game_economy import GameEconomy
 from item_facilities import ItemFacility
 from rewards import RewardBalanceSheet
-from utils import (BASE_ITEMS, BATCH_SIZE, INIT_ECONOMY,
+from control_policy import SimpleControlPolicy
+from utils import (BASE_ITEMS, INIT_ECONOMY,
                    ITEM_DEFAULTS, TARGET_ITEM_COUNTS, RUN_TIME, get_total_counts,
                    parse_materials, yaml_reader)
 # imports
@@ -66,13 +67,15 @@ class CatGameWorld:
           facility.set_one_min_manufacturing_time()
 
 
-  def act(self):
+  def act(self, world_batch_size):
+    for item, _ in self.item_facilities.items():
+      self.item_facilities[item].act(world_batch_size[item])
+
     self.check_presents()
 
-    if self.clock.is_within_runtime():
-      # move clock ahead by 1
-      self.is_one_min_crafting()
-      self.clock.tick()
+    # move clock ahead by 1
+    self.is_one_min_crafting()
+    self.clock.tick()
 
 # classes
 
@@ -141,20 +144,18 @@ def worldbuilder_create():
 # main
 def main():
   world = worldbuilder_create()
+  policy = SimpleControlPolicy()
 
-  while not world.check_terminate_condition():
-    for item, _ in world.item_facilities.items():
-      world.item_facilities[item].act(BATCH_SIZE[item])
-
-    if world.clock.is_within_runtime():
-      world.act()
+  while True:
+    if not world.check_terminate_condition() and world.clock.is_within_runtime():
+      world.act(policy.compute_batch_size())
     else:
       break
 
   print(
     world.clock.time,
     world.economy.items_in_stash,
-    world.total_rewards,
+    # world.total_rewards,
     # sum(final_reward)
   )
 
