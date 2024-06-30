@@ -54,29 +54,6 @@ TARGET_ITEM_COUNTS = ENV_FOLDER / 'loaders'/'crafting_target.yml'
 
 RUN_DAYS = 25
 RUN_TIME = RUN_DAYS * 24 * 60
-
-# DEFAULT BATCH SIZE
-BATCH_SIZE = {
-  'string': 10,
-  'wood': 10,
-  'metal': 12,
-  'ribbon': 5,
-  'needles': 3,
-  'sparkles': 2,
-  'bronze': 3,
-  'silver': 2,
-  'gold': 1,
-  'amethyst': 3,
-  'pendant': 1,
-  'necklace': 1,
-  'orb': 2,
-  'water': 2,
-  'fire': 1,
-  'waterstone': 1,
-  'firestone': 1,
-  'elementstone': 1,
-  'artifact': 1
-}
 # constants
 
 
