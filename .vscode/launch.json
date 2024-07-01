@@ -1,17 +1,29 @@
 {
-  "version": "0.1.0",
+  "version": "1.0.0",
   "configurations": [
     {
-      "name": "project - debugger", // Anything you want
+      "name": "project - main debugger", // Anything you want
       "type": "debugpy",
       "request": "launch",
-      "cwd": "${workspaceFolder}/python_proj_template", // full path to project folder
+      "cwd": "${workspaceFolder}/kaggle_severestal", // full path to project folder
       "python": "/home/helder/.cache/pypoetry/virtualenvs/any-project-template-18SrI9Sa-py3.12/bin/python", // full path to python.exe (run  poetry env info --path) in terminal to get virtual env folder
-      "program": "${workspaceFolder}/python_proj_template/main.py", // full path to file to execute
+      "program": "${workspaceFolder}/kaggle_severestal/main.py", // full path to file to execute
       "console": "integratedTerminal",
       "redirectOutput": true,
       "justMyCode": true,
       "stopOnEntry": false,
-    }
+    },
+    {
+      "name": "project - train debugger", // Anything you want
+      "type": "debugpy",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/kaggle_severestal/src", // full path to project folder
+      "python": "/home/helder/.cache/pypoetry/virtualenvs/any-project-template-18SrI9Sa-py3.12/bin/python", // full path to python.exe (run  poetry env info --path) in terminal to get virtual env folder
+      "program": "${workspaceFolder}/kaggle_severestal/src/train.py", // full path to file to execute
+      "console": "integratedTerminal",
+      "redirectOutput": true,
+      "justMyCode": true,
+      "stopOnEntry": false,
+    },
   ]
 }
