@@ -1,0 +1,82 @@
+seed: 42
+project_name: 'project'
+create_tf_records: True
+fold: 0
+aug_name: 'default'
+apply_mixup: True
+model_name: 'default'
+model_config:
+  'sample_rate': 32000
+  'window_size': 1024
+  'hop_size': 320
+  'mel_bins': 64
+  'fmin': 50
+  'fmax': 14000
+  'classes_num': 264
+  'apply_aug': True
+  'top_db': null
+pretrained_path: null
+bckgrd_aug_dir: 'default'
+optimizer_name: 'adamw'
+weight_decay: 0.01
+loss_func_name: 'sed_scaled_pos_neg_focal_loss'
+loss_func_params:
+  'gamma' : 0.0
+  'alpha_0' : 1.0
+  'alpha_1': 1.0
+  'secondary_factor': 1.0
+scheduler_name: 'warmup_with_cosine'
+lr_scale_factor: 0.01
+lr: 0.001
+logger_name: 'neptune' # 'wandb' 'mlflow' 'printlogger'
+PERIOD: 30
+metrics: ['lraps', 'f1score_clip', 'f1score_frame']
+track_metric: 'lraps'
+metric_factor: 1
+checkpoint_dir: None
+
+
+# here starts the training params
+train_ds_params:
+  'root_dir': '/data/'
+  'csv_dir': '/folds/all_data.csv'
+  'period': null
+  'labels': null
+  'inv_labels': null
+  'isTraining': True
+  'num_test_samples': 1
+valid_ds_params:
+  'root_dir': '/data/'
+  'csv_dir': '/folds/all_data.csv'
+  'period': null
+  'labels': null
+  'inv_labels': null
+  'isTraining': True
+  'num_test_samples': 2
+  'background_audio_dir': '/background/data_ssw'
+test_ds_params:
+  'root_dir': '/data/'
+  'csv_dir': '/folds/all_data.csv'
+  'period': null
+  'labels': null
+  'inv_labels': null
+  'isTraining': True
+  'num_test_samples': 2
+  'background_audio_dir': '/background/data_ssw'
+checkpoint_params:
+  'save_dir': '/saved_models/'
+  'n_saved': 5
+  'prefix_name': null
+train_bs: 32
+train_num_workers: 8
+valid_bs: 32
+valid_num_workers: 4
+add_progressbar: True
+run_params:
+  'max_epochs': 50,
+  'epoch_length': None
+val_length: None
+eval_every: 10
+load_model_only: False
+accumulation_steps: 1
+gradient_clip_val: 0
