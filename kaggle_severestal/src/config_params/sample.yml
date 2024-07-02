@@ -2,7 +2,6 @@ seed: 42
 project_name: 'project'
 create_tf_records: True
 fold: 0
-aug_name: 'default'
 apply_mixup: True
 model_name: 'default'
 model_config:
@@ -15,8 +14,10 @@ model_config:
   'classes_num': 264
   'apply_aug': True
   'top_db': null
+aug_config:
+  'aug_name': 'default'
+  'bckgrd_aug_dir': 'default'
 pretrained_path: null
-bckgrd_aug_dir: 'default'
 optimizer_name: 'adamw'
 weight_decay: 0.01
 loss_func_name: 'sed_scaled_pos_neg_focal_loss'

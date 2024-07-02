@@ -21,7 +21,7 @@ class BaseEngine:
   def __init__(self, hparams):
     self.hparams = hparams
 
-    self._init_score_function()
+    # self._init_score_function()
     self._init_augmentation()
 
     self._init_train_datalader()
@@ -37,6 +37,7 @@ class BaseEngine:
 
   def _init_score_function(self):
     # look into this from kaggle-birdsong-recognition repo
+    # this will be the final evaluation metric
     pass
 
 
@@ -112,8 +113,8 @@ class BaseEngine:
   def test_step(self, engine, batch):
     pass
 
-  def prepare_batch(self, batch, model='valid'):
-    pass
+  def prepare_batch(self, batch, mode='valid'):
+    return batch
 
   def output_transform(self, x, y, y_pred, loss=None):
     pass
