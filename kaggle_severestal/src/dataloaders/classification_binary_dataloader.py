@@ -84,6 +84,21 @@ class BinaryClassificationDataloader:
     self.ds = self.ds.prefetch(AUTOTUNE)
 
 
+
+class BinaryClassificationDataloaderKeras(tf.keras.utils.PyDataset):
+  '''Dataset for binary Classification'''
+
+  def __init__(self, hparams):
+    pass
+
+
+  def __getitem__(self, idx):
+    pass
+
+
+  def __len__(self):
+    pass
+
 # classes
 
 
