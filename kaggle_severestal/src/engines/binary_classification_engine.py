@@ -8,7 +8,8 @@
 
 # imports
 #    script imports
-from engine.base.base_engine import BaseEngine
+from engines.base_engine import BaseEngine
+from engines.engine_utils import get_augmentation
 # imports
 
 
@@ -17,14 +18,14 @@ from engine.base.base_engine import BaseEngine
 
 
 # classes
-class ClassificationEngine(BaseEngine):
-  '''Engine to train classification models'''
+class BinaryClassificationEngine(BaseEngine):
+  '''Engine to train Binary classification models'''
 
   def __init__(self, hparams):
     super().__init__(hparams)
-    pass
+    # pass
 
-  def prepare_batch(self, batch, mode = 'valid'):
+  def prepare_batch(self, batch, mode='valid'):
     pass
 
   def loss_fn(self, y_pred, y):
@@ -52,7 +53,7 @@ class ClassificationEngine(BaseEngine):
     pass
 
   def _init_augmentation(self):
-    pass
+    self.tfms = get_augmentation(self.hparams.aug_config)
 
   def _init_train_datalader(self):
     pass

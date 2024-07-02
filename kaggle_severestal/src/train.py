@@ -4,14 +4,14 @@
 '''Train the model base script'''
 
 from argparse import ArgumentParser
-from engine.classification_engine import ClassificationEngine
+from engines.binary_classification_engine import BinaryClassificationEngine
 from config_params.params_reader import Parameters
 
 
 def main(module_params=None):
   '''main function'''
-  pe = ClassificationEngine(module_params)
-  pe.train()
+  pe = BinaryClassificationEngine(module_params)
+  pe.train(module_params.run_params)
 
 
 if __name__ == '__main__':

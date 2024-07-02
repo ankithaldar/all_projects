@@ -115,7 +115,7 @@ class Parameters:
 
 # functions
 def test_parameters():
-  params = Parameters('./src/config_params/sample.yml')
+  params = Parameters('/run/media/helder/Code_Dump/all_projects_all_branches/competitions_main/kaggle_severestal/src/config_params/sample.yml')
   print(params)
 
 def functions():
@@ -125,7 +125,7 @@ def functions():
 
 # main
 def main():
-  # test_parameters()
+  test_parameters()
   pass
 
 
