@@ -27,21 +27,25 @@ class AlphaZero:
 
   def __init__(self, model, game, args):
     self.model = model
+    self.optimizer = self.define_optimizer()
     self.game = game
     self.args = args
     self.mcts = MCTS(game, args, model)
-    self.define_optimizer()
 
 
   def define_optimizer(self):
-    self.optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+    return tf.keras.optimizers.Adam(learning_rate=1e-3, weight_decay=1e-4)
 
 
   def send_to_discord(self, message):
     payload = {
       'content': message,
     }
-    requests.post(os.environ['DISCORD_WEBHOOK'], json=payload)
+    try:
+      if os.environ['DISCORD_WEBHOOK']:
+        requests.post(os.environ['DISCORD_WEBHOOK'], json=payload)
+    except KeyError:
+      pass
 
 
   def self_play(self):
@@ -55,7 +59,9 @@ class AlphaZero:
 
       memory.append((neutral_state, action_probs, player))
 
-      action = np.random.choice(self.game.action_size, p=action_probs)
+      temperature_action_probs = action_probs ** (1 / self.args['temperature'])
+      temperature_action_probs = temperature_action_probs / np.sum(temperature_action_probs)
+      action = np.random.choice(self.game.action_size, p=temperature_action_probs) # change to p=temperature_action_probs
 
       state = self.game.get_next_state(state, action, player)
 
@@ -87,8 +93,8 @@ class AlphaZero:
         out_policy, out_value = self.model(state)
 
         # Compute the loss value for this minibatch.
-        policy_loss = tf.keras.losses.categorical_crossentropy(out_policy, policy_targets)
-        value_loss = tf.keras.losses.MSE(out_value, value_targets)
+        policy_loss = tf.keras.losses.categorical_crossentropy(policy_targets, out_policy)
+        value_loss = tf.keras.losses.MSE(value_targets, out_value)
         # loss = policy_loss + value_loss
 
         # Use the gradient tape to automatically retrieve
@@ -104,16 +110,15 @@ class AlphaZero:
     for iteration in range(self.args['num_iterations']):
       memory = []
 
+      # self.model.eval()
       for _ in range(self.args['num_selfPlay_iterations']):
         memory += self.self_play()
 
+
+      # self.model.train()
       for num_epoch in range(self.args['num_epochs']):
         self.train(memory)
-        try:
-          if os.environ['DISCORD_WEBHOOK']:
-            self.send_to_discord(f'Iteration: {iteration}, Epoch: {num_epoch}')
-        except KeyError:
-          pass
+        self.send_to_discord(f'Iteration: {iteration}, Epoch: {num_epoch}')
 
       tf.keras.models.save_model(self.model, f'model_{self.game.game_name}_{iteration}.keras')
 # classes
