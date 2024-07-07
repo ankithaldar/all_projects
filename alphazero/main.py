@@ -52,7 +52,7 @@ def test_tictactoe_self_play():
     'C': 2,
     'num_searches': 60,
     'num_iterations': 3,
-    'num_selfPlay_iterations': 10,
+    'num_selfPlay_iterations': 500,
     'num_epochs': 4,
     'batch_size': 64
   }
