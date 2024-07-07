@@ -15,7 +15,7 @@ import tensorflow as tf
 
 
 # classes
-class ResNetStartBlock(tf.keras.Layer):
+class ResNetStartBlock(tf.keras.layers.Layer):
   '''Resnet model start layer'''
 
   def __init__(self, num_hidden):
@@ -43,7 +43,7 @@ class ResNetStartBlock(tf.keras.Layer):
 
 
 
-class ResNetResBlock(tf.keras.Layer):
+class ResNetResBlock(tf.keras.layers.Layer):
   '''Resnet model Residual Blocks'''
 
   def __init__(self, num_hidden):
@@ -87,7 +87,7 @@ class ResNetResBlock(tf.keras.Layer):
 
 
 
-class ResNetPolicyHead(tf.keras.Layer):
+class ResNetPolicyHead(tf.keras.layers.Layer):
   '''Resnet model Policy Head'''
 
   def __init__(self, game):
@@ -122,7 +122,7 @@ class ResNetPolicyHead(tf.keras.Layer):
 
 
 
-class ResNetValueHead(tf.keras.Layer):
+class ResNetValueHead(tf.keras.layers.Layer):
   '''Resnet model Value Head'''
 
   def __init__(self):
