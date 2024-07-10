@@ -16,11 +16,6 @@ from src.mcts import MCTS
 
 
 # constants
-# DISCORD_URL = 'https://discord.com/api/v9/channels/1259362351107407975/messages'
-# SESSION = tls_client.Session(
-#   client_identifier='chrome_120',
-#   random_tls_extension_order=True
-# )
 # constants
 
 # https://stackoverflow.com/questions/44036971/multiple-outputs-in-keras
