@@ -16,7 +16,30 @@ from collections import Counter
 
 # classes
 class GameEconomy:
-  '''Game Economy - Coins & item stash'''
+  """Class representing the in-game economy system for a game.
+
+    This class tracks the player's coins and item stash, including methods to
+    update their balances and provides separate counters for tracking total
+    coins used and gained throughout the game.
+
+    Attributes:
+      coins: The current number of coins the player possesses.
+      items_in_stash: A `collections.Counter` object that tracks the quantities
+      of each item type the player has stored.
+      used_coins: Internal counter for tracking the total number of coins spent
+      throughout the game (for informational purposes).
+      gained_coins: Internal counter for tracking the total number of coins gained
+      throughout the game (for informational purposes).
+
+    Methods:
+      update_coins(self, used_coins=0, gained_coins=0) -> None: Updates the
+      player's coin balance, considering both used and gained coins in a
+      single transaction.
+      update_stash(self, used_stash=None, gained_stash=None) -> None: Updates
+      the items in the player's stash. Takes separate arguments for items used
+      (removed from stash) and items gained (added to stash), allowing for
+      transactions involving both.
+  """
 
   def __init__(self) -> None:
     self.coins = 0
