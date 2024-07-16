@@ -12,7 +12,8 @@ from collections import Counter
 
 
 # constants
-COST_PENALTY = 1
+COST_PENALTY = 1.5
+GAMMA = 0.99
 # constants
 
 
@@ -21,11 +22,12 @@ COST_PENALTY = 1
 class RewardBalanceSheet:
   '''Balance Sheet For Rewards'''
 
-  time: int = 0 # positive
-  cost: int = 0 # negative
+  gamma: float = 0.0
+  time: float = 0.0 # positive
+  cost: float = 0.0 # negative
 
-  def total(self) -> int:
-    return self.time - self.cost
+  def total(self) -> float:
+    return self.gamma * (self.time - self.cost)
 
   def __add__(self, other):
     return RewardBalanceSheet(self.time + other.time, self.cost + other.cost)
@@ -44,13 +46,16 @@ class RewardBalanceSheet:
 class RewardCalculation:
   '''Calculate Rewards'''
   item: object
-  time: int = 0 # positive
-  cost: int = 0 # negative
+  gamma: float = GAMMA
+  time: float = 0.0 # positive
+  cost: float = 0.0 # negative
 
   def calculate_reward(self):
     self.item_idle_reward()
     # self.start_crafting_reward()
 
+  def gamma_calc(self, gamma, time):
+    return gamma ** (time - 1)
 
   def item_idle_reward(self):
     def get_source_stash():
@@ -64,8 +69,9 @@ class RewardCalculation:
       if self.item.total_target_count <= self.item.total_crafted_count:
         self.item.reward_memory.append(
           RewardBalanceSheet(
-            time = 1,
-            cost = 0
+            gamma = self.gamma_calc(self.gamma, self.item.clock.time),
+            time = 1.0,
+            cost = 0.0
           )
         )
 
@@ -74,13 +80,15 @@ class RewardCalculation:
         for item_source in self.item.sources:
           item_source.reward_memory.append(
             RewardBalanceSheet(
-              time = -1, # negative to minimize the wating time
-              cost = 0
+              gamma = self.gamma_calc(self.gamma, self.item.clock.time),
+              time = -1.0, # negative to minimize the wating time
+              cost = 0.0
             )
           )
 
   def start_crafting_reward(self):
     return RewardBalanceSheet(
+      gamma = self.gamma_calc(self.gamma, self.item.clock.time),
       # time advantage for time saved
       time = ((self.item.manufacturing.batch_size) * self.item.bom.req_time) / self.item.clock.run_time,
       # coin penalty for extra coins used

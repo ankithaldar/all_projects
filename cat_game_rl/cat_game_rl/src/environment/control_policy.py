@@ -5,6 +5,7 @@
 
 
 # imports
+import random
 #    script imports
 # imports
 
@@ -17,10 +18,15 @@
 class SimpleControlPolicy:
   '''Policy control for the game. Choosing one batch bize per flow'''
 
-  def compute_batch_size(self):
+  def compute_batch_size(self, world):
     '''computing batch size for each flow'''
 
-    batch_size = {
+    batch_size = self.random_batch_size(world=world)
+
+    return batch_size
+
+  def fixed_batch_size(self, world):
+    return {
       'string': 10,
       'wood': 10,
       'metal': 12,
@@ -42,9 +48,15 @@ class SimpleControlPolicy:
       'artifact': 1
     }
 
+  def random_batch_size(self, world):
+    '''Randomly choosing batch size for each flow'''
+
+    batch_size = {}
+    for k, v in world.item_facilities.items():
+      size = min(20, v.total_target_count - v.total_crafted_count)
+      size =  0 if size <= 0 else random.randint(0, size)
+      batch_size[k] = size
     return batch_size
-
-
 
 # classes
 
