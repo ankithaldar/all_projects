@@ -39,6 +39,8 @@ class ItemFacility:
     self.manufacturing = ManufacturingUnit(self)
     self.reward_calc = RewardCalculation(self)
     self.reward_memory = []
+    self.dependents = []
+    self.define_dependents()
 
     self.crafting_level = self.define_item_production_level()
 
@@ -49,6 +51,10 @@ class ItemFacility:
       crafting_level = max([i.crafting_level for i in self.sources]) + 1
 
     return crafting_level
+
+  def define_dependents(self):
+    for i in self.sources:
+      i.dependents.append(self)
 
   def get_current_count_in_stash(self) -> int:
     return self.game_economy.items_in_stash[self.name]

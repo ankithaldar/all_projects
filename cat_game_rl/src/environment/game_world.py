@@ -148,14 +148,15 @@ def main():
 
   while True:
     if not world.check_terminate_condition() and world.clock.is_within_runtime():
-      world.act(policy.compute_batch_size())
+      world.act(policy.compute_batch_size(world))
     else:
       break
 
   print(
     world.clock.time,
     world.economy.items_in_stash,
-    # world.total_rewards,
+    world.total_rewards,
+    world.economy.used_coins,
     # sum(final_reward)
   )
 
