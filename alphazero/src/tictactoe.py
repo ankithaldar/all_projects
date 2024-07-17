@@ -16,7 +16,39 @@ import numpy as np
 
 # classes
 class TicTacToe:
-  '''TicTacToe'''
+  '''TicTacToe
+
+  This class represents a Tic-Tac-Toe game environment. It provides methods for
+  initializing the game state, making moves, checking for win conditions, and
+  determining game termination.
+
+  Attributes:
+    row_count (int): Number of rows in the game board (default: 3).
+    column_count (int): Number of columns in the game board (default: 3).
+    action_size (int): Total number of possible actions (row_count * column_count).
+    game_name (str): game_name (str): Name of the game.
+
+  Methods:
+    __init__(): Initializes a new TicTacToe game instance with default parameters.
+    get_initial_state(): Returns an initial game state represented as a NumPy
+      array of shape (row_count, column_count) filled with zeros.
+    get_next_state(state, action, player): Updates the game state by placing the
+      given player's mark at the specified action location.
+    get_valid_moves(state): Returns a NumPy array indicating valid moves
+      (empty cells) in the given state.
+    check_win(state, action): Checks if the player who made the action has won
+      the game.
+    get_row_column_for_action(action): Converts an action index to row and
+      column coordinates.
+    get_value_and_terminated(state, action): Determines the game value
+      (1 for win, 0 for draw, -1 for loss) and whether the game is terminated.
+    get_opponent(player): Returns the opponent's player value.
+    get_opponent_value(value): Returns the opponent's value.
+    change_perspective(state, player): Changes the perspective of the game
+      state for the given player.
+    get_encoded_state(state): Encodes the game state into a NumPy array suitable
+      for machine learning models.
+  '''
 
   def __init__(self):
     self.row_count = 3
