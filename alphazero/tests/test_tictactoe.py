@@ -17,6 +17,17 @@ import numpy as np
 
 # functions
 def test_tictactoe(game, mcts):
+  '''
+  Interactive Tic-Tac-Toe game using MCTS for AI player.
+
+  This function allows human player interaction with the Tic-Tac-Toe game environment
+  and utilizes the provided MCTS instance for the AI player's decision-making.
+
+  Args:
+    game: A TicTacToe game environment instance.
+    mcts: An MCTS instance for AI player decision-making.
+  '''
+
   tictactoe = game
   player = 1
   state = tictactoe.get_initial_state()

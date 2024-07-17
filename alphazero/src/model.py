@@ -16,7 +16,21 @@ import tensorflow as tf
 
 # classes
 class ResNetStartBlock(tf.keras.layers.Layer):
-  '''Resnet model start layer'''
+  '''ResNet model start layer
+
+  This layer is the initial block of the ResNet model.
+  It consists of a convolutional layer, batch normalization,
+  and ReLU activation.
+
+  Args:
+    num_hidden: The number of filters in the convolutional layer.
+
+  Inputs:
+    A tensor of shape (batch_size, height, width, channels).
+
+  Outputs:
+    A tensor of shape (batch_size, height, width, num_hidden).
+  '''
 
   def __init__(self, num_hidden):
     super().__init__()
@@ -44,7 +58,22 @@ class ResNetStartBlock(tf.keras.layers.Layer):
 
 
 class ResNetResBlock(tf.keras.layers.Layer):
-  '''Resnet model Residual Blocks'''
+  '''ResNet model Residual Blocks
+
+  This layer implements a residual block, which is the core building block of
+  the ResNet model. It consists of two convolutional layers,
+  batch normalization, and ReLU activations.
+  The output of the block is added to the input (residual connection).
+
+  Args:
+    num_hidden: The number of filters in the convolutional layers.
+
+  Inputs:
+    A tensor of shape (batch_size, height, width, channels).
+
+  Outputs:
+    A tensor of shape (batch_size, height, width, num_hidden).
+  '''
 
   def __init__(self, num_hidden):
     super().__init__()
@@ -79,7 +108,7 @@ class ResNetResBlock(tf.keras.layers.Layer):
     for layer in self.layer_list:
       x = layer(x)
 
-    x += residual
+    x = tf.keras.layers.Add()([x, residual])
 
     x = self.relu_02(x)
 
@@ -88,7 +117,20 @@ class ResNetResBlock(tf.keras.layers.Layer):
 
 
 class ResNetPolicyHead(tf.keras.layers.Layer):
-  '''Resnet model Policy Head'''
+  '''ResNet model Policy Head
+
+  This layer is the policy head of the ResNet model. It takes the output of the
+  ResNet backbone and processes it to produce a policy output.
+
+  Args:
+    game: The game environment.
+
+  Inputs:
+    A tensor of shape (batch_size, height, width, channels).
+
+  Outputs:
+    A tensor of shape (batch_size, action_size).
+  '''
 
   def __init__(self, game):
     super().__init__()
@@ -123,7 +165,17 @@ class ResNetPolicyHead(tf.keras.layers.Layer):
 
 
 class ResNetValueHead(tf.keras.layers.Layer):
-  '''Resnet model Value Head'''
+  '''ResNet model Value Head
+
+  This layer is the value head of the ResNet model. It takes the output of the
+  ResNet backbone and processes it to produce a value output.
+
+  Inputs:
+    A tensor of shape (batch_size, height, width, channels).
+
+  Outputs:
+    A tensor of shape (batch_size, 1).
+  '''
 
   def __init__(self):
     super().__init__()
@@ -159,7 +211,24 @@ class ResNetValueHead(tf.keras.layers.Layer):
 
 
 class ResNet(tf.keras.Model):
-  '''ResNet model'''
+  '''ResNet model
+
+  This class implements the ResNet model for a game environment. It consists of
+  a start block, multiple residual blocks, a policy head, and a value head.
+
+  Args:
+    game: The game environment.
+    num_res_blocks: The number of residual blocks.
+    num_hidden: The number of filters in the convolutional layers.
+
+  Inputs:
+    A tensor of shape (batch_size, height, width, channels).
+
+  Outputs:
+    A tuple of two tensors:
+      - Policy output: A tensor of shape (batch_size, action_size).
+      - Value output: A tensor of shape (batch_size, 1).
+  '''
 
   def __init__(self, game, num_res_blocks, num_hidden):
     super().__init__()

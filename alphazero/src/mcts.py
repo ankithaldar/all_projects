@@ -18,7 +18,25 @@ import tensorflow as tf
 
 # classes
 class Node:
-  '''Node for MCTS'''
+  '''Node for Monte Carlo Tree Search (MCTS)
+
+  This class represents a node in the MCTS tree. Each node holds information
+  about the game state, the action that led to this state, the visit count
+  (number of times this node has been visited), the value sum (sum of values
+  obtained from simulations starting at this node), and references to its parent
+  node and child nodes.
+
+  Attributes:
+    game: The game environment.
+    args: A dictionary containing MCTS hyperparameters.
+    state: The game state represented by this node.
+    parent: The parent node of this node.
+    action_taken: The action that led to this state (None for the root node).
+    prior: The prior probability of this node (used during exploration).
+    visit_count: The number of times this node has been visited.
+    value_sum: The sum of values obtained from simulations starting at this node.
+    children: A list of child nodes.
+  '''
 
   def __init__(self, game, args, state, parent=None, action_taken=None, prior=0, visit_count=0):
     self.game = game
@@ -35,10 +53,20 @@ class Node:
 
 
   def is_fully_expanded(self):
+    '''Checks if all valid actions can be taken from this state.
+
+    Returns:
+      True if all valid actions can be taken from this state, False otherwise.
+    '''
     return len(self.children) > 0
 
 
   def select(self):
+    '''Selects the best child node based on the Upper Confidence Bound (UCB) formula.
+
+    Returns:
+      The child node with the highest UCB value.
+    '''
     best_child = None
     best_ucb = -np.inf
 
@@ -52,6 +80,15 @@ class Node:
 
 
   def get_ucb(self, child):
+    '''Calculates the UCB value for a child node.
+
+    Args:
+      child: The child node for which to calculate UCB.
+
+    Returns:
+      The UCB value of the child node.
+    '''
+
     if child.visit_count == 0:
       q_value = 0
     else:
@@ -60,6 +97,11 @@ class Node:
 
 
   def expand(self, policy):
+    '''Expands the node by creating child nodes for each valid action.
+
+    Args:
+      policy: A probability distribution over possible actions.
+    '''
     for action, prob in enumerate(policy):
       if prob > 0:
         child_state = self.state.copy()
@@ -71,6 +113,11 @@ class Node:
 
 
   def backpropagate(self, value):
+    '''Propagates the value obtained from a simulation back up the tree.
+
+    Args:
+      value: The value obtained from a simulation.
+    '''
     self.value_sum += value
     self.visit_count += 1
 
@@ -80,7 +127,16 @@ class Node:
 
 
 class MCTS:
-  '''Monte Carlo Tree Search'''
+  '''Monte Carlo Tree Search (MCTS)
+
+  This class implements the MCTS algorithm for playing games. MCTS uses a tree
+  structure to explore the game state space and select the most promising action.
+
+  Attributes:
+    game: The game environment.
+    args: A dictionary containing MCTS hyperparameters.
+    model: A TensorFlow model used to evaluate game states.
+  '''
 
   def __init__(self, game, args, model):
     self.game = game
