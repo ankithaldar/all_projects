@@ -23,7 +23,20 @@ from src.mcts import MCTS
 
 # classes
 class AlphaZero:
-  '''Self Play'''
+  '''AlphaZero Agent for Self-Play and Reinforcement Learning
+
+  This class implements the AlphaZero algorithm for playing games using
+  self-play and reinforcement learning. AlphaZero combines Monte Carlo Tree
+  Search (MCTS) with a neural network model to achieve high performance in
+  various games.
+
+  Attributes:
+    model: A TensorFlow model used for policy and value estimation.
+    optimizer: An optimizer used for training the model.
+    game: The game environment (TicTacToe, Go, etc.).
+    args: A dictionary containing hyperparameters for AlphaZero.
+    mcts: An instance of the MCTS class for searching the game tree.
+  '''
 
   def __init__(self, model, game, args):
     self.model = model
@@ -34,10 +47,23 @@ class AlphaZero:
 
 
   def define_optimizer(self):
+    '''Defines the optimizer used for training the model.
+
+    Returns:
+      A TensorFlow optimizer (default: Adam with learning rate 1e-3 and weight decay 1e-4).
+    '''
     return tf.keras.optimizers.Adam(learning_rate=1e-3, weight_decay=1e-4)
 
 
   def send_to_discord(self, message):
+    '''Sends a message to a Discord webhook (for logging purposes).
+
+    Args:
+      message: The message content to send.
+
+    Raises:
+      KeyError: If the environment variable 'DISCORD_WEBHOOK' is not set.
+    '''
     payload = {
       'content': message,
     }
@@ -49,6 +75,11 @@ class AlphaZero:
 
 
   def self_play(self):
+    '''Performs a single self-play game simulation.
+
+    Returns:
+      A list of tuples containing encoded game states, action probabilities, and player outcomes for training the model.
+    '''
     memory = []
     player = 1
     state = self.game.get_initial_state()
@@ -82,6 +113,11 @@ class AlphaZero:
 
 
   def train(self, memory):
+    '''Trains the model using a minibatch of self-play data.
+
+    Args:
+      memory: A list of tuples containing encoded game states, action probabilities, and player outcomes.
+    '''
     random.shuffle(memory)
     for batch_idx in range(0, len(memory), self.args['batch_size']):
       sample = memory[batch_idx:min(len(memory) - 1, batch_idx + self.args['batch_size'])] # Change to memory[batchIdx:batchIdx+self.args['batch_size']] in case of an error
@@ -107,6 +143,10 @@ class AlphaZero:
 
 
   def learn(self):
+    '''Main training loop for the AlphaZero agent.
+
+    This function iteratively performs self-play, trains the model, and saves the model checkpoints.
+    '''
     for iteration in range(self.args['num_iterations']):
       memory = []
 
