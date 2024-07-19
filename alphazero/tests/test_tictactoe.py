@@ -64,4 +64,16 @@ def test_tictactoe(game, mcts):
 
     player = tictactoe.get_opponent(player)
 
+
+
+# test_get_initial_state: Checks if the initial state is a 3x3 matrix of zeros.
+# test_get_next_state: Verifies that placing a piece updates the correct position in the state.
+# test_get_valid_moves: Asserts that valid moves are correctly identified.
+# test_check_win: Tests different win conditions (row, column, diagonals).
+# test_get_value_and_terminated: Checks for win, draw, and ongoing game scenarios.
+# test_get_opponent: Ensures correct opponent determination.
+# test_get_opponent_value: Verifies opponent value calculation.
+# test_change_perspective: Checks if the state is correctly changed from one player's perspective to another.
+# test_get_encoded_state: Asserts the shape of the encoded state.
+
 # functions
