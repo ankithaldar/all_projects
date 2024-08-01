@@ -1,9 +1,10 @@
-# All projects that I'll be working on
-Each project has its own main branch and sub branches in format
+# Truck Carton problem as defined by Sampath
 
-```
-<project_name>/main
-<project_name>/<testing branch name>
-```
+WIP
 
-*Note: Please change the .vscode/launch.json accordingly.*
+I want to work on a reinforcement learning problem.
+1. I have x number of trucks (python object). Each truck has volume capacity of x_i
+2. I have y number of cartons (python object). Each carton has volume capacity of y_n
+3. The trucks are as to be filled with cartons in such a way that they move between the warehouse and the store
+4. the trucks have to be filled with cartons so that it reaches maximum utilization
+5. the trucks have to be filled in such a way that the minimum displacement of cartons are done to drop the ordered cartons at a store
