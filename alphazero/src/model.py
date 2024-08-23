@@ -6,6 +6,11 @@
 
 # imports
 import tensorflow as tf
+
+try:
+  from tensorflow.keras.layers import Layer
+except ImportError:
+  import tensorflow.keras.Layer as Layer
 #    script imports
 # imports
 
@@ -15,7 +20,7 @@ import tensorflow as tf
 
 
 # classes
-class ResNetStartBlock(tf.keras.layers.Layer):
+class ResNetStartBlock(Layer):
   '''ResNet model start layer
 
   This layer is the initial block of the ResNet model.
@@ -57,7 +62,7 @@ class ResNetStartBlock(tf.keras.layers.Layer):
 
 
 
-class ResNetResBlock(tf.keras.layers.Layer):
+class ResNetResBlock(Layer):
   '''ResNet model Residual Blocks
 
   This layer implements a residual block, which is the core building block of
@@ -116,7 +121,7 @@ class ResNetResBlock(tf.keras.layers.Layer):
 
 
 
-class ResNetPolicyHead(tf.keras.layers.Layer):
+class ResNetPolicyHead(Layer):
   '''ResNet model Policy Head
 
   This layer is the policy head of the ResNet model. It takes the output of the
@@ -164,7 +169,7 @@ class ResNetPolicyHead(tf.keras.layers.Layer):
 
 
 
-class ResNetValueHead(tf.keras.layers.Layer):
+class ResNetValueHead(Layer):
   '''ResNet model Value Head
 
   This layer is the value head of the ResNet model. It takes the output of the
