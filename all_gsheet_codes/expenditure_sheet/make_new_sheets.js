@@ -143,6 +143,20 @@ function mns_clear_last_rows_of_dates_from_each_sheet(sheet, days_in_this_mon) {
   if ((days_in_this_mon + 2) <= 32) {
     ss.getRange("A" + (days_in_this_mon + 2) + ":A32").clearContent();
   }
+  // Add Maid Salary in Month Sheets
+  add_pay_salary = {
+    "Maid Salary": maid_salary,
+    "Car Washing Salary": car_cleaning
+  };
+
+  var i = 1;
+
+  for (var keys in add_pay_salary) {
+    ss.getRange("B" + (days_in_this_mon + i)).setValue(keys);
+    ss.getRange("C" + (days_in_this_mon + i)).setValue(1);
+    ss.getRange("D" + (days_in_this_mon + i)).setValue(add_pay_salary[keys]);
+    i++;
+  }
 };
 
 function mns_mark_bank_statement_first_day() {
@@ -166,7 +180,7 @@ function mns_mark_from_last_year() {
   // fill continuation of bank statement
   for (var i = 0; i < banks.length; i++) {
     var ss = get_sheet(hidden_sheets[1] + ' - ' + banks[i]);
-    ss.getRange("O1").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "' + hidden_sheets[1] + ' - ' + banks[i] + '!O1")');
+    ss.getRange("O1").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "' + hidden_sheets[1] + ' - ' + banks[i] + '!P1")');
   }
 
   // fill Jan Last Month Cash in hand
