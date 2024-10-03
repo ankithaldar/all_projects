@@ -6,7 +6,7 @@
 // inputs
 let
   // Specify current year
-  years = "2024",
+  years = "2025",
 
   // Current bank names with accounts
   banks = ['HDFC', 'SBI'],
@@ -19,7 +19,7 @@ let
   car_cleaning = 000000,
   home_emi = 000000,
 
-  old_sheet_link = 'https://docs.google.com/spreadsheets/d/1IUMhLKsL4u0HBXtExAGgraABi8sbo1W4HiTBmoTfSBg'
+  old_sheet_link = ''
 
   // months array
   mons = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
@@ -30,9 +30,9 @@ let
 
   card_map = {
     "CC IndusInd 0596": { "bill_date":  3, "sheet_cell": "$M$28" },
-    "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$M$29" },
+    "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$M$29", "repayment_days": 22 },
     "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$M$30" },
-    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$M$31" },
+    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$M$31", "repayment_days": 18 },
     "CC Citi 7878":     { "bill_date": 21, "sheet_cell": "$M$32" },
     "CC Citi 7175":     { "bill_date": 21, "sheet_cell": "$M$33" },
     "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$M$34" }
