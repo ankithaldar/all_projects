@@ -19,7 +19,10 @@ let
   car_cleaning = 000000,
   home_emi = 000000,
 
-  old_sheet_link = ''
+  old_sheet_link = '',
+
+  // Debugger Options
+  if_debug = false,
 
   // months array
   mons = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],

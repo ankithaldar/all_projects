@@ -16,7 +16,7 @@ function create_cc_statement() {
 
 function create_month_templates(days) {
   // get today date
-  var today = mns_get_date_today();
+  var today = get_date_today();
 
   for (var i = today.getMonth() + (!mns_check_if_jan_sheet_exists()) ? 0 : 1; i < mons.length; i++) {
     duplicate_individual_sheet(hidden_sheets[0], mons[i])
@@ -46,14 +46,6 @@ function create_month_templates(days) {
 };
 
 // -----------------------------------------------------------------------------
-
-function get_sheet(sheet) {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheet);
-}
-
-function mns_get_date_today() {
-  return new Date();
-};
 
 function mns_check_if_jan_sheet_exists() {
   var
@@ -145,8 +137,8 @@ function mns_clear_last_rows_of_dates_from_each_sheet(sheet, days_in_this_mon) {
   }
   // Add Maid Salary in Month Sheets
   add_pay_salary = {
-    "Maid Salary": maid_salary,
-    "Car Washing Salary": car_cleaning
+    "Maid Monthly": maid_salary,
+    "Car Washing Monthly": car_cleaning
   };
 
   var i = 1;
