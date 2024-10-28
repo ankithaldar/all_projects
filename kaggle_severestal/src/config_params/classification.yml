@@ -1,0 +1,50 @@
+seed: 42
+project_name: 'kaggle_severestal'
+model_name: 'classification'
+
+# dataloader settings
+dataloader_params:
+  workers: 8
+  use_multiprocessing: True
+  max_queue_size: 10
+
+train_ds_params:
+  img_dir: "/content/kaggle/input/severstal-steel-defect-detection/train_images"
+  csv_file_path: "/content/kaggle/input/severstal-steel-defect-detection/train.csv"
+  columns_from_csv:
+    - ImageId
+    - ClassId
+  shuffle_on_epoch_end: True
+
+test_ds_params:
+  img_dir: ""
+
+# image parameters
+image_size: (1600, 256)
+image_channels: 3
+
+optimizer: 'adamw'
+optimizer_params:
+  learning_rate: 0.001,
+  weight_decay: 0.004,
+  beta_1: 0.9,
+  beta_2: 0.999,
+  epsilon: 1e-7,
+  amsgrad: False,
+  clipnorm: None,
+  clipvalue: None,
+  global_clipnorm: None,
+  use_ema: False,
+  ema_momentum: 0.99,
+  ema_overwrite_frequency: None,
+  loss_scale_factor: None,
+  gradient_accumulation_steps: None,
+
+# model_training
+train_batch_size: 128
+epochs: 50
+lr: 0.0001
+lr_scale_factor: 0.001
+
+# logging
+logger_name: 'neptune'
