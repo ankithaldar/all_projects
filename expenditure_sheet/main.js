@@ -2,7 +2,6 @@
 
 
 // Define Global Variables
-
 // inputs
 let
   // Specify current year
@@ -15,11 +14,15 @@ let
   salary_bank = "HDFC",
 
   salary_amount = 000000,
+  meal_card_amount = 000000,
   maid_salary = 000000,
   car_cleaning = 000000,
   home_emi = 000000,
 
-  old_sheet_link = ''
+  old_sheet_link = '',
+
+  // Debugger Options
+  if_debug = false,
 
   // months array
   mons = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
@@ -63,7 +66,7 @@ function make_year_expense_sheet() {
 function delete_sheets_mid_year() {
   var today = new Date();
   for (var i = today.getMonth() + 1; i < mons.length; i++) {
-    delete_individual_sheet(mons[i])
+    delete_individual_sheet(mons[i]);
   }
 
   // UnHide template after the delete
@@ -74,7 +77,7 @@ function delete_sheets_mid_year() {
 function delete_all_created_sheets() {
 
   for (var i = 0; i < mons.length; i++) {
-    delete_individual_sheet(mons[i])
+    delete_individual_sheet(mons[i]);
   }
 
   // Delete bank sheets
@@ -82,12 +85,11 @@ function delete_all_created_sheets() {
     delete_individual_sheet('BankStatement - ' + banks[i])
   }
 
-  delete_individual_sheet('CCstatement')
+  delete_individual_sheet('CCstatement');
 
   // UnHide template after the delete
   for (var i = 0; i < hidden_sheets.length; i++) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     ss = ss.setActiveSheet(ss.getSheetByName(hidden_sheets[i])).showSheet();
   }
-
 };
