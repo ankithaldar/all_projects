@@ -16,7 +16,7 @@ function create_cc_statement() {
 
 function create_month_templates(days) {
   // get today date
-  var today = mns_get_date_today();
+  var today = get_date_today();
 
   for (var i = today.getMonth() + (!mns_check_if_jan_sheet_exists()) ? 0 : 1; i < mons.length; i++) {
     duplicate_individual_sheet(hidden_sheets[0], mons[i])
@@ -36,9 +36,9 @@ function create_month_templates(days) {
   }
 
   hide_sheets(hidden_sheets);
-  mns_mark_bank_statement_first_day();
-  mns_mark_cc_statement_first_day();
-  mns_mark_imp_events_first_day();
+  // mns_mark_bank_statement_first_day();
+  // mns_mark_cc_statement_first_day();
+  // mns_mark_imp_events_first_day();
   mns_move_required_sheets();
 
   mns_mark_from_last_year();
@@ -46,14 +46,6 @@ function create_month_templates(days) {
 };
 
 // -----------------------------------------------------------------------------
-
-function get_sheet(sheet) {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheet);
-}
-
-function mns_get_date_today() {
-  return new Date();
-};
 
 function mns_check_if_jan_sheet_exists() {
   var
@@ -94,13 +86,14 @@ function mns_add_bank_sums_for_cash_online(sheet) {
 };
 
 function mns_update_cc_formulae(sheet) {
-  for (var j = 4; j < Object.keys(card_map).length + 4; j++) {
+  // addded 1 to for loop for meal card tracking
+  for (var j = 4; j < Object.keys(card_map).length + 4 + 1; j++) {
     sheet.getRange("M" + j).setFormula("=SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $L" + j + ", 'CCStatement'!$B:$B, TEXT($A$2, \"MMM-YY\"))")
 
     sheet.getRange("M" + (j + 24)).setFormula("=ROUND(SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $L" + (j + 24) + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $N" + (j + 24) + ")) - SUMIFS('CCStatement'!$G:$G, 'CCStatement'!$C:$C, $L" + (j + 24) + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $N" + (j + 24) + ")), 2)")
   }
 
-}
+};
 
 function mns_last_month_cash_at_hand(sheet, prev_sheet) {
   var ss = get_sheet(sheet);
@@ -126,7 +119,7 @@ function mns_mark_last_month_app_carry_overs(sheet, prev_sheet) {
     ss.getRange("S" + j).setFormula("=L" + (j + 10));
     ss.getRange("T" + j).setFormula("=" + prev_sheet + "!N" + (j + 10));
   }
-}
+};
 
 function mns_set_first_date_of_month(sheet, prev_sheet, days_in_last_mon) {
   var ss = get_sheet(sheet);
@@ -136,7 +129,7 @@ function mns_set_first_date_of_month(sheet, prev_sheet, days_in_last_mon) {
 function mns_set_first_date_of_jan(sheet) {
   var ss = get_sheet(sheet);
   ss.getRange("A2").setValue("1/1/" + years);
-}
+};
 
 function mns_clear_last_rows_of_dates_from_each_sheet(sheet, days_in_this_mon) {
   var ss = get_sheet(sheet);
@@ -145,8 +138,8 @@ function mns_clear_last_rows_of_dates_from_each_sheet(sheet, days_in_this_mon) {
   }
   // Add Maid Salary in Month Sheets
   add_pay_salary = {
-    "Maid Salary": maid_salary,
-    "Car Washing Salary": car_cleaning
+    "Maid Monthly": maid_salary,
+    "Car Washing Monthly": car_cleaning
   };
 
   var i = 1;
@@ -174,7 +167,7 @@ function mns_mark_cc_statement_first_day() {
 function mns_mark_imp_events_first_day() {
   var ss = get_sheet("ImpEvents");
   ss.getRange("A2").setFormula("=Jan!A2");
-}
+};
 
 function mns_mark_from_last_year() {
   // fill continuation of bank statement
@@ -203,6 +196,9 @@ function mns_move_required_sheets() {
 
   ss.setActiveSheet(ss.getSheetByName("ImpEvents"));
   ss.moveActiveSheet(ss.getNumSheets());
-}
+
+  ss.setActiveSheet(ss.getSheetByName("Analytics"));
+  ss.moveActiveSheet(ss.getNumSheets());
+};
 
 // -----------------------------------------------------------------------------
