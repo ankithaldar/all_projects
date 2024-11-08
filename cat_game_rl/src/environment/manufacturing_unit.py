@@ -69,6 +69,8 @@ class ManufacturingUnit(Agent):
 
   # this happens when you hit the coins button to start crafting
   def start_crafting(self):
+    # --------------------------------------------------------------------------
+    # crafting logic 1 - Put complete count of pieces at once
     # update coins
     self.item.game_economy.update_coins(
       used_coins=self.item.bom.get_batch_cost(self.batch_size)
@@ -97,7 +99,9 @@ class ManufacturingUnit(Agent):
     self.item.reward_memory.append(
       self.item.reward_calc.start_crafting_reward()
     )
-
+    # --------------------------------------------------------------------------
+    # crafting logic 2 - Put pieces to craft one at a time (using a for loop)
+    # --------------------------------------------------------------------------
 
   # this happens when you hit the collect button
   def stop_crafting(self):
