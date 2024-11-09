@@ -173,7 +173,7 @@ function mvd_mark_date(key_name, bank_row, cc_row, sheet_bank, sheet_cc) {
     // Fill this in particular day of CC sheet
     cc_card_num = key_name.split(' - ')[0]
     month_name = key_name.split(' - ')[2].substring(0, 3)
-    total_formulae = "=MAX(INT(" + month_name + "!" + card_map[cc_card_num]['sheet_cell'] + "), 0)"
+    total_formulae = "=MAX(" + month_name + "!" + card_map[cc_card_num]['sheet_cell'] + ", 0)"
     mvd_fill_cc_sheet(cc_card_num, key_name, 'c', total_formulae, cc_row, sheet_cc)
     mvd_fill_bank_sheet('', key_name, 'w', total_formulae, bank_row, sheet_bank)
   }
