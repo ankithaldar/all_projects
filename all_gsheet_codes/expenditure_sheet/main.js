@@ -36,9 +36,10 @@ let
     "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$M$29", "repayment_days": 22 },
     "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$M$30", "repayment_days": 18 },
     "CC One 0531":      { "bill_date": 14, "sheet_cell": "$M$31", "repayment_days": 17 },
-    "CC Citi 7878":     { "bill_date": 21, "sheet_cell": "$M$32", "repayment_days": 21 },
-    "CC Citi 7175":     { "bill_date": 21, "sheet_cell": "$M$33", "repayment_days": 21 },
-    "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$M$34", "repayment_days": 18 }
+    "CC Axis 7878":     { "bill_date": 21, "sheet_cell": "$M$32", "repayment_days": 21 },
+    "CC Axis 7175":     { "bill_date": 21, "sheet_cell": "$M$33", "repayment_days": 21 },
+    "CC Axis 6599":     { "bill_date": 21, "sheet_cell": "$M$34", "repayment_days": 21 },
+    "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$M$35", "repayment_days": 18 }
   }
 ;
 
