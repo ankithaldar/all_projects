@@ -26,7 +26,8 @@ function create_month_templates(days) {
     if (i > 0) {
       mns_last_month_cash_at_hand(mons[i], mons[i - 1]);
       mns_mark_currency_notes(mons[i], mons[i - 1]);
-      mns_mark_last_month_app_carry_overs(mons[i], mons[i - 1]);
+      mns_mark_credit_cards(mons[i], mons[i - 1]);
+      mns_mark_last_month_wallet_carry_overs(mons[i], mons[i - 1]);
       mns_set_first_date_of_month(mons[i], mons[i - 1], days[i - 1]);
     } else if (i == 0) {
       mns_set_first_date_of_jan(mons[i]);
@@ -66,58 +67,101 @@ function mns_set_formulaes_for_the_month(sheet) {
 };
 
 function mns_define_average_expenditure_over_the_month(sheet) {
-  sheet.getRange("J4").setFormula("=ROUND(J3/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(TODAY()), TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2,0)), TRUE, 1), 2)");
-  sheet.getRange("J25").setFormula("=ROUND(J18/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(EOMONTH(A2, 0)) - DAY(TODAY()) + 1, TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2, 0)), TRUE, 1), 2)");
-  sheet.getRange("J26").setFormula("=ROUND(J18/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(EOMONTH(A2, 0)) - DAY(TODAY() + K26), TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2, 0)), TRUE, 1), 2)");
+  // Committed AverageExp
+  var total_cell = "K3"; // cell from which the formulae is to be calculated
+  var place_cell = "K4"; // cell in which the formulae is to be set
+  sheet.getRange(place_cell).setFormula("=ROUND(" + total_cell + "/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(TODAY()), TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2,0)), TRUE, 1), 2)");
 
+  // Remaining AvgExp / day
+  var total_cell = "K8"; // cell from which the formulae is to be calculated
+  var place_cell = "K10"; // cell in which the formulae is to be set
+  sheet.getRange(place_cell).setFormula("=ROUND(" + total_cell +"/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(EOMONTH(A2, 0)) - DAY(TODAY()) + 1, TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2, 0)), TRUE, 1), 2)");
+
+  // My Expenditure Per Day
+  var total_cell = "K12"; // cell from which the formulae is to be calculated
+  var place_cell = "K13"; // cell in which the formulae is to be set
+  sheet.getRange(place_cell).setFormula("=ROUND(" + total_cell + "/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(EOMONTH(A2, 0)) - DAY(TODAY()) + 1, TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2, 0)), TRUE, 1), 2)");
 };
 
 function mns_add_bank_sums_for_cash_online(sheet) {
-  for (var j = 2; j <= 3; j++) {
+  // j=9 since [Bank Transactions] start from row 9
+  var start_row_num = 9;
+  var end_row_num = 10;
+  var entry_name_column = "R";
+  for (var j = start_row_num; j <= end_row_num; j++) {
     var formula_withdraw = "";
     var formula_deposit = "";
 
     for (var k = 0; k < banks.length; k++) {
-      formula_withdraw = formula_withdraw + "SUMIFS('BankStatement - " + banks[k] + "'!$F:$F, 'BankStatement - " + banks[k] + "'!$B:$B, TEXT($A$2, \"MMMM\"), 'BankStatement - " + banks[k] + "'!$C:$C, $L" + j + ")" + (k < (banks.length - 1) ? " + " : "");
-      formula_deposit = formula_deposit + "SUMIFS('BankStatement - " + banks[k] + "'!$G:$G, 'BankStatement - " + banks[k] + "'!$B:$B, TEXT($A$2, \"MMMM\"), 'BankStatement - " + banks[k] + "'!$C:$C, $L" + j + ")" + (k < (banks.length - 1) ? " + " : "");
+      formula_withdraw = formula_withdraw + "SUMIFS('BankStatement - " + banks[k] + "'!$F:$F, 'BankStatement - " + banks[k] + "'!$B:$B, TEXT($A$2, \"MMMM\"), 'BankStatement - " + banks[k] + "'!$C:$C, $" + entry_name_column + j + ")" + (k < (banks.length - 1) ? " + " : "");
+      formula_deposit = formula_deposit + "SUMIFS('BankStatement - " + banks[k] + "'!$G:$G, 'BankStatement - " + banks[k] + "'!$B:$B, TEXT($A$2, \"MMMM\"), 'BankStatement - " + banks[k] + "'!$C:$C, $" + entry_name_column + j + ")" + (k < (banks.length - 1) ? " + " : "");
     }
-    sheet.getRange("M" + j).setFormula("=(" + formula_withdraw + ") - (" + formula_deposit + ")");
+    sheet.getRange("S" + j).setFormula("=(" + formula_withdraw + ") - (" + formula_deposit + ")");
   }
 };
 
 function mns_update_cc_formulae(sheet) {
   // addded 1 to for loop for meal card tracking
-  for (var j = 4; j < Object.keys(card_map).length + 4 + 1; j++) {
-    sheet.getRange("M" + j).setFormula("=SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $L" + j + ", 'CCStatement'!$B:$B, TEXT($A$2, \"MMM-YY\"))")
+  var start_row_num = 25;
+  var end_row_num = Object.keys(card_map).length + start_row_num + 1;
 
-    sheet.getRange("M" + (j + 24)).setFormula("=ROUND(SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $L" + (j + 24) + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $N" + (j + 24) + ")) - SUMIFS('CCStatement'!$G:$G, 'CCStatement'!$C:$C, $L" + (j + 24) + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $N" + (j + 24) + ")), 2)")
+  var card_name_column = "R";
+  var card_bill_date_column = "U";
+
+  for (var j = start_row_num; j < end_row_num; j++) {
+
+    sheet.getRange("S" + j).setFormula("=SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$B:$B, TEXT($A$2, \"MMM-YY\"))")
+
+    sheet.getRange("T" + j).setFormula("=ROUND(SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $" + card_bill_date_column + j + ")) - SUMIFS('CCStatement'!$G:$G, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $" + card_bill_date_column + j + ")), 2)")
   }
 
 };
 
 function mns_last_month_cash_at_hand(sheet, prev_sheet) {
   var ss = get_sheet(sheet);
-  ss.getRange("M18").setFormula("=" + prev_sheet + "!M20");
+
+  ss.getRange("S6").setFormula("=" + prev_sheet + "!S2");
 };
 
 function mns_mark_currency_notes(sheet, prev_sheet) {
   var ss = get_sheet(sheet);
-  for (var j = 2; j < 15; j++) {
-    ss.getRange("P" + j).setFormula("=" + prev_sheet + "!P" + j);
-  }
 
-  // Mark Credit Cards
-  for (var j = 4; j <= 11; j++) {
-    ss.getRange("L" + j).setFormula("=" + prev_sheet + "!L" + j);
+  var start_row_num = 4;
+  var end_row_num = 15;
+  var place_cell="X";
+
+  for (var j = start_row_num; j <= end_row_num; j++) {
+    ss.getRange(place_cell + j).setFormula("=" + prev_sheet + "!" + place_cell + j);
   }
 };
 
-function mns_mark_last_month_app_carry_overs(sheet, prev_sheet) {
+function mns_mark_credit_cards(sheet, prev_sheet){
+  // Mark Credit Cards
   var ss = get_sheet(sheet);
-  for (var j = 2; j < 6; j++) {
-    ss.getRange("L" + (j + 10)).setFormula("=" + prev_sheet + "!L" + (j + 10));
-    ss.getRange("S" + j).setFormula("=L" + (j + 10));
-    ss.getRange("T" + j).setFormula("=" + prev_sheet + "!N" + (j + 10));
+
+  var start_row_num = 25;
+  var end_row_num = Object.keys(card_map).length + start_row_num + 1;
+  var place_cell = "R";
+
+  for (var j = start_row_num; j <= end_row_num; j++) {
+    ss.getRange(place_cell + j).setFormula("=" + prev_sheet + "!" + place_cell + j);
+  }
+};
+
+function mns_mark_last_month_wallet_carry_overs(sheet, prev_sheet) {
+  var ss = get_sheet(sheet);
+
+  var start_row_num = 13;
+  var end_row_num = start_row_num + 10;
+  var name_cell = "R";
+  var balance_cell = "U";
+
+  for (var j = start_row_num; j < end_row_num; j++) {
+    ss.getRange(name_cell + j).setFormula("=" + prev_sheet + "!" + name_cell + j);
+    ss.getRange(balance_cell + j).setFormula("=" + prev_sheet + "!T" + j);
+
+    // ss.getRange("S" + j).setFormula("=L" + (j + 10));
+    // ss.getRange("T" + j).setFormula("=" + prev_sheet + "!N" + (j + 10));
   }
 };
 
@@ -148,6 +192,7 @@ function mns_clear_last_rows_of_dates_from_each_sheet(sheet, days_in_this_mon) {
     ss.getRange("B" + (days_in_this_mon + i)).setValue(keys);
     ss.getRange("C" + (days_in_this_mon + i)).setValue(1);
     ss.getRange("D" + (days_in_this_mon + i)).setValue(add_pay_salary[keys]);
+    ss.getRange("H" + (days_in_this_mon + i)).setValue("Home");
     i++;
   }
 };
@@ -178,13 +223,22 @@ function mns_mark_from_last_year() {
 
   // fill Jan Last Month Cash in hand
   var ss = get_sheet("Jan");
-  ss.getRange("M18").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!M20")');
+  // after 2025 comment this line and unconnect the next
+  ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!M20")');
+  // ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!S2")');
 
-
-  for (i = 2; i <= 14; i++) {
-    var ss = get_sheet("Jan");
-    ss.getRange('Jan!P' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!P' + i + '")');
+  // fill Jan Denomination
+  for (i = 4; i <= 15; i++) {
+    // after 2025 comment this line and unconnect the next
+    ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!P' + (i - 2) + '")');
+    // ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!X' + i + '")');
   }
+
+  // fill Jan Wallet Balances
+  // for (i = 13; i < 13 + 10; i++) {
+  //   var ss = get_sheet("Jan");
+  //   ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!X' + i + '")');
+  // }
 
 };
 
