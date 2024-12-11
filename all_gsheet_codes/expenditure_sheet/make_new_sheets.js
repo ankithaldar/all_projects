@@ -112,6 +112,15 @@ function mns_update_cc_formulae(sheet) {
 
     sheet.getRange("S" + j).setFormula("=SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$B:$B, TEXT($A$2, \"MMM-YY\"))")
 
+
+    if (j < end_row_num - 1) {
+      // Mapped to analytics sheet
+      // in analytics sheet the dates are in order and start from row 4
+      sheet.getRange(card_bill_date_column + j).setFormula("='Analytics'!G" + (j-21))
+    } else {
+      sheet.getRange(card_bill_date_column + j).setFormula("=DAY(EOMONTH($A$2, 0))")
+    }
+
     sheet.getRange("T" + j).setFormula("=ROUND(SUMIFS('CCStatement'!$F:$F, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $" + card_bill_date_column + j + ")) - SUMIFS('CCStatement'!$G:$G, 'CCStatement'!$C:$C, $" + card_name_column + j + ", 'CCStatement'!$A:$A, \"<\"& DATE(YEAR($A$2), MONTH($A$2), $" + card_bill_date_column + j + ")), 2)")
   }
 
