@@ -34,11 +34,11 @@ let
   card_map = {
     "CC IndusInd 0596": { "bill_date":  3, "sheet_cell": "$T$25", "repayment_days": 20 },
     "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$T$26", "repayment_days": 22 },
-    "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$T$27", "repayment_days": 18 },
-    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$T$28", "repayment_days": 17 },
-    "CC Axis 7878":     { "bill_date": 21, "sheet_cell": "$T$29", "repayment_days": 21 },
-    "CC Axis 7175":     { "bill_date": 21, "sheet_cell": "$T$30", "repayment_days": 21 },
-    "CC Axis 6599":     { "bill_date": 21, "sheet_cell": "$T$31", "repayment_days": 21 },
+    "CC Axis 6599":     { "bill_date": 11, "sheet_cell": "$T$27", "repayment_days": 19 },
+    "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$T$28", "repayment_days": 18 },
+    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$T$29", "repayment_days": 17 },
+    "CC Axis 7878":     { "bill_date": 21, "sheet_cell": "$T$30", "repayment_days": 21 },
+    "CC Axis 7175":     { "bill_date": 21, "sheet_cell": "$T$31", "repayment_days": 21 },
     "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$T$32", "repayment_days": 18 }
   }
 ;
