@@ -32,14 +32,14 @@ let
   hidden_sheets = ['Template', 'BankStatement', 'CCStatement-Template'],
 
   card_map = {
-    "CC IndusInd 0596": { "bill_date":  3, "sheet_cell": "$M$28", "repayment_days": 20 },
-    "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$M$29", "repayment_days": 22 },
-    "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$M$30", "repayment_days": 18 },
-    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$M$31", "repayment_days": 17 },
-    "CC Axis 7878":     { "bill_date": 21, "sheet_cell": "$M$32", "repayment_days": 21 },
-    "CC Axis 7175":     { "bill_date": 21, "sheet_cell": "$M$33", "repayment_days": 21 },
-    "CC Axis 6599":     { "bill_date": 21, "sheet_cell": "$M$34", "repayment_days": 21 },
-    "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$M$35", "repayment_days": 18 }
+    "CC IndusInd 0596": { "bill_date":  3, "sheet_cell": "$T$25", "repayment_days": 20 },
+    "CC SC 8148":       { "bill_date":  8, "sheet_cell": "$T$26", "repayment_days": 22 },
+    "CC Axis 6599":     { "bill_date": 11, "sheet_cell": "$T$27", "repayment_days": 19 },
+    "CC ICICI 7007":    { "bill_date": 14, "sheet_cell": "$T$28", "repayment_days": 18 },
+    "CC One 0531":      { "bill_date": 14, "sheet_cell": "$T$29", "repayment_days": 17 },
+    "CC Axis 7878":     { "bill_date": 21, "sheet_cell": "$T$30", "repayment_days": 21 },
+    "CC Axis 7175":     { "bill_date": 21, "sheet_cell": "$T$31", "repayment_days": 21 },
+    "CC ICICI 8019":    { "bill_date": 28, "sheet_cell": "$T$32", "repayment_days": 18 }
   }
 ;
 
@@ -47,17 +47,11 @@ let
 // Main Functions Start
 
 function make_year_expense_sheet() {
-  // Create bank statements
-  create_bank_statement();
-
-  // Create CC Statement sheet
-  create_cc_statement();
-
   // Leap year check and manipulate days in feb
   days = leap_year_check_and_manipulate(years, days_in_mons);
 
-  // Create Month templates
-  create_month_templates(days);
+  // Make new sheets for the year
+  make_new_sheets(days)
 
   // Mark various Days of the month
   mark_various_days(days);

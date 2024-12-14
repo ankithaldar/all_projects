@@ -1,3 +1,15 @@
+function make_new_sheets(days) {
+  // Create bank statements
+  create_bank_statement();
+
+  // Create CC Statement sheet
+  create_cc_statement();
+
+  // Create Month templates
+  create_month_templates(days);
+}
+
+
 function create_bank_statement() {
   // Duplicating bank sheets
   for (var i = 0; i < banks.length; i++) {
