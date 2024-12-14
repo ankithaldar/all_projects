@@ -47,17 +47,11 @@ let
 // Main Functions Start
 
 function make_year_expense_sheet() {
-  // Create bank statements
-  create_bank_statement();
-
-  // Create CC Statement sheet
-  create_cc_statement();
-
   // Leap year check and manipulate days in feb
   days = leap_year_check_and_manipulate(years, days_in_mons);
 
-  // Create Month templates
-  create_month_templates(days);
+  // Make new sheets for the year
+  make_new_sheets(days)
 
   // Mark various Days of the month
   mark_various_days(days);
