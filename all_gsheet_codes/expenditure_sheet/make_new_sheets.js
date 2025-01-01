@@ -92,7 +92,7 @@ function mns_define_average_expenditure_over_the_month(sheet) {
   // My Expenditure Per Day
   var total_cell = "K12"; // cell from which the formulae is to be calculated
   var place_cell = "K13"; // cell in which the formulae is to be set
-  sheet.getRange(place_cell).setFormula("=ROUND(" + total_cell + "/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(EOMONTH(A2, 0)) - DAY(TODAY()) + 1, TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2, 0)), TRUE, 1), 2)");
+  sheet.getRange(place_cell).setFormula("=ROUND(" + total_cell + "/IFS(AND(TODAY()>=A2, TODAY()<=EOMONTH(A2,0)), DAY(TODAY()), TODAY()>=EOMONTH(A2,0), DAY(EOMONTH(A2,0)), TRUE, 1), 2)");
 };
 
 function mns_add_bank_sums_for_cash_online(sheet) {
