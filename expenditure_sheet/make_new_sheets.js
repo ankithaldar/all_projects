@@ -245,21 +245,21 @@ function mns_mark_from_last_year() {
   // fill Jan Last Month Cash in hand
   var ss = get_sheet("Jan");
   // after 2025 comment this line and unconnect the next
-  ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!M20")');
-  // ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!S2")');
+  // ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!M20")');
+  ss.getRange("S6").setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!S2")');
 
   // fill Jan Denomination
   for (i = 4; i <= 15; i++) {
     // after 2025 comment this line and unconnect the next
-    ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!P' + (i - 2) + '")');
-    // ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!X' + i + '")');
+    // ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!P' + (i - 2) + '")');
+    ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!X' + i + '")');
   }
 
   // fill Jan Wallet Balances
-  // for (i = 13; i < 13 + 10; i++) {
-  //   var ss = get_sheet("Jan");
-  //   ss.getRange('Jan!X' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!X' + i + '")');
-  // }
+  for (i = 13; i < 13 + 10; i++) {
+    var ss = get_sheet("Jan");
+    ss.getRange('Jan!U' + i).setFormula('=IMPORTRANGE("' + old_sheet_link + '", "Dec!T' + i + '")');
+  }
 
 };
 
