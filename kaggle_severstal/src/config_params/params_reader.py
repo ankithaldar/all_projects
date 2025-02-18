@@ -133,6 +133,25 @@ class Parameters:
     if isinstance(self.fold, int | str):
       self.fold = 0
 
+  def unpack_dict_attributes(self, new_keys: list[str]) -> None:
+    '''Unpacks dictionary values associated with new keys into object attributes.'''
+
+    for key in new_keys:
+      value = self.__dict__.get(key)
+      if isinstance(value, dict):
+        self._unpack_recursive(value, prefix=key)
+        del self.__dict__[key]
+
+  def _unpack_recursive(self, data_dict: dict, prefix: str) -> None:
+    '''Recursively unpacks a dictionary and sets attributes in the object's __dict__.'''
+
+    for dict_key, dict_value in data_dict.items():
+      attribute_name = f"{prefix}_{dict_key}"
+      if isinstance(dict_value, dict):
+        self._unpack_recursive(dict_value, prefix=attribute_name) # Recursive call for nested dictionaries
+      else:
+        setattr(self, attribute_name, dict_value) # Set attribute using setattr
+
 
 # classes
 
