@@ -5,11 +5,13 @@
 
 
 # imports
+import torch
 #    script imports
 # imports
 
 
 # constants
+MAX_BATCH_SIM = 20
 # constants
 
 
@@ -21,7 +23,14 @@ class ActionCalculator:
     self.env = env
 
   def get_action(self):
-    pass
+     item_list_one_hot = torch.nn.functional.one_hot(
+      [i for i, _ in enumerate(self.env.facilities.keys())],
+      num_classes=-1
+    )
+    batch_size = torch.nn.functional.one_hot(
+      [i for i in range(MAX_BATCH_SIM + 1)],
+      num_classes=-1
+    )
 
   def constraint_check(self):
     pass

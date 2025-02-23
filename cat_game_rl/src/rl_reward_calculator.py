@@ -17,9 +17,8 @@
 class RewardCalculator:
   '''Reward Represenatation for RL environment'''
 
-  def __init__(self, arg):
-    super().__init__()
-    self.arg = arg
+  def __init__(self, env):
+    self.env = env
 
 # classes
 

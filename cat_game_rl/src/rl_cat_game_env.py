@@ -22,7 +22,7 @@ class CatGameEnv:
   '''RL environment for Cat Game'''
 
   def __init__(self):
-    self.world = worldbuilder_create()
+    self.reset()
     self.state_calculator = StateCalculator(self.world)
     self.reward_calculator = RewardCalculator(self.world)
     self.action_calculator = ActionCalculator(self.world)

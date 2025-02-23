@@ -6,7 +6,9 @@
 
 # imports
 from dataclasses import dataclass
+import numpy as np
 #    script imports
+from env_utils import RUN_TIME
 # imports
 
 
@@ -23,30 +25,29 @@ class StateCalculator:
     self.env = env
 
   def __post__init__(self) -> None:
-    self.state = {
-      'game_time': self.env.clock.time,
-      'coins': self.env.economy.coins,
-      'one_min_crafting': self.env.clock.flag_one_min_crafting,
-      'item_states':{
-        item_name: {
-          'crafted_count': facility.total_crafted_count,
-          'target_count': facility.total_target_count,
-          'crafting_status': facility.is_crafting,
-          'stock_status': facility.current_stash,
-          'source_stock': {
-            source_name: source.get_current_count_in_stash()
-            for source_name, source in facility.sources.items()
-          },
-          'target_stock': facility.total_target_count
-        }
-        for item_name, facility in self.env.item_facilities.items()
-      }
-    }
+    self.coins = self.env.economy.coins/10^10
+    self.game_time = self.env.clock.time/RUN_TIME
+    self.one_min_crafting = self.env.clock.flag_one_min_crafting
+    self.is_crafting = [1 if facility.is_crafting else 0 for _, facility in self.env.item_facilities.items()]
+    self.stock_status = [facility.current_stash/facility.total_target_count for _, facility in self.env.item_facilities.items()]
+    self.pending_status = [(facility.total_target_count - facility.total_crafted_count)/facility.total_target_count for _, facility in self.env.item_facilities.items()]
 
   def _to_numpy(self):
-    pass
+    return np.array(
+      [self.coins] +
+      [self.game_time] +
+      [self.one_min_crafting] +
+      self.is_crafting +
+      self.stock_status +
+      self.pending_status,
+      dtype=np.float32
+    )
 
-  def _to_tensor(self):
+  def _to_torch_tensor(self):
+    '''Convert state to a PyTorch tensor.'''
+    return torch.tensor(self._to_numpy(), dtype=torch.float32)
+
+  def _to_tf_tensor(self):
     pass
 
 
