@@ -5,9 +5,9 @@
       "name": "project - debugger", // Anything you want
       "type": "debugpy",
       "request": "launch",
-      "cwd": "${workspaceFolder}/python_proj_template", // full path to project folder
+      "cwd": "${workspaceFolder}/alphazero", // full path to project folder
       "python": "/home/helder/.cache/pypoetry/virtualenvs/any-project-template-18SrI9Sa-py3.12/bin/python", // full path to python.exe (run  poetry env info --path) in terminal to get virtual env folder
-      "program": "${workspaceFolder}/python_proj_template/main.py", // full path to file to execute
+      "program": "${workspaceFolder}/alphazero/main.py", // full path to file to execute
       "console": "integratedTerminal",
       "redirectOutput": true,
       "justMyCode": true,
