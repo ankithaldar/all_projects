@@ -20,6 +20,7 @@ class GameClock:
   def __init__(self, run_time):
     self.run_time = run_time
     self.__time = 1
+    self.flag_one_min_crafting = False
 
   @property
   def time(self) -> int:

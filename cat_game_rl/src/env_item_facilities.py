@@ -33,6 +33,8 @@ class ItemFacility:
   clock: GameClock
 
   def __post_init__(self):
+    self.craft_time = 0
+    self.idle_time = 0
     self.is_crafting = False
     self.current_stash = self.get_current_count_in_stash()
     self.manufacturing = ManufacturingUnit(self)
@@ -57,6 +59,12 @@ class ItemFacility:
   def act(self, batch_size:int=0):
     if self.total_target_count > self.total_crafted_count:
       self.manufacturing.act(batch_size)
+
+    if self.is_crafting:
+      self.craft_time += 1
+
+    if not self.is_crafting and self.total_target_count > self.total_crafted_count:
+      self.idle_time += 1
 
     self.current_stash = self.get_current_count_in_stash()
 

@@ -37,9 +37,9 @@ class ManufacturingUnit():
       if self.is_crafting_possible():
         self.start_crafting()
 
-    else:
-      # when total crafting ends for that item
-      self.delete_attributes()
+    # else:
+    #   # when total crafting ends for that item
+    #   self.delete_attributes()
 
   # Crafting Checks ------------------------------------------------------------
   def is_crafting_possible(self):
@@ -106,6 +106,10 @@ class ManufacturingUnit():
 
     # mark unit as free for crafting
     self.item.is_crafting = False
+
+    # set start and end time as 0
+    self.start_time = 0
+    self.end_time = 0
 
   # delete unrequired attributes
   def delete_attributes(self):
