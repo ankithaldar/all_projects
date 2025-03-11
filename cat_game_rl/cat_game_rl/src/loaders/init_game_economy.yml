@@ -1,0 +1,25 @@
+coins: 6161753
+materials:
+  - tree : 50000
+  - cotton : 50000
+  - rock : 50000
+  - quartz : 50000
+  - string: 80
+  - wood: 85
+  - ribbon: 55
+  - metal: 597
+  - needles: 38
+  - sparkles: 3
+  - bronze: 220
+  - silver: 2
+  - gold: 2
+  - amethyst: 133
+  - pendant: 6
+  - necklace: 1
+  - orb: 207
+  - water: 16
+  - fire: 0
+  - waterstone: 2
+  - firestone: 1
+  - elementstone: 5
+  - artifact: 6
