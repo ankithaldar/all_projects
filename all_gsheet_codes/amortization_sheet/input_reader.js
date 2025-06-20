@@ -96,10 +96,14 @@ function read_and_validate_inputs() {
     var interest_rate_changes_start_column = 4; // Column E is index 4 (0-based)
     var interest_rate_changes_columns_count = 2; // Date and Rate
 
+    var emi_amount_changes_header_row = 17; // Row 17 is header for Interest Rate Changes (0-based index is 16)
+    var emi_amount_changes_start_column = 7; // Column H is index 7 (0-based)
+    var emi_amount_changes_columns_count = 2; // Date and Rate
 
     // --- Get Dynamic Ranges ---
     var extra_payments_range_str = get_dynamic_range(sheet, extra_payments_header_row - 1, extra_payments_start_column, extra_payments_columns_count); // Header row is 17, so index is 16
     var interest_rate_changes_range_str = get_dynamic_range(sheet, interest_rate_changes_header_row - 1, interest_rate_changes_start_column, interest_rate_changes_columns_count); // Header row is 17, so index is 16
+    var emi_amount_changes_range_str = get_dynamic_range(sheet, emi_amount_changes_header_row - 1, emi_amount_changes_start_column, emi_amount_changes_columns_count); // Header row is 17, so index is 16
 
 
     // --- Data Retrieval ---
@@ -116,7 +120,7 @@ function read_and_validate_inputs() {
 
     extra_payments_data = (extra_payments_range_str) ? sheet.getRange(extra_payments_range_str).getValues() : []; // Get data if range is valid, else empty array
     interest_rate_changes_data = (interest_rate_changes_range_str) ? sheet.getRange(interest_rate_changes_range_str).getValues() : []; // Get data if range is valid, else empty array
-
+    emi_amount_changes_data = (emi_amount_changes_range_str) ? sheet.getRange(emi_amount_changes_range_str).getValues() : []; // Get data if range is valid, else empty array
 
     // --- Input Validation ---
     // (The validation logic remains the same as in the previous version, just using snake_case input names)
@@ -245,6 +249,26 @@ function read_and_validate_inputs() {
           if (!isEmptyRow(interest_rate_changes_data[j])) {
             Logger.log("Error: Invalid Interest Rate Change entry in row " + (j + interest_rate_changes_header_row + 1) + ". Must be Date and Interest Rate Percentage.");
             SpreadsheetApp.getUi().alert("Error: Invalid Interest Rate Change entry in row " + (j + interest_rate_changes_header_row + 1) + ". Must be Date and Interest Rate Percentage.");
+            return null;
+          }
+        }
+      }
+    }
+
+    // EMI Amount Changes Data Validation
+    inputs.emi_amount_changes = [];
+    if (emi_amount_changes_data && emi_amount_changes_data.length > 0) {
+      for (var j = 0; j < emi_amount_changes_data.length; j++) {
+        if (emi_amount_changes_data[j][0] instanceof Date && !isNaN(emi_amount_changes_data[j][0]) &&
+          typeof emi_amount_changes_data[j][1] === 'number' && emi_amount_changes_data[j][1] >= 0) {
+          inputs.emi_amount_changes.push({
+            date: emi_amount_changes_data[j][0],
+            amount: emi_amount_changes_data[j][1]
+          });
+        } else if (!(emi_amount_changes_data[j][0] == null && emi_amount_changes_data[j][1] == null)) {
+          if (!isEmptyRow(emi_amount_changes_data[j])) {
+            Logger.log("Error: Invalid EMI Amount Change entry in row " + (j + emi_amount_changes_header_row + 1) + ". Must be Date and EMI Amount.");
+            SpreadsheetApp.getUi().alert("Error: Invalid EMI Amount Change entry in row " + (j + emi_amount_changes_header_row + 1) + ". Must be Date and EMI Amount.");
             return null;
           }
         }

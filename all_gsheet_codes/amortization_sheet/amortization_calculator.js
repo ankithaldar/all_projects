@@ -147,7 +147,7 @@ function generate_amortization_schedule(inputs) {
  * (No changes in this function)
  */
 function get_interest_rate_for_period(paymentDate, interestRateChanges, defaultRate) {
-  var applicableRate = defaultRate || 0.05;
+  var applicableRate = defaultRate || 0.085;
 
   if (interestRateChanges && interestRateChanges.length > 0) {
     for (var i = 0; i < interestRateChanges.length; i++) {

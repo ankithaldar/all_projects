@@ -98,6 +98,7 @@ function capture_all_event_dates(inputs) {
   var payment_date_day = inputs.payment_date;
   var extra_payments = inputs.extra_payments;
   var interest_rate_changes = inputs.interest_rate_changes;
+  var emi_amount_changes = inputs.emi_amount_changes;
 
   var current_payment_date = new Date(first_payment_date);
 
@@ -117,6 +118,12 @@ function capture_all_event_dates(inputs) {
   // 3. Capture Interest Rate Change dates
   if (interest_rate_changes && interest_rate_changes.length > 0) {
     interest_rate_changes.forEach(function (change) {
+      event_dates.push(change.date);
+    });
+  }
+
+  if (emi_amount_changes && emi_amount_changes.length > 0) {
+    emi_amount_changes.forEach(function (change) {
       event_dates.push(change.date);
     });
   }
