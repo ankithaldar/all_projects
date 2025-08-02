@@ -10,7 +10,7 @@
 
 
 # constants
-LEVEL_END_REWARD = 100
+LEVEL_END_REWARD = 10000
 # constants
 
 
@@ -29,9 +29,9 @@ class RewardCalculator:
     step_reward += self.calculate_level_end_reward()
     step_reward += self.calculate_negative_coin_change()
     step_reward += self.calculate_time_over_target_not_complete_reward()
-    step_reward += self.calculate_inventory_holding_reward()
+    # step_reward += self.calculate_inventory_holding_reward()
     step_reward += self.calculate_crafting_start_reward()
-    step_reward += self.calculate_idle_time_reward()
+    # step_reward += self.calculate_idle_time_reward()
     step_reward += self.calculate_game_time_reward()
 
 
