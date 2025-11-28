@@ -70,5 +70,5 @@ def main():
 
 # if main script
 if __name__ == '__main__':
-  train_classifier()
+  # train_classifier()
   train_classifier(model_name='resnet34')
