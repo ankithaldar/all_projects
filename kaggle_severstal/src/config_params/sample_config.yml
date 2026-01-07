@@ -1,0 +1,140 @@
+# ===========================================================================
+# GLOBAL SETTINGS
+#    Everything that is *not* data, model, training, etc. but still global.
+# ===========================================================================
+global_:
+  run_id: null                       # str | null -> auto-generated timestamp
+  seed: &seed 42                           # int | null -> disable
+  deterministic: false               # bool -> cudnn.deterministic & benchmark
+  accumulate_grad_batches: 16
+  hardware:
+    accelerator: auto                # cpu | gpu | tpu | hpu | auto
+    devices: auto                    # int | list[int] | "auto"
+    strategy: ddp                    # ddp | ddp_spawn | deepspeed | fsdp | ...
+    precision: 16-mixed              # 32 | 16-mixed | bf16-mixed | 64
+    amp_backend: native              # native | apex
+    enable_progress_bar: True
+    num_nodes: 1                     # int | 1
+  tags: &tags ["baseline", "debug", "resnet34_01"]        # list[str] -> passed to every logger
+
+
+# ===========================================================================
+# ENGINE
+# ===========================================================================
+engine:
+  model:
+  loss: torch.nn.BCEWithLogitsLoss
+
+
+# ===========================================================================
+# METRICS
+# ===========================================================================
+metrics:
+  - class_path: torchmetrics.Accuracy
+    init_args: &metric_args
+      task: 'multilabel'
+      num_labels: &num_labels 4
+      threshold: &threshold 0.6
+      average: 'none'
+  - class_path: torchmetrics.F1Score
+    init_args: *metric_args
+  - class_path: torchmetrics.Precision
+    init_args: *metric_args
+  - class_path: torchmetrics.Recall
+    init_args: *metric_args
+  - class_path: torchmetrics.ExactMatch
+    init_args: *metric_args
+  - class_path: torchmetrics.HammingDistance
+    init_args: *metric_args
+
+
+# ===========================================================================
+# CHECKPOINTING
+# ===========================================================================
+checkpointing: &ckpt
+  dirpath: ./checkpoints
+  filename: &ckpt_nm "kaggle_severstal_resnet34_01_{epoch:02d}-{step}-{val_F1Score:.3f}"
+  monitor: &mon_metric 'val_F1Score'
+  mode: min
+  save_top_k: 3
+  save_last: true
+  save_weights_only: false
+  auto_insert_metric_name: true
+  every_n_epochs: null
+  train_time_interval: null  # e.g., "00:30:00" for every 30 mins
+
+
+# ===========================================================================
+# LOGGER
+# ===========================================================================
+loggers:
+  - class_path: pytorch_lightning.loggers.NeptuneLogger
+    init_args:
+      api_key: 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5NDI4NTMwOS05N2ExLTRkZDgtYTQxZi1lOGYyNWRmOGU0YzUifQ=='
+      project: &log_proj 'kaggle-severstal'
+      name: &run_name 'resnet34_01'
+      # run: None
+      log_model_checkpoints: True
+      prefix: 'training'
+      # run_id: None
+      tags: *tags
+  # - class_path: pytorch_lightning.loggers.WandbLogger
+  #   init_args:
+  #     name: *run_name
+  #     save_dir: 'logs/wandb'
+  #     version: *run_name
+  #     offline: False
+  #     project: *log_proj
+  #     log_model: all
+  #     checkpoint_name: *ckpt_nm
+  #     entity: None
+  #     id: None
+  #     tags: *tags
+  #     notes: None
+  #     group: None
+  #     job_type: 'train'
+  #     save_code: True
+  - class_path: 'pytorch_lightning.loggers.CSVLogger'
+    init_args:
+      save_dir: './logs/csv'
+      name: 'metrics'
+
+
+# ===========================================================================
+# CALLBACKS
+# ===========================================================================
+callbacks:
+  - class_path: pytorch_lightning.callbacks.EarlyStopping
+    init_args:
+      monitor: *mon_metric
+      patience: 5
+      mode: 'min'
+      min_delta: 0.0
+      check_finite: True
+      check_on_train_epoch_end: False
+  - class_path: pytorch_lightning.callbacks.LearningRateMonitor
+    init_args:
+      logging_interval: 'step'
+      log_momentum: True
+  - class_path: pytorch_lightning.callbacks.ModelCheckpoint
+    init_args: *ckpt
+  - class_path: callbacks.discord_callback.DiscordCallback
+    init_args:
+      experiment_name: 'kaggle_severstal_resnet34_01'
+      log_every_n_steps: 200
+      log_val_metrics: true
+      log_model_hyperparams: true
+      max_retries: 3
+  - class_path: pytorch_lightning.callbacks.RichProgressBar
+    init_args:
+      refresh_rate: 1
+      leave: False
+  - class_path: pytorch_lightning.callbacks.ModelSummary
+    init_args:
+      max_depth: 2
+  - class_path: pytorch_lightning.callbacks.StochasticWeightAveraging
+    init_args:
+      swa_lrs: 1.0e-3
+      swa_epoch_start: 0.8
+      annealing_epochs: 10
+      annealing_strategy: cos
