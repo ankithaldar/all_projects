@@ -29,19 +29,35 @@ def get_metrics():
   return [
     Metrics(
       class_path='torchmetrics.Accuracy',
-      init_args={'task': 'binary', 'threshold': 0.5}
+      init_args={
+        'task': 'multilabel',
+        'num_labels': 4,
+        'threshold': 0.6
+      }
     ),
     Metrics(
       class_path='torchmetrics.F1Score',
-      init_args={'task': 'binary', 'threshold': 0.5}
+      init_args={
+        'task': 'multilabel',
+        'num_labels': 4,
+        'threshold': 0.6
+      }
     ),
     Metrics(
       class_path='torchmetrics.Precision',
-      init_args={'task': 'binary', 'threshold': 0.5}
+      init_args={
+        'task': 'multilabel',
+        'num_labels': 4,
+        'threshold': 0.6
+      }
     ),
     Metrics(
       class_path='torchmetrics.Recall',
-      init_args={'task': 'binary', 'threshold': 0.5}
+      init_args={
+        'task': 'multilabel',
+        'num_labels': 4,
+        'threshold': 0.6
+      }
     ),
   ]
 

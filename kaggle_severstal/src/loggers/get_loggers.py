@@ -28,11 +28,27 @@ def get_loggers():
   return [
     Logger(
       class_path='pytorch_lightning.loggers.WandbLogger',
-      init_args={'entity': None, 'project': 'kaggle_severstal', 'name': 'resnet34_01', 'tags': ["baseline", "debug"], 'notes': None, 'group': None, 'job_type': 'train', 'save_dir': "logs/wandb", 'save_code': False, 'offline': False, 'log_model': False}
+      init_args={
+        'entity': None,
+        'project': 'kaggle_severstal',
+        'name': 'resnet34_01',
+        'tags': ["baseline",
+        "debug"],
+        'notes': None,
+        'group': None,
+        'job_type': 'train',
+        'save_dir': 'logs/wandb',
+        'save_code': False,
+        'offline': False,
+        'log_model': False
+      }
     ),
     Logger(
       class_path='pytorch_lightning.loggers.CSVLogger',
-      init_args={'save_dir': './logs/csv', 'name': 'metrics'}
+      init_args={
+        'save_dir': './logs/csv',
+        'name': 'metrics'
+      }
     )
   ]
 

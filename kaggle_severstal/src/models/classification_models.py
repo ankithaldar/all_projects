@@ -28,11 +28,11 @@ class EfficientNetB1Classifier(nn.Module):
       drop_rate=drop_rate,
       num_classes=0  # remove head
     )
-    self.out = nn.Linear(self.model.num_features, 1)
+    self.out = nn.Linear(self.model.num_features, 4)
 
   def forward(self, x):
     feats = self.model(x)
-    return self.out(feats).squeeze(dim=1)  # (B,)
+    return self.out(feats)
 
 
 
@@ -46,10 +46,10 @@ class ResNet34Classifier(nn.Module):
       pretrained=pretrained,
       num_classes=0
     )
-    self.out = nn.Linear(self.model.num_features, 1)
+    self.out = nn.Linear(self.model.num_features, 4)
 
   def forward(self, x):
     feats = self.model(x)
-    return self.out(feats).squeeze(dim=1)
+    return self.out(feats)
 
 # classes
