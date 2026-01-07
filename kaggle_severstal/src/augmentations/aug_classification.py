@@ -27,8 +27,13 @@ class Augmentaiton:
   init_args: dict
 
 
-def train_augmentation():
+def train_augmentation(blackout: bool = True):
   return [
+    Augmentaiton(
+      class_path='augmentations.custom_defect_blackout.CustomDefectBlackout',
+      init_args={'p': 0.5}
+    )
+  ] if blackout else [] + [
     Augmentaiton(
       class_path='albumentations.RandomCrop',
       init_args={'height': 224, 'width': 1568}
@@ -70,8 +75,8 @@ def validation_augmentation():
 class ClassificationAugmentation:
   '''Augmentation for classification'''
 
-  def __init__(self, train: bool = True):
-    self.aug_list = train_augmentation() if train else validation_augmentation()
+  def __init__(self, train: bool = True, blackout: bool = True):
+    self.aug_list = train_augmentation(blackout) if train else validation_augmentation()
 
   def __call__(self):
     augs = []

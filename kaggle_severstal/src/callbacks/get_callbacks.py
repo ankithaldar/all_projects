@@ -28,19 +28,42 @@ def get_callbacks():
   return [
     Callback(
       class_path='pytorch_lightning.callbacks.EarlyStopping',
-      init_args={'monitor': 'val_F1Score', 'patience': 5, 'mode': 'min', 'min_delta': 0.0, 'check_finite': True, 'check_on_train_epoch_end': False}
+      init_args={
+        'monitor': 'val_F1Score',
+        'patience': 5,
+        'mode': 'min',
+        'min_delta': 0.0,
+        'check_finite': True,
+        'check_on_train_epoch_end': False}
     ),
     Callback(
       class_path='pytorch_lightning.callbacks.LearningRateMonitor',
-      init_args={'logging_interval': 'step', 'log_momentum': True}
+      init_args={
+        'logging_interval': 'step',
+        'log_momentum': True
+      }
     ),
     Callback(
       class_path='pytorch_lightning.callbacks.ModelCheckpoint',
-      init_args={'dirpath': './checkpoints', 'filename': "kaggle_severstal_resnet34_01_{epoch:02d}-{step}-{val_F1Score:.3f}", 'monitor': 'val_F1Score', 'mode': 'min', 'save_top_k': 3, 'save_last': True, 'save_weights_only': False, 'auto_insert_metric_name': True, 'every_n_epochs': None, 'train_time_interval': None}
+      init_args={
+        'dirpath': './checkpoints',
+        'filename': "kaggle_severstal_resnet34_01_{epoch:02d}-{step}-{val_F1Score:.3f}",
+        'monitor': 'val_F1Score',
+        'mode': 'min',
+        'save_top_k': 3,
+        'save_last': True,
+        'save_weights_only': False,
+        'auto_insert_metric_name': True,
+        'every_n_epochs': None,
+        'train_time_interval': None
+      }
     ),
     Callback(
       class_path='callbacks.discord_callback.DiscordCallback',
-      init_args={'experiment_name': 'kaggle_severstal_resnet34_01', 'log_every_n_steps': 200}
+      init_args={
+        'experiment_name': 'kaggle_severstal_resnet34_01',
+        'log_every_n_steps': 200
+      }
     )
   ]
 

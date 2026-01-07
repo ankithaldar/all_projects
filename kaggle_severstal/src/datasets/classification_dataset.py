@@ -9,10 +9,10 @@
 from pathlib import Path
 
 import cv2
+import torch
 import numpy as np
 import pandas as pd
 from augmentations.aug_classification import ClassificationAugmentation
-from augmentations.custom_defect_blackout import DefectBlackout
 from helpers.rle import rle_decode  # we will implement later
 from torch.utils.data import Dataset
 
@@ -37,21 +37,26 @@ class ClassificationDataset(Dataset):
     csv_path=DATA_ROOT / 'train.csv',
     images_dir=DATA_ROOT / 'train_images',
     train=True,
-    blackout=True
+    blackout=True,
+    num_classes=4
   ):
     super().__init__()
 
     self.train = train
     self.images_dir = images_dir
+    self.num_classes = num_classes
+    self.blackout = blackout
 
     # fetch all images in dataframe
     df_enc = pd.read_csv(csv_path)
 
     # merge all files and labels
-    df = self.merge_annotation_data(
-      df=self.list_file_in_df(),
-      df_1=df_enc.groupby('ImageId')['EncodedPixels'].apply(list),
-      df_2=df_enc.groupby('ImageId')['ClassId'].apply(list)
+    df = self.setup_label_and_rle(
+      self.merge_annotation_data(
+        df=self.list_file_in_df(),
+        df_1=df_enc.groupby('ImageId')['EncodedPixels'].apply(list),
+        df_2=df_enc.groupby('ImageId')['ClassId'].apply(list)
+      )
     )
 
     self.items = [{
@@ -62,13 +67,6 @@ class ClassificationDataset(Dataset):
     }
     for img_id in df.index
     ]
-
-    self.aug = ClassificationAugmentation(train=self.train)()
-
-    self.blackout = blackout
-
-    self.blackout_aug = DefectBlackout(p=0.5)
-
 
 
   def list_file_in_df(self):
@@ -83,10 +81,44 @@ class ClassificationDataset(Dataset):
     return pd.DataFrame({
       'ImageId': [f.name for f in files],
       'abs_path': [str(f.resolve()) for f in files],
-      'EncodedPixels': [''] * len(files),
-      'ClassId': [0] * len(files),
+      'EncodedPixels': [['']] * len(files),
+      'ClassId': [[0]] * len(files),
     }).set_index('ImageId')
 
+
+  def setup_label_and_rle(self, df):
+    '''
+    Transforms a DataFrame containing segmentation mask annotations in Run-Length Encoding (RLE) format into a structured representation where each image has a fixed-length list per class for both labels and RLE strings.
+
+    Parameters:
+      - df: Base DataFrame with ImageId as index, columns: ['absolute file path', 'EncodedPixels', 'ClassId']
+
+    Returns:
+    - Merged DataFrame with updated EncodedPixels and ClassId for structured representation where each image has a fixed-length list per class for both labels and RLE strings.
+
+    '''
+    result_df = []
+
+    for index, row in df.iterrows():
+      labels = [0] * self.num_classes
+      rle = [''] * self.num_classes
+
+      for c_id in row['ClassId']:
+        try:
+          labels[c_id - 1] = 1
+          rle[c_id - 1] = row['EncodedPixels'][row['ClassId'].index(c_id)]
+        except IndexError as e:
+          print(row['ClassId'], row['EncodedPixels'])
+          raise
+
+      result_df.append({
+        'ImageId': index,
+        'abs_path': row['abs_path'],
+        'EncodedPixels': rle,
+        'ClassId': labels
+      })
+
+    return pd.DataFrame(result_df).set_index('ImageId')
 
 
   def merge_annotation_data(self, df, df_1=None, df_2=None):
@@ -139,14 +171,13 @@ class ClassificationDataset(Dataset):
 
   def decode_masks(self, masks_rle):
     masks = []
-    masks.append(np.zeros((256, 1600), dtype=np.uint8))
 
     for rle in masks_rle:
       if isinstance(rle, str) and len(rle) > 0:
         masks.append(rle_decode(rle, shape=(256, 1600)))
       else:
         masks.append(np.zeros((256, 1600), dtype=np.uint8))
-    return masks
+    return np.array(masks)
 
 
   def __len__(self):
@@ -157,19 +188,17 @@ class ClassificationDataset(Dataset):
 
     image = self.load_image(item['file_path'])
     masks = self.decode_masks(item['masks_rle'])
-    label = int(any(m.sum() > 0 for m in masks))
+    labels = item['classes']
 
-    if self.train and self.blackout:
-      image, masks, label = self.blackout_aug(image, masks)
+    self.aug = ClassificationAugmentation(train=self.train, blackout=self.blackout)()
 
-    # Albumentations requires all masks stacked
-    stacked = np.stack(masks, axis=-1)
+    augmented = self.aug(image=image, masks=np.stack(masks, axis=0))
+    image_tensor, masks = augmented['image'], augmented['masks']
 
-    self.aug = ClassificationAugmentation(train=self.train)()
+    if isinstance(masks, torch.Tensor):
+      masks = masks.numpy()
 
-    augmented = self.aug(image=image, masks=[stacked])
-    image_tensor = augmented['image']
     # label is scalar int
-    return image_tensor, label
+    return image_tensor, np.array([np.any(mask) for mask in masks], dtype=int)
 
 # classes
