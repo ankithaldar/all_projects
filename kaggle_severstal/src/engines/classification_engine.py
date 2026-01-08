@@ -10,6 +10,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from helpers.handler_list import MetricsHandler
+from losses.asymmetric_loss import AsymmetricLossOptimized
 from models.classification_models import (EfficientNetB1Classifier,
                                           ResNet34Classifier)
 
@@ -39,7 +40,8 @@ class Classifier(pl.LightningModule):
     else:
       raise ValueError(f'Unsupported model: {model_name}')
 
-    self.criterion = nn.BCEWithLogitsLoss()
+    # self.criterion = nn.BCEWithLogitsLoss()
+    self.criterion = AsymmetricLossOptimized()
 
     self.metrics = nn.ModuleDict({
       **MetricsHandler(hparams.metrics)(run_type='train'),
