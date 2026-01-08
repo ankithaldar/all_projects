@@ -6,6 +6,7 @@
 
 # imports
 import timm
+import torch
 import torch.nn as nn
 
 #    script imports
@@ -32,7 +33,7 @@ class EfficientNetB1Classifier(nn.Module):
 
   def forward(self, x):
     feats = self.model(x)
-    return self.out(feats)
+    return torch.sigmoid(self.out(feats))
 
 
 
@@ -50,6 +51,6 @@ class ResNet34Classifier(nn.Module):
 
   def forward(self, x):
     feats = self.model(x)
-    return self.out(feats)
+    return torch.sigmoid(self.out(feats))
 
 # classes
