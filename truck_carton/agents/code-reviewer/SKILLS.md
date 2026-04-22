@@ -80,3 +80,10 @@ Returns issues by severity with a PASS/FAIL verdict.
 - **Stale generation tests**: When domain model fields
   change (e.g. truck.route becomes dynamic), tests
   asserting on generated data must be updated.
+- **Grid capacity overflow**: When facilities exceed
+  available grid cells, cap the count to avoid
+  infinite placement loops.
+- **State machine deadlocks**: If a truck is LOADING
+  but no cartons fit (too large), it must transition
+  to ROUTING. Check _advance_truck_state handles the
+  "queue non-empty but no valid placements" case.

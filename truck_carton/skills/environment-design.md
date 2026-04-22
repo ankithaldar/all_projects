@@ -106,3 +106,15 @@
 - Curriculum stages scale gradually: 4x4 -> 16x16 ->
   40x40 -> 80x80 -> 160x160 to prevent the agent from
   being overwhelmed by large grids early.
+
+### Runtime Edge Cases
+
+- Grid generation must cap facility count to available
+  interior cells (rows-2)*(cols-2)/3 per type to avoid
+  infinite placement loops on small grids.
+- State machine must handle "queue has cartons but none
+  fit in truck" by transitioning LOADING -> ROUTING.
+  Otherwise the truck is stuck forever.
+- Adjacent facilities (Manhattan dist 1) don't need
+  road segments — they're directly connected as graph
+  nodes since all non-TERRAIN cells are traversable.
