@@ -64,6 +64,51 @@ trucks. One truck acts per step.
 └───────┘    └──────────────┘   └──────────────┘
 ```
 
+## Logging & Observability
+
+The system uses Python's `logging` module with
+hierarchical loggers under the `truck_carton`
+namespace:
+
+- `truck_carton.env` — Environment step/reset
+- `truck_carton.episode` — Per-step and per-episode
+  structured data
+- `truck_carton.training` — Training pipeline
+- `truck_carton.curriculum` — Stage promotions
+- `truck_carton.packing` — Placement decisions
+- `truck_carton.reward` — Reward computation
+
+### EpisodeLogger
+
+A structured logger that accumulates step-by-step
+data and emits a complete episode summary dict at
+episode end. Each step records: action, action type,
+reward breakdown, truck states, and truck positions.
+
+### JSON Log Output
+
+When `json_log_file` is configured, each log entry
+is emitted as a single JSON line for consumption by
+the Streamlit dashboard or external tools.
+
+## Live Dashboard (Streamlit)
+
+`scripts/dashboard.py` provides a real-time
+visualization of RL simulations:
+
+- **Grid World Map**: Plotly-based rendering of the
+  2D grid with terrain, roads, facilities, and truck
+  positions updated live at each step
+- **Truck Status**: Per-truck cargo, travel distance,
+  and state (ROUTING/LOADING/AT_DEPOT)
+- **Reward Timeline**: Step and cumulative reward
+- **Reward Breakdown**: Polar chart of all 9 reward
+  components
+- **Episode History**: Cross-episode trends for
+  reward and completion rate
+
+Run: `streamlit run scripts/dashboard.py`
+
 ## Module Dependency Graph
 
 ```
@@ -92,6 +137,8 @@ config.py
     ├── env/masking.py
     │
     ├── env/packing_env.py  (integrates all above)
+    │
+    ├── logging_config.py  (structured logging)
     │
     ├── curriculum/manager.py
     │
@@ -156,7 +203,7 @@ The agent learns to distribute cartons across the fleet.
 
 ### 5. Reward Decomposition
 
-Eight independent components, each returning a scalar:
+Nine independent components, each returning a scalar:
 
 | Component   | Weight | Signal                      |
 |-------------|--------|-----------------------------|
@@ -168,6 +215,7 @@ Eight independent components, each returning a scalar:
 | Weight      | -3.0   | Excess weight ratio [0,1]   |
 | Completion  | +10.0  | Progress ratio [0,1]        |
 | Priority    | +1.0   | Accessibility score [0,1]   |
+| Travel Dist | -1.0   | Route efficiency ratio [0,1]|
 
 **Invariant**: Every component returns [0, 1]. Weights
 handle sign and magnitude. Displacement excludes cartons
