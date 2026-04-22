@@ -1,0 +1,14 @@
+ga:
+  population_size: 200
+  n_generations: 500
+  crossover_prob: 0.7
+  mutation_prob: 0.3
+  mut_batch_indpb: 0.02
+  mut_time_shift_prob: 0.15
+  mut_inject_recipe_prob: 0.1
+  time_block_size: 48
+  hall_of_fame_size: 50
+  sparse_init_density: 0.05
+  max_init_batch: 10
+  log_every_gen: true
+  seed: 42
