@@ -24,6 +24,11 @@ class WeightReward:
                 - truck.max_weight
             )
             if excess > 0 and truck.max_weight > 0:
-                penalty += excess / truck.max_weight
+                penalty += min(
+                    excess / truck.max_weight, 1.0
+                )
 
-        return penalty / max(len(state.trucks), 1)
+        return min(
+            penalty / max(len(state.trucks), 1),
+            1.0,
+        )

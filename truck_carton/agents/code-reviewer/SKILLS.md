@@ -55,3 +55,11 @@ Returns issues by severity with a PASS/FAIL verdict.
 - **Route-unaware displacement**: Cartons assigned to
   stores not on a truck's route must be excluded from
   displacement calculations.
+- **Unbounded per-truck accumulation**: When summing
+  a per-truck metric (weight ratio, utilization),
+  cap each truck's contribution to 1.0 before
+  averaging. Otherwise overloaded trucks produce
+  values > 1.0.
+- **Stale test assertions**: When a component's return
+  range changes, grep for all tests asserting on the
+  old range and update them.
