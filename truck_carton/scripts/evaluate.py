@@ -61,10 +61,10 @@ def main() -> None:
       done = terminated or truncated
 
     metrics = collector.compute(
-      episode_data=env._episode,
-      spaces=env._spaces,
-      placed_cartons=env._placed,
-      current_weights=env._weights,
+      episode_data=env.episode_data,
+      spaces=env.spaces,
+      placed_cartons=env.placed_cartons,
+      current_weights=env.current_weights,
       total_reward=total_reward,
       curriculum_stage=args.stage,
     )
