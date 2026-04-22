@@ -96,7 +96,7 @@ def test_completion_all_placed():
         cartons=cartons, placed=placed, total=4
     )
     r = CompletionReward().compute(state)
-    assert r == 2.0
+    assert r == 1.0
 
 
 def test_completion_partial():
@@ -261,6 +261,26 @@ def test_priority_bounded():
         cartons=cartons, placed=placed, total=2
     )
     r = PriorityReward().compute(state)
+    assert 0.0 <= r <= 1.0
+
+
+def test_weight_severely_overloaded_bounded():
+    """Weight reward must stay in [0, 1] even when
+    trucks are severely overloaded."""
+    state = _make_state(weights=[3000.0])
+    r = WeightReward().compute(state)
+    assert 0.0 <= r <= 1.0
+
+
+def test_utilization_overloaded_bounded():
+    """Utilization reward must stay in [0, 1] even
+    when weight exceeds capacity."""
+    space = Space3D(4, 4, 4)
+    space.place(1, 0, 0, 0, 4, 4, 4)
+    state = _make_state(
+        spaces=[space], weights=[3000.0]
+    )
+    r = UtilizationReward().compute(state)
     assert 0.0 <= r <= 1.0
 
 
