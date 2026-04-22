@@ -77,3 +77,6 @@
   update ALL tests that assert on the old range.
   The test_completion_all_placed assertion was stale
   after capping completion to [0, 1].
+- When adding a new reward component, update BOTH the
+  RewardCalculator import/registration AND the test
+  that asserts len(breakdown)==N.

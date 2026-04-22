@@ -71,3 +71,12 @@ Returns issues by severity with a PASS/FAIL verdict.
 - **SOLID violations to watch**: God classes (>300 LOC),
   methods with >5 params (use a context dataclass),
   thin wrappers that add no abstraction value.
+- **Feature dim drift**: When max_trucks changes, the
+  candidate_feature_dim must be max_trucks + 8 (onehot
+  + 8 position/weight features). Check this invariant
+  after any config change.
+- **Component count drift**: When a reward component is
+  added, update the test asserting len(breakdown)==N.
+- **Stale generation tests**: When domain model fields
+  change (e.g. truck.route becomes dynamic), tests
+  asserting on generated data must be updated.
