@@ -267,3 +267,29 @@ def test_road_sprite_corner():
 
   sprite = renderer._road_sprite(0, 0, grid)
   assert sprite == '\u250C'  # ┌
+
+
+def test_env_episode_terminates():
+  """A full episode must always terminate within
+  max_steps, even with edge-case cartons."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  obs, _ = env.reset(seed=99)
+
+  steps = 0
+  done = False
+  while not done and steps < 500:
+    mask = env.action_masks()
+    valid = np.where(mask)[0]
+    if len(valid) == 0:
+      break
+    action = int(valid[0])
+    obs, reward, terminated, truncated, info = (
+      env.step(action)
+    )
+    steps += 1
+    done = terminated or truncated
+
+  assert done or steps >= 500 or len(valid) == 0

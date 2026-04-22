@@ -200,20 +200,30 @@ class DataGenerator:
     grid[depot[0], depot[1]] = CellType.DEPOT
 
     gc = self._config.grid
+    # Interior cells available (exclude border)
+    interior = max((rows - 2) * (cols - 2), 1)
+    safe_wh = min(num_warehouses, interior // 3)
+    safe_st = min(
+      num_stores, interior // 3
+    )
+
     min_spacing = max(
       gc.min_facility_spacing,
-      int(min(rows, cols) * gc.spacing_scale_factor),
+      int(
+        min(rows, cols)
+        * gc.spacing_scale_factor
+      ),
     )
     placed: list[tuple[int, int]] = [depot]
 
     wh_positions = self._place_facilities(
-      grid, rows, cols, num_warehouses,
+      grid, rows, cols, safe_wh,
       CellType.WAREHOUSE, placed, min_spacing,
     )
     placed.extend(wh_positions)
 
     st_positions = self._place_facilities(
-      grid, rows, cols, num_stores,
+      grid, rows, cols, safe_st,
       CellType.STORE, placed, min_spacing,
     )
     placed.extend(st_positions)

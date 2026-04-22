@@ -207,3 +207,42 @@ def test_trucks_start_at_depot():
   depot = data.grid_world.depot_position
   for truck in data.trucks:
     assert truck.position == depot
+
+
+def test_small_grid_does_not_crash():
+  """A tiny grid with many facilities must not
+  crash — it caps facility count gracefully."""
+  config = AppConfig()
+  gen = DataGenerator(
+    config, np.random.default_rng(42)
+  )
+  data = gen.generate(
+    num_trucks=2, num_stores=6,
+    num_cartons=5, num_warehouses=4,
+    grid_rows=4, grid_cols=4,
+  )
+  assert data.grid_world is not None
+  assert len(data.warehouses) >= 1
+  assert len(data.stores) >= 1
+
+
+def test_large_grid_facilities_reachable():
+  """On a 40x40 grid, all facilities must be
+  reachable from each other."""
+  config = AppConfig()
+  gen = DataGenerator(
+    config, np.random.default_rng(42)
+  )
+  data = gen.generate(
+    num_trucks=5, num_stores=4,
+    num_cartons=30, num_warehouses=3,
+    grid_rows=40, grid_cols=40,
+  )
+  gw = data.grid_world
+  n = len(gw.facility_positions)
+  for i in range(n):
+    for j in range(n):
+      if i != j:
+        assert gw.distance_matrix[i, j] < (
+          float('inf')
+        )
