@@ -87,3 +87,10 @@ Returns issues by severity with a PASS/FAIL verdict.
   but no cartons fit (too large), it must transition
   to ROUTING. Check _advance_truck_state handles the
   "queue non-empty but no valid placements" case.
+- **Observation value range**: All obs must be [0,1].
+  Watch stage_index normalization — dividing by a
+  hardcoded constant breaks when curriculum stages
+  are added. Use max(num_stages-1, 1) or clamp.
+- **Encapsulation**: Scripts must not access env._*
+  private attributes. Use public properties instead.
+  Add @property accessors for commonly-needed state.

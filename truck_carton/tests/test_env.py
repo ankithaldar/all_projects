@@ -154,10 +154,11 @@ def test_env_grid_world_created():
   )
   env.reset(seed=42)
 
-  assert env._episode is not None
-  assert env._episode.grid_world is not None
-  assert len(env._episode.warehouses) > 0
-  assert len(env._warehouse_cartons) > 0
+  assert env.episode_data is not None
+  assert env.episode_data.grid_world is not None
+  assert len(env.episode_data.warehouses) > 0
+  snap = env.get_render_snapshot()
+  assert len(snap['warehouse_cartons']) > 0
 
 
 def test_env_routing_and_packing():

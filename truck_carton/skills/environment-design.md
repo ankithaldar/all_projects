@@ -118,3 +118,10 @@
 - Adjacent facilities (Manhattan dist 1) don't need
   road segments — they're directly connected as graph
   nodes since all non-TERRAIN cells are traversable.
+- Observation stage_index must be normalized by the
+  actual max stage count, not a hardcoded constant.
+  With 5 stages (indices 0-4), dividing by 4.0 and
+  clamping to 1.0 is correct.
+- Scripts should use public @property accessors
+  (episode_data, spaces, placed_cartons, num_delivered,
+  step_count) instead of env._* private attributes.
