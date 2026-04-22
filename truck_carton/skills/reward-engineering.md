@@ -64,3 +64,16 @@
   and support return violation rates (0.0 = good),
   which the negative config weight converts to
   penalties. Don't invert them inside the component.
+
+### Audit Learnings (Loop 2)
+
+- Every per-truck accumulation must be capped per truck
+  before averaging. Weight utilization and weight
+  penalty can both exceed 1.0 per truck if the truck
+  is overloaded beyond 2x capacity.
+- Pattern: `min(per_truck_value, 1.0)` before summing,
+  then `min(result, 1.0)` on the final output.
+- When changing a reward component's return range,
+  update ALL tests that assert on the old range.
+  The test_completion_all_placed assertion was stale
+  after capping completion to [0, 1].

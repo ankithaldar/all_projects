@@ -25,9 +25,10 @@ class UtilizationReward:
             truck = state.trucks[i]
             vol_sum += space.get_occupancy_ratio()
             if truck.max_weight > 0:
-                wt_sum += (
+                wt_sum += min(
                     state.current_weights[i]
-                    / truck.max_weight
+                    / truck.max_weight,
+                    1.0,
                 )
             active += 1
 
@@ -36,4 +37,4 @@ class UtilizationReward:
 
         vol_util = vol_sum / active
         wt_util = wt_sum / active
-        return (vol_util + wt_util) / 2.0
+        return min((vol_util + wt_util) / 2.0, 1.0)
