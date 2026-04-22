@@ -191,6 +191,79 @@ def test_support_no_violation():
     assert r == 0.0
 
 
+def test_completion_bounded():
+    """Completion reward must stay in [0, 1]."""
+    cartons = [
+        Carton(i, 1, 1, 1, 1.0, False, 1, 0)
+        for i in range(4)
+    ]
+    placed = {
+        i: PlacementInfo(
+            0, (i, 0, 0), (1, 1, 1), Rotation.LWH
+        )
+        for i in range(4)
+    }
+    state = _make_state(
+        cartons=cartons, placed=placed, total=4
+    )
+    r = CompletionReward().compute(state)
+    assert 0.0 <= r <= 1.0
+    assert r == 1.0
+
+
+def test_displacement_ignores_off_route_cartons():
+    """Cartons destined for stores not on the
+    truck's route should not inflate displacement."""
+    from truck_carton.reward.displacement import (
+        DisplacementReward,
+    )
+    trucks = [
+        Truck(0, 8, 4, 4, 500.0, [0])
+    ]
+    stores = [Store(0, 0), Store(1, 1)]
+    c0 = Carton(1, 1, 1, 1, 1.0, False, 1, 0)
+    c1 = Carton(2, 1, 1, 1, 1.0, False, 1, 1)
+    placed = {
+        1: PlacementInfo(
+            0, (0, 0, 0), (1, 1, 1), Rotation.LWH
+        ),
+        2: PlacementInfo(
+            0, (1, 0, 0), (1, 1, 1), Rotation.LWH
+        ),
+    }
+    state = _make_state(
+        trucks=trucks, stores=stores,
+        cartons=[c0, c1], placed=placed,
+        weights=[2.0], total=2,
+    )
+    r = DisplacementReward().compute(state)
+    assert 0.0 <= r <= 1.0
+
+
+def test_priority_bounded():
+    """Priority reward must be in [0, 1]."""
+    from truck_carton.reward.priority import (
+        PriorityReward,
+    )
+    cartons = [
+        Carton(1, 1, 1, 1, 1.0, False, 3, 0),
+        Carton(2, 1, 1, 1, 1.0, False, 1, 0),
+    ]
+    placed = {
+        1: PlacementInfo(
+            0, (3, 0, 0), (1, 1, 1), Rotation.LWH
+        ),
+        2: PlacementInfo(
+            0, (0, 0, 0), (1, 1, 1), Rotation.LWH
+        ),
+    }
+    state = _make_state(
+        cartons=cartons, placed=placed, total=2
+    )
+    r = PriorityReward().compute(state)
+    assert 0.0 <= r <= 1.0
+
+
 def test_calculator_returns_breakdown():
     weights = RewardWeights()
     calc = RewardCalculator(weights)

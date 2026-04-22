@@ -27,9 +27,31 @@ Returns issues by severity with a PASS/FAIL verdict.
 1. **Correctness** — Logic errors, off-by-one,
    boundary conditions
 2. **Style** — 4-space indent, 80-char lines, single
-   quotes, snake_case
+   quotes, snake_case (per .pylintrc)
 3. **Types** — Proper annotations, Protocol usage
 4. **NumPy** — Vectorization opportunities, dtype
    consistency
 5. **Gym contract** — observation space shape matches,
    action mask correctness
+
+## Known Bug Patterns (from audit history)
+
+- **Uninitialized lookup dicts**: Methods that depend
+  on `_carton_lookup` must populate it before use.
+  Check that `validate_placement()` receives and
+  builds the lookup from `all_cartons`.
+- **Observation bounds**: All features MUST be in
+  [0, 1]. Watch for hardcoded divisors (e.g., `/50.0`)
+  that break when config values change. Use config
+  fields instead.
+- **Reward bounds**: Each RewardComponent.compute()
+  must return [0, 1]. The RewardCalculator handles
+  sign via weights.
+- **Cumulative vs step reward**: episode info `r` must
+  be the cumulative sum, not the final step's reward.
+- **Carton skip on failed placement**: If action
+  decodes to None, the environment must NOT advance
+  to the next carton.
+- **Route-unaware displacement**: Cartons assigned to
+  stores not on a truck's route must be excluded from
+  displacement calculations.

@@ -117,7 +117,18 @@ class PlacementValidator:
         above = self._space.grid[
             x:x + dl, y:y + dw, top_z:
         ]
-        return bool(np.all(above == 0))
+        unique_ids = np.unique(above)
+        unique_ids = unique_ids[unique_ids != 0]
+        for cid in unique_ids:
+            carton_above = self._carton_lookup.get(
+                int(cid)
+            )
+            if (
+                carton_above is not None
+                and not carton_above.is_fragile
+            ):
+                return False
+        return True
 
     def check_weight(
         self,
@@ -134,7 +145,12 @@ class PlacementValidator:
         dl: int, dw: int, dh: int,
         current_weight: float,
         max_weight: float,
+        all_cartons: list[Carton] | None = None,
     ) -> tuple[bool, list[str]]:
+        if all_cartons:
+            self._carton_lookup = {
+                c.carton_id: c for c in all_cartons
+            }
         violations: list[str] = []
         if not self.check_bounds(x, y, z, dl, dw, dh):
             violations.append('out_of_bounds')

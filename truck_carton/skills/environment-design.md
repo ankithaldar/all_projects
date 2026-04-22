@@ -39,3 +39,19 @@
 - `info['episode']` dict is required for SB3's Monitor
   wrapper to detect episode boundaries
 - Height map must be recomputed after every placement
+
+### Audit Learnings (Loop 1)
+
+- info['episode']['r'] must be CUMULATIVE episode
+  reward, not the single-step reward from the final
+  step. SB3's Monitor records this value as the total
+  episode return.
+- All observation features must be normalized to [0,1].
+  Hardcoded 1.0 placeholders in truck_meta waste
+  observation capacity. Use actual normalized values
+  (e.g., truck.max_weight / max_weight_capacity).
+- Carton weight normalization must use a config value
+  (max_carton_weight) not a hardcoded 50.0.
+- EnvironmentConfig should include max_weight_capacity
+  and max_carton_weight so the observation builder can
+  normalize without accessing TruckConfig/CartonConfig.
