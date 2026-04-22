@@ -63,3 +63,11 @@ Returns issues by severity with a PASS/FAIL verdict.
 - **Stale test assertions**: When a component's return
   range changes, grep for all tests asserting on the
   old range and update them.
+- **Wrong type annotations**: Check that method params
+  match the actual objects passed. `truck: Carton` when
+  it should be `truck: Truck` causes runtime errors.
+- **Missing imports in tests**: New test code that uses
+  numpy must import it explicitly.
+- **SOLID violations to watch**: God classes (>300 LOC),
+  methods with >5 params (use a context dataclass),
+  thin wrappers that add no abstraction value.

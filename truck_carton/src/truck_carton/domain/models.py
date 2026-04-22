@@ -93,3 +93,34 @@ class EpisodeData:
     default_factory=list
   )
   grid_world: GridWorld | None = None
+
+
+@dataclass
+class ObservationContext:
+  """All state needed for observation encoding.
+  Decouples observer from environment internals."""
+
+  trucks: list[Truck]
+  spaces: list
+  current_carton: Carton | None
+  remaining_cartons: list[Carton]
+  packing_candidates: list
+  current_weights: list[float]
+  num_placed: int
+  total_cartons: int
+  stage_index: int
+  step_count: int
+  max_steps: int
+  grid_world: GridWorld | None = None
+  warehouses: list[Warehouse] = field(
+    default_factory=list
+  )
+  warehouse_cartons: dict[int, list[int]] = field(
+    default_factory=dict
+  )
+  routing_candidates: list = field(
+    default_factory=list
+  )
+  active_truck_idx: int = 0
+  total_travel: float = 0.0
+  num_delivered: int = 0

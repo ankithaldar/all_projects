@@ -1,3 +1,5 @@
+import numpy as np
+
 from truck_carton.config import EnvironmentConfig
 from truck_carton.domain.models import Carton, Truck
 from truck_carton.env.action import ActionManager
