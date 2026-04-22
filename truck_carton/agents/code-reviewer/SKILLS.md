@@ -94,3 +94,20 @@ Returns issues by severity with a PASS/FAIL verdict.
 - **Encapsulation**: Scripts must not access env._*
   private attributes. Use public properties instead.
   Add @property accessors for commonly-needed state.
+- **Reward output clipping**: All reward components
+  MUST return min(..., 1.0). Violation-count-based
+  rewards (fragility, support) can theoretically
+  exceed 1.0 even though violations <= total. Always
+  add a safety clamp.
+- **Unbounded frame accumulation**: GridRenderer
+  capture_frame() must have a max_frames limit or
+  LRU eviction. Without it, long training episodes
+  cause OOM.
+- **Logger thread safety**: JSON formatters using
+  json.dumps(default=str) should wrap in try/except
+  for non-serializable edge cases (circular refs,
+  custom objects).
+- **Dashboard state consistency**: Streamlit session
+  state mutations during reruns can cause race-like
+  behavior. Use explicit episode IDs and guard all
+  reads with key-existence checks.
