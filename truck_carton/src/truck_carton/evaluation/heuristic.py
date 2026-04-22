@@ -1,0 +1,266 @@
+"""Heuristic baseline agent for truck-carton packing.
+
+Provides a deterministic rule-based policy for
+comparison with RL-trained models. Uses domain
+knowledge to make packing and routing decisions
+without any learning.
+"""
+from __future__ import annotations
+
+from typing import Protocol
+
+import numpy as np
+
+from truck_carton.domain.models import CellType
+
+
+class ActionProvider(Protocol):
+  """Minimal interface needed from the environment
+  to select heuristic actions."""
+
+  def action_masks(self) -> np.ndarray: ...
+
+
+class HeuristicAgent:
+  """Rule-based agent using domain heuristics.
+
+  Packing strategy:
+    1. Prefer lowest z (bottom-up stacking)
+    2. Prefer corner/wall positions for stability
+    3. Prefer positions that group same-store cartons
+    4. Place fragile cartons high (near the top)
+    5. Place high-priority near door (low x)
+
+  Routing strategy:
+    1. Visit nearest warehouse with cartons
+    2. Deliver to stores with most matching cargo
+    3. Go to depot when no useful destinations
+  """
+
+  def __init__(self, config: object) -> None:
+    self._max_candidates = getattr(
+      getattr(config, 'env', config),
+      'max_candidates', 500,
+    )
+
+  def predict(
+    self,
+    env: object,
+    masks: np.ndarray,
+  ) -> int:
+    """Select an action using heuristic rules.
+
+    Inspects the environment's internal candidate
+    lists to apply domain-aware scoring.
+    """
+    valid = np.where(masks)[0]
+    if len(valid) == 0:
+      return 0
+
+    am = env._action_manager
+    packing_valid = [
+      a for a in valid if a < self._max_candidates
+    ]
+    routing_valid = [
+      a for a in valid if a >= self._max_candidates
+    ]
+
+    if packing_valid and am.candidates:
+      return self._select_packing(
+        packing_valid, am, env
+      )
+    if routing_valid and am.routing_candidates:
+      return self._select_routing(
+        routing_valid, am, env
+      )
+    return int(valid[0])
+
+  def _select_packing(
+    self,
+    valid_actions: list[int],
+    am: object,
+    env: object,
+  ) -> int:
+    """Score each packing candidate and pick best."""
+    carton = env._current_carton
+    placed = env._placed
+    carton_lookup = env._carton_lookup
+    truck_idx = env._active_truck_idx
+
+    best_score = -float('inf')
+    best_action = valid_actions[0]
+
+    for action in valid_actions:
+      if action >= len(am.candidates):
+        continue
+      cand = am.candidates[action]
+      score = self._score_candidate(
+        cand, carton, placed, carton_lookup,
+        truck_idx, env,
+      )
+      if score > best_score:
+        best_score = score
+        best_action = action
+
+    return best_action
+
+  def _score_candidate(
+    self,
+    cand: object,
+    carton: object,
+    placed: dict,
+    carton_lookup: dict,
+    truck_idx: int,
+    env: object,
+  ) -> float:
+    """Multi-criteria scoring for a placement."""
+    x, y, z = cand.x, cand.y, cand.z
+    dl, dw, dh = cand.oriented_dims
+    truck = env._episode.trucks[cand.truck_id]
+    score = 0.0
+
+    # 1. Bottom-up: prefer lowest z
+    score -= z * 10.0
+
+    # 2. Corner/wall bonus
+    at_x_wall = (x == 0 or x + dl == truck.length)
+    at_y_wall = (y == 0 or y + dw == truck.width)
+    if at_x_wall and at_y_wall:
+      score += 8.0
+    elif at_x_wall or at_y_wall:
+      score += 4.0
+
+    # 3. Grouping: prefer adjacent to same-store
+    dest = carton.destination_store_id
+    neighbor_bonus = 0.0
+    for cid, info in placed.items():
+      if info.truck_id != cand.truck_id:
+        continue
+      other = carton_lookup.get(cid)
+      if other is None:
+        continue
+      if other.destination_store_id == dest:
+        ox, oy, oz = info.position
+        odl, odw, odh = info.oriented_dims
+        dx = max(0, max(x, ox) - min(
+          x + dl, ox + odl
+        ))
+        dy = max(0, max(y, oy) - min(
+          y + dw, oy + odw
+        ))
+        dz = max(0, max(z, oz) - min(
+          z + dh, oz + odh
+        ))
+        dist = dx + dy + dz
+        if dist <= 1:
+          neighbor_bonus += 5.0
+        elif dist <= 3:
+          neighbor_bonus += 2.0
+    score += min(neighbor_bonus, 15.0)
+
+    # 4. Fragile cartons: prefer high z
+    if carton.is_fragile:
+      score += z * 5.0
+
+    # 5. Priority accessibility: high-priority
+    #    cartons near door (low x)
+    if carton.priority == 3:
+      score -= x * 3.0
+    elif carton.priority == 2:
+      score -= x * 1.5
+
+    # 6. Compact packing: minimize wasted x-extent
+    score -= (x + dl) * 0.5
+
+    # 7. Weight balance: slight preference for
+    #    distributing across trucks evenly
+    if cand.truck_id == truck_idx:
+      score += 1.0
+
+    return score
+
+  def _select_routing(
+    self,
+    valid_actions: list[int],
+    am: object,
+    env: object,
+  ) -> int:
+    """Pick best routing destination."""
+    truck_idx = env._active_truck_idx
+    cargo = env._truck_cargo[truck_idx]
+    carton_lookup = env._carton_lookup
+    wh_cartons = env._warehouse_cartons
+
+    best_score = -float('inf')
+    best_action = valid_actions[0]
+    offset = self._max_candidates
+
+    for action in valid_actions:
+      ri = action - offset
+      if ri >= len(am.routing_candidates):
+        continue
+      rc = am.routing_candidates[ri]
+      score = self._score_routing(
+        rc, cargo, carton_lookup, wh_cartons,
+      )
+      if score > best_score:
+        best_score = score
+        best_action = action
+
+    return best_action
+
+  def _score_routing(
+    self,
+    rc: object,
+    cargo: set,
+    carton_lookup: dict,
+    wh_cartons: dict,
+  ) -> float:
+    """Score a routing candidate."""
+    score = 0.0
+    dist = max(rc.distance, 1.0)
+
+    if rc.location_type == CellType.WAREHOUSE:
+      wh_id = rc.location_id
+      remaining = len(
+        wh_cartons.get(wh_id, [])
+      )
+      # Prefer warehouses with more cartons,
+      # penalize distance
+      score = remaining * 10.0 / dist
+
+    elif rc.location_type == CellType.STORE:
+      matching = sum(
+        1 for cid in cargo
+        if carton_lookup.get(cid) is not None
+        and carton_lookup[cid]
+        .destination_store_id == rc.location_id
+      )
+      # Prefer stores where we can deliver
+      # the most cartons, penalize distance
+      score = matching * 15.0 / dist
+
+    elif rc.location_type == CellType.DEPOT:
+      if not cargo:
+        score = 5.0 / dist
+      else:
+        score = -100.0
+
+    return score
+
+
+class RandomAgent:
+  """Uniform random baseline for comparison."""
+
+  def __init__(self, seed: int = 42) -> None:
+    self._rng = np.random.default_rng(seed)
+
+  def predict(
+    self,
+    env: object,
+    masks: np.ndarray,
+  ) -> int:
+    valid = np.where(masks)[0]
+    if len(valid) == 0:
+      return 0
+    return int(self._rng.choice(valid))
