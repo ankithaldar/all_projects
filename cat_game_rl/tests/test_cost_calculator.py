@@ -87,3 +87,13 @@ class TestMaxAffordableBatch:
                 assert max_b >= b, (
                     f"init_cost={init_cost}, b={b}, cost={cost}, max_b={max_b}"
                 )
+
+    def test_large_batch_no_overflow(self):
+        cost = CostCalculator.total_cost(10000, 100)
+        assert cost > 0
+        assert isinstance(cost, float)
+        batch = CostCalculator.max_affordable_batch(10000, int(cost))
+        assert batch >= 100
+
+    def test_negative_coins(self):
+        assert CostCalculator.max_affordable_batch(100, -50) == 0
