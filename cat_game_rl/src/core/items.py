@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import IntEnum
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import yaml
@@ -72,6 +71,9 @@ class CraftingTree:
     def from_yaml(cls, path: str) -> CraftingTree:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
+
+        if data is None or "items" not in data:
+            raise ValueError(f"Invalid crafting tree YAML: {path}")
 
         recipes: Dict[ItemId, Recipe] = {}
         tier_map: Dict[ItemId, int] = {}

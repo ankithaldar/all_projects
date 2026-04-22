@@ -43,16 +43,17 @@ class GaOperators:
 
         col = random.randint(0, NUM_CRAFTABLE - 1)
         shift = random.randint(-6, 6)
-        if shift == 0:
+        if shift == 0 or abs(shift) >= MAX_TICKS:
             return (individual,)
 
         column = individual[:, col].copy()
         individual[:, col] = 0
 
         if shift > 0:
-            individual[shift:, col] = column[: MAX_TICKS - shift]
+            individual[shift:MAX_TICKS, col] = column[: MAX_TICKS - shift]
         else:
-            individual[:MAX_TICKS + shift, col] = column[-shift:]
+            abs_shift = abs(shift)
+            individual[: MAX_TICKS - abs_shift, col] = column[abs_shift:MAX_TICKS]
 
         return (individual,)
 
