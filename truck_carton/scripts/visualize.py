@@ -88,11 +88,11 @@ def main() -> None:
       env.get_render_snapshot()
     )
 
-  delivered = len(env._delivered)
-  total = len(env._episode.cartons)
+  delivered = env.num_delivered
+  total = len(env.episode_data.cartons)
   print(
     f'Delivered {delivered}/{total} cartons'
-    f' in {env._step_count} steps'
+    f' in {env.step_count} steps'
   )
 
   if args.gif:
@@ -108,7 +108,9 @@ def main() -> None:
   if args.mode in ('packing', 'both'):
     viz = PackingVisualizer()
     viz.render_all_trucks(
-      env._episode, env._spaces, env._placed
+      env.episode_data,
+      env.spaces,
+      env.placed_cartons,
     )
     plt.show()
 
