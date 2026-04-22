@@ -103,7 +103,9 @@ def render_grid_plotly(
 ) -> go.Figure:
   """Render grid world as a Plotly heatmap with
   truck markers, facility labels, and roads."""
-  gw = snapshot['grid_world']
+  gw = snapshot.get('grid_world')
+  if gw is None:
+    return go.Figure()
   grid = gw.grid.astype(float)
   rows, cols = gw.rows, gw.cols
 
