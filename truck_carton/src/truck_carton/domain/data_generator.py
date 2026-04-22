@@ -199,7 +199,11 @@ class DataGenerator:
     depot = (rows // 2, cols // 2)
     grid[depot[0], depot[1]] = CellType.DEPOT
 
-    min_spacing = self._config.grid.min_facility_spacing
+    gc = self._config.grid
+    min_spacing = max(
+      gc.min_facility_spacing,
+      int(min(rows, cols) * gc.spacing_scale_factor),
+    )
     placed: list[tuple[int, int]] = [depot]
 
     wh_positions = self._place_facilities(

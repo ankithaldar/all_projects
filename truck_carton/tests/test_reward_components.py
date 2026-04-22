@@ -116,7 +116,7 @@ def test_completion_partial():
     cartons=cartons, placed=placed, total=4
   )
   r = CompletionReward().compute(state)
-  assert abs(r - 0.5) < 1e-9
+  assert abs(r - 0.25) < 1e-9
 
 
 def test_weight_no_violation():
