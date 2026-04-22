@@ -24,8 +24,9 @@ class CartonConfig:
 class GridConfig:
   """Procedural grid generation parameters."""
 
-  min_facility_spacing: int = 2
-  road_extra_edges: int = 2
+  min_facility_spacing: int = 3
+  road_extra_edges: int = 3
+  spacing_scale_factor: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -58,13 +59,20 @@ class CurriculumStage:
 class CurriculumConfig:
   stages: tuple[CurriculumStage, ...] = (
     CurriculumStage(
-      'toy', 2, 2, 10, 1, 5, 5, 0.7, 100
+      'tiny', 2, 2, 10, 1, 4, 4, 0.7, 100
     ),
     CurriculumStage(
-      'small', 3, 3, 20, 2, 7, 7, 0.7, 100
+      'small', 3, 3, 20, 2, 16, 16, 0.7, 100
     ),
     CurriculumStage(
-      'medium', 5, 4, 40, 3, 10, 10, 0.7, 100
+      'medium', 5, 4, 40, 3, 40, 40, 0.7, 150
+    ),
+    CurriculumStage(
+      'large', 8, 6, 80, 4, 80, 80, 0.6, 200
+    ),
+    CurriculumStage(
+      'full', 12, 8, 120, 6, 160, 160,
+      0.5, 300
     ),
   )
 
@@ -73,9 +81,9 @@ class CurriculumConfig:
 class EnvironmentConfig:
   """Max bounds for observation space dims."""
 
-  max_trucks: int = 5
-  max_stores: int = 4
-  max_cartons: int = 40
+  max_trucks: int = 12
+  max_stores: int = 8
+  max_cartons: int = 120
   max_truck_length: int = 16
   max_truck_width: int = 8
   max_truck_height: int = 8
@@ -83,9 +91,10 @@ class EnvironmentConfig:
   max_carton_weight: float = 50.0
   max_candidates: int = 500
   candidate_feature_dim: int = 18
-  max_grid_rows: int = 10
-  max_grid_cols: int = 10
-  max_warehouses: int = 4
+  max_grid_rows: int = 160
+  max_grid_cols: int = 160
+  max_warehouses: int = 6
+  max_locations: int = 15
   max_routing_actions: int = 100
   routing_feature_dim: int = 8
 
@@ -94,7 +103,7 @@ class EnvironmentConfig:
 class TrainingConfig:
   """MaskablePPO hyperparameters."""
 
-  total_timesteps: int = 2_000_000
+  total_timesteps: int = 5_000_000
   learning_rate: float = 3e-4
   n_steps: int = 2048
   batch_size: int = 64
