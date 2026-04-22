@@ -7,6 +7,7 @@ from stable_baselines3.common.callbacks import (
 from truck_carton.curriculum.manager import (
   CurriculumManager,
 )
+from truck_carton.logging_config import get_logger
 
 
 class CurriculumCallback(BaseCallback):
@@ -20,6 +21,7 @@ class CurriculumCallback(BaseCallback):
   ) -> None:
     super().__init__(verbose)
     self._curriculum = curriculum_manager
+    self._log = get_logger('curriculum')
 
   def _on_step(self) -> bool:
     infos = self.locals.get('infos')
@@ -52,13 +54,11 @@ class CurriculumCallback(BaseCallback):
           'curriculum/stage_name',
           self._curriculum.stage.name,
         )
-        if self.verbose > 0:
-          print(
-            '[Curriculum] Promoted to'
-            f' stage'
-            f' {self._curriculum.current_stage}:'
-            f' {self._curriculum.stage.name}'
-          )
+        self._log.info(
+          'Promoted to stage %d: %s',
+          self._curriculum.current_stage,
+          self._curriculum.stage.name,
+        )
 
     return True
 
