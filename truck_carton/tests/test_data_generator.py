@@ -55,7 +55,10 @@ def test_truck_dimensions_in_range():
     )
 
 
-def test_truck_routes_are_valid_store_ids():
+def test_trucks_initialized_correctly():
+  """Trucks start with empty routes at depot
+  in ROUTING state."""
+  from truck_carton.domain.models import TruckState
   config = AppConfig()
   gen = DataGenerator(
     config, np.random.default_rng(42)
@@ -63,12 +66,11 @@ def test_truck_routes_are_valid_store_ids():
   data = gen.generate(
     num_trucks=3, num_stores=3, num_cartons=10
   )
-  store_ids = {s.store_id for s in data.stores}
+  depot = data.grid_world.depot_position
   for truck in data.trucks:
-    assert len(truck.route) >= 1
-    for sid in truck.route:
-      assert sid in store_ids
-    assert truck.route == sorted(truck.route)
+    assert truck.route == []
+    assert truck.position == depot
+    assert truck.state == TruckState.ROUTING
 
 
 def test_carton_dimensions_in_range():
