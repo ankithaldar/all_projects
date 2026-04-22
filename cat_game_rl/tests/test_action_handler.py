@@ -118,6 +118,35 @@ class TestValidateAndApply:
         expected_cost = math.ceil(CostCalculator.total_cost(50, 5))
         assert coins.balance == 10000 - expected_cost
 
+    def test_cannot_schedule_same_slot_twice(self, crafting_tree: CraftingTree):
+        handler = ActionHandler(crafting_tree, max_batch=20)
+        stash = Stash()
+        stash.add(ItemId.COTTON, 100)
+        coins = CoinGenerator(100000)
+        slots = SlotScheduler(crafting_tree)
+
+        decoded = {ItemId.STRING: 3}
+        result1 = handler.validate_and_apply(decoded, stash, coins, slots)
+        assert ItemId.STRING in result1["applied"]
+
+        decoded2 = {ItemId.STRING: 2}
+        result2 = handler.validate_and_apply(decoded2, stash, coins, slots)
+        assert ItemId.STRING in result2["rejected"]
+        assert result2["rejected"][ItemId.STRING] == "slot_busy"
+
+    def test_material_rollback_on_partial_failure(self, crafting_tree: CraftingTree):
+        handler = ActionHandler(crafting_tree, max_batch=20)
+        stash = Stash()
+        stash.add(ItemId.STRING, 4)
+        stash.add(ItemId.WOOD, 0)
+        coins = CoinGenerator(100000)
+        slots = SlotScheduler(crafting_tree)
+
+        decoded = {ItemId.RIBBON: 2}
+        result = handler.validate_and_apply(decoded, stash, coins, slots)
+        assert ItemId.RIBBON in result["rejected"]
+        assert stash.get(ItemId.STRING) == 4
+
 
 class TestActionMask:
     def test_zero_always_valid(self, crafting_tree: CraftingTree):

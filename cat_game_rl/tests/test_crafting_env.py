@@ -81,7 +81,7 @@ class TestCraftingEnv:
         env.reset()
         mask = env.action_masks()
         for i in range(NUM_CRAFTABLE):
-            assert mask[i * 21] == True
+            assert mask[i * 21]
 
     def test_reward_is_finite(self, env: CraftingEnv):
         env.reset()

@@ -18,6 +18,8 @@ class TargetProvider:
     def _load(self, path: str) -> None:
         with open(path, "r") as f:
             data = yaml.safe_load(f)
+        if data is None or "targets" not in data:
+            raise ValueError(f"Invalid targets YAML: {path}")
         self._targets = {}
         for name, count in data["targets"].items():
             item_id = ITEM_NAME_TO_ID[name.lower()]
