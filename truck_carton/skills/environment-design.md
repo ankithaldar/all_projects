@@ -91,3 +91,18 @@
   export of full episodes.
 - play_animation() uses matplotlib.animation for
   Jupyter HTML5 video playback.
+
+### Scaling to Large Grids (160x160)
+
+- Direct grid encoding (grid_map) doesn't scale —
+  160x160 = 25,600 cells is too large for observation.
+- Use graph-distance features instead: pairwise
+  facility distances in a fixed-size matrix
+  (max_locations x max_locations = 15x15 = 225 floats).
+- Truck positions are normalized (row/grid_rows,
+  col/grid_cols) so they stay [0,1] at any grid size.
+- Facility spacing must scale with grid size:
+  spacing = max(base, grid_dim * scale_factor).
+- Curriculum stages scale gradually: 4x4 -> 16x16 ->
+  40x40 -> 80x80 -> 160x160 to prevent the agent from
+  being overwhelmed by large grids early.
