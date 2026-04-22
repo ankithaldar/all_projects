@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 import networkx as nx
 import numpy as np
 
-from truck_carton.config import AppConfig
+from truck_carton.config import AppConfig, GridConfig
 from truck_carton.domain.models import (
   Carton,
   CellType,
@@ -16,15 +18,133 @@ from truck_carton.domain.models import (
 )
 
 
+class RoadNetworkStrategy(Protocol):
+  """Strategy for building road networks.
+  Implement to add new grid layout types."""
+
+  def build(
+    self,
+    grid: np.ndarray,
+    rows: int,
+    cols: int,
+    facilities: list[tuple[int, int]],
+    rng: np.random.Generator,
+  ) -> None: ...
+
+
+class MSTRoadStrategy:
+  """Builds roads via MST with L-shaped segments."""
+
+  def __init__(self, config: GridConfig) -> None:
+    self._config = config
+
+  def build(
+    self,
+    grid: np.ndarray,
+    rows: int,
+    cols: int,
+    facilities: list[tuple[int, int]],
+    rng: np.random.Generator,
+  ) -> None:
+    if len(facilities) < 2:
+      return
+
+    g = nx.Graph()
+    for i, pos_a in enumerate(facilities):
+      for j, pos_b in enumerate(facilities):
+        if i < j:
+          dist = (
+            abs(pos_a[0] - pos_b[0])
+            + abs(pos_a[1] - pos_b[1])
+          )
+          g.add_edge(i, j, weight=dist)
+
+    mst = nx.minimum_spanning_tree(g)
+
+    non_mst = [
+      (u, v) for u, v in g.edges()
+      if not mst.has_edge(u, v)
+    ]
+    extras = min(
+      self._config.road_extra_edges,
+      len(non_mst),
+    )
+    if extras > 0:
+      chosen = rng.choice(
+        len(non_mst), size=extras, replace=False
+      )
+      for idx in chosen:
+        u, v = non_mst[idx]
+        mst.add_edge(u, v)
+
+    for u, v in mst.edges():
+      self._build_segment(
+        grid, rows, cols,
+        facilities[u], facilities[v], rng,
+      )
+
+  def _build_segment(
+    self,
+    grid: np.ndarray,
+    rows: int,
+    cols: int,
+    src: tuple[int, int],
+    dst: tuple[int, int],
+    rng: np.random.Generator,
+  ) -> None:
+    r1, c1 = src
+    r2, c2 = dst
+
+    if abs(c2 - c1) > 1:
+      bend_c = int(
+        min(c1, c2)
+        + abs(c2 - c1)
+        * rng.uniform(0.2, 0.8)
+      )
+    else:
+      bend_c = c1
+
+    step_r = int(np.sign(r2 - r1)) or 1
+    step_c = int(np.sign(c2 - c1)) or 1
+
+    c = c1
+    while c != bend_c:
+      c += step_c
+      if 0 <= c < cols and 0 <= r1 < rows:
+        if grid[r1, c] == CellType.TERRAIN:
+          grid[r1, c] = CellType.ROAD
+
+    r = r1
+    while r != r2:
+      r += step_r
+      if 0 <= r < rows and 0 <= bend_c < cols:
+        if grid[r, bend_c] == CellType.TERRAIN:
+          grid[r, bend_c] = CellType.ROAD
+
+    c = bend_c
+    while c != c2:
+      c += step_c
+      if 0 <= c < cols and 0 <= r2 < rows:
+        if grid[r2, c] == CellType.TERRAIN:
+          grid[r2, c] = CellType.ROAD
+
+
 class DataGenerator:
   """Generates random episode data with procedural
   grid layouts for each curriculum stage."""
 
   def __init__(
-    self, config: AppConfig, rng: np.random.Generator
+    self,
+    config: AppConfig,
+    rng: np.random.Generator,
+    road_strategy: RoadNetworkStrategy | None = None,
   ) -> None:
     self._config = config
     self._rng = rng
+    self._road_strategy = (
+      road_strategy
+      or MSTRoadStrategy(config.grid)
+    )
 
   def generate(
     self,
@@ -94,8 +214,8 @@ class DataGenerator:
     )
     placed.extend(st_positions)
 
-    self._build_road_network(
-      grid, rows, cols, placed
+    self._road_strategy.build(
+      grid, rows, cols, placed, self._rng
     )
 
     facility_positions = list(placed)
@@ -157,101 +277,6 @@ class DataGenerator:
       positions.append((r, c))
 
     return positions
-
-  def _build_road_network(
-    self,
-    grid: np.ndarray,
-    rows: int,
-    cols: int,
-    facilities: list[tuple[int, int]],
-  ) -> None:
-    if len(facilities) < 2:
-      return
-
-    # MST on facility positions for connectivity
-    g = nx.Graph()
-    for i, pos_a in enumerate(facilities):
-      for j, pos_b in enumerate(facilities):
-        if i < j:
-          dist = (
-            abs(pos_a[0] - pos_b[0])
-            + abs(pos_a[1] - pos_b[1])
-          )
-          g.add_edge(i, j, weight=dist)
-
-    mst = nx.minimum_spanning_tree(g)
-
-    # Add extra edges for redundancy
-    non_mst = [
-      (u, v) for u, v in g.edges()
-      if not mst.has_edge(u, v)
-    ]
-    extras = min(
-      self._config.grid.road_extra_edges,
-      len(non_mst),
-    )
-    if extras > 0:
-      chosen = self._rng.choice(
-        len(non_mst), size=extras, replace=False
-      )
-      for idx in chosen:
-        u, v = non_mst[idx]
-        mst.add_edge(u, v)
-
-    for u, v in mst.edges():
-      self._build_road_segment(
-        grid, rows, cols,
-        facilities[u], facilities[v],
-      )
-
-  def _build_road_segment(
-    self,
-    grid: np.ndarray,
-    rows: int,
-    cols: int,
-    src: tuple[int, int],
-    dst: tuple[int, int],
-  ) -> None:
-    r1, c1 = src
-    r2, c2 = dst
-
-    # L-shaped road with random bend point
-    # (inspired by the example's build_railroad)
-    if abs(c2 - c1) > 1:
-      bend_c = int(
-        min(c1, c2)
-        + abs(c2 - c1)
-        * self._rng.uniform(0.2, 0.8)
-      )
-    else:
-      bend_c = c1
-
-    step_r = int(np.sign(r2 - r1)) or 1
-    step_c = int(np.sign(c2 - c1)) or 1
-
-    # Horizontal from src to bend
-    c = c1
-    while c != bend_c:
-      c += step_c
-      if 0 <= c < cols and 0 <= r1 < rows:
-        if grid[r1, c] == CellType.TERRAIN:
-          grid[r1, c] = CellType.ROAD
-
-    # Vertical at bend
-    r = r1
-    while r != r2:
-      r += step_r
-      if 0 <= r < rows and 0 <= bend_c < cols:
-        if grid[r, bend_c] == CellType.TERRAIN:
-          grid[r, bend_c] = CellType.ROAD
-
-    # Horizontal from bend to dst
-    c = bend_c
-    while c != c2:
-      c += step_c
-      if 0 <= c < cols and 0 <= r2 < rows:
-        if grid[r2, c] == CellType.TERRAIN:
-          grid[r2, c] = CellType.ROAD
 
   def _compute_distances(
     self,
