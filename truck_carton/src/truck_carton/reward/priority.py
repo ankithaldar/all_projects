@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class PriorityReward:
+    """High-priority carton accessibility score."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

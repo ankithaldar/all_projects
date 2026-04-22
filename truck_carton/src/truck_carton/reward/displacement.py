@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 
 class DisplacementReward:
+    """Normalized blocker count per delivery stop."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class SupportReward:
+    """Unsupported carton base cell violation rate."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:
