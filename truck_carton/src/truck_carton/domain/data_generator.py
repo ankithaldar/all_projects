@@ -415,8 +415,12 @@ class DataGenerator:
     warehouses: list[Warehouse],
   ) -> list[Carton]:
     cc = self._config.carton
-    store_ids = [s.store_id for s in stores]
-    wh_ids = [w.warehouse_id for w in warehouses]
+    store_ids = (
+      [s.store_id for s in stores] or [0]
+    )
+    wh_ids = (
+      [w.warehouse_id for w in warehouses] or [0]
+    )
     cartons: list[Carton] = []
 
     for i in range(num_cartons):
