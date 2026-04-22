@@ -125,3 +125,30 @@
 - Scripts should use public @property accessors
   (episode_data, spaces, placed_cartons, num_delivered,
   step_count) instead of env._* private attributes.
+
+### Logging & Observability
+
+- EpisodeLogger accumulates per-step structured data
+  (action, type, reward breakdown, truck states and
+  positions) and emits a complete summary at episode
+  end via end_episode().
+- JSON log output (one object per line) feeds the
+  Streamlit dashboard and external monitoring tools.
+- Hierarchical loggers: truck_carton.{env, episode,
+  training, curriculum, packing, reward}.
+- Logger integration is non-blocking: DEBUG-level
+  step logs, INFO-level episode/promotion events.
+- setup_logging() is idempotent — safe to call
+  multiple times without duplicating handlers.
+
+### Live Dashboard
+
+- Streamlit dashboard (scripts/dashboard.py) renders
+  the grid world map live during simulation using
+  Plotly go.Image + go.Scatter overlays.
+- Trucks shown as colored diamonds with state-based
+  colors (ROUTING=orange, LOADING=cyan, AT_DEPOT=gray)
+- Per-truck cargo bar chart, reward polar breakdown,
+  cumulative timeline, and episode history trends.
+- Dashboard uses st.session_state for cross-rerun
+  persistence; guard all state reads with defaults.

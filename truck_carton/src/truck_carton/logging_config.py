@@ -81,7 +81,11 @@ class _JsonFormatter(logging.Formatter):
     }
     if hasattr(record, 'data'):
       entry['data'] = record.data
-    return json.dumps(entry, default=str)
+    try:
+      return json.dumps(entry, default=str)
+    except (TypeError, ValueError):
+      entry.pop('data', None)
+      return json.dumps(entry, default=str)
 
 
 def get_logger(subsystem: str) -> logging.Logger:

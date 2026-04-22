@@ -43,4 +43,4 @@ class SupportReward:
           violations += 1
 
     total = max(len(state.placed_cartons), 1)
-    return violations / total
+    return min(violations / total, 1.0)
