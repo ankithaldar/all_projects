@@ -1,0 +1,267 @@
+items:
+  # Base items (unlimited supply, tier 0)
+  - id: cotton
+    type: base
+    tier: 0
+
+  - id: tree
+    type: base
+    tier: 0
+
+  - id: rock
+    type: base
+    tier: 0
+
+  - id: quartz
+    type: base
+    tier: 0
+
+  # Tier 1: direct from base materials
+  - id: string
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: cotton
+          quantity: 3
+      coin_cost: 50
+      craft_time: 5
+
+  - id: wood
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: tree
+          quantity: 3
+      coin_cost: 50
+      craft_time: 5
+
+  - id: metal
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: rock
+          quantity: 3
+      coin_cost: 100
+      craft_time: 15
+
+  - id: bronze
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: rock
+          quantity: 4
+      coin_cost: 200
+      craft_time: 30
+
+  - id: amethyst
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: quartz
+          quantity: 10
+      coin_cost: 300
+      craft_time: 60
+
+  - id: orb
+    type: craftable
+    tier: 1
+    recipe:
+      ingredients:
+        - item: quartz
+          quantity: 20
+      coin_cost: 300
+      craft_time: 60
+
+  # Tier 2: from tier 1
+  - id: ribbon
+    type: craftable
+    tier: 2
+    recipe:
+      ingredients:
+        - item: string
+          quantity: 2
+          require_crafted: true
+        - item: wood
+          quantity: 2
+          require_crafted: true
+      coin_cost: 100
+      craft_time: 15
+
+  - id: needles
+    type: craftable
+    tier: 2
+    recipe:
+      ingredients:
+        - item: metal
+          quantity: 4
+          require_crafted: true
+        - item: ribbon
+          quantity: 1
+          require_crafted: true
+      coin_cost: 200
+      craft_time: 30
+
+  # Tier 3
+  - id: sparkles
+    type: craftable
+    tier: 3
+    recipe:
+      ingredients:
+        - item: needles
+          quantity: 2
+          require_crafted: true
+        - item: ribbon
+          quantity: 2
+          require_crafted: true
+      coin_cost: 300
+      craft_time: 60
+
+  - id: silver
+    type: craftable
+    tier: 3
+    recipe:
+      ingredients:
+        - item: bronze
+          quantity: 3
+          require_crafted: true
+        - item: sparkles
+          quantity: 1
+          require_crafted: true
+      coin_cost: 300
+      craft_time: 120
+
+  # Tier 4
+  - id: gold
+    type: craftable
+    tier: 4
+    recipe:
+      ingredients:
+        - item: silver
+          quantity: 2
+          require_crafted: true
+        - item: sparkles
+          quantity: 2
+          require_crafted: true
+      coin_cost: 500
+      craft_time: 360
+
+  - id: pendant
+    type: craftable
+    tier: 4
+    recipe:
+      ingredients:
+        - item: amethyst
+          quantity: 7
+          require_crafted: true
+        - item: silver
+          quantity: 2
+          require_crafted: true
+      coin_cost: 500
+      craft_time: 180
+
+  - id: water
+    type: craftable
+    tier: 4
+    recipe:
+      ingredients:
+        - item: orb
+          quantity: 2
+          require_crafted: true
+        - item: silver
+          quantity: 1
+          require_crafted: true
+      coin_cost: 800
+      craft_time: 360
+
+  # Tier 5
+  - id: necklace
+    type: craftable
+    tier: 5
+    recipe:
+      ingredients:
+        - item: pendant
+          quantity: 3
+          require_crafted: true
+        - item: gold
+          quantity: 2
+          require_crafted: true
+      coin_cost: 800
+      craft_time: 760
+
+  - id: fire
+    type: craftable
+    tier: 5
+    recipe:
+      ingredients:
+        - item: orb
+          quantity: 6
+          require_crafted: true
+        - item: gold
+          quantity: 1
+          require_crafted: true
+      coin_cost: 1000
+      craft_time: 720
+
+  # Tier 6
+  - id: waterstone
+    type: craftable
+    tier: 6
+    recipe:
+      ingredients:
+        - item: water
+          quantity: 2
+          require_crafted: true
+        - item: ribbon
+          quantity: 10
+          require_crafted: true
+      coin_cost: 1500
+      craft_time: 720
+
+  - id: firestone
+    type: craftable
+    tier: 6
+    recipe:
+      ingredients:
+        - item: fire
+          quantity: 1
+          require_crafted: true
+        - item: sparkles
+          quantity: 2
+          require_crafted: true
+      coin_cost: 1500
+      craft_time: 720
+
+  # Tier 7
+  - id: elementstone
+    type: craftable
+    tier: 7
+    recipe:
+      ingredients:
+        - item: waterstone
+          quantity: 1
+          require_crafted: true
+        - item: firestone
+          quantity: 1
+          require_crafted: true
+      coin_cost: 5000
+      craft_time: 1440
+
+  # Tier 8
+  - id: artifact
+    type: craftable
+    tier: 8
+    recipe:
+      ingredients:
+        - item: necklace
+          quantity: 1
+          require_crafted: true
+        - item: elementstone
+          quantity: 1
+          require_crafted: true
+      coin_cost: 10000
+      craft_time: 4320
