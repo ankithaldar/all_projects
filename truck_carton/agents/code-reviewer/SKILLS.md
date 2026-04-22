@@ -111,3 +111,17 @@ Returns issues by severity with a PASS/FAIL verdict.
   state mutations during reruns can cause race-like
   behavior. Use explicit episode IDs and guard all
   reads with key-existence checks.
+- **Heuristic agent encapsulation**: Baseline agents
+  must use public @property accessors (action_manager,
+  current_carton, carton_lookup, active_truck_idx,
+  warehouse_cartons, truck_cargo) instead of env._*
+  private attributes. Add new @property to env when
+  needed rather than violating encapsulation.
+- **None carton guard**: When scoring packing
+  candidates, always check that current_carton is not
+  None before accessing its fields. The invariant
+  (candidates imply carton) is implicit and fragile.
+- **Test env mocking**: Dont use bare DummyEnv objects
+  without required attributes. Use a real env instance
+  with reset() called, or properly mock all accessed
+  properties.
