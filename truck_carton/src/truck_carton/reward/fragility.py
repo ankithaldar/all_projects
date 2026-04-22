@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class FragilityReward:
+    """Non-fragile-above-fragile violation rate."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

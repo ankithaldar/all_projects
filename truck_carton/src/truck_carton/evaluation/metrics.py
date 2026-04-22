@@ -16,6 +16,8 @@ from truck_carton.packing.space3d import Space3D
 
 @dataclass
 class EpisodeMetrics:
+    """All evaluation metrics for one episode."""
+
     volumetric_utilization_per_truck: list[float]
     fleet_volumetric_utilization: float
     weight_utilization_per_truck: list[float]

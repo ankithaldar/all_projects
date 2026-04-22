@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 
 class UtilizationReward:
+    """Average volumetric and weight fill ratio."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

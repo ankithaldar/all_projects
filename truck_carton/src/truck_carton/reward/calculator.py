@@ -15,6 +15,8 @@ from truck_carton.packing.space3d import Space3D
 
 @dataclass
 class EnvironmentState:
+    """Snapshot passed to each reward component."""
+
     trucks: list[Truck]
     spaces: list[Space3D]
     placed_cartons: dict[int, PlacementInfo]

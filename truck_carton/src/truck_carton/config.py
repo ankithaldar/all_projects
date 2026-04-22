@@ -51,6 +51,8 @@ class CurriculumConfig:
 
 @dataclass(frozen=True)
 class EnvironmentConfig:
+    """Max bounds for observation space dims."""
+
     max_trucks: int = 5
     max_stores: int = 4
     max_cartons: int = 40
@@ -65,6 +67,8 @@ class EnvironmentConfig:
 
 @dataclass(frozen=True)
 class TrainingConfig:
+    """MaskablePPO hyperparameters."""
+
     total_timesteps: int = 2_000_000
     learning_rate: float = 3e-4
     n_steps: int = 2048
@@ -83,6 +87,8 @@ class TrainingConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
+    """Top-level configuration container."""
+
     truck: TruckConfig = field(default_factory=TruckConfig)
     carton: CartonConfig = field(default_factory=CartonConfig)
     rewards: RewardWeights = field(default_factory=RewardWeights)
