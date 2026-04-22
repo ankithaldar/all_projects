@@ -15,6 +15,10 @@ from truck_carton.curriculum.manager import (
 from truck_carton.env.packing_env import (
   TruckCartonPackingEnv,
 )
+from truck_carton.logging_config import (
+  get_logger,
+  setup_logging,
+)
 from truck_carton.training.callbacks import (
   CurriculumCallback,
   MetricsCallback,
@@ -35,6 +39,15 @@ class Trainer:
     self._output_dir.mkdir(
       parents=True, exist_ok=True
     )
+
+    log_dir = self._output_dir / 'logs'
+    setup_logging(
+      log_file=str(log_dir / 'training.log'),
+      json_log_file=str(
+        log_dir / 'training.jsonl'
+      ),
+    )
+    self._log = get_logger('training')
 
   def train(self) -> MaskablePPO:
     env = self._make_env()
@@ -86,6 +99,13 @@ class Trainer:
       ),
     ]
 
+    self._log.info(
+      'Starting training: %d timesteps, lr=%s,'
+      ' seed=%d',
+      tc.total_timesteps, tc.learning_rate,
+      tc.seed,
+    )
+
     model.learn(
       total_timesteps=tc.total_timesteps,
       callback=callbacks,
@@ -95,6 +115,7 @@ class Trainer:
       self._output_dir / 'models' / 'final_model'
     )
     model.save(str(final_path))
+    self._log.info('Model saved to %s', final_path)
     return model
 
   def _make_env(self) -> Monitor:
