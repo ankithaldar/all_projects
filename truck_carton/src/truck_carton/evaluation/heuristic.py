@@ -7,24 +7,30 @@ without any learning.
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from truck_carton.domain.models import CellType
 
-
-class ActionProvider(Protocol):
-  """Minimal interface needed from the environment
-  to select heuristic actions."""
-
-  def action_masks(self) -> np.ndarray: ...
+if TYPE_CHECKING:
+  from truck_carton.domain.models import Carton
+  from truck_carton.env.action import (
+    ActionManager,
+    RoutingCandidate,
+  )
+  from truck_carton.env.packing_env import (
+    TruckCartonPackingEnv,
+  )
+  from truck_carton.packing.placement import (
+    PlacementCandidate,
+  )
 
 
 class HeuristicAgent:
   """Rule-based agent using domain heuristics.
 
-  Packing strategy:
+  Packing strategy (higher score = better):
     1. Prefer lowest z (bottom-up stacking)
     2. Prefer corner/wall positions for stability
     3. Prefer positions that group same-store cartons
@@ -45,19 +51,15 @@ class HeuristicAgent:
 
   def predict(
     self,
-    env: object,
+    env: TruckCartonPackingEnv,
     masks: np.ndarray,
   ) -> int:
-    """Select an action using heuristic rules.
-
-    Inspects the environment's internal candidate
-    lists to apply domain-aware scoring.
-    """
+    """Select an action using heuristic rules."""
     valid = np.where(masks)[0]
     if len(valid) == 0:
       return 0
 
-    am = env._action_manager
+    am = env.action_manager
     packing_valid = [
       a for a in valid if a < self._max_candidates
     ]
@@ -78,14 +80,17 @@ class HeuristicAgent:
   def _select_packing(
     self,
     valid_actions: list[int],
-    am: object,
-    env: object,
+    am: ActionManager,
+    env: TruckCartonPackingEnv,
   ) -> int:
     """Score each packing candidate and pick best."""
-    carton = env._current_carton
-    placed = env._placed
-    carton_lookup = env._carton_lookup
-    truck_idx = env._active_truck_idx
+    carton = env.current_carton
+    if carton is None:
+      return valid_actions[0]
+
+    placed = env.placed_cartons
+    carton_lookup = env.carton_lookup
+    truck_idx = env.active_truck_idx
 
     best_score = -float('inf')
     best_action = valid_actions[0]
@@ -106,17 +111,20 @@ class HeuristicAgent:
 
   def _score_candidate(
     self,
-    cand: object,
-    carton: object,
-    placed: dict,
-    carton_lookup: dict,
+    cand: PlacementCandidate,
+    carton: Carton,
+    placed: dict[int, object],
+    carton_lookup: dict[int, Carton],
     truck_idx: int,
-    env: object,
+    env: TruckCartonPackingEnv,
   ) -> float:
     """Multi-criteria scoring for a placement."""
     x, y, z = cand.x, cand.y, cand.z
     dl, dw, dh = cand.oriented_dims
-    truck = env._episode.trucks[cand.truck_id]
+    ep = env.episode_data
+    if ep is None or cand.truck_id >= len(ep.trucks):
+      return 0.0
+    truck = ep.trucks[cand.truck_id]
     score = 0.0
 
     # 1. Bottom-up: prefer lowest z
@@ -182,14 +190,14 @@ class HeuristicAgent:
   def _select_routing(
     self,
     valid_actions: list[int],
-    am: object,
-    env: object,
+    am: ActionManager,
+    env: TruckCartonPackingEnv,
   ) -> int:
     """Pick best routing destination."""
-    truck_idx = env._active_truck_idx
-    cargo = env._truck_cargo[truck_idx]
-    carton_lookup = env._carton_lookup
-    wh_cartons = env._warehouse_cartons
+    truck_idx = env.active_truck_idx
+    cargo = env.truck_cargo[truck_idx]
+    carton_lookup = env.carton_lookup
+    wh_cartons = env.warehouse_cartons
 
     best_score = -float('inf')
     best_action = valid_actions[0]
@@ -211,10 +219,10 @@ class HeuristicAgent:
 
   def _score_routing(
     self,
-    rc: object,
-    cargo: set,
-    carton_lookup: dict,
-    wh_cartons: dict,
+    rc: RoutingCandidate,
+    cargo: set[int],
+    carton_lookup: dict[int, Carton],
+    wh_cartons: dict[int, list[int]],
   ) -> float:
     """Score a routing candidate."""
     score = 0.0
@@ -225,8 +233,6 @@ class HeuristicAgent:
       remaining = len(
         wh_cartons.get(wh_id, [])
       )
-      # Prefer warehouses with more cartons,
-      # penalize distance
       score = remaining * 10.0 / dist
 
     elif rc.location_type == CellType.STORE:
@@ -236,8 +242,6 @@ class HeuristicAgent:
         and carton_lookup[cid]
         .destination_store_id == rc.location_id
       )
-      # Prefer stores where we can deliver
-      # the most cartons, penalize distance
       score = matching * 15.0 / dist
 
     elif rc.location_type == CellType.DEPOT:
@@ -257,7 +261,7 @@ class RandomAgent:
 
   def predict(
     self,
-    env: object,
+    env: TruckCartonPackingEnv,
     masks: np.ndarray,
   ) -> int:
     valid = np.where(masks)[0]

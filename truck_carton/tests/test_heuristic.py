@@ -244,12 +244,12 @@ def test_random_agent_deterministic():
 def test_heuristic_predict_with_no_valid_actions():
   """Heuristic returns 0 when no actions are valid."""
   config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  env.reset(seed=42)
   agent = HeuristicAgent(config)
+
   masks = np.zeros(600, dtype=np.bool_)
-
-  class DummyEnv:
-    pass
-
-  dummy = DummyEnv()
-  action = agent.predict(dummy, masks)
+  action = agent.predict(env, masks)
   assert action == 0
