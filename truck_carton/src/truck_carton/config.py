@@ -6,7 +6,9 @@ class TruckConfig:
   length_range: tuple[int, int] = (8, 16)
   width_range: tuple[int, int] = (4, 8)
   height_range: tuple[int, int] = (4, 8)
-  weight_capacity_range: tuple[float, float] = (500.0, 2000.0)
+  weight_capacity_range: tuple[float, float] = (
+    500.0, 2000.0
+  )
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,14 @@ class CartonConfig:
 
 
 @dataclass(frozen=True)
+class GridConfig:
+  """Procedural grid generation parameters."""
+
+  min_facility_spacing: int = 2
+  road_extra_edges: int = 2
+
+
+@dataclass(frozen=True)
 class RewardWeights:
   alpha_utilization: float = 1.0
   beta_displacement: float = -2.0
@@ -28,6 +38,7 @@ class RewardWeights:
   zeta_weight: float = -3.0
   eta_completion: float = 10.0
   theta_priority: float = 1.0
+  iota_travel_distance: float = -1.0
 
 
 @dataclass(frozen=True)
@@ -36,6 +47,9 @@ class CurriculumStage:
   num_trucks: int
   num_stores: int
   num_cartons: int
+  num_warehouses: int
+  grid_rows: int
+  grid_cols: int
   promotion_threshold: float
   promotion_window: int
 
@@ -43,9 +57,15 @@ class CurriculumStage:
 @dataclass(frozen=True)
 class CurriculumConfig:
   stages: tuple[CurriculumStage, ...] = (
-    CurriculumStage('toy', 2, 2, 10, 0.7, 100),
-    CurriculumStage('small', 3, 3, 20, 0.7, 100),
-    CurriculumStage('medium', 5, 4, 40, 0.7, 100),
+    CurriculumStage(
+      'toy', 2, 2, 10, 1, 5, 5, 0.7, 100
+    ),
+    CurriculumStage(
+      'small', 3, 3, 20, 2, 7, 7, 0.7, 100
+    ),
+    CurriculumStage(
+      'medium', 5, 4, 40, 3, 10, 10, 0.7, 100
+    ),
   )
 
 
@@ -63,6 +83,11 @@ class EnvironmentConfig:
   max_carton_weight: float = 50.0
   max_candidates: int = 500
   candidate_feature_dim: int = 18
+  max_grid_rows: int = 10
+  max_grid_cols: int = 10
+  max_warehouses: int = 4
+  max_routing_actions: int = 100
+  routing_feature_dim: int = 8
 
 
 @dataclass(frozen=True)
@@ -89,9 +114,18 @@ class TrainingConfig:
 class AppConfig:
   """Top-level configuration container."""
 
-  truck: TruckConfig = field(default_factory=TruckConfig)
-  carton: CartonConfig = field(default_factory=CartonConfig)
-  rewards: RewardWeights = field(default_factory=RewardWeights)
+  truck: TruckConfig = field(
+    default_factory=TruckConfig
+  )
+  carton: CartonConfig = field(
+    default_factory=CartonConfig
+  )
+  grid: GridConfig = field(
+    default_factory=GridConfig
+  )
+  rewards: RewardWeights = field(
+    default_factory=RewardWeights
+  )
   curriculum: CurriculumConfig = field(
     default_factory=CurriculumConfig
   )

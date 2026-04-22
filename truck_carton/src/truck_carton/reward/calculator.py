@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from truck_carton.config import RewardWeights
@@ -28,6 +28,11 @@ class EnvironmentState:
   step_placement: PlacementInfo | None
   is_terminal: bool
   total_cartons: int
+  total_travel_distance: float = 0.0
+  max_possible_distance: float = 1.0
+  delivered_cartons: set[int] = field(
+    default_factory=set
+  )
 
 
 class RewardComponent(Protocol):
@@ -58,6 +63,9 @@ class RewardCalculator:
     )
     from truck_carton.reward.support import (
       SupportReward,
+    )
+    from truck_carton.reward.travel_distance import (
+      TravelDistanceReward,
     )
     from truck_carton.reward.utilization import (
       UtilizationReward,
@@ -108,6 +116,11 @@ class RewardCalculator:
         'priority',
         weights.theta_priority,
         PriorityReward(),
+      ),
+      (
+        'travel_distance',
+        weights.iota_travel_distance,
+        TravelDistanceReward(),
       ),
     ]
 

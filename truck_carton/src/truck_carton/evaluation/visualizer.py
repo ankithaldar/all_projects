@@ -13,8 +13,10 @@ if TYPE_CHECKING:
   from truck_carton.domain.models import (
     Carton,
     EpisodeData,
+    GridWorld,
     PlacementInfo,
     Truck,
+    Warehouse,
   )
   from truck_carton.packing.space3d import Space3D
 
@@ -185,3 +187,83 @@ class PackingVisualizer:
       linewidth=0.3,
     )
     ax.add_collection3d(collection)
+
+  def render_grid(
+    self,
+    grid_world: GridWorld,
+    warehouses: list[Warehouse],
+    stores: list,
+    trucks: list[Truck],
+    title: str | None = None,
+  ) -> plt.Figure:
+    """Render the 2D grid with facilities and
+    truck positions."""
+    from truck_carton.domain.models import CellType
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    grid = grid_world.grid.astype(float)
+    cmap = plt.cm.Pastel1
+    ax.imshow(
+      grid, cmap=cmap, origin='upper',
+      vmin=0, vmax=4,
+    )
+
+    dp = grid_world.depot_position
+    ax.plot(
+      dp[1], dp[0], 's',
+      color='black', markersize=14,
+      label='Depot',
+    )
+    ax.annotate(
+      'D', (dp[1], dp[0]),
+      ha='center', va='center',
+      color='white', fontweight='bold',
+    )
+
+    for wh in warehouses:
+      r, c = wh.position
+      ax.plot(
+        c, r, '^',
+        color='blue', markersize=12,
+      )
+      ax.annotate(
+        f'W{wh.warehouse_id}', (c, r - 0.4),
+        ha='center', fontsize=8,
+      )
+
+    for store in stores:
+      r, c = store.position
+      ax.plot(
+        c, r, 'o',
+        color='green', markersize=12,
+      )
+      ax.annotate(
+        f'S{store.store_id}', (c, r - 0.4),
+        ha='center', fontsize=8,
+      )
+
+    colors = ['red', 'orange', 'purple',
+              'cyan', 'magenta']
+    for i, truck in enumerate(trucks):
+      r, c = truck.position
+      color = colors[i % len(colors)]
+      ax.plot(
+        c, r, 'D',
+        color=color, markersize=10,
+        label=f'Truck {truck.truck_id}',
+      )
+
+    ax.set_xlim(-0.5, grid_world.cols - 0.5)
+    ax.set_ylim(
+      grid_world.rows - 0.5, -0.5
+    )
+    ax.set_title(
+      title or 'Grid World Layout'
+    )
+    ax.legend(
+      loc='upper right', fontsize=8
+    )
+    ax.grid(True, alpha=0.3)
+
+    return fig
