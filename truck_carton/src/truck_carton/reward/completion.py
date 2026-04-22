@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 
 class CompletionReward:
+    """Placement progress ratio, 1.0 when all placed."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

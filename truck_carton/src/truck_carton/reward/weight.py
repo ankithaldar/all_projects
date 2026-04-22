@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 
 class WeightReward:
+    """Excess weight ratio, capped at 1.0."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:

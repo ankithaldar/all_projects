@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class GroupingReward:
+    """Bounding-box tightness of same-store groups."""
+
     def compute(
         self, state: EnvironmentState
     ) -> float:
