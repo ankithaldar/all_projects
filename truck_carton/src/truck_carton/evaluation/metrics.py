@@ -32,6 +32,9 @@ class EpisodeMetrics:
   num_total: int
   completion_rate: float
   curriculum_stage: int
+  total_travel_distance: float = 0.0
+  avg_travel_per_truck: float = 0.0
+  delivery_completion_rate: float = 0.0
 
 
 class MetricsCollector:

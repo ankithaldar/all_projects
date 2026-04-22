@@ -7,6 +7,8 @@ from truck_carton.domain.models import (
   EpisodeData,
   Store,
   Truck,
+  TruckState,
+  Warehouse,
 )
 from truck_carton.packing.space3d import Space3D
 
@@ -26,6 +28,7 @@ def small_truck() -> Truck:
   return Truck(
     truck_id=0, length=8, width=4,
     height=4, max_weight=500.0, route=[0, 1],
+    position=(2, 2), state=TruckState.ROUTING,
   )
 
 
@@ -44,6 +47,7 @@ def sample_carton() -> Carton:
     carton_id=1, length=2, width=2, height=2,
     weight=10.0, is_fragile=False, priority=2,
     destination_store_id=0,
+    origin_warehouse_id=0,
   )
 
 
@@ -53,14 +57,21 @@ def fragile_carton() -> Carton:
     carton_id=2, length=2, width=2, height=1,
     weight=5.0, is_fragile=True, priority=3,
     destination_store_id=1,
+    origin_warehouse_id=0,
   )
 
 
 @pytest.fixture
 def stores() -> list[Store]:
   return [
-    Store(store_id=0, route_position=0),
-    Store(store_id=1, route_position=1),
+    Store(
+      store_id=0, route_position=0,
+      position=(0, 4),
+    ),
+    Store(
+      store_id=1, route_position=1,
+      position=(4, 4),
+    ),
   ]
 
 
@@ -74,6 +85,7 @@ def sample_episode(
   truck2 = Truck(
     truck_id=1, length=6, width=4,
     height=4, max_weight=400.0, route=[0],
+    position=(2, 2), state=TruckState.ROUTING,
   )
   cartons = [
     sample_carton,
@@ -82,15 +94,22 @@ def sample_episode(
       carton_id=3, length=1, width=1,
       height=1, weight=3.0, is_fragile=False,
       priority=1, destination_store_id=0,
+      origin_warehouse_id=0,
     ),
     Carton(
       carton_id=4, length=2, width=1,
       height=1, weight=8.0, is_fragile=False,
       priority=3, destination_store_id=1,
+      origin_warehouse_id=0,
     ),
   ]
   return EpisodeData(
     trucks=[small_truck, truck2],
     stores=stores,
     cartons=cartons,
+    warehouses=[
+      Warehouse(
+        warehouse_id=0, position=(2, 0)
+      ),
+    ],
   )

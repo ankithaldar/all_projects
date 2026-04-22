@@ -15,7 +15,7 @@ def test_mask_shape():
   am = ActionManager(cfg)
   mask_provider = ActionMaskProvider(am)
   mask = mask_provider.get_mask()
-  assert mask.shape == (cfg.max_candidates,)
+  assert mask.shape == (am.total_action_size,)
   assert not mask.any()
 
 
@@ -79,8 +79,10 @@ def test_decode_valid_action():
     [0.0], [validator],
   )
 
-  candidate = am.decode_action(0)
-  assert candidate is not None
+  decoded = am.decode_action(0)
+  assert decoded is not None
+  action_type, candidate = decoded
+  assert action_type == 'packing'
   assert candidate.truck_id == 0
 
 
@@ -89,3 +91,43 @@ def test_decode_invalid_action():
   am = ActionManager(cfg)
   assert am.decode_action(0) is None
   assert am.decode_action(999) is None
+
+
+def test_routing_mask():
+  """Routing candidates should appear after
+  the packing offset in the action mask."""
+  from truck_carton.domain.models import (
+    GridWorld,
+    Store,
+    Truck,
+    TruckState,
+    Warehouse,
+  )
+
+  cfg = EnvironmentConfig()
+  am = ActionManager(cfg)
+
+  gw = GridWorld(
+    rows=5, cols=5,
+    grid=np.zeros((5, 5), dtype=np.int8),
+    depot_position=(2, 2),
+    distance_matrix=np.array([
+      [0.0, 3.0], [3.0, 0.0]
+    ]),
+    facility_positions=[(2, 2), (0, 0)],
+  )
+  truck = Truck(
+    0, 8, 4, 4, 500.0, [],
+    position=(2, 2),
+    state=TruckState.ROUTING,
+  )
+  wh = Warehouse(0, (0, 0))
+  am.compute_routing_candidates(
+    truck, 0, [wh], [],
+    gw, {0: [1, 2]}, set(), {},
+  )
+
+  mask = am.get_action_mask()
+  assert not mask[:cfg.max_candidates].any()
+  routing_mask = mask[cfg.max_candidates:]
+  assert routing_mask.any()

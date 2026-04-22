@@ -55,3 +55,24 @@
 - EnvironmentConfig should include max_weight_capacity
   and max_carton_weight so the observation builder can
   normalize without accessing TruckConfig/CartonConfig.
+
+### Grid World Integration
+
+- The grid is procedurally generated per episode via
+  DataGenerator._generate_grid_world(). Uses MST on
+  facility positions for guaranteed connectivity, plus
+  random extra edges for redundancy.
+- L-shaped road segments (inspired by the reference
+  supply-chain environment's build_railroad) connect
+  facilities with random bend points.
+- networkx computes all-pairs shortest paths at episode
+  start. Paths are cached in GridWorld.path_cache.
+- Trucks use a state machine: ROUTING (pick destination)
+  -> LOADING (pack at warehouse) -> ROUTING -> ... ->
+  AT_DEPOT (finished).
+- The unified Discrete(600) action space keeps packing
+  (0..499) and routing (500..599) mutually exclusive
+  via the action mask.
+- When a truck arrives at a store, cargo matching that
+  store is auto-unloaded (no explicit unloading action
+  needed).
