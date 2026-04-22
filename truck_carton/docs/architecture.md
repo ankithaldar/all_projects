@@ -254,6 +254,44 @@ Episode ends when:
   - Max steps exceeded
 ```
 
+## Heuristic Baseline
+
+`evaluation/heuristic.py` provides deterministic
+rule-based agents for comparison with trained models.
+
+### HeuristicAgent
+
+**Packing strategy** (multi-criteria scoring):
+1. Bottom-up stacking (prefer lowest z: -10*z)
+2. Corner/wall placement (+4/+8 bonus)
+3. Same-store grouping (adjacency bonus up to +15)
+4. Fragile cartons high (+5*z for fragile)
+5. Priority accessibility (high-priority near door)
+6. Compact packing (minimize x-extent)
+
+**Routing strategy**:
+1. Visit warehouses with most cartons (reward/dist)
+2. Deliver to stores with most matching cargo
+3. Return to depot only when cargo is empty
+
+### RandomAgent
+
+Uniform random selection from valid actions. Serves
+as the lower-bound baseline.
+
+### Usage
+
+```bash
+# Heuristic baseline
+python scripts/evaluate.py --agent heuristic
+
+# Random baseline
+python scripts/evaluate.py --agent random
+
+# Trained model
+python scripts/evaluate.py --model output/models/best_model
+```
+
 ## Algorithm Choice: MaskablePPO
 
 - **Action masking** prevents illegal placements
