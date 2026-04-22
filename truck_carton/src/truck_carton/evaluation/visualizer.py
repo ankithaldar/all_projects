@@ -289,13 +289,17 @@ class GridRenderer:
     2: 'AT_DEPOT',
   }
 
+  MAX_FRAMES = 2000
+
   def __init__(
     self,
     cell_w: int = 24,
     cell_h: int = 18,
+    max_frames: int | None = None,
   ) -> None:
     self._cell_w = cell_w
     self._cell_h = cell_h
+    self._max_frames = max_frames or self.MAX_FRAMES
     self._frames: list = []
 
   def render(self, snapshot: dict) -> 'Image':
@@ -549,6 +553,8 @@ class GridRenderer:
   def capture_frame(
     self, snapshot: dict
   ) -> None:
+    if len(self._frames) >= self._max_frames:
+      self._frames.pop(0)
     self._frames.append(self.render(snapshot))
 
   def clear_frames(self) -> None:
