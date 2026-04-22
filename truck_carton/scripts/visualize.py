@@ -12,6 +12,7 @@ from truck_carton.env.packing_env import (
   TruckCartonPackingEnv,
 )
 from truck_carton.evaluation.visualizer import (
+  GridRenderer,
   PackingVisualizer,
 )
 
@@ -22,7 +23,7 @@ def main() -> None:
   )
   parser.add_argument(
     '--model', type=str, default=None,
-    help='Path to saved model (random if omitted)',
+    help='Path to saved model',
   )
   parser.add_argument(
     '--stage', type=int, default=0,
@@ -31,6 +32,15 @@ def main() -> None:
   parser.add_argument(
     '--seed', type=int, default=42,
     help='Random seed',
+  )
+  parser.add_argument(
+    '--gif', type=str, default=None,
+    help='Save animation as GIF to this path',
+  )
+  parser.add_argument(
+    '--mode', type=str, default='grid',
+    choices=['grid', 'packing', 'both'],
+    help='Visualization mode',
   )
   args = parser.parse_args()
 
@@ -43,9 +53,15 @@ def main() -> None:
   if args.model:
     model = MaskablePPO.load(args.model)
 
+  renderer = GridRenderer()
   obs, info = env.reset(seed=args.seed)
-  done = False
 
+  # Capture initial frame
+  renderer.capture_frame(
+    env.get_render_snapshot()
+  )
+
+  done = False
   while not done:
     masks = env.action_masks()
     if not masks.any():
@@ -68,16 +84,33 @@ def main() -> None:
     )
     done = terminated or truncated
 
+    renderer.capture_frame(
+      env.get_render_snapshot()
+    )
+
+  delivered = len(env._delivered)
+  total = len(env._episode.cartons)
   print(
-    f'Placed {len(env._placed)}'
-    f'/{len(env._episode.cartons)} cartons'
+    f'Delivered {delivered}/{total} cartons'
+    f' in {env._step_count} steps'
   )
 
-  viz = PackingVisualizer()
-  viz.render_all_trucks(
-    env._episode, env._spaces, env._placed
-  )
-  plt.show()
+  if args.gif:
+    renderer.save_gif(args.gif)
+    print(f'Saved animation to {args.gif}')
+
+  if args.mode in ('grid', 'both'):
+    final = renderer.render(
+      env.get_render_snapshot()
+    )
+    final.show()
+
+  if args.mode in ('packing', 'both'):
+    viz = PackingVisualizer()
+    viz.render_all_trucks(
+      env._episode, env._spaces, env._placed
+    )
+    plt.show()
 
 
 if __name__ == '__main__':

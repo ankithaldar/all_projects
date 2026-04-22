@@ -76,3 +76,18 @@
 - When a truck arrives at a store, cargo matching that
   store is auto-unloaded (no explicit unloading action
   needed).
+
+### PIL-Based Grid Rendering
+
+- GridRenderer uses PIL/Pillow for composite images
+  with ASCII grid, Unicode road sprites, facility
+  labels, truck markers, and a status dashboard.
+- Road sprites use 4-neighbor connectivity checks to
+  select from Unicode box-drawing characters:
+  ─ │ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼
+- The env provides snapshots via get_render_snapshot()
+  returning a dict decoupled from the env object.
+- capture_frame() + save_gif() enables animated GIF
+  export of full episodes.
+- play_animation() uses matplotlib.animation for
+  Jupyter HTML5 video playback.

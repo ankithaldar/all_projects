@@ -188,6 +188,8 @@ class PackingVisualizer:
     )
     ax.add_collection3d(collection)
 
+  # Keep the simple matplotlib grid renderer
+  # for backward compatibility.
   def render_grid(
     self,
     grid_world: GridWorld,
@@ -267,3 +269,336 @@ class PackingVisualizer:
     ax.grid(True, alpha=0.3)
 
     return fig
+
+
+class GridRenderer:
+  """PIL-based rendering engine with ASCII grid,
+  Unicode road sprites, status dashboard, and
+  frame animation support."""
+
+  BG_COLOR = '#263238'
+  ROAD_COLOR = '#80A7FB'
+  FACILITY_COLOR = '#C3E88D'
+  TRUCK_COLOR = '#FFCB6B'
+  STATUS_COLOR = '#BBBBBB'
+  ALERT_COLOR = '#FF5370'
+
+  _TRUCK_STATE_NAMES = {
+    0: 'ROUTING',
+    1: 'LOADING',
+    2: 'AT_DEPOT',
+  }
+
+  def __init__(
+    self,
+    cell_w: int = 24,
+    cell_h: int = 18,
+  ) -> None:
+    self._cell_w = cell_w
+    self._cell_h = cell_h
+    self._frames: list = []
+
+  def render(self, snapshot: dict) -> 'Image':
+    """Render one frame from an env snapshot."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    gw = snapshot['grid_world']
+    rows, cols = gw.rows, gw.cols
+
+    map_w = cols * self._cell_w
+    map_h = rows * self._cell_h
+    status_h = 220
+    margin = 20
+    img_w = map_w + 2 * margin
+    img_h = map_h + status_h + 2 * margin
+
+    img = Image.new(
+      'RGB', (img_w, img_h), self.BG_COLOR
+    )
+    draw = ImageDraw.Draw(img)
+
+    try:
+      font = ImageFont.truetype(
+        'arial', 13
+      )
+      small = ImageFont.truetype(
+        'arial', 10
+      )
+    except OSError:
+      font = ImageFont.load_default()
+      small = font
+
+    # Layer 1: roads
+    grid = gw.grid
+    for r in range(rows):
+      for c in range(cols):
+        x = margin + c * self._cell_w
+        y = margin + r * self._cell_h
+        cell = int(grid[r, c])
+
+        if cell == 0:  # TERRAIN
+          continue
+        if cell == 1:  # ROAD
+          sprite = self._road_sprite(
+            r, c, grid
+          )
+          draw.text(
+            (x + 4, y), sprite,
+            fill=self.ROAD_COLOR, font=font,
+          )
+
+    # Layer 2: facilities
+    warehouses = snapshot.get('warehouses', [])
+    stores = snapshot.get('stores', [])
+    depot = gw.depot_position
+
+    dr, dc = depot
+    dx = margin + dc * self._cell_w
+    dy = margin + dr * self._cell_h
+    draw.rectangle(
+      [dx, dy, dx + self._cell_w - 1,
+       dy + self._cell_h - 1],
+      fill='#455A64',
+    )
+    draw.text(
+      (dx + 4, dy), 'D',
+      fill=self.FACILITY_COLOR, font=font,
+    )
+
+    for wh in warehouses:
+      wr, wc = wh.position
+      wx = margin + wc * self._cell_w
+      wy = margin + wr * self._cell_h
+      draw.rectangle(
+        [wx, wy, wx + self._cell_w - 1,
+         wy + self._cell_h - 1],
+        fill='#1A237E',
+      )
+      draw.text(
+        (wx + 2, wy),
+        f'W{wh.warehouse_id}',
+        fill=self.FACILITY_COLOR, font=font,
+      )
+
+    for st in stores:
+      sr, sc = st.position
+      sx = margin + sc * self._cell_w
+      sy = margin + sr * self._cell_h
+      draw.rectangle(
+        [sx, sy, sx + self._cell_w - 1,
+         sy + self._cell_h - 1],
+        fill='#1B5E20',
+      )
+      draw.text(
+        (sx + 2, sy),
+        f'S{st.store_id}',
+        fill=self.FACILITY_COLOR, font=font,
+      )
+
+    # Layer 3: trucks
+    truck_colors = [
+      '#FFCB6B', '#FF5370', '#C792EA',
+      '#89DDFF', '#F78C6C',
+    ]
+    trucks = snapshot.get('trucks', [])
+    for i, truck in enumerate(trucks):
+      tr, tc = truck.position
+      tx = margin + tc * self._cell_w
+      ty = margin + tr * self._cell_h
+      color = truck_colors[
+        i % len(truck_colors)
+      ]
+      draw.text(
+        (tx + 8, ty), '*',
+        fill=color, font=font,
+      )
+
+    # Layer 4: status panel
+    panel_y = margin + map_h + 10
+    self._draw_status(
+      draw, snapshot, margin, panel_y,
+      img_w, font, small,
+    )
+
+    return img
+
+  def _road_sprite(
+    self, r: int, c: int, grid: np.ndarray
+  ) -> str:
+    rows, cols = grid.shape
+
+    def _traversable(nr: int, nc: int) -> bool:
+      if nr < 0 or nr >= rows:
+        return False
+      if nc < 0 or nc >= cols:
+        return False
+      return int(grid[nr, nc]) != 0
+
+    top = _traversable(r - 1, c)
+    bottom = _traversable(r + 1, c)
+    left = _traversable(r, c - 1)
+    right = _traversable(r, c + 1)
+
+    if (top or bottom) and not right and not left:
+      return '\u2502'  # │
+    if (right or left) and not top and not bottom:
+      return '\u2500'  # ─
+    if bottom and right and not top and not left:
+      return '\u250C'  # ┌
+    if bottom and left and not top and not right:
+      return '\u2510'  # ┐
+    if top and right and not bottom and not left:
+      return '\u2514'  # └
+    if top and left and not bottom and not right:
+      return '\u2518'  # ┘
+    if top and bottom and right and not left:
+      return '\u251C'  # ├
+    if top and bottom and left and not right:
+      return '\u2524'  # ┤
+    if bottom and right and left and not top:
+      return '\u252C'  # ┬
+    if top and right and left and not bottom:
+      return '\u2534'  # ┴
+    if top and bottom and right and left:
+      return '\u253C'  # ┼
+    return '\u00B7'  # · fallback
+
+  def _draw_status(
+    self,
+    draw: 'ImageDraw',
+    snapshot: dict,
+    x: int,
+    y: int,
+    img_w: int,
+    font: 'ImageFont',
+    small: 'ImageFont',
+  ) -> None:
+    trucks = snapshot.get('trucks', [])
+    cargo = snapshot.get('truck_cargo', [])
+    travel = snapshot.get('truck_travel', [])
+    wh_cartons = snapshot.get(
+      'warehouse_cartons', {}
+    )
+    delivered = snapshot.get('delivered', set())
+    total = snapshot.get('total_cartons', 0)
+    step = snapshot.get('step', 0)
+    reward = snapshot.get(
+      'cumulative_reward', 0.0
+    )
+
+    # Global status
+    lines = [
+      f'Step: {step}'
+      f'  Delivered: {len(delivered)}/{total}'
+      f'  Reward: {reward:.1f}',
+    ]
+
+    # Warehouse inventory
+    wh_parts = []
+    for wh_id, cids in sorted(
+      wh_cartons.items()
+    ):
+      wh_parts.append(
+        f'W{wh_id}:{len(cids)}'
+      )
+    if wh_parts:
+      lines.append(
+        'Warehouses: ' + '  '.join(wh_parts)
+      )
+
+    # Per-truck status
+    for i, truck in enumerate(trucks):
+      state_name = self._TRUCK_STATE_NAMES.get(
+        int(truck.state), '?'
+      )
+      n_cargo = (
+        len(cargo[i]) if i < len(cargo) else 0
+      )
+      dist = (
+        travel[i] if i < len(travel) else 0.0
+      )
+      bar = self._progress_bar(
+        len(delivered), total
+      )
+      lines.append(
+        f'T{truck.truck_id}: {state_name}'
+        f'  pos={truck.position}'
+        f'  cargo={n_cargo}'
+        f'  travel={dist:.0f}'
+      )
+
+    for i, line in enumerate(lines):
+      draw.text(
+        (x, y + i * 16), line,
+        fill=self.STATUS_COLOR, font=small,
+      )
+
+  @staticmethod
+  def _progress_bar(
+    done: int, total: int, width: int = 15
+  ) -> str:
+    if total == 0:
+      filled = 0
+    else:
+      filled = round(
+        min(done, total) / total * width
+      )
+    bar = '=' * filled + '-' * (width - filled)
+    return f'[{bar}] {done}/{total}'
+
+  def capture_frame(
+    self, snapshot: dict
+  ) -> None:
+    self._frames.append(self.render(snapshot))
+
+  def clear_frames(self) -> None:
+    self._frames = []
+
+  def save_gif(
+    self,
+    path: str,
+    duration: int = 300,
+  ) -> None:
+    if not self._frames:
+      return
+    self._frames[0].save(
+      path,
+      save_all=True,
+      append_images=self._frames[1:],
+      duration=duration,
+      loop=0,
+    )
+
+  def play_animation(self) -> None:
+    """Play frames as HTML5 video in Jupyter."""
+    from matplotlib import animation
+
+    if not self._frames:
+      return
+
+    frames_np = [
+      np.array(f) for f in self._frames
+    ]
+    dpi = 72.0
+    h, w = frames_np[0].shape[:2]
+    fig = plt.figure(
+      figsize=(w / dpi, h / dpi), dpi=dpi
+    )
+    im = plt.figimage(frames_np[0])
+
+    def _animate(i: int):
+      im.set_array(frames_np[i])
+      return (im,)
+
+    anim = animation.FuncAnimation(
+      fig, _animate,
+      frames=len(frames_np),
+      interval=300,
+      repeat=True,
+    )
+
+    try:
+      from IPython.display import HTML, display
+      display(HTML(anim.to_html5_video()))
+    except ImportError:
+      plt.show()
