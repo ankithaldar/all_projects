@@ -26,3 +26,18 @@ test results with pass/fail counts.
 3. **Constraint tests** — Gravity, fragility, weight
 4. **Reward tests** — Component isolation, weighted sum
 5. **Masking tests** — All masked actions are invalid
+
+## Regression Test Patterns (from audit history)
+
+- **Fragility stacking**: Test fragile-on-fragile
+  (allowed), non-fragile-on-fragile (rejected),
+  and validate_placement with/without all_cartons.
+- **Reward bounds**: Every reward component must return
+  a value in [0.0, 1.0] for all inputs.
+- **Cumulative reward**: Episode info['episode']['r']
+  must equal the sum of all step rewards.
+- **Carton skip prevention**: Stepping with an invalid
+  action must not advance the carton queue.
+- **Off-route cartons**: Displacement reward must not
+  count cartons destined for stores not on the truck's
+  route as blockers.

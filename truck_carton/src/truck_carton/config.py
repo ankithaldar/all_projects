@@ -57,6 +57,8 @@ class EnvironmentConfig:
     max_truck_length: int = 16
     max_truck_width: int = 8
     max_truck_height: int = 8
+    max_weight_capacity: float = 2000.0
+    max_carton_weight: float = 50.0
     max_candidates: int = 500
     candidate_feature_dim: int = 18
 

@@ -90,4 +90,6 @@ class PriorityReward:
 
         if not scores:
             return 0.0
-        return float(np.mean(scores))
+        return float(
+            np.clip(np.mean(scores), 0.0, 1.0)
+        )

@@ -19,8 +19,12 @@ class CompletionReward:
             len(state.placed_cartons)
             / state.total_cartons
         )
-        bonus = 1.0 if (
+        all_placed = (
             len(state.placed_cartons)
             == state.total_cartons
-        ) else 0.0
-        return fraction + bonus
+        )
+        # Scale so 100% placement yields 1.0, with
+        # a steeper curve rewarding near-completion.
+        if all_placed:
+            return 1.0
+        return fraction * 0.5

@@ -25,18 +25,22 @@ class DisplacementReward:
         total_displacement = 0
         total_stops = 0
 
-        for truck_idx, truck in enumerate(state.trucks):
+        for truck_idx, truck in enumerate(
+            state.trucks
+        ):
             if truck_idx >= len(state.spaces):
                 break
 
             truck_cids = [
                 cid
-                for cid, info in state.placed_cartons.items()
+                for cid, info
+                in state.placed_cartons.items()
                 if info.truck_id == truck_idx
             ]
             if not truck_cids:
                 continue
 
+            route_set = set(truck.route)
             route_stores = sorted(
                 truck.route,
                 key=lambda sid: store_positions.get(
@@ -44,6 +48,17 @@ class DisplacementReward:
                 ),
             )
             unloaded: set[int] = set()
+
+            # Mark cartons whose destination is not
+            # on this truck's route as pre-unloaded
+            # so they don't inflate displacement.
+            for cid in truck_cids:
+                dest = (
+                    carton_lookup[cid]
+                    .destination_store_id
+                )
+                if dest not in route_set:
+                    unloaded.add(cid)
 
             for store_id in route_stores:
                 store_cids = [
@@ -89,4 +104,4 @@ class DisplacementReward:
         max_possible = max(
             len(state.placed_cartons), 1
         )
-        return avg_disp / max_possible
+        return min(avg_disp / max_possible, 1.0)

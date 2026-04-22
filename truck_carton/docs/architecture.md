@@ -130,11 +130,15 @@ Eight independent components, each returning a scalar:
 | Utilization | +1.0   | Volume + weight fill ratio  |
 | Displacement| -2.0   | Cartons blocking unloading  |
 | Grouping    | +1.5   | Same-store bbox tightness   |
-| Fragility   | -5.0   | Non-fragile above fragile   |
-| Support     | -5.0   | Unsupported carton cells    |
-| Weight      | -3.0   | Excess weight ratio         |
-| Completion  | +10.0  | Fraction placed + bonus     |
-| Priority    | +1.0   | High-priority accessibility |
+| Fragility   | -5.0   | Violation rate [0,1]        |
+| Support     | -5.0   | Violation rate [0,1]        |
+| Weight      | -3.0   | Excess weight ratio [0,1]   |
+| Completion  | +10.0  | Progress ratio [0,1]        |
+| Priority    | +1.0   | Accessibility score [0,1]   |
+
+**Invariant**: Every component returns [0, 1]. Weights
+handle sign and magnitude. Displacement excludes cartons
+whose destination is not on the truck's route.
 
 ### 6. Curriculum Learning
 

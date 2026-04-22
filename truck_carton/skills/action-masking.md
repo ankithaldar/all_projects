@@ -44,3 +44,17 @@
   truncated
 - Future improvement: sample strategically (spread
   across trucks, prefer corners, prefer low-z)
+
+### Audit Learnings (Loop 1)
+
+- PlacementValidator._carton_lookup must be populated
+  before any fragility check. validate_placement()
+  originally missed this — fragility checks silently
+  passed because the lookup was empty.
+- _check_no_nonfragile_above originally rejected ANY
+  carton above a fragile one (np.all(above == 0)).
+  Fixed to allow fragile-above-fragile by checking
+  each carton's is_fragile flag individually.
+- The environment must not advance to the next carton
+  when placement fails (action decodes to None).
+  Otherwise cartons are silently skipped.

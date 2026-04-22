@@ -47,3 +47,20 @@
   exceeded (hard constraint)
 - This allows the agent to prioritize volume fill while
   respecting weight limits
+
+### Audit Learnings (Loop 1)
+
+- All reward components must return values in [0, 1].
+  The RewardCalculator weights handle sign/magnitude.
+- Completion reward originally returned up to 2.0
+  (fraction + bonus). Fixed to return fraction*0.5
+  normally, 1.0 on full completion.
+- Displacement must exclude cartons whose destination
+  store is not on the truck's route, otherwise they
+  become permanent blockers inflating the metric.
+- Priority reward normalization can produce negative
+  values; must clamp output to [0, 1] with np.clip.
+- Reward components are RATES not REWARDS: fragility
+  and support return violation rates (0.0 = good),
+  which the negative config weight converts to
+  penalties. Don't invert them inside the component.
