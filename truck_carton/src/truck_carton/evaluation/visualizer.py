@@ -306,7 +306,10 @@ class GridRenderer:
     """Render one frame from an env snapshot."""
     from PIL import Image, ImageDraw, ImageFont
 
-    gw = snapshot['grid_world']
+    gw = snapshot.get('grid_world')
+    if gw is None:
+      img = Image.new('RGB', (200, 100), self.BG_COLOR)
+      return img
     rows, cols = gw.rows, gw.cols
 
     map_w = cols * self._cell_w
