@@ -12,13 +12,16 @@ def _make_config(
 ) -> CurriculumConfig:
   return CurriculumConfig(stages=(
     CurriculumStage(
-      'toy', 2, 2, 10, threshold, window
+      'toy', 2, 2, 10, 1, 5, 5,
+      threshold, window,
     ),
     CurriculumStage(
-      'small', 3, 3, 20, threshold, window
+      'small', 3, 3, 20, 2, 7, 7,
+      threshold, window,
     ),
     CurriculumStage(
-      'medium', 5, 4, 40, threshold, window
+      'medium', 5, 4, 40, 3, 10, 10,
+      threshold, window,
     ),
   ))
 
