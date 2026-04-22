@@ -191,3 +191,79 @@ def test_env_routing_and_packing():
     done = terminated or truncated
 
   assert routing_steps > 0 or packing_steps > 0
+
+
+def test_render_snapshot():
+  """get_render_snapshot() must return a dict
+  with all required keys."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  env.reset(seed=42)
+
+  snap = env.get_render_snapshot()
+  assert 'grid_world' in snap
+  assert 'trucks' in snap
+  assert 'warehouses' in snap
+  assert 'stores' in snap
+  assert 'warehouse_cartons' in snap
+  assert 'truck_cargo' in snap
+  assert 'delivered' in snap
+  assert 'step' in snap
+
+
+def test_grid_renderer_produces_image():
+  """GridRenderer.render() must return a PIL
+  Image."""
+  from truck_carton.evaluation.visualizer import (
+    GridRenderer,
+  )
+
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  env.reset(seed=42)
+
+  renderer = GridRenderer()
+  snap = env.get_render_snapshot()
+  img = renderer.render(snap)
+
+  assert img is not None
+  assert img.size[0] > 0
+  assert img.size[1] > 0
+
+
+def test_road_sprite_straight_horizontal():
+  """A road cell with left and right neighbors
+  should produce a horizontal line."""
+  from truck_carton.evaluation.visualizer import (
+    GridRenderer,
+  )
+
+  renderer = GridRenderer()
+  grid = np.zeros((3, 3), dtype=np.int8)
+  grid[1, 0] = 1  # ROAD left
+  grid[1, 1] = 1  # ROAD center
+  grid[1, 2] = 1  # ROAD right
+
+  sprite = renderer._road_sprite(1, 1, grid)
+  assert sprite == '\u2500'  # ─
+
+
+def test_road_sprite_corner():
+  """A road cell with bottom and right neighbors
+  should produce a top-left corner."""
+  from truck_carton.evaluation.visualizer import (
+    GridRenderer,
+  )
+
+  renderer = GridRenderer()
+  grid = np.zeros((3, 3), dtype=np.int8)
+  grid[0, 0] = 1  # center
+  grid[1, 0] = 1  # below
+  grid[0, 1] = 1  # right
+
+  sprite = renderer._road_sprite(0, 0, grid)
+  assert sprite == '\u250C'  # ┌
