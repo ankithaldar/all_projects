@@ -3,11 +3,44 @@
 ## Overview
 
 The system optimizes 3D carton loading into delivery
-trucks using reinforcement learning. It handles
-multi-truck fleets with multi-store delivery routes,
-respecting physical constraints (gravity, weight,
-fragility) and logistics constraints (delivery order,
-store grouping, priority accessibility).
+trucks using reinforcement learning on a procedurally
+generated 2D grid world. Warehouses, stores, and a
+depot are placed on the grid, connected by road
+networks. Trucks navigate the grid to pick up cartons
+from warehouses and deliver them to stores, while the
+agent optimizes both routing decisions and 3D packing.
+
+Physical constraints (gravity, weight, fragility) and
+logistics constraints (delivery order, store grouping,
+priority accessibility) are enforced throughout.
+
+## Two-Layer Design
+
+**Layer 1 — Grid World**: Procedurally generated 2D
+grid with depot, warehouses, stores, and L-shaped road
+networks. Trucks move between facilities via shortest
+paths computed with networkx. Each episode generates a
+unique layout for generalization.
+
+**Layer 2 — 3D Packing**: When a truck is at a
+warehouse, the agent packs cartons into the truck's 3D
+space using gravity-aware placement with action masking.
+
+## Unified Action Space
+
+`Discrete(600)`:
+- Actions 0..499: packing candidates (3D placement)
+- Actions 500..599: routing candidates (move truck)
+
+At any step, EITHER packing OR routing actions are
+valid (never both). The mask enforces mutual
+exclusivity based on the active truck's state:
+- `ROUTING` → only routing actions unmasked
+- `LOADING` → only packing actions unmasked
+- `AT_DEPOT` → truck is finished
+
+Multi-truck scheduling: round-robin among active
+trucks. One truck acts per step.
 
 ## High-Level Architecture
 
