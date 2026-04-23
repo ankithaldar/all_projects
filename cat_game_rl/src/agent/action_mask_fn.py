@@ -6,4 +6,4 @@ from src.env.crafting_env import CraftingEnv
 
 
 def compute_action_mask(env: CraftingEnv) -> np.ndarray:
-    return env.action_masks()
+  return env.action_masks()
