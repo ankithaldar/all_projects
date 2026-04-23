@@ -6,7 +6,7 @@ from src.core.slot_scheduler import ManufacturingSlot, SlotScheduler
 from src.core.target_provider import TargetProvider
 
 __all__ = [
-    "ItemId", "Ingredient", "Recipe", "CraftingTree",
-    "CostCalculator", "Stash", "CoinGenerator",
-    "ManufacturingSlot", "SlotScheduler", "TargetProvider",
+  "ItemId", "Ingredient", "Recipe", "CraftingTree",
+  "CostCalculator", "Stash", "CoinGenerator",
+  "ManufacturingSlot", "SlotScheduler", "TargetProvider",
 ]
