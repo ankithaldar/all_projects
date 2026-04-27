@@ -425,7 +425,7 @@ class DataGenerator:
 
     for i in range(num_cartons):
       cartons.append(Carton(
-        carton_id=i,
+        carton_id=i + 1,
         length=int(self._rng.integers(
           cc.length_range[0],
           cc.length_range[1] + 1,

@@ -14,7 +14,10 @@ import numpy as np
 from truck_carton.domain.models import CellType
 
 if TYPE_CHECKING:
-  from truck_carton.domain.models import Carton
+  from truck_carton.domain.models import (
+    Carton,
+    PlacementInfo,
+  )
   from truck_carton.env.action import (
     ActionManager,
     RoutingCandidate,
@@ -113,7 +116,7 @@ class HeuristicAgent:
     self,
     cand: PlacementCandidate,
     carton: Carton,
-    placed: dict[int, object],
+    placed: dict[int, PlacementInfo],
     carton_lookup: dict[int, Carton],
     truck_idx: int,
     env: TruckCartonPackingEnv,

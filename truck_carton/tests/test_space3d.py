@@ -91,3 +91,31 @@ def test_copy():
   s2.remove(1)
   assert s.get_occupied_volume() == 8
   assert s2.get_occupied_volume() == 0
+
+
+def test_place_rejects_zero_carton_id():
+  """Space3D.place() must reject carton_id=0 since
+  0 is the sentinel for empty cells."""
+  import pytest
+  s = Space3D(4, 4, 4)
+  with pytest.raises(ValueError):
+    s.place(0, 0, 0, 0, 1, 1, 1)
+
+
+def test_place_rejects_negative_carton_id():
+  """Space3D.place() must reject negative IDs."""
+  import pytest
+  s = Space3D(4, 4, 4)
+  with pytest.raises(ValueError):
+    s.place(-1, 0, 0, 0, 1, 1, 1)
+
+
+def test_lowest_valid_id_visible():
+  """Carton with ID 1 (lowest valid) must be
+  visible in height_map and occupancy."""
+  s = Space3D(4, 4, 4)
+  s.place(1, 0, 0, 0, 2, 2, 1)
+  hm = s.get_height_map()
+  assert hm[0, 0] == 1
+  assert s.get_occupancy_ratio() > 0.0
+  assert not s.can_place(0, 0, 0, 2, 2, 1)

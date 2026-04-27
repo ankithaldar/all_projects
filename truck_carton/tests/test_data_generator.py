@@ -110,6 +110,22 @@ def test_unique_carton_ids():
   assert len(ids) == len(set(ids))
 
 
+def test_carton_ids_start_from_one():
+  """Carton IDs must start from 1, not 0, because
+  Space3D uses 0 as the empty-cell sentinel."""
+  config = AppConfig()
+  gen = DataGenerator(
+    config, np.random.default_rng(42)
+  )
+  data = gen.generate(
+    num_trucks=2, num_stores=2, num_cartons=10
+  )
+  for carton in data.cartons:
+    assert carton.carton_id > 0, (
+      f'Carton ID {carton.carton_id} is <= 0'
+    )
+
+
 def test_fragile_distribution():
   config = AppConfig()
   gen = DataGenerator(
