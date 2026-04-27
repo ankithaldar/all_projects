@@ -27,7 +27,7 @@ def main() -> None:
   )
   parser.add_argument(
     '--stage', type=int, default=0,
-    help='Curriculum stage (0-2)',
+    help='Curriculum stage (0-4)',
   )
   parser.add_argument(
     '--seed', type=int, default=42,
