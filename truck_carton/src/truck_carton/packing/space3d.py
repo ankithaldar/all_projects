@@ -42,6 +42,11 @@ class Space3D:
     x: int, y: int, z: int,
     dl: int, dw: int, dh: int,
   ) -> None:
+    if carton_id <= 0:
+      raise ValueError(
+        f'carton_id must be > 0 (got {carton_id})'
+        f'; 0 is reserved for empty cells'
+      )
     self.grid[
       x:x + dl, y:y + dw, z:z + dh
     ] = carton_id

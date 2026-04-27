@@ -143,6 +143,17 @@
 - Added truck_travel @property to env for clean access
   to per-truck travel distances in evaluation scripts.
 
+### Audit Learnings (Loop 9)
+
+- CRITICAL: Space3D.grid uses 0 for empty cells. Carton
+  IDs generated starting from 0 meant the first carton
+  was invisible in the grid — overlaps allowed, height
+  map wrong, occupancy not counted, support/fragility
+  checks broken. Fix: start carton IDs from 1. Guard
+  with ValueError in Space3D.place() if carton_id <= 0.
+  General rule: any grid using 0 as sentinel must never
+  store entity ID 0.
+
 ### Runtime Edge Cases
 
 - Grid generation must cap facility count to available

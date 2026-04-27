@@ -62,3 +62,8 @@ test results with pass/fail counts.
   values must be >= 0.0 before clipping. Test that no
   routing candidate encoding produces negative feat
   values (e.g., depot location_id must not be -1).
+- **Zero carton_id collision**: Test that Space3D.place()
+  rejects carton_id=0 (ValueError). Test that generated
+  carton IDs always start from 1, not 0. Test that a
+  placed carton with the lowest ID is actually visible
+  in height_map and occupancy_ratio.
