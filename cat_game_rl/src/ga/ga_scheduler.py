@@ -28,10 +28,14 @@ class GaScheduler:
     config: Dict[str, Any],
     crafting_tree: CraftingTree,
     targets: Dict[ItemId, int],
+    initial_coins: int = 0,
+    initial_stash: Dict[str, int] | None = None,
   ):
     self._config = config
     self._tree = crafting_tree
     self._targets = targets
+    self._initial_coins = initial_coins
+    self._initial_stash = initial_stash
     self._operators = GaOperators(crafting_tree, config)
     self._log_path = None
 
@@ -63,7 +67,10 @@ class GaScheduler:
   def _evaluate(
     self, individual: np.ndarray
   ) -> tuple[float, float, float, float]:
-    return Chromosome.evaluate(individual, self._tree, self._targets)
+    return Chromosome.evaluate(
+      individual, self._tree, self._targets,
+      self._initial_coins, self._initial_stash,
+    )
 
   def run(
     self,
