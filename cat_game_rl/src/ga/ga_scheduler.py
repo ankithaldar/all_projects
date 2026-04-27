@@ -60,7 +60,9 @@ class GaScheduler:
     self._toolbox.register("mutate", self._operators.mutate)
     self._toolbox.register("select", tools.selNSGA2)
 
-  def _evaluate(self, individual: np.ndarray) -> tuple[float, float, float]:
+  def _evaluate(
+    self, individual: np.ndarray
+  ) -> tuple[float, float, float, float]:
     return Chromosome.evaluate(individual, self._tree, self._targets)
 
   def run(

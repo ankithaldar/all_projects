@@ -115,3 +115,18 @@ class TestGaScheduler:
   ):
     scheduler = GaScheduler(ga_config, crafting_tree, targets)
     assert scheduler.get_best_schedule([]) is None
+
+  def test_fitness_is_4_tuple(
+    self,
+    ga_config: dict,
+    crafting_tree: CraftingTree,
+    targets: dict,
+  ):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      scheduler = GaScheduler(ga_config, crafting_tree, targets)
+      hof = scheduler.run(n_generations=2, output_dir=tmpdir)
+      assert len(hof) > 0
+      fit = hof[0].fitness.values
+      assert len(fit) == 4
+      assert all(isinstance(v, float) for v in fit)
+      assert all(v >= 0 for v in fit)

@@ -33,5 +33,14 @@ Performs unbiased code review with zero context leakage. Returns issues by sever
 - **Base material replenishment could pass negative qty**: `9999 - stash.get()` without guard. Now uses `max(0, ...)`.
 - **GA fitness extended to 4 objectives**: Added cost-per-item metric alongside total cost, completion time, and waste.
 
+### Audit Loop 3 (2026-04-27)
+- **Observation space bounds must be enforced**: `spaces.Box(high=9999)` is a contract — `build_obs` must clamp values with `np.clip()`. Stash can exceed 9999 for cheap fast-crafting items; targets_remaining can exceed -9999 with mass over-delivery.
+- **Reward components must not hardcode env config**: `TimeEfficiencyReward` hardcoded `max_ticks=2016`. Must read from state dict or accept as parameter.
+- **Dashboard path traversal**: `st.text_input` for file paths must be validated against an allowlist of directories. User could read arbitrary files.
+- **Crossover must handle remainder ticks**: `n_blocks = MAX_TICKS // block_size` drops tail ticks. Use ceiling division.
+- **Train/eval parity**: `evaluate.py` must wrap env with same `FrameSkipWrapper` used during training, or results are meaningless.
+- **Type annotations must match runtime**: GA `_evaluate` annotated as 3-tuple but returns 4-tuple after fitness expansion.
+- **Dead code signals incomplete logic**: `stash` variable fetched but unused in `WasteMinimizationReward` suggested missing functionality.
+
 ## When to Use
 Spawn this agent after any non-trivial code change. It reviews files but does NOT modify them. The parent agent applies all fixes.

@@ -59,24 +59,36 @@ def main() -> None:
       ["Simulation", "Bottleneck", "RL vs GA", "Pareto Front", "Target Editor"],
     )
 
+  allowed_dirs = [
+    os.path.abspath("output"),
+    os.path.abspath("config"),
+  ]
+
+  def _is_safe_path(path: str) -> bool:
+    abs_path = os.path.abspath(path)
+    return any(abs_path.startswith(d) for d in allowed_dirs)
+
   rl_schedule_df = None
   rl_sim = None
-  if os.path.exists(rl_schedule_path):
+  if _is_safe_path(rl_schedule_path) and os.path.exists(rl_schedule_path):
     rl_schedule_df = parse_batch_schedule(rl_schedule_path)
     rl_sim = simulate_schedule(rl_schedule_df, crafting_tree)
   else:
     if page in ["Simulation", "Bottleneck"]:
-      st.warning(f"RL schedule not found at {rl_schedule_path}")
+      if not _is_safe_path(rl_schedule_path):
+        st.warning("Path must be within output/ or config/.")
+      else:
+        st.warning(f"RL schedule not found at {rl_schedule_path}")
 
   ga_schedule_df = None
   ga_sim = None
   ga_log = None
 
-  if os.path.exists(ga_schedule_path):
+  if _is_safe_path(ga_schedule_path) and os.path.exists(ga_schedule_path):
     ga_schedule_df = parse_batch_schedule(ga_schedule_path)
     ga_sim = simulate_schedule(ga_schedule_df, crafting_tree)
 
-  if os.path.exists(ga_log_path):
+  if _is_safe_path(ga_log_path) and os.path.exists(ga_log_path):
     ga_log = parse_ga_log(ga_log_path)
 
   active_sim = rl_sim or ga_sim

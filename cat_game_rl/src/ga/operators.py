@@ -21,7 +21,7 @@ class GaOperators:
   def cx_time_block(
     self, ind1: np.ndarray, ind2: np.ndarray
   ) -> tuple[np.ndarray, np.ndarray]:
-    n_blocks = MAX_TICKS // self._block_size
+    n_blocks = (MAX_TICKS + self._block_size - 1) // self._block_size
     for b in range(n_blocks):
       if random.random() < 0.5:
         start = b * self._block_size
