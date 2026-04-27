@@ -149,3 +149,16 @@ Returns issues by severity with a PASS/FAIL verdict.
   values (CellType.DEPOT, CellType.WAREHOUSE) instead
   of raw integers (2, 3, 4) when comparing location
   types in observation encoding.
+- **Sentinel values in feature encoding**: Using -1 as
+  a sentinel (e.g., depot location_id=-1) produces
+  negative values in normalized features. Clipping
+  hides the bug but wastes the feature slot. Use 0
+  for sentinels in feature-encoded contexts.
+- **Enum normalization divisor**: When normalizing an
+  IntEnum to [0,1], divide by max_value not max_value+1.
+  E.g., TruckState max=2, so divide by 2.0 not 3.0,
+  to use the full [0,1] range.
+- **MetricsCollector completeness**: When adding new
+  fields to EpisodeMetrics, always update compute() to
+  populate them. Unpopulated fields silently default to
+  0.0, hiding missing functionality from callers.
