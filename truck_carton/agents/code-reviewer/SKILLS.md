@@ -162,3 +162,10 @@ Returns issues by severity with a PASS/FAIL verdict.
   fields to EpisodeMetrics, always update compute() to
   populate them. Unpopulated fields silently default to
   0.0, hiding missing functionality from callers.
+- **Zero-ID sentinel collision in occupancy grids**:
+  Space3D uses 0 for empty cells. If any entity ID is 0,
+  placing it writes 0 to the grid — making it invisible
+  to overlap, height, occupancy, support, and fragility
+  checks. All entity IDs stored in grids MUST be > 0.
+  Guard with an assertion in place(). Start generated
+  IDs from 1, not 0.
