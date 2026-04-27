@@ -126,6 +126,7 @@ class CraftingEnv(gym.Env):
       "targets_remaining": self.targets.targets_remaining_array(),
       "targets_total": self.targets.targets_total_array(),
       "tick": self.current_tick,
+      "max_ticks": self._max_ticks,
     }
 
   def render(self) -> Optional[str]:

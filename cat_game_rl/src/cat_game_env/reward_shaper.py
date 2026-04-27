@@ -38,7 +38,6 @@ class WasteMinimizationReward(RewardComponent):
 
   def compute(self, state: Dict, action_info: Dict, next_state: Dict) -> float:
     targets_remaining = next_state.get("targets_remaining", np.zeros(NUM_ITEMS))
-    stash = next_state.get("stash", np.zeros(NUM_ITEMS))
     excess = 0.0
     for i in range(NUM_ITEMS):
       if targets_remaining[i] < 0:
@@ -96,9 +95,9 @@ class TimeEfficiencyReward(RewardComponent):
 
   def compute(self, state: Dict, action_info: Dict, next_state: Dict) -> float:
     if next_state.get("targets_complete", False):
-      max_ticks = 2016
+      max_ticks = next_state.get("max_ticks", 2016)
       tick = next_state.get("tick", max_ticks)
-      return 10.0 * (1.0 - tick / max_ticks)
+      return 10.0 * (1.0 - tick / max(max_ticks, 1))
     return 0.0
 
 

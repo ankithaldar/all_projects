@@ -121,3 +121,35 @@ class TestCraftingEnv:
     _, _, _, _, info = env.step(action)
     assert "reward_components" in info
     assert "total" in info["reward_components"]
+
+  def test_reset_deterministic(self, env: CraftingEnv):
+    obs1, _ = env.reset(seed=42)
+    obs2, _ = env.reset(seed=42)
+    for key in obs1:
+      assert np.array_equal(obs1[key], obs2[key])
+
+  def test_reset_clears_state(self, env: CraftingEnv):
+    env.reset()
+    action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
+    action[0] = 1
+    for _ in range(10):
+      env.step(action)
+    obs, _ = env.reset()
+    assert env.current_tick == 0
+    assert obs["coins"][0] == 0
+    assert obs["current_tick"][0] == 0
+
+  def test_obs_within_space_bounds(self, env: CraftingEnv):
+    env.reset()
+    for _ in range(20):
+      action = env.action_space.sample()
+      obs, _, terminated, truncated, _ = env.step(action)
+      assert env.observation_space.contains(obs)
+      if terminated or truncated:
+        break
+
+  def test_coins_increment_exact(self, env: CraftingEnv):
+    env.reset()
+    action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
+    obs, _, _, _, _ = env.step(action)
+    assert obs["coins"][0] == 210

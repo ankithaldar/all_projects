@@ -22,3 +22,4 @@ Each item is masked independently — it doesn't account for other items consumi
 - Batch=0 must ALWAYS be unmasked — prevents the agent from being forced into an impossible action
 - Mask is computed on pre-tick state (before coin tick and base replenishment). This makes the mask slightly conservative — actions that would be feasible after the tick may be masked. The `validate_and_apply` step compensates by using the post-tick state.
 - `max_affordable_batch` must account for `math.ceil()` when converting float cost to int coins. The inverse formula can return batch sizes that are unaffordable after ceiling.
+- Observation values must be clamped to declared `spaces.Box` bounds. `build_obs` now uses `np.clip(stash, 0, 9999)` and `np.clip(targets_remaining, -9999, 9999)` to enforce the contract.

@@ -108,7 +108,7 @@ targets.yaml ────────┘         ↓
 19 items x 21 batch sizes = `MultiDiscrete([21]*19)`. MaskablePPO masks per sub-space. Total mask dimension: 399 bools.
 
 ### Conservative Masking + Greedy Validation
-Masks each item independently (ignoring other items' demands this tick). `ActionHandler.validate_and_apply()` then applies greedily in topological order, clipping any that can't be satisfied. Agent learns contention via policy gradient.
+Masks each item independently (ignoring other items' demands this tick). `ActionHandler.validate_and_apply()` then applies greedily in topological order, clipping any that can't be satisfied. Agent learns contention via policy gradient. Mask is computed on pre-tick state (210 coins conservative). Observations are clamped to declared `spaces.Box` bounds.
 
 ### GA Chromosome: Dense (2016, 19)
 Fixed-size enables simple crossover (time-block swaps) and numpy-friendly evaluation. 95% zeros at init keeps it effectively sparse.

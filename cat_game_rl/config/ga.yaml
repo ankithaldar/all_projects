@@ -10,5 +10,6 @@ ga:
   hall_of_fame_size: 50
   sparse_init_density: 0.05
   max_init_batch: 10
+  max_batch_size: 20
   log_every_gen: true
   seed: 42

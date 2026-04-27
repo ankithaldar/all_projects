@@ -51,11 +51,13 @@ class ObservationBuilder:
   ) -> Dict[str, np.ndarray]:
     time_frac = tick / max(self._max_ticks, 1)
     return {
-      "stash": stash.as_array(),
+      "stash": np.clip(stash.as_array(), 0, 9999),
       "coins": np.array([coins.balance], dtype=np.int32),
       "slots": slots.get_slot_array(),
       "time_fraction": np.array([time_frac], dtype=np.float32),
       "current_tick": np.array([tick], dtype=np.int32),
-      "targets_remaining": targets.targets_remaining_array(),
+      "targets_remaining": np.clip(
+        targets.targets_remaining_array(), -9999, 9999
+      ),
       "targets_total": targets.targets_total_array(),
     }

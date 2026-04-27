@@ -139,7 +139,7 @@ class TestCoinEfficiency:
       "applied": {ItemId.STRING: 5},
     }
     value = r.compute({}, action_info, {})
-    assert value < 0
+    assert value == pytest.approx(-500 / 5 / 1000.0)
 
   def test_name(self):
     assert CoinEfficiencyReward().name == "coin_efficiency"
@@ -154,8 +154,9 @@ class TestTimeEfficiency:
   def test_early_completion(self):
     r = TimeEfficiencyReward()
     state = _make_state(targets_complete=True, tick=500)
+    state["max_ticks"] = 2016
     value = r.compute({}, {}, state)
-    assert value > 0
+    assert value == pytest.approx(10.0 * (1.0 - 500 / 2016))
 
   def test_late_completion_lower_reward(self):
     r = TimeEfficiencyReward()
@@ -185,6 +186,13 @@ class TestBatchOptimization:
     action_info = {"applied": {ItemId.STRING: 5}}
     value = r.compute({}, action_info, {})
     assert value == pytest.approx(0.25)
+
+  def test_multiple_items(self):
+    from src.core.items import ItemId
+    r = BatchOptimizationReward()
+    action_info = {"applied": {ItemId.STRING: 5, ItemId.WOOD: 15}}
+    value = r.compute({}, action_info, {})
+    assert value == pytest.approx((5 + 15) / 2 / 20.0)
 
   def test_name(self):
     assert BatchOptimizationReward().name == "batch_optimization"
