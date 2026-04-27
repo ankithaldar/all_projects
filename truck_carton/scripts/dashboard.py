@@ -521,10 +521,15 @@ def run_episode(
     current_weights=env.current_weights,
     total_reward=total_reward,
     curriculum_stage=stage,
+    truck_travel=env.truck_travel,
+    num_delivered=env.num_delivered,
   )
   return {
     'total_reward': total_reward,
     'completion_rate': ep_metrics.completion_rate,
+    'delivery_rate': (
+      ep_metrics.delivery_completion_rate
+    ),
     'vol_util': (
       ep_metrics.fleet_volumetric_utilization
     ),
@@ -592,8 +597,8 @@ if st.session_state['episode_history']:
     f'{np.mean([h["completion_rate"] for h in history]):.1%}',
   )
   cols[2].metric(
-    'Avg Vol Util',
-    f'{np.mean([h["vol_util"] for h in history]):.1%}',
+    'Avg Delivery',
+    f'{np.mean([h.get("delivery_rate", 0) for h in history]):.1%}',
   )
   cols[3].metric(
     'Total Episodes',
