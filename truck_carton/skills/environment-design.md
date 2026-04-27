@@ -125,6 +125,24 @@
   integers (2, 3, 4) instead of enum values. Fix: use
   CellType.DEPOT, CellType.WAREHOUSE, CellType.STORE.
 
+### Audit Learnings (Loop 8)
+
+- MetricsCollector.compute() did not populate the
+  travel/delivery fields (total_travel_distance,
+  avg_travel_per_truck, delivery_completion_rate) added
+  to EpisodeMetrics after the routing layer was built.
+  Fix: accept truck_travel and num_delivered params.
+- Depot routing candidate used location_id=-1 as a
+  sentinel, producing a negative feature value
+  (-1/14=-0.071) that was silently clipped to 0.0.
+  Fix: use location_id=0 (depot one-hot distinguishes).
+- _encode_truck_states divided by 3.0 for TruckState
+  enum with max value 2 (AT_DEPOT). This capped the
+  observation at 0.667 instead of 1.0. Fix: divide by
+  2.0 (the actual max enum value).
+- Added truck_travel @property to env for clean access
+  to per-truck travel distances in evaluation scripts.
+
 ### Runtime Edge Cases
 
 - Grid generation must cap facility count to available

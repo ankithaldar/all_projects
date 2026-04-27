@@ -253,3 +253,33 @@ def test_heuristic_predict_with_no_valid_actions():
   masks = np.zeros(600, dtype=np.bool_)
   action = agent.predict(env, masks)
   assert action == 0
+
+
+def test_metrics_travel_and_delivery():
+  """MetricsCollector must populate travel and delivery
+  fields when truck_travel and num_delivered are given."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  agent = HeuristicAgent(config)
+  reward, _ = _run_episode(env, agent, seed=42)
+
+  collector = MetricsCollector()
+  metrics = collector.compute(
+    episode_data=env.episode_data,
+    spaces=env.spaces,
+    placed_cartons=env.placed_cartons,
+    current_weights=env.current_weights,
+    total_reward=reward,
+    curriculum_stage=0,
+    truck_travel=env.truck_travel,
+    num_delivered=env.num_delivered,
+  )
+  assert metrics.total_travel_distance >= 0.0
+  assert metrics.avg_travel_per_truck >= 0.0
+  assert 0.0 <= metrics.delivery_completion_rate <= 1.0
+  if env.num_delivered > 0:
+    assert metrics.delivery_completion_rate > 0.0
+  if any(t > 0 for t in env.truck_travel):
+    assert metrics.total_travel_distance > 0.0

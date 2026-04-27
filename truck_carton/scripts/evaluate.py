@@ -105,6 +105,8 @@ def main() -> None:
       current_weights=env.current_weights,
       total_reward=total_reward,
       curriculum_stage=args.stage,
+      truck_travel=env.truck_travel,
+      num_delivered=env.num_delivered,
     )
     all_metrics.append(metrics)
 
@@ -153,6 +155,14 @@ def main() -> None:
   print(
     'Priority score:     '
     f'{np.mean([m.priority_accessibility_score for m in all_metrics]):.2%}'
+  )
+  print(
+    'Delivery rate:      '
+    f'{np.mean([m.delivery_completion_rate for m in all_metrics]):.2%}'
+  )
+  print(
+    'Avg travel/truck:   '
+    f'{np.mean([m.avg_travel_per_truck for m in all_metrics]):.1f}'
   )
   print(
     'Mean reward:        '
