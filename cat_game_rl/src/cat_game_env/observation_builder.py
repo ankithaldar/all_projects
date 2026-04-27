@@ -13,7 +13,7 @@ from src.core.target_provider import TargetProvider
 
 
 class ObservationBuilder:
-  def __init__(self, max_ticks: int = 2016):
+  def __init__(self, max_ticks: int = 8064):
     self._max_ticks = max_ticks
 
   def build_space(self) -> spaces.Dict:
@@ -22,7 +22,7 @@ class ObservationBuilder:
         low=0, high=9999, shape=(NUM_ITEMS,), dtype=np.int32
       ),
       "coins": spaces.Box(
-        low=0, high=999_999, shape=(1,), dtype=np.int32
+        low=0, high=99_999_999, shape=(1,), dtype=np.int32
       ),
       "slots": spaces.Box(
         low=0, high=1000, shape=(NUM_CRAFTABLE, 3), dtype=np.int32
