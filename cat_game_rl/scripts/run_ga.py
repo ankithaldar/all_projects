@@ -34,13 +34,21 @@ def main() -> None:
   with open(args.config, "r") as f:
     config = yaml.safe_load(f)["ga"]
 
+  with open("config/training.yaml", "r") as f:
+    train_config = yaml.safe_load(f)
+  env_cfg = train_config.get("environment", {})
+  initial_coins = env_cfg.get("initial_coins", 0)
+  initial_stash = env_cfg.get("initial_stash", {})
+
   tree = CraftingTree.from_yaml("config/crafting_tree.yaml")
 
   with open("config/targets.yaml", "r") as f:
     targets_data = yaml.safe_load(f)["targets"]
   targets = {ITEM_NAME_TO_ID[k.lower()]: v for k, v in targets_data.items()}
 
-  scheduler = GaScheduler(config, tree, targets)
+  scheduler = GaScheduler(
+    config, tree, targets, initial_coins, initial_stash
+  )
   hof = scheduler.run(
     n_generations=args.generations,
     output_dir=args.output_dir,
@@ -72,7 +80,8 @@ def main() -> None:
     print(
       f"Best fitness: cost={best.fitness.values[0]:.0f}, "
       f"time={best.fitness.values[1]:.0f} ticks, "
-      f"waste={best.fitness.values[2]:.0f}"
+      f"waste={best.fitness.values[2]:.0f}, "
+      f"cost_per_item={best.fitness.values[3]:.1f}"
     )
     print(f"Pareto front size: {len(hof)}")
 
