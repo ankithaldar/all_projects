@@ -440,6 +440,11 @@ def test_truck_state_obs_full_range():
         )
         seen_at_depot = True
 
+  assert seen_at_depot, (
+    'No truck reached AT_DEPOT in the episode '
+    '— full range was not exercised'
+  )
+
 
 def test_truck_travel_property():
   """env.truck_travel must be accessible and reflect
