@@ -84,13 +84,13 @@ def test_completion_none():
 def test_completion_all_placed():
   cartons = [
     Carton(i, 1, 1, 1, 1.0, False, 1, 0)
-    for i in range(4)
+    for i in range(1, 5)
   ]
   placed = {
     i: PlacementInfo(
-      0, (i, 0, 0), (1, 1, 1), Rotation.LWH
+      0, (i - 1, 0, 0), (1, 1, 1), Rotation.LWH
     )
-    for i in range(4)
+    for i in range(1, 5)
   }
   state = _make_state(
     cartons=cartons, placed=placed, total=4
@@ -102,13 +102,13 @@ def test_completion_all_placed():
 def test_completion_partial():
   cartons = [
     Carton(i, 1, 1, 1, 1.0, False, 1, 0)
-    for i in range(4)
+    for i in range(1, 5)
   ]
   placed = {
-    0: PlacementInfo(
+    1: PlacementInfo(
       0, (0, 0, 0), (1, 1, 1), Rotation.LWH
     ),
-    1: PlacementInfo(
+    2: PlacementInfo(
       0, (1, 0, 0), (1, 1, 1), Rotation.LWH
     ),
   }
@@ -195,13 +195,13 @@ def test_completion_bounded():
   """Completion reward must stay in [0, 1]."""
   cartons = [
     Carton(i, 1, 1, 1, 1.0, False, 1, 0)
-    for i in range(4)
+    for i in range(1, 5)
   ]
   placed = {
     i: PlacementInfo(
-      0, (i, 0, 0), (1, 1, 1), Rotation.LWH
+      0, (i - 1, 0, 0), (1, 1, 1), Rotation.LWH
     )
-    for i in range(4)
+    for i in range(1, 5)
   }
   state = _make_state(
     cartons=cartons, placed=placed, total=4
@@ -292,4 +292,4 @@ def test_calculator_returns_breakdown():
   assert isinstance(total, float)
   assert 'utilization' in breakdown
   assert 'completion' in breakdown
-  assert len(breakdown) == 8
+  assert len(breakdown) == 9

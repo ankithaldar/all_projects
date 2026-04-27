@@ -63,7 +63,7 @@ def test_episode_logger_lifecycle():
   )
 
   el.log_packing(
-    carton_id=0,
+    carton_id=1,
     truck_id=0,
     position=(0, 0, 0),
     dims=(2, 2, 2),
