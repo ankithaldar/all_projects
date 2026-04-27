@@ -19,7 +19,7 @@
 │                   CraftingEnv (Gymnasium)                    │
 │  ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐  │
 │  │ ObsBuilder   │ │ActionHandler │ │  RewardShaper      │  │
-│  │ (Dict space) │ │ (validate+   │ │  (4 components)    │  │
+│  │ (Dict space) │ │ (validate+   │ │  (7 components)    │  │
 │  │              │ │  apply)      │ │                    │  │
 │  └──────────────┘ └──────────────┘ └────────────────────┘  │
 └────────────────────────┬───────────────────────────────────┘
@@ -113,6 +113,24 @@ Masks each item independently (ignoring other items' demands this tick). `Action
 ### GA Chromosome: Dense (2016, 19)
 Fixed-size enables simple crossover (time-block swaps) and numpy-friendly evaluation. 95% zeros at init keeps it effectively sparse.
 
+### Optimization Objectives
+Both RL and GA optimize for minimum coins used and lowest completion time with efficient batching:
+
+**RL Reward Components (7 total):**
+1. `SlotUtilizationReward` — maximize active manufacturing slots
+2. `WasteMinimizationReward` — penalize over-production beyond targets
+3. `TargetCompletionReward` — reward progress + completion bonus
+4. `ExcessInventoryPenalty` — penalize large stash accumulation
+5. `CoinEfficiencyReward` — penalize high cost-per-item produced
+6. `TimeEfficiencyReward` — bonus for early target completion
+7. `BatchOptimizationReward` — reward larger, more efficient batches
+
+**GA Fitness (4 objectives, all minimized via NSGA-II):**
+1. Total coin cost
+2. Completion tick (time to meet all targets)
+3. Waste (excess production beyond targets)
+4. Cost per item produced (batch efficiency)
+
 ### Shared Simulation Logic
 GA's `Chromosome.evaluate()` and `CraftingEnv.step()` both use the same core domain classes (Stash, CoinGenerator, SlotScheduler, CostCalculator). No duplicate game logic.
 
@@ -124,7 +142,7 @@ config/*.yaml
     └→ src/core/target_provider.py (TargetProvider)
 
 src/core/ (zero ML deps: numpy + pyyaml)
-    └→ src/env/ (adds gymnasium)
+    └→ src/cat_game_env/ (adds gymnasium)
         └→ src/agent/ (adds sb3-contrib, torch)
     └→ src/ga/ (adds deap)
     └→ src/dashboard/ (adds streamlit, plotly, pandas)

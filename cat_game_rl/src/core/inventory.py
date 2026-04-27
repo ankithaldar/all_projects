@@ -40,12 +40,14 @@ class Stash:
     self, ingredients: Tuple[Ingredient, ...]
   ) -> int:
     if not ingredients:
-      return 0
+      return 9999
     max_batch = float("inf")
     for ing in ingredients:
+      if ing.quantity <= 0:
+        continue
       available = self._counts[int(ing.item_id)]
       max_batch = min(max_batch, available // ing.quantity)
-    return int(max_batch)
+    return int(max_batch) if max_batch != float("inf") else 9999
 
   def as_array(self) -> np.ndarray:
     return self._counts.copy()

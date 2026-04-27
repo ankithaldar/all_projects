@@ -7,7 +7,7 @@ from src.core.items import ItemId, CraftingTree, NUM_CRAFTABLE
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
-from src.env.action_handler import ActionHandler
+from src.cat_game_env.action_handler import ActionHandler
 
 
 class TestActionMaskIntegration:

@@ -16,6 +16,7 @@ class GaOperators:
     self._block_size = config.get("time_block_size", 48)
     self._mut_batch_indpb = config.get("mut_batch_indpb", 0.02)
     self._mut_time_shift_prob = config.get("mut_time_shift_prob", 0.15)
+    self._max_batch = config.get("max_batch_size", 20)
 
   def cx_time_block(
     self, ind1: np.ndarray, ind2: np.ndarray
@@ -33,7 +34,9 @@ class GaOperators:
 
   def mut_batch_size(self, individual: np.ndarray) -> tuple[np.ndarray]:
     mask = np.random.random(individual.shape) < self._mut_batch_indpb
-    new_vals = np.random.randint(0, 16, size=mask.sum()).astype(np.uint8)
+    new_vals = np.random.randint(
+      0, self._max_batch + 1, size=mask.sum()
+    ).astype(np.uint8)
     individual[mask] = new_vals
     return (individual,)
 

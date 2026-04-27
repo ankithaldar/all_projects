@@ -22,3 +22,5 @@ for ing in recipe.ingredients:
 ## Learnings
 - Found in audit loop 1: the original `for-else` pattern only rolled back on coin failure, not on ingredient failure
 - The `max_affordable_batch_materials()` pre-check should catch most cases, but race conditions between items sharing materials (e.g., two items both needing ribbon) can still trigger partial failures during greedy validation
+- Found in audit loop 2: GA `chromosome.py` evaluate() had the SAME missing rollback bug — materials leaked on partial ingredient failure. Fixed by adding `removed_ings` tracking identical to `action_handler.py`.
+- Found in audit loop 2: Dashboard `utils.py` `simulate_schedule()` also had the missing rollback bug. All three simulation paths (env, GA, dashboard) now use the same rollback pattern.

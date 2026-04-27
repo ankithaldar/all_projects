@@ -19,8 +19,15 @@ def render_targets_page(
 ) -> None:
   st.header("Target Editor & Re-Simulation")
 
+  if not os.path.exists(targets_path):
+    st.error(f"Targets file not found: {targets_path}")
+    return
   with open(targets_path, "r") as f:
-    targets_data = yaml.safe_load(f)["targets"]
+    raw = yaml.safe_load(f)
+  if not raw or "targets" not in raw:
+    st.error("Invalid targets file: missing 'targets' key.")
+    return
+  targets_data = raw["targets"]
 
   st.subheader("Edit Targets")
   new_targets = {}

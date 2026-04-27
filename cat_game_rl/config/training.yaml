@@ -24,6 +24,9 @@ reward_weights:
   waste_minimization: 0.1
   target_completion: 1.0
   excess_inventory: 0.05
+  coin_efficiency: 0.4
+  time_efficiency: 0.5
+  batch_optimization: 0.2
 
 training:
   total_timesteps: 2000000

@@ -8,7 +8,7 @@ from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.target_provider import TargetProvider
-from src.env.observation_builder import ObservationBuilder
+from src.cat_game_env.observation_builder import ObservationBuilder
 
 
 class TestObservationBuilder:

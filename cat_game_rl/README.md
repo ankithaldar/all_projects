@@ -108,7 +108,7 @@ tick_index  elapsed_minutes   item_name           batch_size_decided
 ```
 config/              YAML configuration files
 src/core/            Domain model (items, inventory, costs, slots, targets)
-src/env/             Gymnasium environment, reward shaper, frame skipper
+src/cat_game_env/    Gymnasium environment, reward shaper, frame skipper
 src/agent/           MaskablePPO agent wrapper
 src/ga/              NSGA-II genetic algorithm baseline
 src/logging_util/    Rotating gzip-compressed logger

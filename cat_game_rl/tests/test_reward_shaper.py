@@ -4,11 +4,14 @@ import numpy as np
 import pytest
 
 from src.core.items import NUM_ITEMS, NUM_CRAFTABLE
-from src.env.reward_shaper import (
+from src.cat_game_env.reward_shaper import (
   SlotUtilizationReward,
   WasteMinimizationReward,
   TargetCompletionReward,
   ExcessInventoryPenalty,
+  CoinEfficiencyReward,
+  TimeEfficiencyReward,
+  BatchOptimizationReward,
   RewardShaper,
 )
 
@@ -20,6 +23,7 @@ def _make_state(
   stash=None,
   targets_remaining=None,
   targets_total=None,
+  tick=0,
 ):
   return {
     "active_slot_count": active_slots,
@@ -34,6 +38,7 @@ def _make_state(
       targets_total if targets_total is not None
       else np.ones(NUM_ITEMS)
     ),
+    "tick": tick,
   }
 
 
@@ -120,6 +125,71 @@ class TestExcessInventory:
     assert ExcessInventoryPenalty().name == "excess_inventory"
 
 
+class TestCoinEfficiency:
+  def test_no_spending(self):
+    r = CoinEfficiencyReward()
+    value = r.compute({}, {"total_coins_spent": 0, "applied": {}}, {})
+    assert value == 0.0
+
+  def test_spending(self):
+    from src.core.items import ItemId
+    r = CoinEfficiencyReward()
+    action_info = {
+      "total_coins_spent": 500,
+      "applied": {ItemId.STRING: 5},
+    }
+    value = r.compute({}, action_info, {})
+    assert value < 0
+
+  def test_name(self):
+    assert CoinEfficiencyReward().name == "coin_efficiency"
+
+
+class TestTimeEfficiency:
+  def test_not_complete(self):
+    r = TimeEfficiencyReward()
+    state = _make_state(targets_complete=False, tick=100)
+    assert r.compute({}, {}, state) == 0.0
+
+  def test_early_completion(self):
+    r = TimeEfficiencyReward()
+    state = _make_state(targets_complete=True, tick=500)
+    value = r.compute({}, {}, state)
+    assert value > 0
+
+  def test_late_completion_lower_reward(self):
+    r = TimeEfficiencyReward()
+    early = _make_state(targets_complete=True, tick=500)
+    late = _make_state(targets_complete=True, tick=1500)
+    assert r.compute({}, {}, early) > r.compute({}, {}, late)
+
+  def test_name(self):
+    assert TimeEfficiencyReward().name == "time_efficiency"
+
+
+class TestBatchOptimization:
+  def test_no_actions(self):
+    r = BatchOptimizationReward()
+    assert r.compute({}, {"applied": {}}, {}) == 0.0
+
+  def test_large_batches(self):
+    from src.core.items import ItemId
+    r = BatchOptimizationReward()
+    action_info = {"applied": {ItemId.STRING: 20}}
+    value = r.compute({}, action_info, {})
+    assert value == pytest.approx(1.0)
+
+  def test_small_batches(self):
+    from src.core.items import ItemId
+    r = BatchOptimizationReward()
+    action_info = {"applied": {ItemId.STRING: 5}}
+    value = r.compute({}, action_info, {})
+    assert value == pytest.approx(0.25)
+
+  def test_name(self):
+    assert BatchOptimizationReward().name == "batch_optimization"
+
+
 class TestRewardShaper:
   def test_default_weights(self):
     shaper = RewardShaper()
@@ -152,6 +222,9 @@ class TestRewardShaper:
       "waste_minimization", "waste_minimization_weighted",
       "target_completion", "target_completion_weighted",
       "excess_inventory", "excess_inventory_weighted",
+      "coin_efficiency", "coin_efficiency_weighted",
+      "time_efficiency", "time_efficiency_weighted",
+      "batch_optimization", "batch_optimization_weighted",
       "total",
     }
     assert expected_keys.issubset(set(breakdown.keys()))

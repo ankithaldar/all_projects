@@ -44,13 +44,15 @@ class Chromosome:
     genes: np.ndarray,
     crafting_tree: CraftingTree,
     targets: Dict[ItemId, int],
-  ) -> Tuple[float, float, float]:
+  ) -> Tuple[float, float, float, float]:
     stash = Stash()
     coins = CoinGenerator(0)
     slots = SlotScheduler(crafting_tree)
     delivered = {k: 0 for k in targets}
     total_cost = 0.0
     completion_tick = PENALTY_TICK
+    total_items_produced = 0
+    total_batches = 0
 
     for t in range(MAX_TICKS):
       coins.tick()
@@ -74,7 +76,7 @@ class Chromosome:
         max_coin = CostCalculator.max_affordable_batch(
           recipe.coin_cost, coins.balance
         )
-        feasible = min(batch_size, max_mat, max_coin)
+        feasible = min(batch_size, max_mat, max_coin, 20)
 
         if feasible <= 0:
           continue
@@ -82,11 +84,15 @@ class Chromosome:
         cost = CostCalculator.total_cost(recipe.coin_cost, feasible)
         cost_int = math.ceil(cost)
 
+        removed_ings = []
         ok = True
         for ing in recipe.ingredients:
           if not stash.remove(ing.item_id, ing.quantity * feasible):
+            for prev_ing in removed_ings:
+              stash.add(prev_ing.item_id, prev_ing.quantity * feasible)
             ok = False
             break
+          removed_ings.append(ing)
 
         if not ok:
           continue
@@ -98,6 +104,8 @@ class Chromosome:
 
         slots.start(item_id, feasible)
         total_cost += cost_int
+        total_items_produced += feasible
+        total_batches += 1
 
       completed = slots.tick()
       for item_id, qty in completed:
@@ -110,9 +118,13 @@ class Chromosome:
         completion_tick = t
 
     waste = 0.0
-    stash_arr = stash.as_array()
     for item_id, target in targets.items():
       excess = max(0, delivered.get(item_id, 0) - target)
       waste += excess
 
-    return (total_cost, float(completion_tick), waste)
+    if total_items_produced > 0:
+      cost_per_item = total_cost / total_items_produced
+    else:
+      cost_per_item = float(PENALTY_TICK)
+
+    return (total_cost, float(completion_tick), waste, cost_per_item)
