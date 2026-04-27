@@ -7,8 +7,8 @@ import numpy as np
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 
-from src.env.crafting_env import CraftingEnv
-from src.env.frame_skipper import FrameSkipWrapper
+from src.cat_game_env.crafting_env import CraftingEnv
+from src.cat_game_env.frame_skipper import FrameSkipWrapper
 from src.agent.action_mask_fn import compute_action_mask
 from src.agent.callbacks import TensorBoardCallback, CheckpointCallback
 

@@ -92,6 +92,7 @@ class TestGaScheduler:
       assert "gen" in entry
       assert "pareto_front_size" in entry
       assert "best_cost" in entry
+      assert "best_cost_per_item" in entry
 
   def test_get_best_schedule(
     self,

@@ -75,7 +75,7 @@ def simulate_schedule(
     coins.tick()
 
     for base_id in BASE_ITEM_IDS:
-      deficit = 9999 - stash.get(base_id)
+      deficit = max(0, 9999 - stash.get(base_id))
       if deficit > 0:
         stash.add(base_id, deficit)
 
@@ -99,11 +99,15 @@ def simulate_schedule(
         cost = math.ceil(
           CostCalculator.total_cost(recipe.coin_cost, feasible)
         )
+        removed_ings = []
         ok = True
         for ing in recipe.ingredients:
           if not stash.remove(ing.item_id, ing.quantity * feasible):
+            for prev_ing in removed_ings:
+              stash.add(prev_ing.item_id, prev_ing.quantity * feasible)
             ok = False
             break
+          removed_ings.append(ing)
         if not ok:
           continue
         if not coins.spend(cost):

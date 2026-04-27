@@ -20,3 +20,5 @@ Each item is masked independently — it doesn't account for other items consumi
 - sb3-contrib `ActionMasker` wrapper calls `env.action_masks()` automatically
 - Mask must be `np.bool_` dtype, not `np.int32`
 - Batch=0 must ALWAYS be unmasked — prevents the agent from being forced into an impossible action
+- Mask is computed on pre-tick state (before coin tick and base replenishment). This makes the mask slightly conservative — actions that would be feasible after the tick may be masked. The `validate_and_apply` step compensates by using the post-tick state.
+- `max_affordable_batch` must account for `math.ceil()` when converting float cost to int coins. The inverse formula can return batch sizes that are unaffordable after ceiling.

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from src.core.items import ItemId, NUM_CRAFTABLE
-from src.env.crafting_env import CraftingEnv
+from src.cat_game_env.crafting_env import CraftingEnv
 
 
 class TestCraftingEnv:
