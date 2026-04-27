@@ -41,3 +41,16 @@ test results with pass/fail counts.
 - **Off-route cartons**: Displacement reward must not
   count cartons destined for stores not on the truck's
   route as blockers.
+- **Remaining cartons observation**: carton_queue in
+  the observation must contain actual unplaced cartons,
+  not be empty. Test by verifying obs['carton_queue']
+  has nonzero entries after reset.
+- **Multi-truck termination**: Episode must not end
+  just because one truck has no valid actions. Test by
+  verifying the env cycles through all trucks before
+  declaring done.
+- **Feature dim consistency**: routing_feature_dim must
+  match the actual number of features populated in
+  _encode_routing_candidates. Test by checking no
+  routing candidate feature row has trailing zeros in
+  slots that should be populated.
