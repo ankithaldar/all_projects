@@ -97,3 +97,21 @@ class TestMaxAffordableBatch:
 
   def test_negative_coins(self):
     assert CostCalculator.max_affordable_batch(100, -50) == 0
+
+  def test_ceil_boundary(self):
+    import math
+    result = CostCalculator.max_affordable_batch(100, 249)
+    assert result == 1
+    assert math.ceil(CostCalculator.total_cost(100, 1)) <= 249
+    assert math.ceil(CostCalculator.total_cost(100, 2)) > 249
+
+  def test_returned_batch_always_affordable(self):
+    import math
+    for init_cost in [50, 100, 300, 1000]:
+      for coins in range(1, 5000, 47):
+        b = CostCalculator.max_affordable_batch(init_cost, coins)
+        if b > 0:
+          actual = math.ceil(CostCalculator.total_cost(init_cost, b))
+          assert actual <= coins, (
+            f"init={init_cost}, coins={coins}, b={b}, cost={actual}"
+          )

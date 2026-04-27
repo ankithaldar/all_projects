@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.items import ItemId, CRAFTABLE_ITEM_IDS
 from src.cat_game_env.crafting_env import CraftingEnv
+from src.cat_game_env.frame_skipper import FrameSkipWrapper
 from src.agent.masked_agent import MaskedAgent
 
 
@@ -41,7 +42,12 @@ def main() -> None:
     "reward_weights": config.get("reward_weights"),
   }
 
-  env = CraftingEnv(env_config)
+  base_env = CraftingEnv(env_config)
+  frame_skip = config["environment"].get("frame_skip", 1)
+  if frame_skip > 1:
+    env = FrameSkipWrapper(base_env, skip=frame_skip)
+  else:
+    env = base_env
   agent = MaskedAgent.load(args.model, env, config)
 
   obs, info = env.reset()
@@ -89,8 +95,8 @@ def main() -> None:
 
   print(f"Total reward: {total_reward:.2f}")
   print(f"Schedule exported to {output_path}")
-  print(f"Targets complete: {env.targets.is_complete()}")
-  print(f"Final tick: {env.current_tick}")
+  print(f"Targets complete: {base_env.targets.is_complete()}")
+  print(f"Final tick: {base_env.current_tick}")
 
 
 if __name__ == "__main__":

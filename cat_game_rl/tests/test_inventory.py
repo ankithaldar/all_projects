@@ -87,3 +87,13 @@ class TestStash:
     counts[0] = 42
     fresh_stash.set_counts(counts)
     assert fresh_stash.get(ItemId.COTTON) == 42
+
+  def test_max_affordable_empty_ingredients(self, fresh_stash: Stash):
+    assert fresh_stash.max_affordable_batch_materials(()) == 9999
+
+  def test_add_zero(self, fresh_stash: Stash):
+    fresh_stash.add(ItemId.COTTON, 0)
+    assert fresh_stash.get(ItemId.COTTON) == 0
+
+  def test_remove_zero(self, fresh_stash: Stash):
+    assert fresh_stash.remove(ItemId.COTTON, 0) is True
