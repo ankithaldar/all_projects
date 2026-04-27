@@ -130,7 +130,8 @@ config.py
     │       │
     │       └── reward/{utilization,displacement,
     │           grouping,fragility,support,weight,
-    │           completion,priority}.py
+    │           completion,priority,
+    │           travel_distance}.py
     │
     ├── env/observation.py
     │
