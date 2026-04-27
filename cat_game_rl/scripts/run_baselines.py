@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Order-based manufacturing baseline for the crafting RL system.
+
+Top tiers place purchase orders on lower tiers. Lower tiers fulfill
+orders and push finished goods up. Two baselines:
+  - Baseline Time (batch=1): minimum coins per unit, maximum time
+  - Baseline Coins (batch=all): minimum production runs, shows true cost
+"""
 from __future__ import annotations
 
 import math
@@ -26,6 +33,8 @@ MAX_TICKS = 8064
 PENALTY_TICK = MAX_TICKS + 1
 
 
+# ── Static DAG Analysis ──────────────────────────────────────────
+
 def critical_path_ticks(
   tree: CraftingTree, item_id: ItemId, memo: Dict[ItemId, int] | None = None
 ) -> int:
@@ -45,32 +54,75 @@ def critical_path_ticks(
   return result
 
 
-def compute_total_requirements(
+# ── Order Book: top-down demand explosion ─────────────────────────
+
+def build_order_book(
   tree: CraftingTree,
   targets: Dict[ItemId, int],
   initial_stash: Dict[str, int],
 ) -> Dict[ItemId, int]:
-  reqs: Dict[ItemId, int] = {}
+  gross: Dict[ItemId, int] = {}
   for item_id, qty in targets.items():
-    reqs[item_id] = reqs.get(item_id, 0) + qty
+    gross[item_id] = gross.get(item_id, 0) + qty
 
   for item_id in reversed(tree.topo_order):
-    needed = reqs.get(item_id, 0)
-    if needed <= 0:
-      continue
-    if item_id not in tree.recipes:
+    needed = gross.get(item_id, 0)
+    if needed <= 0 or item_id not in tree.recipes:
       continue
     recipe = tree.get_recipe(item_id)
     for ing in recipe.ingredients:
-      reqs[ing.item_id] = reqs.get(ing.item_id, 0) + ing.quantity * needed
+      gross[ing.item_id] = gross.get(ing.item_id, 0) + ing.quantity * needed
 
-  for name, qty in initial_stash.items():
-    iid = ITEM_NAME_TO_ID.get(name.lower())
-    if iid is not None and iid in reqs:
-      reqs[iid] = max(0, reqs[iid] - qty)
+  net: Dict[ItemId, int] = {}
+  for item_id, qty in gross.items():
+    if tree.is_base(item_id):
+      continue
+    stash_name = item_id.name.lower()
+    on_hand = 0
+    for name, sq in initial_stash.items():
+      if name.lower() == stash_name:
+        on_hand = sq
+        break
+    net[item_id] = max(0, qty - on_hand)
 
-  return reqs
+  return net
 
+
+def print_order_cascade(
+  tree: CraftingTree,
+  order_book: Dict[ItemId, int],
+  targets: Dict[ItemId, int],
+) -> None:
+  print("=" * 70)
+  print("ORDER CASCADE (top-down demand → bottom-up fulfillment)")
+  print("=" * 70)
+
+  max_tier = max(tree.tier[i] for i in tree.topo_order)
+  for tier in range(max_tier, 0, -1):
+    tier_items = [
+      i for i in tree.topo_order
+      if tree.tier.get(i, 0) == tier and order_book.get(i, 0) > 0
+    ]
+    if not tier_items:
+      continue
+
+    print(f"\n  Tier {tier}:")
+    for item_id in tier_items:
+      qty = order_book[item_id]
+      tgt = targets.get(item_id, 0)
+      tgt_str = f" (target: {tgt})" if tgt > 0 else ""
+      recipe = tree.get_recipe(item_id)
+      ing_str = " + ".join(
+        f"{ing.quantity * qty} {ing.item_id.name.lower()}"
+        for ing in recipe.ingredients
+      )
+      print(f"    {item_id.name.lower():<16} order={qty:<5}{tgt_str}")
+      print(f"      → places order: {ing_str}")
+
+  print()
+
+
+# ── Simulation runner ─────────────────────────────────────────────
 
 @dataclass
 class SimResult:
@@ -82,6 +134,7 @@ class SimResult:
   slot_utilization: float
   coins_per_target: float
   total_items_produced: int
+  batches_run: int
 
 
 StrategyFn = Callable[
@@ -111,6 +164,7 @@ def run_simulation(
   completion_tick = PENALTY_TICK
   total_items_produced = 0
   total_active_ticks = 0
+  batches_run = 0
 
   for t in range(MAX_TICKS):
     coins.tick()
@@ -163,6 +217,7 @@ def run_simulation(
       slots.start(item_id, feasible)
       total_cost += cost_int
       total_items_produced += feasible
+      batches_run += 1
 
     completed = slots.tick()
     for item_id, qty in completed:
@@ -194,92 +249,54 @@ def run_simulation(
     slot_utilization=total_active_ticks / (MAX_TICKS * NUM_CRAFTABLE),
     coins_per_target=total_cost / max(target_sum, 1),
     total_items_produced=total_items_produced,
+    batches_run=batches_run,
   )
 
 
-def make_greedy_strategy(
-  tree: CraftingTree, reqs: Dict[ItemId, int]
-) -> StrategyFn:
-  tier_sorted = sorted(
-    tree.topo_order, key=lambda x: (tree.tier.get(x, 0), int(x))
-  )
+# ── Order-based strategies ────────────────────────────────────────
 
-  def strategy(tick, tree, stash, slots, coins, targets, delivered):
-    actions = {}
-    for item_id in tier_sorted:
-      needed = reqs.get(item_id, 0) + targets.get(item_id, 0)
-      produced = delivered.get(item_id, 0) + stash.get(item_id)
-      if produced >= needed and delivered.get(item_id, 0) >= targets.get(item_id, 0):
-        continue
-      if not slots.is_busy(item_id):
-        actions[item_id] = 1
-    return actions
-  return strategy
-
-
-def make_critical_path_strategy(
-  tree: CraftingTree, reqs: Dict[ItemId, int], crit: Dict[ItemId, int]
-) -> StrategyFn:
-  crit_sorted = sorted(
-    tree.topo_order, key=lambda x: (-crit.get(x, 0), -tree.tier.get(x, 0))
-  )
-
-  def strategy(tick, tree, stash, slots, coins, targets, delivered):
-    actions = {}
-    for item_id in crit_sorted:
-      needed = reqs.get(item_id, 0) + targets.get(item_id, 0)
-      produced = delivered.get(item_id, 0) + stash.get(item_id)
-      if produced >= needed and delivered.get(item_id, 0) >= targets.get(item_id, 0):
-        continue
-      if not slots.is_busy(item_id):
-        actions[item_id] = 1
-    return actions
-  return strategy
-
-
-def make_coin_min_strategy(
-  tree: CraftingTree, reqs: Dict[ItemId, int]
+def make_order_strategy(
+  tree: CraftingTree,
+  order_book: Dict[ItemId, int],
+  batch_mode: str,
 ) -> StrategyFn:
   def strategy(tick, tree, stash, slots, coins, targets, delivered):
-    actions = {}
+    actions: Dict[ItemId, int] = {}
+
     for item_id in tree.topo_order:
-      needed = reqs.get(item_id, 0) + targets.get(item_id, 0)
-      produced = delivered.get(item_id, 0) + stash.get(item_id)
-      if produced >= needed and delivered.get(item_id, 0) >= targets.get(item_id, 0):
+      order_qty = order_book.get(item_id, 0)
+      if order_qty <= 0:
         continue
-      if not slots.is_busy(item_id):
+      if slots.is_busy(item_id):
+        continue
+
+      produced = delivered.get(item_id, 0) + stash.get(item_id)
+      remaining = order_qty - produced
+      if remaining <= 0:
+        continue
+
+      if batch_mode == "one":
         actions[item_id] = 1
+      else:
+        actions[item_id] = min(remaining, 20)
+
     return actions
   return strategy
 
 
-def make_time_min_strategy(
-  tree: CraftingTree, reqs: Dict[ItemId, int]
-) -> StrategyFn:
-  def strategy(tick, tree, stash, slots, coins, targets, delivered):
-    actions = {}
-    for item_id in tree.topo_order:
-      needed = reqs.get(item_id, 0) + targets.get(item_id, 0)
-      produced = delivered.get(item_id, 0) + stash.get(item_id)
-      if produced >= needed and delivered.get(item_id, 0) >= targets.get(item_id, 0):
-        continue
-      if not slots.is_busy(item_id):
-        actions[item_id] = 20
-    return actions
-  return strategy
-
+# ── Output formatting ─────────────────────────────────────────────
 
 def print_dag_analysis(
   tree: CraftingTree, crit: Dict[ItemId, int], targets: Dict[ItemId, int]
 ) -> None:
-  print("=" * 65)
+  print("=" * 70)
   print("STATIC DAG ANALYSIS")
-  print("=" * 65)
+  print("=" * 70)
   print(
     f"{'Item':<16}{'Tier':<6}{'Craft(ticks)':<14}"
     f"{'CritPath(ticks)':<17}{'CoinCost':<10}"
   )
-  print("-" * 65)
+  print("-" * 70)
   for item_id in tree.topo_order:
     recipe = tree.get_recipe(item_id)
     marker = " *" if item_id in targets else ""
@@ -290,43 +307,85 @@ def print_dag_analysis(
     )
   print("\n* = target item\n")
 
-  print("TARGET ITEMS:")
-  for item_id, qty in sorted(targets.items(), key=lambda x: -crit[x[0]]):
-    print(
-      f"  {item_id.name.lower():<16} qty={qty:<4} "
-      f"crit_path={crit[item_id]} ticks "
-      f"({crit[item_id] * 5 / 60:.1f} hours)"
-    )
-  print()
+
+def print_order_book(order_book: Dict[ItemId, int], tree: CraftingTree) -> None:
+  print("=" * 50)
+  print("ORDER BOOK (net quantities to produce)")
+  print("=" * 50)
+  total_orders = 0
+  for item_id in tree.topo_order:
+    qty = order_book.get(item_id, 0)
+    if qty > 0:
+      batches = math.ceil(qty / 20)
+      cost_b1 = math.ceil(CostCalculator.total_cost(
+        tree.get_recipe(item_id).coin_cost, 1
+      )) * qty
+      cost_bmax = sum(
+        math.ceil(CostCalculator.total_cost(
+          tree.get_recipe(item_id).coin_cost, min(qty - i * 20, 20)
+        ))
+        for i in range(batches)
+      )
+      print(
+        f"  {item_id.name.lower():<16} qty={qty:<5} "
+        f"batches(b=1)={qty:<4} batches(b=max)={batches:<3} "
+        f"coins(b=1)={cost_b1:>8,}  coins(b=max)={cost_bmax:>8,}"
+      )
+      total_orders += qty
+  print(f"\n  Total items to produce: {total_orders}\n")
 
 
 def print_results(results: List[SimResult]) -> None:
-  print("=" * 95)
+  print("=" * 100)
   print("BASELINE COMPARISON")
-  print("=" * 95)
+  print("=" * 100)
   print(
-    f"{'Strategy':<16}{'TotalCost':>12}{'Completion':>12}"
-    f"{'Waste':>8}{'Cost/Item':>11}{'SlotUtil':>10}"
-    f"{'Coin/Tgt':>10}{'Items':>8}"
+    f"{'Strategy':<20}{'TotalCost':>12}{'Tick':>8}{'Days':>7}"
+    f"{'Waste':>7}{'Cost/Item':>11}{'SlotUtil':>10}"
+    f"{'Coin/Tgt':>10}{'Batches':>9}{'Items':>7}"
   )
-  print("-" * 95)
+  print("-" * 100)
   for r in results:
-    tick_str = (
-      str(r.completion_tick) if r.completion_tick < PENALTY_TICK
-      else "FAILED"
-    )
-    days = (
-      f"({r.completion_tick * 5 / 1440:.1f}d)"
-      if r.completion_tick < PENALTY_TICK else ""
-    )
+    if r.completion_tick < PENALTY_TICK:
+      tick_str = str(r.completion_tick)
+      days_str = f"{r.completion_tick * 5 / 1440:.1f}"
+    else:
+      tick_str = "FAIL"
+      days_str = "-"
     print(
-      f"{r.name:<16}{r.total_cost:>12,.0f}{tick_str:>8} {days:<5}"
+      f"{r.name:<20}{r.total_cost:>12,.0f}{tick_str:>8}{days_str:>7}"
       f"{r.waste:>7.0f}{r.cost_per_item:>11.1f}"
       f"{r.slot_utilization:>9.1%}{r.coins_per_target:>10.1f}"
-      f"{r.total_items_produced:>8}"
+      f"{r.batches_run:>9}{r.total_items_produced:>7}"
     )
   print()
 
+  if len(results) == 2:
+    t, c = results[0], results[1]
+    print("INTERPRETATION:")
+    print(
+      f"  Time baseline (batch=1):   {t.name} — "
+      f"cheapest per unit ({t.cost_per_item:.1f} coins/item), "
+      f"slowest ({t.completion_tick} ticks)"
+    )
+    print(
+      f"  Coins baseline (batch=max): {c.name} — "
+      f"fewest batches ({c.batches_run}), "
+      f"fastest ({c.completion_tick} ticks), "
+      f"total cost {c.total_cost:,.0f}"
+    )
+    if t.completion_tick < PENALTY_TICK and c.completion_tick < PENALTY_TICK:
+      time_saved = t.completion_tick - c.completion_tick
+      cost_diff = c.total_cost - t.total_cost
+      print(
+        f"  Trade-off: batch=max saves {time_saved} ticks "
+        f"({time_saved * 5 / 1440:.1f} days) "
+        f"but costs {cost_diff:,.0f} more coins"
+      )
+    print()
+
+
+# ── Main ──────────────────────────────────────────────────────────
 
 def main() -> None:
   tree = CraftingTree.from_yaml("config/crafting_tree.yaml")
@@ -346,21 +405,32 @@ def main() -> None:
     item_id: critical_path_ticks(tree, item_id, memo)
     for item_id in tree.topo_order
   }
-  reqs = compute_total_requirements(tree, targets, initial_stash)
 
-  print_dag_analysis(tree, crit, targets)
+  order_book = build_order_book(tree, targets, initial_stash)
 
-  print("REQUIREMENTS (after subtracting initial stash):")
-  for item_id in tree.topo_order:
-    if reqs.get(item_id, 0) > 0:
-      print(f"  {item_id.name.lower():<16} {reqs[item_id]:>6}")
   print()
+  print_dag_analysis(tree, crit, targets)
+  print_order_cascade(tree, order_book, targets)
+  print_order_book(order_book, tree)
+
+  print(
+    f"Initial state: {initial_coins:,} coins, "
+    f"{sum(initial_stash.values())} items in stash"
+  )
+  print(f"Horizon: {MAX_TICKS} ticks ({MAX_TICKS * 5 / 1440:.0f} days)")
+  print(
+    f"Coin income: 210/tick = {MAX_TICKS * 210:,} over horizon"
+  )
+  print(
+    f"Total coin budget: {initial_coins + MAX_TICKS * 210:,}\n"
+  )
+
+  strat_time = make_order_strategy(tree, order_book, "one")
+  strat_coins = make_order_strategy(tree, order_book, "all")
 
   strategies = [
-    ("greedy", make_greedy_strategy(tree, reqs)),
-    ("critical_path", make_critical_path_strategy(tree, reqs, crit)),
-    ("coin_min", make_coin_min_strategy(tree, reqs)),
-    ("time_min", make_time_min_strategy(tree, reqs)),
+    ("baseline_time_b1", strat_time),
+    ("baseline_coins_bmax", strat_coins),
   ]
 
   results = []
@@ -370,7 +440,8 @@ def main() -> None:
       sname, fn, tree, targets, initial_coins, initial_stash
     )
     status = (
-      f"done (tick {r.completion_tick})"
+      f"done (tick {r.completion_tick}, "
+      f"{r.completion_tick * 5 / 1440:.1f} days)"
       if r.completion_tick < PENALTY_TICK else "FAILED"
     )
     print(status)
