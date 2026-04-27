@@ -49,6 +49,8 @@ class MetricsCollector:
     current_weights: list[float],
     total_reward: float,
     curriculum_stage: int,
+    truck_travel: list[float] | None = None,
+    num_delivered: int = 0,
   ) -> EpisodeMetrics:
     trucks = episode_data.trucks
     cartons = episode_data.cartons
@@ -93,6 +95,10 @@ class MetricsCollector:
     num_placed = len(placed_cartons)
     num_total = len(cartons)
 
+    travel = truck_travel or []
+    total_travel = sum(travel)
+    num_trucks = max(len(trucks), 1)
+
     return EpisodeMetrics(
       volumetric_utilization_per_truck=vol_util,
       fleet_volumetric_utilization=(
@@ -114,6 +120,13 @@ class MetricsCollector:
         num_placed / max(num_total, 1)
       ),
       curriculum_stage=curriculum_stage,
+      total_travel_distance=total_travel,
+      avg_travel_per_truck=(
+        total_travel / num_trucks
+      ),
+      delivery_completion_rate=(
+        num_delivered / max(num_total, 1)
+      ),
     )
 
   def _compute_avg_displacement(

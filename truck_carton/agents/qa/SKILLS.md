@@ -54,3 +54,11 @@ test results with pass/fail counts.
   _encode_routing_candidates. Test by checking no
   routing candidate feature row has trailing zeros in
   slots that should be populated.
+- **MetricsCollector travel/delivery**: Test that
+  EpisodeMetrics.total_travel_distance and
+  delivery_completion_rate are non-zero after running
+  a full episode with routing and deliveries.
+- **Observation feature sign**: All observation feature
+  values must be >= 0.0 before clipping. Test that no
+  routing candidate encoding produces negative feat
+  values (e.g., depot location_id must not be -1).

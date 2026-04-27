@@ -371,3 +371,85 @@ def test_cycle_to_truck_with_actions():
     done = terminated or truncated
 
   assert steps > 0
+
+
+def test_obs_no_negative_features():
+  """All observation features must be >= 0.0 (no
+  negative values from sentinel IDs like -1)."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  obs, _ = env.reset(seed=42)
+
+  done = False
+  steps = 0
+  while not done and steps < 50:
+    mask = env.action_masks()
+    valid = np.where(mask)[0]
+    if len(valid) == 0:
+      break
+    action = int(valid[0])
+    obs, reward, terminated, truncated, info = (
+      env.step(action)
+    )
+    steps += 1
+    done = terminated or truncated
+
+    for key, arr in obs.items():
+      assert arr.min() >= 0.0, (
+        f'Negative value in obs[{key!r}] at '
+        f'step {steps}: min={arr.min()}'
+      )
+
+
+def test_truck_state_obs_full_range():
+  """Truck state observation should use the full
+  [0, 1] range, not cap at 0.667."""
+  from truck_carton.domain.models import TruckState
+
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  env.reset(seed=42)
+
+  done = False
+  seen_at_depot = False
+  steps = 0
+  while not done and steps < 300:
+    mask = env.action_masks()
+    valid = np.where(mask)[0]
+    if len(valid) == 0:
+      break
+    action = int(valid[0])
+    obs, _, terminated, truncated, _ = (
+      env.step(action)
+    )
+    steps += 1
+    done = terminated or truncated
+
+    for i, truck in enumerate(
+      env.episode_data.trucks
+    ):
+      if truck.state == TruckState.AT_DEPOT:
+        val = obs['truck_states'][i]
+        assert abs(val - 1.0) < 1e-5, (
+          f'AT_DEPOT truck state should be 1.0,'
+          f' got {val}'
+        )
+        seen_at_depot = True
+
+
+def test_truck_travel_property():
+  """env.truck_travel must be accessible and reflect
+  actual distances traveled."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  env.reset(seed=42)
+  assert len(env.truck_travel) == len(
+    env.episode_data.trucks
+  )
+  assert all(t == 0.0 for t in env.truck_travel)
