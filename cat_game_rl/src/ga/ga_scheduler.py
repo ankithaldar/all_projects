@@ -15,7 +15,9 @@ from src.ga.operators import GaOperators
 
 
 if not hasattr(creator, "FitnessMulti"):
-  creator.create("FitnessMulti", base.Fitness, weights=(-1.0, -1.0, -1.0))
+  creator.create(
+    "FitnessMulti", base.Fitness, weights=(-1.0, -1.0, -1.0, -1.0)
+  )
 if not hasattr(creator, "Individual"):
   creator.create("Individual", np.ndarray, fitness=creator.FitnessMulti)
 
@@ -136,6 +138,7 @@ class GaScheduler:
         "cost": ind.fitness.values[0],
         "time": ind.fitness.values[1],
         "waste": ind.fitness.values[2],
+        "cost_per_item": ind.fitness.values[3],
         "rank": 1,
       })
 
@@ -143,6 +146,7 @@ class GaScheduler:
     costs = [f[0] for f in fits]
     times = [f[1] for f in fits]
     wastes = [f[2] for f in fits]
+    cpis = [f[3] for f in fits]
 
     entry = {
       "gen": gen,
@@ -152,9 +156,11 @@ class GaScheduler:
       "best_cost": min(costs) if costs else 0,
       "best_time": min(times) if times else 0,
       "best_waste": min(wastes) if wastes else 0,
+      "best_cost_per_item": min(cpis) if cpis else 0,
       "avg_cost": sum(costs) / len(costs) if costs else 0,
       "avg_time": sum(times) / len(times) if times else 0,
       "avg_waste": sum(wastes) / len(wastes) if wastes else 0,
+      "avg_cost_per_item": sum(cpis) / len(cpis) if cpis else 0,
       "front": front_entries[:10],
     }
 

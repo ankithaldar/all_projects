@@ -12,7 +12,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.items import ItemId, CRAFTABLE_ITEM_IDS
-from src.env.crafting_env import CraftingEnv
+from src.cat_game_env.crafting_env import CraftingEnv
 from src.agent.masked_agent import MaskedAgent
 
 

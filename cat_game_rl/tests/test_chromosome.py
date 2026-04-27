@@ -37,34 +37,53 @@ class TestChromosome:
     assert CRAFTABLE_ITEM_IDS[0] in schedule[0]
     assert schedule[0][CRAFTABLE_ITEM_IDS[0]] == 5
 
-  def test_evaluate_returns_three_floats(
+  def test_evaluate_returns_four_floats(
     self, crafting_tree: CraftingTree, targets: dict
   ):
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     result = Chromosome.evaluate(genes, crafting_tree, targets)
-    assert len(result) == 3
+    assert len(result) == 4
     assert all(isinstance(v, float) for v in result)
 
   def test_all_zeros_high_penalty(
     self, crafting_tree: CraftingTree, targets: dict
   ):
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
-    cost, time, waste = Chromosome.evaluate(genes, crafting_tree, targets)
-    assert time == MAX_TICKS + 1  # penalty tick
+    cost, time, waste, cpi = Chromosome.evaluate(
+      genes, crafting_tree, targets
+    )
+    assert time == MAX_TICKS + 1
+    assert cost == 0.0
+    assert cpi == float(MAX_TICKS + 1)
 
   def test_crafting_string_reduces_time(
     self, crafting_tree: CraftingTree, targets: dict
   ):
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
-    # Craft string every tick for first 10 ticks
     for t in range(10):
       genes[t, 0] = 5  # STRING batch=5
-    cost, time, waste = Chromosome.evaluate(genes, crafting_tree, targets)
-    assert time < MAX_TICKS + 1  # should complete
+    cost, time, waste, cpi = Chromosome.evaluate(
+      genes, crafting_tree, targets
+    )
+    assert time < MAX_TICKS + 1
+    assert cost > 0
+    assert cpi > 0
 
   def test_waste_tracks_excess(self, crafting_tree: CraftingTree):
     targets = {ItemId.STRING: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     genes[0, 0] = 10  # STRING batch=10, target is only 1
-    cost, time, waste = Chromosome.evaluate(genes, crafting_tree, targets)
-    assert waste >= 9  # at least 9 excess strings
+    cost, time, waste, cpi = Chromosome.evaluate(
+      genes, crafting_tree, targets
+    )
+    assert waste >= 9
+
+  def test_material_rollback_on_partial_failure(
+    self, crafting_tree: CraftingTree
+  ):
+    targets = {ItemId.STRING: 1}
+    genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
+    genes[0, 0] = 1
+    cost1, _, _, _ = Chromosome.evaluate(genes, crafting_tree, targets)
+    cost2, _, _, _ = Chromosome.evaluate(genes, crafting_tree, targets)
+    assert cost1 == cost2

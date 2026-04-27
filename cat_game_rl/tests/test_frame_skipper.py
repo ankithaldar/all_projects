@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from src.core.items import NUM_CRAFTABLE
-from src.env.crafting_env import CraftingEnv
-from src.env.frame_skipper import FrameSkipWrapper
+from src.cat_game_env.crafting_env import CraftingEnv
+from src.cat_game_env.frame_skipper import FrameSkipWrapper
 
 
 class TestFrameSkipper:

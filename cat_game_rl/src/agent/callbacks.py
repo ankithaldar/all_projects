@@ -12,20 +12,37 @@ class TensorBoardCallback(BaseCallback):
 
   def _on_step(self) -> bool:
     infos = self.locals.get("infos", [])
+    if not infos:
+      return True
+
+    reward_sums = {}
+    reward_counts = {}
+    applied_total = 0
+    rejected_total = 0
+    last_tick = 0
+
     for info in infos:
       reward_components = info.get("reward_components", {})
       for key, value in reward_components.items():
         if isinstance(value, (int, float)):
-          self.logger.record(f"reward/{key}", value)
+          reward_sums[key] = reward_sums.get(key, 0.0) + value
+          reward_counts[key] = reward_counts.get(key, 0) + 1
 
       action_info = info.get("action_info", {})
-      applied = action_info.get("applied", {})
-      rejected = action_info.get("rejected", {})
-      self.logger.record("actions/applied_count", len(applied))
-      self.logger.record("actions/rejected_count", len(rejected))
+      applied_total += len(action_info.get("applied", {}))
+      rejected_total += len(action_info.get("rejected", {}))
+      last_tick = max(last_tick, info.get("tick", 0))
 
-      tick = info.get("tick", 0)
-      self.logger.record("env/tick", tick)
+    n = len(infos)
+    for key in reward_sums:
+      cnt = reward_counts[key]
+      self.logger.record(
+        f"reward/{key}", reward_sums[key] / cnt if cnt else 0.0
+      )
+
+    self.logger.record("actions/applied_count", applied_total / n)
+    self.logger.record("actions/rejected_count", rejected_total / n)
+    self.logger.record("env/tick", last_tick)
     return True
 
 

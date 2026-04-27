@@ -38,6 +38,8 @@ class CostCalculator:
     discriminant = 9 + 16 * coins / init_cost
     b_float = (-3 + math.sqrt(discriminant)) / 2
     b = max(0, int(b_float))
-    if CostCalculator.total_cost(init_cost, b + 1) <= coins:
+    while b > 0 and math.ceil(CostCalculator.total_cost(init_cost, b)) > coins:
+      b -= 1
+    if math.ceil(CostCalculator.total_cost(init_cost, b + 1)) <= coins:
       b += 1
     return b
