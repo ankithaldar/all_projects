@@ -7,6 +7,7 @@ import numpy as np
 
 from src.core.items import (
   CraftingTree, ItemId, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE, BASE_ITEM_IDS,
+  ITEM_NAME_TO_ID,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
@@ -14,7 +15,7 @@ from src.core.slot_scheduler import SlotScheduler
 from src.core.cost_calculator import CostCalculator
 from src.core.target_provider import TargetProvider
 
-MAX_TICKS = 2016
+MAX_TICKS = 8064
 PENALTY_TICK = MAX_TICKS + 1
 
 
@@ -44,9 +45,16 @@ class Chromosome:
     genes: np.ndarray,
     crafting_tree: CraftingTree,
     targets: Dict[ItemId, int],
+    initial_coins: int = 0,
+    initial_stash: Dict[str, int] | None = None,
   ) -> Tuple[float, float, float, float]:
     stash = Stash()
-    coins = CoinGenerator(0)
+    if initial_stash:
+      for name, qty in initial_stash.items():
+        item_id = ITEM_NAME_TO_ID.get(name.lower())
+        if item_id is not None and qty > 0:
+          stash.add(item_id, qty)
+    coins = CoinGenerator(initial_coins)
     slots = SlotScheduler(crafting_tree)
     delivered = {k: 0 for k in targets}
     total_cost = 0.0
