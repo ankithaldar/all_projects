@@ -78,12 +78,28 @@ class TestChromosome:
     )
     assert waste >= 9
 
-  def test_material_rollback_on_partial_failure(
+  def test_evaluate_deterministic(
     self, crafting_tree: CraftingTree
   ):
     targets = {ItemId.STRING: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     genes[0, 0] = 1
-    cost1, _, _, _ = Chromosome.evaluate(genes, crafting_tree, targets)
-    cost2, _, _, _ = Chromosome.evaluate(genes, crafting_tree, targets)
-    assert cost1 == cost2
+    result1 = Chromosome.evaluate(genes, crafting_tree, targets)
+    result2 = Chromosome.evaluate(genes, crafting_tree, targets)
+    assert result1 == result2
+
+  def test_infeasible_craft_no_cost(self, crafting_tree: CraftingTree):
+    targets = {ItemId.RIBBON: 1}
+    genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
+    ribbon_idx = None
+    for i, cid in enumerate(CRAFTABLE_ITEM_IDS):
+      if ItemId(cid) == ItemId.RIBBON:
+        ribbon_idx = i
+        break
+    assert ribbon_idx is not None
+    genes[0, ribbon_idx] = 5
+    cost, time, waste, cpi = Chromosome.evaluate(
+      genes, crafting_tree, targets
+    )
+    assert cost == 0.0
+    assert time == MAX_TICKS + 1
