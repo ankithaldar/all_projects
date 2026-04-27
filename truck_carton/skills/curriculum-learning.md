@@ -4,11 +4,12 @@
 
 ### Stage Design
 
-- 3 stages: Toy (2/2/10), Small (3/3/20),
-  Medium (5/4/40)
-- Each stage increases trucks, stores, and cartons
-- The agent transfers learned packing strategies to
-  harder problems
+- 5 stages: Tiny (2/2/10), Small (3/3/20),
+  Medium (5/4/40), Large (8/6/80), Full (12/8/120)
+- Each stage increases trucks, stores, cartons,
+  warehouses, and grid size
+- The agent transfers learned packing and routing
+  strategies to harder problems
 
 ### Promotion Mechanism
 
@@ -23,12 +24,13 @@
 ### Fixed Observation Space
 
 - Observation dimensions are always sized for the
-  maximum stage (5 trucks, 40 cartons, 500 candidates)
+  maximum stage (12 trucks, 120 cartons, 500 packing
+  candidates, 100 routing candidates)
 - Earlier stages use more zero-padding
 - This means the same neural network architecture
   works across all stages without modification
-- The `is_active` flag in truck_meta distinguishes
-  real trucks from padding
+- The `is_active` flag in truck_meta (slot 6 = 1.0)
+  distinguishes real trucks from padding
 
 ### Integration with SB3
 
