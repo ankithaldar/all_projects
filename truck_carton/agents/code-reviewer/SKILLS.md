@@ -125,3 +125,27 @@ Returns issues by severity with a PASS/FAIL verdict.
   without required attributes. Use a real env instance
   with reset() called, or properly mock all accessed
   properties.
+- **Empty observation context fields**: When building
+  ObservationContext, all list fields must be populated
+  with actual data, not empty lists. An empty
+  remaining_cartons field means carton_queue obs is
+  always zeros — a silent information loss that cripples
+  the agent's ability to plan.
+- **Premature episode termination**: After switching
+  the active truck, if that truck has no valid actions,
+  cycle through other non-depot trucks before declaring
+  the episode done. Only terminate when ALL trucks lack
+  valid actions.
+- **Observation feature slot waste**: If a feature dim
+  config (e.g., routing_feature_dim) reserves N slots
+  but only N-1 are populated, the last slot is always
+  zero and wastes model capacity. Ensure dim matches
+  actual feature count.
+- **Hardcoded normalization constants**: Stage index
+  normalization must use config-derived values (e.g.,
+  num_curriculum_stages - 1), not hardcoded numbers
+  like 4.0 that break when stages are added/removed.
+- **Magic number enum comparisons**: Use CellType enum
+  values (CellType.DEPOT, CellType.WAREHOUSE) instead
+  of raw integers (2, 3, 4) when comparing location
+  types in observation encoding.

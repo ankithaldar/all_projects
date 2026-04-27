@@ -107,6 +107,24 @@
   40x40 -> 80x80 -> 160x160 to prevent the agent from
   being overwhelmed by large grids early.
 
+### Audit Learnings (Loop 7)
+
+- ObservationContext.remaining_cartons was always set to
+  an empty list, making carton_queue observation all zeros.
+  Fix: compute unplaced cartons explicitly in _get_obs().
+- Episode could terminate prematurely if the round-robin
+  active truck had no valid actions, even when other trucks
+  did. Fix: cycle through all non-depot trucks before
+  declaring done, via _cycle_to_truck_with_actions().
+- routing_feature_dim was 8 but only 7 features were
+  populated (index 7 always zero). Fix: reduce to 7.
+- stage_index was hardcoded as `/4.0` instead of using
+  config-derived `num_curriculum_stages - 1`. Added
+  num_curriculum_stages field to EnvironmentConfig.
+- CellType comparisons in observation encoding used magic
+  integers (2, 3, 4) instead of enum values. Fix: use
+  CellType.DEPOT, CellType.WAREHOUSE, CellType.STORE.
+
 ### Runtime Edge Cases
 
 - Grid generation must cap facility count to available

@@ -180,16 +180,21 @@ This reduces candidate search from `O(L*W*H*R)` to
 Using `MultiInputPolicy`, the observation is a Dict
 with components:
 
-| Key             | Shape           | Content              |
-|-----------------|-----------------|----------------------|
-| truck_grids     | (5, 1024)       | Flattened 3D grids   |
-| truck_meta      | (5, 7)          | Dimensions, weights  |
-| truck_routes    | (5, 4)          | Store visit matrix   |
-| height_maps     | (5, 16, 8)     | 2D height projection |
-| current_carton  | (7,)            | Current carton feats |
-| carton_queue    | (40, 7)         | Remaining cartons    |
-| candidates      | (500, 18)       | Candidate features   |
-| global_info     | (3,)            | Progress indicators  |
+| Key                 | Shape          | Content                   |
+|---------------------|----------------|---------------------------|
+| truck_grids         | (12, 1024)     | Flattened 3D grids        |
+| truck_meta          | (12, 7)        | Dimensions, weights       |
+| truck_routes        | (12, 8)        | Store visit matrix        |
+| height_maps         | (12, 16, 8)   | 2D height projection      |
+| current_carton      | (7,)           | Current carton features   |
+| carton_queue        | (120, 7)       | Remaining unplaced cartons|
+| candidates          | (500, 20)      | Packing candidate feats   |
+| facility_distances  | (15, 15)       | Pairwise facility dists   |
+| truck_positions     | (12, 2)        | Normalized (row, col)     |
+| truck_states        | (12,)          | Truck state normalized    |
+| warehouse_counts    | (6,)           | Cartons remaining per WH  |
+| routing_candidates  | (100, 7)       | Routing candidate feats   |
+| global_info         | (6,)           | Progress & context        |
 
 All values normalized to [0, 1]. Variable-size episodes
 use zero-padding up to maximum dimensions.
@@ -223,34 +228,37 @@ whose destination is not on the truck's route.
 
 ### 6. Curriculum Learning
 
-Three stages with increasing complexity. Promotion is
-triggered when mean reward exceeds a configurable
-threshold over a sustained window. The observation space
-is fixed to maximum dimensions — only the amount of
-zero-padding changes between stages.
+Five stages (tiny, small, medium, large, full) with
+increasing complexity. Promotion is triggered when mean
+reward exceeds a configurable threshold over a sustained
+window. The observation space is fixed to maximum
+dimensions — only the amount of zero-padding changes
+between stages.
 
 ## Data Flow
 
 ```
 reset()
   → DataGenerator.generate() → EpisodeData
-  → Space3D per truck
-  → Sort cartons (reverse route, priority)
-  → Compute candidates for first carton
+  → Space3D per truck, warehouse carton index
+  → Compute initial candidates (routing)
   → Encode observation → return (obs, info)
 
 step(action)
-  → Decode candidate from action index
-  → Place carton into Space3D
+  → Decode action (packing or routing)
+  → Execute: place carton OR move truck
   → Compute reward via RewardCalculator
-  → Advance to next carton in queue
-  → Compute new candidates
+  → Advance state (packing queue, truck state)
+  → Round-robin to next active truck
+  → Compute new candidates (packing or routing)
+  → If no valid actions, cycle to a truck that does
   → Encode new observation
   → return (obs, reward, terminated, truncated, info)
 
 Episode ends when:
-  - All cartons placed
-  - Current carton has 0 valid candidates
+  - All cartons delivered to stores
+  - All trucks at depot
+  - No truck has valid actions
   - Max steps exceeded
 ```
 

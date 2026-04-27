@@ -59,7 +59,7 @@ class CurriculumStage:
 class CurriculumConfig:
   stages: tuple[CurriculumStage, ...] = (
     CurriculumStage(
-      'tiny', 2, 2, 10, 1, 4, 4, 0.7, 100
+      'tiny', 2, 2, 10, 1, 5, 5, 0.7, 100
     ),
     CurriculumStage(
       'small', 3, 3, 20, 2, 16, 16, 0.7, 100
@@ -90,13 +90,14 @@ class EnvironmentConfig:
   max_weight_capacity: float = 2000.0
   max_carton_weight: float = 50.0
   max_candidates: int = 500
-  candidate_feature_dim: int = 18
+  candidate_feature_dim: int = 20
   max_grid_rows: int = 160
   max_grid_cols: int = 160
   max_warehouses: int = 6
   max_locations: int = 15
   max_routing_actions: int = 100
-  routing_feature_dim: int = 8
+  routing_feature_dim: int = 7
+  num_curriculum_stages: int = 5
 
 
 @dataclass(frozen=True)

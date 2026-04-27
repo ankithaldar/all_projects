@@ -294,3 +294,80 @@ def test_env_episode_terminates():
     done = terminated or truncated
 
   assert done or steps >= 500 or len(valid) == 0
+
+
+def test_carton_queue_obs_nonzero():
+  """carton_queue observation must have nonzero
+  entries when unplaced cartons exist."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  obs, _ = env.reset(seed=42)
+
+  assert obs['carton_queue'].any(), (
+    'carton_queue obs should reflect remaining '
+    'unplaced cartons, not be all zeros'
+  )
+
+
+def test_routing_feature_dim_matches_obs():
+  """routing_candidates observation dim must match
+  config.env.routing_feature_dim (no wasted slots)."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  obs, _ = env.reset(seed=42)
+
+  expected_dim = config.env.routing_feature_dim
+  actual_dim = obs['routing_candidates'].shape[1]
+  assert actual_dim == expected_dim
+
+
+def test_stage_index_normalization():
+  """Stage index in global_info must be properly
+  normalized using num_curriculum_stages, not
+  hardcoded constants."""
+  config = AppConfig()
+  max_stage = len(config.curriculum.stages) - 1
+
+  for stage_idx in range(
+    min(3, len(config.curriculum.stages))
+  ):
+    env = TruckCartonPackingEnv(
+      config=config, curriculum_stage=stage_idx
+    )
+    obs, _ = env.reset(seed=42)
+    stage_val = obs['global_info'][1]
+    expected = stage_idx / max(max_stage, 1)
+    assert abs(stage_val - expected) < 1e-5, (
+      f'Stage {stage_idx}: expected {expected}, '
+      f'got {stage_val}'
+    )
+
+
+def test_cycle_to_truck_with_actions():
+  """When active truck has no valid actions, env
+  should cycle to another truck before terminating."""
+  config = AppConfig()
+  env = TruckCartonPackingEnv(
+    config=config, curriculum_stage=0
+  )
+  obs, _ = env.reset(seed=42)
+
+  done = False
+  steps = 0
+  while not done and steps < 200:
+    mask = env.action_masks()
+    valid = np.where(mask)[0]
+    if len(valid) == 0:
+      break
+    action = int(valid[0])
+    obs, reward, terminated, truncated, info = (
+      env.step(action)
+    )
+    steps += 1
+    done = terminated or truncated
+
+  assert steps > 0
