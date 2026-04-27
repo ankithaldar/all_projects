@@ -8,6 +8,7 @@ from gymnasium import spaces
 
 from src.core.items import (
   CraftingTree, ItemId, BASE_ITEM_IDS, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE,
+  ITEM_NAME_TO_ID,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
@@ -27,8 +28,9 @@ class CraftingEnv(gym.Env):
     tree_path = config.get("crafting_tree_path", "config/crafting_tree.yaml")
     targets_path = config.get("targets_path", "config/targets.yaml")
     self._max_batch = config.get("max_batch_size", 20)
-    self._max_ticks = config.get("max_ticks", 2016)
+    self._max_ticks = config.get("max_ticks", 8064)
     self._initial_coins = config.get("initial_coins", 0)
+    self._initial_stash = config.get("initial_stash", {})
     reward_weights = config.get("reward_weights", None)
 
     self.crafting_tree = CraftingTree.from_yaml(tree_path)
@@ -54,6 +56,10 @@ class CraftingEnv(gym.Env):
   ) -> Tuple[Dict[str, np.ndarray], Dict]:
     super().reset(seed=seed)
     self.stash.reset()
+    for name, qty in self._initial_stash.items():
+      item_id = ITEM_NAME_TO_ID.get(name.lower())
+      if item_id is not None and qty > 0:
+        self.stash.add(item_id, qty)
     self.coins.reset(self._initial_coins)
     self.slots.reset()
     self.targets.reset()
