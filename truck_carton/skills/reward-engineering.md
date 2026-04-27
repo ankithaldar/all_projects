@@ -4,7 +4,7 @@
 
 ### Shaped Reward Design
 
-- 8 independent components with configurable weights
+- 9 independent components with configurable weights
 - Each component returns a normalized scalar in a
   predictable range
 - Negative weights for constraint violations, positive
