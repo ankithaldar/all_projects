@@ -74,7 +74,7 @@ make dashboard
 ```
 
 Dashboard features:
-- **Simulation**: Time slider to scrub through 7-day horizon, stash/coin/slot visualization
+- **Simulation**: Time slider to scrub through 30-day horizon, stash/coin/slot visualization
 - **Bottleneck**: Material availability heatmaps, slot idle time, coin pressure analysis
 - **RL vs GA**: Side-by-side metrics comparison, utilization and coin curves
 - **Pareto Front**: 2D and 3D Pareto plots from GA multi-objective optimization
@@ -92,7 +92,7 @@ tick_index  elapsed_minutes   item_name           batch_size_decided
 1           5                 metal               2
 ```
 
-- `tick_index`: 5-minute game tick (0-2015 for 7-day horizon)
+- `tick_index`: 5-minute game tick (0-2015 for 30-day horizon)
 - `elapsed_minutes`: tick_index * 5
 - `item_name`: which item to manufacture
 - `batch_size_decided`: how many units to produce in this batch
@@ -128,4 +128,4 @@ output/              Runtime artifacts (models, logs, schedules)
 6. Can't start if materials insufficient
 7. All items can manufacture in parallel
 8. Coins generated: 210 per 5-minute tick
-9. Goal: meet level targets within 7-day horizon
+9. Goal: meet level targets within 30-day horizon
