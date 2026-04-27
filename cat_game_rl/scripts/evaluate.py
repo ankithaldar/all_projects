@@ -39,6 +39,7 @@ def main() -> None:
     "max_batch_size": config["environment"]["max_batch_size"],
     "max_ticks": config["environment"]["max_ticks"],
     "initial_coins": config["environment"]["initial_coins"],
+    "initial_stash": config["environment"].get("initial_stash", {}),
     "reward_weights": config.get("reward_weights"),
   }
 
