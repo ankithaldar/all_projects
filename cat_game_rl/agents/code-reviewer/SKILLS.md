@@ -42,5 +42,9 @@ Performs unbiased code review with zero context leakage. Returns issues by sever
 - **Type annotations must match runtime**: GA `_evaluate` annotated as 3-tuple but returns 4-tuple after fitness expansion.
 - **Dead code signals incomplete logic**: `stash` variable fetched but unused in `WasteMinimizationReward` suggested missing functionality.
 
+### Audit Loop 6 (2026-04-28)
+- **Delivery semantics must be consistent across all simulation paths**: RL env, GA, and baselines must agree on what counts as "delivered." Initial stash is raw materials available for crafting, NOT pre-completed deliveries. Only freshly crafted items count toward target completion. Pre-seeding `delivered` from stash creates double-counting when the strategy also reads `stash.get()`.
+- **Order books must guarantee target items are produced**: When subtracting initial stash from gross requirements, target items must always retain at least their target quantity in the order book, even if stash already covers the gross demand.
+
 ## When to Use
 Spawn this agent after any non-trivial code change. It reviews files but does NOT modify them. The parent agent applies all fixes.

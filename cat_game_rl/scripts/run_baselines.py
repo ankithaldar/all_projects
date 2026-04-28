@@ -85,6 +85,9 @@ def build_order_book(
         break
     net[item_id] = max(0, qty - on_hand)
 
+  for item_id, qty in targets.items():
+    net[item_id] = max(net.get(item_id, 0), qty)
+
   return net
 
 
@@ -163,10 +166,7 @@ def run_simulation(
       stash.add(iid, qty)
   coins = CoinGenerator(initial_coins)
   slots = SlotScheduler(crafting_tree)
-  delivered: Dict[ItemId, int] = {}
-  for k in targets:
-    on_hand = stash.get(k)
-    delivered[k] = min(on_hand, targets[k])
+  delivered: Dict[ItemId, int] = {k: 0 for k in targets}
   total_cost = 0.0
   completion_tick = PENALTY_TICK
   total_items_produced = 0
