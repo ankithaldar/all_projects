@@ -90,7 +90,7 @@ ga.yaml → GaScheduler → NSGA-II loop → Pareto front
               ↓                              ↓
         Core domain sim            ga_population_log.jsonl
               ↓                    ga_batch_schedule.txt
-        (2016 ticks/individual)
+        (8064 ticks/individual)
 ```
 
 ### Dashboard
@@ -110,7 +110,7 @@ targets.yaml ────────┘         ↓
 ### Conservative Masking + Greedy Validation
 Masks each item independently (ignoring other items' demands this tick). `ActionHandler.validate_and_apply()` then applies greedily in topological order, clipping any that can't be satisfied. Agent learns contention via policy gradient. Mask is computed on pre-tick state (210 coins conservative). Observations are clamped to declared `spaces.Box` bounds.
 
-### GA Chromosome: Dense (2016, 19)
+### GA Chromosome: Dense (8064, 19)
 Fixed-size enables simple crossover (time-block swaps) and numpy-friendly evaluation. 95% zeros at init keeps it effectively sparse.
 
 ### Optimization Objectives
@@ -133,6 +133,28 @@ Both RL and GA optimize for minimum coins used and lowest completion time with e
 
 ### Shared Simulation Logic
 GA's `Chromosome.evaluate()` and `CraftingEnv.step()` both use the same core domain classes (Stash, CoinGenerator, SlotScheduler, CostCalculator). No duplicate game logic.
+
+### Multi-Agent Tier System
+Independent envs per tier connected via an OrderBoard message bus:
+
+```
+OrderBoard (demand ↓, supply ↑)
+    │
+    ├─ Tier 8 Agent: artifact (1 item)
+    ├─ Tier 7 Agent: elementstone (1 item)
+    ├─ Tier 6 Agent: waterstone, firestone (2 items)
+    ├─ Tier 5 Agent: necklace, fire (2 items)
+    ├─ Tier 4 Agent: gold, pendant, water (3 items)
+    ├─ Tier 3 Agent: sparkles, silver (2 items)
+    ├─ Tier 2 Agent: ribbon, needles (2 items)
+    └─ Tier 1 Agent: string, wood, metal, bronze, amethyst, orb (6 items)
+```
+
+**Communication**: Orders propagate top-down (high tier demands from low). Fulfillments propagate bottom-up (completed items available to higher tiers). Shared coin pool across all tiers.
+
+**Per-tier env**: Each TierEnv has local obs (own stash, slots, ingredients, orders), local action masking, and mixed reward (40% global target progress + 60% local efficiency).
+
+**Orchestrator**: `MultiAgentOrchestrator` coordinates tick loop — coins, base refill, agent actions in topo order, slot completion, order propagation.
 
 ## Module Dependencies
 
