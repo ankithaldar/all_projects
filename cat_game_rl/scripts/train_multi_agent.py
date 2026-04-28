@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Train multi-agent tier-based system for crafting game.
 
-Each tier has its own MaskablePPO agent. An orchestrator coordinates
-the shared environment, order board, and tick loop. Agents are trained
-via collect-then-update: all agents collect rollouts for N ticks,
-then each updates independently.
+Each tier agent trains independently via SB3's MaskablePPO.learn().
+The TierEnv.step() delegates to the shared orchestrator, with other
+tiers using no-op actions during the focal agent's training. Agents
+are trained round-robin: each tier gets a training batch, then the
+next tier trains, cycling for the configured number of rounds.
 """
 from __future__ import annotations
 
@@ -23,6 +24,27 @@ from src.cat_game_env.multi_agent import MultiAgentOrchestrator
 from src.agent.masked_agent import TierAgent
 
 
+def evaluate_episode(
+  orch: MultiAgentOrchestrator,
+  agents: Dict[int, TierAgent],
+  max_ticks: int,
+) -> tuple[int, float]:
+  obs = orch.reset()
+  total_reward = 0.0
+  for _ in range(max_ticks):
+    masks = orch.get_action_masks()
+    actions = {}
+    for tier_num, agent in agents.items():
+      actions[tier_num] = agent.predict(
+        obs[tier_num], action_masks=masks[tier_num],
+      )
+    obs, rewards, terminated, truncated, _ = orch.step(actions)
+    total_reward += sum(rewards.values())
+    if terminated or truncated:
+      break
+  return orch.current_tick, total_reward
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(
     description="Train multi-agent tier system"
@@ -32,8 +54,12 @@ def main() -> None:
     help="Training config path",
   )
   parser.add_argument(
-    "--episodes", type=int, default=100,
-    help="Number of training episodes",
+    "--rounds", type=int, default=10,
+    help="Training rounds (each tier trains once per round)",
+  )
+  parser.add_argument(
+    "--steps-per-round", type=int, default=4096,
+    help="Timesteps per tier per round",
   )
   args = parser.parse_args()
 
@@ -48,6 +74,7 @@ def main() -> None:
     "initial_coins": config["environment"]["initial_coins"],
     "initial_stash": config["environment"].get("initial_stash", {}),
   }
+  max_ticks = config["environment"]["max_ticks"]
 
   orch = MultiAgentOrchestrator(env_config)
 
@@ -55,12 +82,9 @@ def main() -> None:
   for tier_num, tier_env in orch.tier_envs.items():
     agents[tier_num] = TierAgent(tier_env, config)
 
-  n_episodes = args.episodes
-  max_ticks = config["environment"]["max_ticks"]
-
   print(
-    f"Training {len(agents)} tier agents for {n_episodes} episodes "
-    f"({max_ticks} ticks/episode)"
+    f"Training {len(agents)} tier agents, "
+    f"{args.rounds} rounds x {args.steps_per_round} steps/tier"
   )
   for tier_num in sorted(agents.keys()):
     env = orch.tier_envs[tier_num]
@@ -69,45 +93,27 @@ def main() -> None:
       f"action_space={env.action_space}"
     )
 
-  best_tick = max_ticks + 1
-  for episode in range(n_episodes):
-    obs = orch.reset()
-    episode_rewards = {t: 0.0 for t in agents}
-    done = False
+  tick, reward = evaluate_episode(orch, agents, max_ticks)
+  print(f"\nPre-training eval: tick={tick}, reward={reward:.1f}\n")
 
-    for tick in range(max_ticks):
-      masks = orch.get_action_masks()
-      actions: Dict[int, np.ndarray] = {}
-      for tier_num, agent in agents.items():
-        actions[tier_num] = agent.predict(
-          obs[tier_num],
-          action_masks=masks[tier_num],
-          deterministic=False,
-        )
-
-      obs, rewards, terminated, truncated, info = orch.step(actions)
-
-      for tier_num, r in rewards.items():
-        episode_rewards[tier_num] += r
-
-      if terminated or truncated:
-        done = True
-        break
-
-    total_r = sum(episode_rewards.values())
-    completion = orch.current_tick
-    status = "DONE" if terminated else "TRUNC"
-
-    if terminated and completion < best_tick:
-      best_tick = completion
-
-    if episode % 10 == 0 or terminated:
-      print(
-        f"  Ep {episode:>4}/{n_episodes} | "
-        f"{status} tick={completion:>5} | "
-        f"reward={total_r:>8.1f} | "
-        f"best={best_tick if best_tick <= max_ticks else 'N/A'}"
+  for rnd in range(args.rounds):
+    for tier_num in sorted(agents.keys()):
+      agent = agents[tier_num]
+      agent.model.learn(
+        total_timesteps=args.steps_per_round,
+        reset_num_timesteps=False,
       )
+
+    tick, reward = evaluate_episode(orch, agents, max_ticks)
+    status = "DONE" if tick < max_ticks else "TRUNC"
+    print(
+      f"  Round {rnd + 1:>3}/{args.rounds} | "
+      f"{status} tick={tick:>5} | reward={reward:>8.1f}"
+    )
+
+  print("\nFinal evaluation:")
+  tick, reward = evaluate_episode(orch, agents, max_ticks)
+  print(f"  tick={tick}, reward={reward:.1f}")
 
   timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
   model_dir = config["training"].get("model_dir", "output/models")
