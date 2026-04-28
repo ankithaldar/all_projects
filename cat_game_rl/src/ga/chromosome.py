@@ -13,7 +13,6 @@ from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.cost_calculator import CostCalculator
-from src.core.target_provider import TargetProvider
 
 MAX_TICKS = 8064
 PENALTY_TICK = MAX_TICKS + 1

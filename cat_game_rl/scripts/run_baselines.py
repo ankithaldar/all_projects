@@ -300,8 +300,12 @@ def make_order_strategy(
       if slots.is_busy(item_id):
         continue
 
-      produced = delivered.get(item_id, 0) + stash.get(item_id)
-      remaining = order_qty - produced
+      if item_id in targets:
+        remaining = targets[item_id] - delivered.get(item_id, 0)
+      else:
+        produced = delivered.get(item_id, 0) + stash.get(item_id)
+        remaining = order_qty - produced
+
       if remaining <= 0:
         continue
 
