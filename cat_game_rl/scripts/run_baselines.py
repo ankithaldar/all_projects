@@ -132,9 +132,13 @@ class SimResult:
   waste: float
   cost_per_item: float
   slot_utilization: float
+  slot_idle_ratio: float
   coins_per_target: float
   total_items_produced: int
   batches_run: int
+  queue_blocks: int
+  coin_starvation_ticks: int
+  inventory_imbalance: float
 
 
 StrategyFn = Callable[
@@ -159,12 +163,17 @@ def run_simulation(
       stash.add(iid, qty)
   coins = CoinGenerator(initial_coins)
   slots = SlotScheduler(crafting_tree)
-  delivered: Dict[ItemId, int] = {k: 0 for k in targets}
+  delivered: Dict[ItemId, int] = {}
+  for k in targets:
+    on_hand = stash.get(k)
+    delivered[k] = min(on_hand, targets[k])
   total_cost = 0.0
   completion_tick = PENALTY_TICK
   total_items_produced = 0
   total_active_ticks = 0
   batches_run = 0
+  queue_blocks = 0
+  coin_starvation_ticks = 0
 
   for t in range(MAX_TICKS):
     coins.tick()
@@ -178,11 +187,15 @@ def run_simulation(
       t, crafting_tree, stash, slots, coins, targets, delivered
     )
 
+    tick_blocked = False
     for item_id in crafting_tree.topo_order:
       if item_id not in actions:
         continue
       batch_size = actions[item_id]
-      if batch_size <= 0 or slots.is_busy(item_id):
+      if batch_size <= 0:
+        continue
+      if slots.is_busy(item_id):
+        queue_blocks += 1
         continue
 
       recipe = crafting_tree.get_recipe(item_id)
@@ -192,6 +205,8 @@ def run_simulation(
       )
       feasible = min(batch_size, max_mat, max_coin, 20)
       if feasible <= 0:
+        if max_coin == 0 and max_mat > 0:
+          tick_blocked = True
         continue
 
       cost = CostCalculator.total_cost(recipe.coin_cost, feasible)
@@ -219,13 +234,17 @@ def run_simulation(
       total_items_produced += feasible
       batches_run += 1
 
+    if tick_blocked:
+      coin_starvation_ticks += 1
+
     completed = slots.tick()
     for item_id, qty in completed:
       stash.add(item_id, qty)
       if item_id in delivered:
         delivered[item_id] += qty
 
-    total_active_ticks += slots.active_count()
+    active = slots.active_count()
+    total_active_ticks += active
 
     all_done = all(delivered.get(k, 0) >= v for k, v in targets.items())
     if all_done and completion_tick == PENALTY_TICK:
@@ -236,7 +255,14 @@ def run_simulation(
     excess = max(0, delivered.get(item_id, 0) - target)
     waste += excess
 
+  final_stash = stash.as_array()
+  craftable_stash = [int(final_stash[i]) for i in CRAFTABLE_ITEM_IDS]
+  stash_mean = np.mean(craftable_stash) if craftable_stash else 0
+  stash_std = np.std(craftable_stash) if craftable_stash else 0
+  imbalance = stash_std / max(stash_mean, 1)
+
   target_sum = sum(targets.values())
+  util = total_active_ticks / (MAX_TICKS * NUM_CRAFTABLE)
   return SimResult(
     name=name,
     total_cost=total_cost,
@@ -246,10 +272,14 @@ def run_simulation(
       total_cost / total_items_produced
       if total_items_produced > 0 else float(PENALTY_TICK)
     ),
-    slot_utilization=total_active_ticks / (MAX_TICKS * NUM_CRAFTABLE),
+    slot_utilization=util,
+    slot_idle_ratio=1.0 - util,
     coins_per_target=total_cost / max(target_sum, 1),
     total_items_produced=total_items_produced,
     batches_run=batches_run,
+    queue_blocks=queue_blocks,
+    coin_starvation_ticks=coin_starvation_ticks,
+    inventory_imbalance=imbalance,
   )
 
 
@@ -336,15 +366,15 @@ def print_order_book(order_book: Dict[ItemId, int], tree: CraftingTree) -> None:
 
 
 def print_results(results: List[SimResult]) -> None:
-  print("=" * 100)
-  print("BASELINE COMPARISON")
-  print("=" * 100)
+  print("=" * 105)
+  print("BASELINE COMPARISON — Production Metrics")
+  print("=" * 105)
   print(
     f"{'Strategy':<20}{'TotalCost':>12}{'Tick':>8}{'Days':>7}"
     f"{'Waste':>7}{'Cost/Item':>11}{'SlotUtil':>10}"
     f"{'Coin/Tgt':>10}{'Batches':>9}{'Items':>7}"
   )
-  print("-" * 100)
+  print("-" * 105)
   for r in results:
     if r.completion_tick < PENALTY_TICK:
       tick_str = str(r.completion_tick)
@@ -357,6 +387,22 @@ def print_results(results: List[SimResult]) -> None:
       f"{r.waste:>7.0f}{r.cost_per_item:>11.1f}"
       f"{r.slot_utilization:>9.1%}{r.coins_per_target:>10.1f}"
       f"{r.batches_run:>9}{r.total_items_produced:>7}"
+    )
+  print()
+
+  print("=" * 75)
+  print("INEFFICIENCY METRICS (Section 3.2)")
+  print("=" * 75)
+  print(
+    f"{'Strategy':<20}{'SlotIdle':>10}{'QueueBlocks':>13}"
+    f"{'CoinStarve':>12}{'InvImbalance':>14}"
+  )
+  print("-" * 75)
+  for r in results:
+    print(
+      f"{r.name:<20}{r.slot_idle_ratio:>9.1%}"
+      f"{r.queue_blocks:>13}{r.coin_starvation_ticks:>12}"
+      f"{r.inventory_imbalance:>14.2f}"
     )
   print()
 
@@ -382,6 +428,14 @@ def print_results(results: List[SimResult]) -> None:
         f"({time_saved * 5 / 1440:.1f} days) "
         f"but costs {cost_diff:,.0f} more coins"
       )
+    print()
+    print("INEFFICIENCY ANALYSIS:")
+    for r in results:
+      print(f"  {r.name}:")
+      print(f"    Slot idle ratio:     {r.slot_idle_ratio:.1%} of capacity unused")
+      print(f"    Queue blocks:        {r.queue_blocks} (wanted to craft but slot busy)")
+      print(f"    Coin starvation:     {r.coin_starvation_ticks} ticks with materials but no coins")
+      print(f"    Inventory imbalance: {r.inventory_imbalance:.2f} (std/mean of final craftable stash)")
     print()
 
 
