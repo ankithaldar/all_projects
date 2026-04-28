@@ -30,7 +30,9 @@ class OrderBoard:
     self._fulfilled: Dict[ItemId, int] = {}
 
   def post_order(self, item_id: ItemId, quantity: int) -> None:
-    self._orders[item_id] = self._orders.get(item_id, 0) + quantity
+    self._orders[item_id] = max(
+      self._orders.get(item_id, 0), quantity
+    )
 
   def get_pending(self, item_id: ItemId) -> int:
     ordered = self._orders.get(item_id, 0)
@@ -123,6 +125,37 @@ class TierEnv(gym.Env):
 
     self._prev_fraction = 0.0
     self._tick = 0
+    self._orchestrator = None
+
+  def set_orchestrator(self, orch: MultiAgentOrchestrator) -> None:
+    self._orchestrator = orch
+
+  def reset(
+    self, seed: Optional[int] = None, options: Optional[Dict] = None
+  ) -> Tuple[Dict[str, np.ndarray], Dict]:
+    super().reset(seed=seed)
+    if self._orchestrator is not None:
+      obs_all = self._orchestrator.reset(seed=seed)
+      return obs_all[self.tier], {}
+    self.reset_state()
+    return self.build_obs(0), {}
+
+  def step(
+    self, action: np.ndarray
+  ) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
+    if self._orchestrator is None:
+      raise RuntimeError("TierEnv.step() requires an orchestrator")
+    actions: Dict[int, np.ndarray] = {}
+    for t_num, t_env in self._orchestrator.tier_envs.items():
+      if t_num == self.tier:
+        actions[t_num] = action
+      else:
+        n = len(t_env.tier_items)
+        actions[t_num] = np.zeros(n, dtype=np.int64)
+    obs_all, rewards, terminated, truncated, info = (
+      self._orchestrator.step(actions)
+    )
+    return obs_all[self.tier], rewards[self.tier], terminated, truncated, info
 
   def _build_obs_space(self) -> spaces.Dict:
     return spaces.Dict({
@@ -373,6 +406,9 @@ class MultiAgentOrchestrator:
         max_batch=self._max_batch,
         max_ticks=self._max_ticks,
       )
+
+    for env in self.tier_envs.values():
+      env.set_orchestrator(self)
 
   def reset(self, seed: int | None = None) -> Dict[int, Dict]:
     self.stash.reset()

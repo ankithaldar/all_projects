@@ -46,5 +46,10 @@ Performs unbiased code review with zero context leakage. Returns issues by sever
 - **Delivery semantics must be consistent across all simulation paths**: RL env, GA, and baselines must agree on what counts as "delivered." Initial stash is raw materials available for crafting, NOT pre-completed deliveries. Only freshly crafted items count toward target completion. Pre-seeding `delivered` from stash creates double-counting when the strategy also reads `stash.get()`.
 - **Order books must guarantee target items are produced**: When subtracting initial stash from gross requirements, target items must always retain at least their target quantity in the order book, even if stash already covers the gross demand.
 
+### Audit Loop 8 (2026-04-28)
+- **Training scripts must actually call model.learn()**: A predict-only loop looks like training (stochastic actions give illusion of improvement) but saves untrained weights. Always verify the gradient update path exists.
+- **Message-passing order boards must use set semantics, not additive**: `post_order()` called every tick must use `max(existing, new)` not `existing + new`, or demands accumulate N× over N ticks.
+- **Per-tier envs need orchestrator back-reference for Gym compliance**: `TierEnv.step()` must delegate to the orchestrator (which coordinates all tiers) so SB3's `model.learn()` can drive the full simulation.
+
 ## When to Use
 Spawn this agent after any non-trivial code change. It reviews files but does NOT modify them. The parent agent applies all fixes.
