@@ -128,6 +128,14 @@ def print_order_cascade(
 # ── Simulation runner ─────────────────────────────────────────────
 
 @dataclass
+class ScheduleRow:
+  tick_index: int
+  elapsed_minutes: int
+  item_name: str
+  batch_size_decided: int
+
+
+@dataclass
 class SimResult:
   name: str
   total_cost: float
@@ -142,6 +150,7 @@ class SimResult:
   queue_blocks: int
   coin_starvation_ticks: int
   inventory_imbalance: float
+  schedule: List[ScheduleRow]
 
 
 StrategyFn = Callable[
@@ -174,6 +183,7 @@ def run_simulation(
   batches_run = 0
   queue_blocks = 0
   coin_starvation_ticks = 0
+  schedule: List[ScheduleRow] = []
 
   for t in range(MAX_TICKS):
     coins.tick()
@@ -233,6 +243,12 @@ def run_simulation(
       total_cost += cost_int
       total_items_produced += feasible
       batches_run += 1
+      schedule.append(ScheduleRow(
+        tick_index=t,
+        elapsed_minutes=t * 5,
+        item_name=item_id.name.lower(),
+        batch_size_decided=feasible,
+      ))
 
     if tick_blocked:
       coin_starvation_ticks += 1
@@ -280,7 +296,23 @@ def run_simulation(
     queue_blocks=queue_blocks,
     coin_starvation_ticks=coin_starvation_ticks,
     inventory_imbalance=imbalance,
+    schedule=schedule,
   )
+
+
+def export_schedule(result: SimResult, path: str) -> None:
+  os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+  with open(path, "w") as f:
+    f.write(
+      f"{'tick_index':<12}{'elapsed_minutes':<18}"
+      f"{'item_name':<20}{'batch_size_decided'}\n"
+    )
+    f.write("-" * 68 + "\n")
+    for row in result.schedule:
+      f.write(
+        f"{row.tick_index:<12}{row.elapsed_minutes:<18}"
+        f"{row.item_name:<20}{row.batch_size_decided}\n"
+      )
 
 
 # ── Order-based strategies ────────────────────────────────────────
@@ -507,6 +539,28 @@ def main() -> None:
 
   print()
   print_results(results)
+
+  schedule_paths = {
+    "baseline_time_b1": [
+      "output/rl_batch_schedule_train.txt",
+      "output/rl_batch_schedule_eval.txt",
+    ],
+    "baseline_coins_bmax": [
+      "output/ga_results/ga_batch_schedule_train.txt",
+      "output/ga_results/ga_batch_schedule_eval.txt",
+    ],
+  }
+
+  print("EXPORTING SCHEDULES:")
+  for r in results:
+    paths = schedule_paths.get(r.name, [])
+    for p in paths:
+      export_schedule(r, p)
+      print(f"  {p} ({len(r.schedule)} rows)")
+
+  export_schedule(results[0], "output/batch_schedule.txt")
+  print(f"  output/batch_schedule.txt (RL default)")
+  print()
 
 
 if __name__ == "__main__":
