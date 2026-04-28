@@ -49,7 +49,7 @@ def parse_ga_log(path: str) -> List[Dict[str, Any]]:
 def simulate_schedule(
   schedule_df: pd.DataFrame,
   crafting_tree: CraftingTree,
-  max_ticks: int = 2016,
+  max_ticks: int = 8064,
   initial_coins: int = 0,
 ) -> Dict[str, Any]:
   stash = Stash()
@@ -92,7 +92,7 @@ def simulate_schedule(
         max_coin = CostCalculator.max_affordable_batch(
           recipe.coin_cost, coins.balance
         )
-        feasible = min(batch_size, max_mat, max_coin)
+        feasible = min(batch_size, max_mat, max_coin, 20)
         if feasible <= 0:
           continue
 
@@ -133,7 +133,7 @@ def simulate_schedule(
   }
 
 
-def export_replay_csv(sim_data: Dict[str, Any], max_ticks: int = 2016) -> str:
+def export_replay_csv(sim_data: Dict[str, Any], max_ticks: int = 8064) -> str:
   output = io.StringIO()
   writer = csv.writer(output)
 
