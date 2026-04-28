@@ -66,7 +66,10 @@ def main() -> None:
 
   def _is_safe_path(path: str) -> bool:
     abs_path = os.path.abspath(path)
-    return any(abs_path.startswith(d) for d in allowed_dirs)
+    return any(
+      abs_path.startswith(d + os.sep) or abs_path == d
+      for d in allowed_dirs
+    )
 
   rl_schedule_df = None
   rl_sim = None
@@ -95,7 +98,7 @@ def main() -> None:
 
   if page == "Simulation":
     if active_sim is not None:
-      render_simulation_page(active_sim, max_ticks=2016)
+      render_simulation_page(active_sim, max_ticks=8064)
     else:
       st.info("Load a batch schedule to view simulation.")
 
