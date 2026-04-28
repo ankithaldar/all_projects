@@ -16,6 +16,8 @@ def render_targets_page(
   schedule_df: Any,
   crafting_tree: CraftingTree,
   targets_path: str,
+  initial_coins: int = 0,
+  initial_stash: dict | None = None,
 ) -> None:
   st.header("Target Editor & Re-Simulation")
 
@@ -53,7 +55,8 @@ def render_targets_page(
 
     try:
       sim_result = simulate_schedule(
-        schedule_df, crafting_tree, max_ticks=2016
+        schedule_df, crafting_tree, max_ticks=8064,
+        initial_coins=initial_coins, initial_stash=initial_stash,
       )
 
       st.subheader("Re-Simulation Results")
