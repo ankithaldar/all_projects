@@ -3,8 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.core.items import ItemId, NUM_CRAFTABLE
+from src.core.items import ItemId, NUM_CRAFTABLE, CRAFTABLE_ITEM_IDS
 from src.cat_game_env.crafting_env import CraftingEnv
+from src.cat_game_env.multi_agent import (
+  OrderBoard, MultiAgentOrchestrator, group_items_by_tier,
+)
 
 
 class TestCraftingEnv:
@@ -153,3 +156,76 @@ class TestCraftingEnv:
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
     obs, _, _, _, _ = env.step(action)
     assert obs["coins"][0] == 210
+
+
+class TestOrderBoard:
+  def test_post_and_pending(self):
+    board = OrderBoard()
+    board.post_order(ItemId.STRING, 10)
+    assert board.get_pending(ItemId.STRING) == 10
+
+  def test_fulfill_reduces_pending(self):
+    board = OrderBoard()
+    board.post_order(ItemId.STRING, 10)
+    board.fulfill(ItemId.STRING, 4)
+    assert board.get_pending(ItemId.STRING) == 6
+
+  def test_post_order_uses_max_not_add(self):
+    board = OrderBoard()
+    board.post_order(ItemId.STRING, 10)
+    board.post_order(ItemId.STRING, 8)
+    assert board.get_pending(ItemId.STRING) == 10
+
+  def test_reset_clears(self):
+    board = OrderBoard()
+    board.post_order(ItemId.STRING, 10)
+    board.reset()
+    assert board.get_pending(ItemId.STRING) == 0
+
+  def test_pending_never_negative(self):
+    board = OrderBoard()
+    board.post_order(ItemId.STRING, 5)
+    board.fulfill(ItemId.STRING, 10)
+    assert board.get_pending(ItemId.STRING) == 0
+
+
+class TestMultiAgentOrchestrator:
+  @pytest.fixture
+  def orch(self, env_config: dict) -> MultiAgentOrchestrator:
+    return MultiAgentOrchestrator(env_config)
+
+  def test_tier_groups_cover_all_craftable(self, orch):
+    all_items = []
+    for items in orch.tier_groups.values():
+      all_items.extend(items)
+    assert len(all_items) == NUM_CRAFTABLE
+
+  def test_reset_returns_obs_per_tier(self, orch):
+    obs = orch.reset()
+    assert len(obs) == len(orch.tier_envs)
+    for tier_num, o in obs.items():
+      env = orch.tier_envs[tier_num]
+      assert env.observation_space.contains(o)
+
+  def test_step_with_no_ops(self, orch):
+    orch.reset()
+    actions = {}
+    for tier_num, env in orch.tier_envs.items():
+      actions[tier_num] = np.zeros(len(env.tier_items), dtype=np.int64)
+    obs, rewards, terminated, truncated, info = orch.step(actions)
+    assert len(obs) == len(orch.tier_envs)
+    assert len(rewards) == len(orch.tier_envs)
+    assert orch.current_tick == 1
+
+  def test_tier_envs_have_orchestrator(self, orch):
+    for env in orch.tier_envs.values():
+      assert env._orchestrator is orch
+
+  def test_action_masks_per_tier(self, orch):
+    orch.reset()
+    masks = orch.get_action_masks()
+    for tier_num, mask in masks.items():
+      env = orch.tier_envs[tier_num]
+      expected_size = len(env.tier_items) * (env._max_batch + 1)
+      assert mask.shape == (expected_size,)
+      assert mask.dtype == np.bool_
