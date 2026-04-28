@@ -14,7 +14,7 @@ from src.cat_game_env.observation_builder import ObservationBuilder
 class TestObservationBuilder:
   @pytest.fixture
   def obs_builder(self) -> ObservationBuilder:
-    return ObservationBuilder(max_ticks=2016)
+    return ObservationBuilder(max_ticks=8064)
 
   def test_build_space(self, obs_builder: ObservationBuilder):
     space = obs_builder.build_space()
@@ -74,6 +74,6 @@ class TestObservationBuilder:
     funded_coins, slot_scheduler, target_provider
   ):
     obs = obs_builder.build_obs(
-      fresh_stash, funded_coins, slot_scheduler, target_provider, tick=1008
+      fresh_stash, funded_coins, slot_scheduler, target_provider, tick=4032
     )
     assert obs["time_fraction"][0] == pytest.approx(0.5, rel=1e-3)
