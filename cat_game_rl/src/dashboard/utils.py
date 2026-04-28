@@ -51,8 +51,14 @@ def simulate_schedule(
   crafting_tree: CraftingTree,
   max_ticks: int = 8064,
   initial_coins: int = 0,
+  initial_stash: Dict[str, int] | None = None,
 ) -> Dict[str, Any]:
   stash = Stash()
+  if initial_stash:
+    for name, qty in initial_stash.items():
+      item_id = ITEM_NAME_TO_ID.get(name.lower())
+      if item_id is not None and qty > 0:
+        stash.add(item_id, qty)
   coins = CoinGenerator(initial_coins)
   slots = SlotScheduler(crafting_tree)
 

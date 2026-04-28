@@ -36,6 +36,13 @@ def main() -> None:
   targets_path = "config/targets.yaml"
   crafting_tree = CraftingTree.from_yaml(tree_path)
 
+  import yaml as _yaml
+  with open("config/training.yaml", "r") as _f:
+    _train_cfg = _yaml.safe_load(_f)
+  _env_cfg = _train_cfg.get("environment", {})
+  _initial_coins = _env_cfg.get("initial_coins", 0)
+  _initial_stash = _env_cfg.get("initial_stash", {})
+
   with st.sidebar:
     st.header("Data Sources")
 
@@ -75,7 +82,10 @@ def main() -> None:
   rl_sim = None
   if _is_safe_path(rl_schedule_path) and os.path.exists(rl_schedule_path):
     rl_schedule_df = parse_batch_schedule(rl_schedule_path)
-    rl_sim = simulate_schedule(rl_schedule_df, crafting_tree)
+    rl_sim = simulate_schedule(
+      rl_schedule_df, crafting_tree,
+      initial_coins=_initial_coins, initial_stash=_initial_stash,
+    )
   else:
     if page in ["Simulation", "Bottleneck"]:
       if not _is_safe_path(rl_schedule_path):
@@ -89,7 +99,10 @@ def main() -> None:
 
   if _is_safe_path(ga_schedule_path) and os.path.exists(ga_schedule_path):
     ga_schedule_df = parse_batch_schedule(ga_schedule_path)
-    ga_sim = simulate_schedule(ga_schedule_df, crafting_tree)
+    ga_sim = simulate_schedule(
+      ga_schedule_df, crafting_tree,
+      initial_coins=_initial_coins, initial_stash=_initial_stash,
+    )
 
   if _is_safe_path(ga_log_path) and os.path.exists(ga_log_path):
     ga_log = parse_ga_log(ga_log_path)
@@ -117,7 +130,10 @@ def main() -> None:
   elif page == "Target Editor":
     active_df = rl_schedule_df if rl_schedule_df is not None else ga_schedule_df
     if active_df is not None:
-      render_targets_page(active_df, crafting_tree, targets_path)
+      render_targets_page(
+        active_df, crafting_tree, targets_path,
+        initial_coins=_initial_coins, initial_stash=_initial_stash,
+      )
     else:
       st.info("Load a batch schedule to use target editor.")
 
