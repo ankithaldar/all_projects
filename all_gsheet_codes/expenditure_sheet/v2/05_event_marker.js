@@ -80,12 +80,12 @@ function em_flag_dates() {
     bank_tab = em_flag_end_month_salary(mon, k, bank_tab);
     bank_tab = em_flag_home_loan_emi_payment(mon, k, bank_tab);
     bank_tab = em_flag_flat_maintanance_payment(mon, k, bank_tab);
-    // bank_tab = em_flag_flat_electricity_payment(mon, k, bank_tab);
+    bank_tab = em_flag_flat_electricity_payment(mon, k, bank_tab);
     bank_tab = em_flag_personal_loan_adhira_appa(mon, k, bank_tab);
     bank_tab = em_flag_earning_adhira_appa(mon, k, bank_tab);
 
     // cc based_payments
-    cc_tab = em_flag_flat_electricity_payment(mon, k, cc_tab);
+    // cc_tab = em_flag_flat_electricity_payment(mon, k, cc_tab);
     cc_tab = em_flag_internet_payment(mon, k, cc_tab);
     cc_tab = em_flag_meal_card(mon, k, cc_tab);
 
@@ -190,7 +190,7 @@ function em_flag_flat_electricity_payment(mon, k, bank_tab) {
   var electricity_payment_day = new Date(CONFIG.years, k, 15);
   var events = bank_tab[format_date(electricity_payment_day)];
 
-  events.push(['CC Cred Flash', `Electricity Bill Payment - ${electricity_payment_day.toLocaleString('en-EN', { month: 'long' })}`, 'd', `=${mon}!$F$16`]);
+  events.push(['Online', `Electricity Bill Payment - ${electricity_payment_day.toLocaleString('en-EN', { month: 'long' })}`, 'd', `=${mon}!$F$16`]);
 
   bank_tab[format_date(electricity_payment_day)] = events;
 
