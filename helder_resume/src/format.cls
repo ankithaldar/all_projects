@@ -36,6 +36,7 @@
 \usepackage{titlesec}
 \usepackage[usenames,dvipsnames]{color}
 \usepackage{enumitem}
+\usepackage{amsmath}
 \input{glyphtounicode}
 \usepackage{ragged2e}
 % \usepackage[T1]{fontenc}

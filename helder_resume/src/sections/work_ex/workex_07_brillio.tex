@@ -1,27 +1,35 @@
 \resumeSubheading
-  {Senior Data Scientist}{Aug 2024 -- Present}
+  {Lead Data Scientist}{Aug 2024 -- Present}
   {Brillio Technologies Pvt. Ltd.}{Bangalore, India}
-  % Part 02
-  % \resumeItem{Client: \textbf{UK based Retailer (Jun 2026 - Present)}}
-  %   \resumeItemListStart
-  %     \resumeItem{}
-  %   \resumeItemListEnd
-  %   \vspace{5pt}
-  %   \textit{\small Tools: \textbf{Tableau, Python (Pandas, Numpy, statmodels, scikit-learn, seaborn, kedro), SQL(Bigquery), Airflow, Git, GitLab}}
 
-  % % Part 01
+  % Part 02
+  \resumeItem{Client: \textbf{Drywall Distributor (Apr 2026 - Present)}}
+    \resumeItemListStart
+      \resumeItem{Engineered a Python-based drywall estimation backend that processed \textbf{20,000+ multi-page residential PDF drawing packages}, reducing manual takeoff and page-triage effort by \textbf{~75\%} by building automated ingestion, classification, and floor-plan extraction workflows with \textbf{PyMuPDF, OpenCV, FastAPI, and PyTorch.}}
+      \resumeItem{Achieved \textbf{~90\%+ page-classification performance} across electrical, elevation, floor, foundation, roof, and non-floor plan categories by fine-tuning pretrained \textbf{ConvNeXt Tiny/Small} models in \textbf{PyTorch} and validating outputs for reliable downstream floor-plan parsing.}
+      \resumeItem{Automated floor-plan parsing and sectional 2D layout generation by detecting walls, doors, and windows with \textbf{OpenCV-based geometry processing}, reducing manual measurement and layout review time by \textbf{~60\%} while improving downstream 3D drywall surface-area estimation.}
+      \resumeItem{Accelerated material-quote generation by integrating \textbf{Gemini 3.5 Flash} through prompt engineering to convert drywall surface calculations into supplier-specific SKUs, quantities, and waste estimates in \textbf{JSON/Excel}, cutting quote preparation time from hours to minutes.}
+      \resumeItem{Delivered the core backend within a \textbf{4-month timeline} while serving as liaison between backend and frontend teams, defining API contracts, coordinating integration, and aligning stakeholder requirements across \textbf{GCP} and \textbf{BigQuery} workflows.}
+    \resumeItemListEnd
+    \vspace{5pt}
+    \textit{\small Tech Stack: \textbf{Python, PyTorch, ConvNeXt, PyMuPDF, OpenCV, FastAPI, Gemini 3.5 Flash, Google Cloud Platform, BigQuery}}
+
   % \smallskip
-  \resumeItem{Client: \textbf{Telecommunication Service Provider (Aug 2024 - Jun 2026)}}
+
+  % Part 01
+
+  \resumeItem{Client: \textbf{Telecommunication Service Provider (Aug 2024 - Apr 2026)}}
   \resumeItem{\textit{Focused on \textbf{predictive models for Customer Churn} across 12M+ subscriber base, integrating network performance data, billing history, and customer service interactions to engineer \textbf{proactive churn risk prediction signals} that reduced voluntary attrition by 24\% and delivered \textbf{\$25M/year churn savings}.}}
   \resumeItemListStart
-    \resumeItem{\textbf{Orchestrated the full analytics} lifecycle—from descriptive and diagnostic root-cause analysis to predictive churn modeling and prescriptive retention strategies—by partnering with Sales, Customer Success, and Marketing GTM teams to drive data-backed monetization and retention outcomes for a 12M+ subscriber base.}
-    \resumeItem{\textbf{Developed and deployed production-grade Customer Churn propensity models} using Python (XGBoost, CatBoost) and SQL (BigQuery), identifying 85\% of at-risk customers and generating proactive churn risk prediction signals that reduced voluntary attrition by 24\%, delivering \$25M in annual retention savings.}
-    \resumeItem{\textbf{Engineered a Cross-sell/Upsell propensity framework} by clustering high-value subscribers using RFM and behavioral segmentation, directly informing Sales and Customer Success strategies that increased upsell conversion rates by 27\% and unlocked new monetization pipelines.}
-    \resumeItem{\textbf{Partnered with GTM leaders} to optimize hyper-personalized retention offers using ML-driven customer insights, boosting offer acceptance rates by 35\% and securing \$18M in retained annual revenue while embedding data-driven decision-making into daily Sales workflows.}
-    \resumeItem{\textbf{Architected an end-to-end ML experimentation pipeline} (feature store, model registry, Airflow monitoring) that reduced model deployment and experimentation time by 50\%, accelerating the iterative delivery of churn, recommender, and propensity models to business stakeholders.}
-    \resumeItem{\textbf{Performed diagnostic and prescriptive analysis} on churn drivers (network issues, billing complaints) and implemented automated descriptive reporting in Tableau, reducing manual reporting effort by 25+ hours/month and enabling real-time visibility into customer health for executive leadership.}
-    \resumeItem{\textbf{Collaborated cross-functionally} with Network Engineering, Product, and Sales/Customer Success teams to embed predictive data science solutions into operational business processes, reducing complaint-driven churn by 27\% and fostering a scalable data culture across all GTM functions.}
-    \resumeItem{\textbf{Mentored and coached 4 junior data scientists} in advanced SQL, telecom feature engineering (e.g., rolling usage volatility, roaming scores), and stakeholder communication, ensuring the team consistently delivered high-impact analytical solutions in a dynamic, fast-paced environment.}
+    \resumeItem{\textbf{Architected} a production-grade, multi-model churn propensity platform (XGBoost, CatBoost ensemble) integrating network performance telemetry, billing history, and customer service interaction logs; identified 85\% of at-risk customers and drove targeted interventions that reduced annual voluntary attrition by 15\%, yielding \$25M/year in enterprise-wide savings.}
+    \resumeItem{\textbf{Defined and pioneered} the organization's ML experimentation and deployment pipeline (feature store architecture, centralized model registry, automated drift monitoring), establishing MLOps best practices that cut model iteration and deployment cycle time by 50\% and set the standard adopted across three additional data science teams.}
+    \resumeItem{\textbf{Orchestrated} cross-functional alignment with Marketing, Network Engineering, and Product leadership to design and deploy a hyper-personalized retention offer engine, boosting offer acceptance rates by 35\% and recovering \$18M annually in at-risk revenue.}
+    \resumeItem{\textbf{Spearheaded} the design of a hierarchical churn prediction framework (line-level and customer-level), improving predictive accuracy by 18\% over legacy methods and establishing a new architectural standard for multi-granularity modeling within the telecom analytics practice.}
+    \resumeItem{\textbf{Championed} a data-driven customer segmentation strategy leveraging RFM (Recency, Frequency, Monetary) and behavioral clustering for high-value subscribers, increasing upsell conversion by 27\% and directly informing the product roadmap for premium tier features.}
+    \resumeItem{\textbf{Drove} strategic reallocation of retention spend by architecting a Campaign ROI analytics framework across 50+ concurrent campaigns, identifying under-performing segments and redirecting investment to save \$2.5M/year.}
+    \resumeItem{\textbf{Led} root-cause diagnostic analysis mapping churn drivers (network degradation, billing disputes, service failures) to actionable operational interventions, reducing service-related cancellations by 15\% and complaint-driven churn by 27\%.}
+    \resumeItem{\textbf{Established} automated executive churn reporting and visualization infrastructure in Tableau, eliminating 25+ hours/month of manual effort and enabling real-time predictive dashboards for C-suite decision-making.}
+    \resumeItem{\textbf{Mentored and elevated} 4 junior data scientists in Advanced SQL, telecom-specific feature engineering (rolling usage volatility, roaming frequency scoring), stakeholder communication, and ML best practices; fostered a scalable, reproducible data culture adopted across the Go-To-Market analytics function.}
   \resumeItemListEnd
   % \vspace{5pt}
-  \textit{\small Tools: \textbf{Tableau, Python (Pandas, Numpy, statmodels, scikit-learn, seaborn, kedro), SQL(Bigquery), Airflow, Git, GitLab}}
+  \textit{\small Tech Stack: \textbf{Python (Pandas, NumPy, Statmodels, Scikit-Learn, Seaborn, Kedro), SQL (Google BigQuery), XGBoost, CatBoost, Apache Airflow, Tableau, Git, GitLab, GCP}}
