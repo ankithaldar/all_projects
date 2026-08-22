@@ -70,7 +70,7 @@ checkpointing: &ckpt
 loggers:
   - class_path: pytorch_lightning.loggers.NeptuneLogger
     init_args:
-      api_key: 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5NDI4NTMwOS05N2ExLTRkZDgtYTQxZi1lOGYyNWRmOGU0YzUifQ=='
+      api_key: ''
       project: &log_proj 'kaggle-severstal'
       name: &run_name 'resnet34_01'
       # run: None
