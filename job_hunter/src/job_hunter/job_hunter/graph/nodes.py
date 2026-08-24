@@ -271,10 +271,15 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
     }
   run_id = int(state['run_id'])
 
-  budget_data = state.get('budget') or {'max_calls': int(
-    settings.discovery.get('max_llm_calls_per_run', 300),
-  )}
-  budget = TokenBudget(**budget_data)
+  raw_budget = state.get('budget')
+  if isinstance(raw_budget, TokenBudget):
+    budget = raw_budget.model_copy()
+  elif isinstance(raw_budget, dict):
+    budget = TokenBudget(**raw_budget)
+  else:
+    budget = TokenBudget(max_calls=int(
+      settings.discovery.get('max_llm_calls_per_run', 300),
+    ))
   floor = float(SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0))
   enriched_map: Dict[str, Any] = dict(state.get('enriched') or {})
   stats: Dict[str, int] = {}

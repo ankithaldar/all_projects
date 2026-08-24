@@ -106,3 +106,15 @@ def test_structured_repairs_after_validation_failure(tmp_path: Path) -> None:
   ))
   assert result.name == 'fixed'
   assert len(client.session_ids) == 2
+
+
+def test_gateway_paths_resolve_to_real_files(tmp_path: Path) -> None:
+  """gateway_root points at the sibling package, not inside the app pkg.
+
+  Args:
+    tmp_path: Pytest temporary directory (unused).
+  """
+  from job_hunter.core.config import AppSettings
+  root = Path(__file__).resolve().parents[2]
+  settings = AppSettings(root / 'config' / 'app.yaml')
+  assert settings.gateway_config_path.exists(), settings.gateway_config_path
