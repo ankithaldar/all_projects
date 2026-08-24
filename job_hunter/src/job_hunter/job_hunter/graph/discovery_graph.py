@@ -45,12 +45,14 @@ def build_discovery_graph(checkpointer: Optional[Any] = None):
   builder.add_node('build_plan', node_fns.build_plan)
   builder.add_node('fetch_pair', node_fns.fetch_pair)
   builder.add_node('normalize_dedupe', node_fns.normalize_dedupe)
+  builder.add_node('enrich_jds', node_fns.enrich_jds)
 
   builder.set_entry_point('load_profile')
   builder.add_edge('load_profile', 'build_plan')
   builder.add_conditional_edges('build_plan', route_targets, ['fetch_pair'])
   builder.add_edge('fetch_pair', 'normalize_dedupe')
-  builder.add_edge('normalize_dedupe', '__end__')
+  builder.add_edge('normalize_dedupe', 'enrich_jds')
+  builder.add_edge('enrich_jds', '__end__')
   return builder.compile(checkpointer=checkpointer)
 
 

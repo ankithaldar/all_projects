@@ -224,13 +224,126 @@ async def normalize_dedupe(state: Dict[str, Any], config: RunnableConfig) -> Dic
     }
     try:
       new_id = jobs_repo.insert(payload)
-      inserted.append(normalized.model_copy(update={'is_new': True}))
-      _ = new_id
+      inserted.append(normalized.model_copy(update={'is_new': True, 'job_id': new_id}))
     except Exception as exc:
       logger.warning('insert failed for %s: %s', normalized.canonical_url, exc)
   stats = {'new_jobs': len(inserted), 'duplicates': dupes}
   return {
     'inserted': inserted,
+    'stats': stats,
+  }
+
+
+async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+  '''Extract structured fields for newly inserted postings.
+
+  Args:
+    state: Current state.
+    config: Runnable config.
+
+  Returns:
+    Enrichment map, updated budget, and counters.
+  '''
+  from job_hunter.core.models import TokenBudget
+  from job_hunter.llm.client import get_client
+  from job_hunter.services.jd_analyst import JDAnalyst, apply_salary_floor
+  from job_hunter.services.skills_taxonomy import SkillsTaxonomy
+
+  settings = _settings_from_config(config)
+  jobs_repo = JobsRepository(settings.db_path)
+  taxonomy = SkillsTaxonomy(settings.db_path)
+  try:
+    analyst = JDAnalyst(get_client(settings))
+  except Exception as exc:
+    logger.warning('gateway unavailable for enrichment: %s', exc)
+    return {
+      'enriched': dict(state.get('enriched') or {}),
+      'budget': state.get('budget') or {},
+      'stats': {'enrich_failures': len(state.get('inserted') or [])},
+    }
+  run_id = int(state['run_id'])
+
+  budget_data = state.get('budget') or {'max_calls': int(
+    settings.discovery.get('max_llm_calls_per_run', 300),
+  )}
+  budget = TokenBudget(**budget_data)
+  floor = float(SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0))
+  enriched_map: Dict[str, Any] = dict(state.get('enriched') or {})
+  stats: Dict[str, int] = {}
+
+  for job in state.get('inserted') or []:
+    if not budget.allow():
+      stats['enrich_skipped_budget'] = stats.get('enrich_skipped_budget', 0) + 1
+      continue
+    row = jobs_repo.get(int(job.job_id))
+    description = (row or {}).get('description_text') or ''
+    if len(description) < 200:
+      stats['enrich_skipped_short'] = stats.get('enrich_skipped_short', 0) + 1
+      continue
+    budget.spend()
+    try:
+      extraction = await analyst.extract(
+        title=job.raw.title,
+        description_text=description,
+        session_id=f'{run_id}:jd_analyst',
+      )
+    except Exception as exc:
+      logger.warning('extraction failed job %s: %s', job.job_id, exc)
+      stats['enrich_failures'] = stats.get('enrich_failures', 0) + 1
+      continue
+
+    sal_min = extraction.salary_min_lpa if extraction.salary_min_lpa is not None else job.salary_min_lpa
+    sal_max = extraction.salary_max_lpa if extraction.salary_max_lpa is not None else job.salary_max_lpa
+    mode = extraction.work_mode if extraction.work_mode != WorkMode.UNKNOWN else job.work_mode
+    jobs_repo.update_fields(int(job.job_id), {
+      'salary_min_lpa': sal_min,
+      'salary_max_lpa': sal_max,
+      'experience_min_yrs': extraction.experience_min_years,
+      'experience_max_yrs': extraction.experience_max_years,
+      'work_mode': mode,
+      'employment_type': extraction.employment_type,
+    })
+    skill_rows: List[Dict[str, Any]] = []
+    for kind, names in (
+      ('must_have', extraction.must_have_skills),
+      ('nice_to_have', extraction.nice_to_have_skills),
+    ):
+      for name in names:
+        skill_id = taxonomy.resolve(name)
+        if skill_id is None:
+          taxonomy.load_seed({'skills': {name: None}})
+          skill_id = taxonomy.resolve(name)
+        if skill_id is not None:
+          skill_rows.append({
+            'skill_id': skill_id,
+            'kind': kind,
+            'confidence': extraction.confidence,
+          })
+    jobs_repo.attach_skill_rows(int(job.job_id), skill_rows)
+
+    passes, reason = apply_salary_floor(extraction, floor)
+    if not passes:
+      stats['below_salary_floor'] = stats.get('below_salary_floor', 0) + 1
+      logger.info('job %s filtered by floor: %s', job.job_id, reason)
+
+    enriched_map[job.content_hash] = {
+      'must_have_skills': extraction.must_have_skills,
+      'nice_to_have_skills': extraction.nice_to_have_skills,
+      'experience_min_years': extraction.experience_min_years,
+      'experience_max_years': extraction.experience_max_years,
+      'salary_min_lpa': sal_min,
+      'salary_max_lpa': sal_max,
+      'work_mode': mode,
+      'employment_type': extraction.employment_type,
+      'confidence': extraction.confidence,
+      'needs_review': extraction.confidence < 0.5,
+      'passes_floor': passes,
+    }
+    stats['enriched'] = stats.get('enriched', 0) + 1
+
+  return {
+    'enriched': enriched_map,
+    'budget': budget.model_dump(),
     'stats': stats,
   }
 
