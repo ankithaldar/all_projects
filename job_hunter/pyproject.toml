@@ -25,6 +25,7 @@ dependencies = [
   'langgraph>=0.2',
   'aiosqlite>=0.20',
   'mcp>=1.2',
+  'tiktoken>=0.7',
 ]
 
 [project.optional-dependencies]

@@ -23,6 +23,7 @@ def bootstrap(config_path: str | Path, seeds_dir: Path | None = None) -> AppSett
   Returns:
     Loaded settings.
   '''
+  seeds_dir = Path(seeds_dir) if seeds_dir else None
   settings = AppSettings(config_path)
   setup_logging(settings.log_level, settings.data_dir / 'logs')
   settings.data_dir.mkdir(parents=True, exist_ok=True)
