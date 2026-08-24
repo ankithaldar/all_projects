@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
 from job_hunter.db.repositories.profile import ProfileRepository
+from job_hunter.db.repositories.settings import SettingsRepository
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix='/api', tags=['profile'])
@@ -51,10 +52,16 @@ def get_profile(settings: AppSettings = Depends(get_settings)) -> Dict[str, Any]
       'target_roles': ['Data Scientist'], 'seniority_keywords': [],
       'target_verticals': [], 'blocked_verticals': [], 'cities': [],
       'relocate_ok': False, 'remote_pref': 'any',
-      'salary_floor_lpa': None, 'experience_years': 0,
+      'salary_floor_lpa': SettingsRepository(settings.db_path).get(
+        'salary_hard_floor_lpa',
+      ), 'experience_years': 0,
       'employment_types': ['full_time'], 'summary': '', 'skills': [],
     }
   data.setdefault('skills', [])
+  if data.get('salary_floor_lpa') is None:
+    data['salary_floor_lpa'] = SettingsRepository(settings.db_path).get(
+      'salary_hard_floor_lpa',
+    )
   return data
 
 
@@ -76,7 +83,6 @@ def put_profile(
   fields = payload.model_dump()
   floor = fields.pop('salary_floor_lpa', None)
   if floor is not None:
-    from job_hunter.db.repositories.settings import SettingsRepository
     SettingsRepository(settings.db_path).put('salary_hard_floor_lpa', float(floor))
   existing = repo.get_profile(1) or {}
   merged = {**existing, **fields}

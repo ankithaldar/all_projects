@@ -57,11 +57,11 @@ class RunManager:
     _ = token
     return run_id
 
-  async def execute(self, run_id: int) -> Dict[str, Any]:
-    '''Claim and execute a pending run to completion.
+  async def execute(self, run_id: Optional[int] = None) -> Dict[str, Any]:
+    '''Claim (specific or oldest pending) and execute to completion.
 
     Args:
-      run_id: Pending run id.
+      run_id: Specific pending run id, or None for oldest.
 
     Returns:
       Final stats mapping.

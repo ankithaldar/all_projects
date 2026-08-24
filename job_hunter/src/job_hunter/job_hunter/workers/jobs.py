@@ -63,10 +63,9 @@ def execute_pending_run(
   '''
   from job_hunter.services.run_manager import RunManager
   manager = RunManager(_settings(config_path))
-  target_id = run_id or manager.runs.claim_pending()
-  if target_id is None:
+  if run_id is None and not manager.runs.has_pending():
     return {'run_id': None, 'status': 'nothing_pending', 'stats': {}}
-  return asyncio.run(manager.execute(target_id))
+  return asyncio.run(manager.execute(run_id))
 
 
 def recover_orphans(config_path: str | Path) -> list:

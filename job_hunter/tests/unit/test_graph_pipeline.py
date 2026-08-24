@@ -181,3 +181,113 @@ def test_run_claim_protocol(tmp_path: Path) -> None:
   second = repo.claim_pending()
   assert first == run_id
   assert second is None or second != run_id
+
+
+def test_execute_claims_oldest_pending(tmp_path: Path, monkeypatch) -> None:
+  '''RunManager.execute(None) claims and finishes the oldest pending run.
+
+  Args:
+    tmp_path: Pytest temporary directory.
+    monkeypatch: Pytest fixture.
+  '''
+  from job_hunter.services.run_manager import RunManager
+  from job_hunter.core.config import AppSettings
+
+  run_migrations(tmp_path / 'app.db')
+  config_path = tmp_path / 'app.yaml'
+  config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
+  monkeypatch.setenv('APP_DATA_DIR', str(tmp_path))
+  settings = AppSettings(config_path)
+
+  async def fake_discovery(settings_arg, run_id, **kwargs):
+    '''Stub graph execution.
+
+    Args:
+      settings_arg: Settings.
+      run_id: Run id.
+      **kwargs: Ignored.
+
+    Returns:
+      Minimal final state.
+    '''
+    return {'stats': {'new_jobs': 0}, 'errors': []}
+
+  import job_hunter.graph.discovery_graph as dg
+  monkeypatch.setattr(dg, 'run_discovery', fake_discovery)
+
+  manager = RunManager(settings)
+  first = manager.enqueue('discovery', 'test')
+  manager.runs.create('discovery', 'test')
+  result = asyncio.run(manager.execute(None))
+  assert result['run_id'] == first
+  assert result['status'] == 'success'
+
+
+def test_fetch_pair_stores_watermark(tmp_path: Path, monkeypatch) -> None:
+  '''fetch_pair persists max posted_at as the crawl cursor.
+
+  Args:
+    tmp_path: Pytest temporary directory.
+    monkeypatch: Pytest fixture.
+  '''
+  import asyncio as aio
+  from job_hunter.core.config import AppSettings
+  from job_hunter.core.db import run_migrations as rm
+  from job_hunter.db.repositories.crawl_state import CrawlStateRepository
+  from job_hunter.graph.nodes import fetch_pair
+
+  rm(tmp_path / 'app.db')
+  config_path = tmp_path / 'app.yaml'
+  config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
+  monkeypatch.setenv('APP_DATA_DIR', str(tmp_path))
+  settings = AppSettings(config_path)
+  _ = settings.app_root
+
+  class StubAdapter:
+    '''Returns one timestamped record.'''
+
+    def __init__(self, http) -> None:
+      '''Accept client.
+
+      Args:
+        http: Unused.
+      '''
+      _ = http
+
+    async def fetch(self, target, limit=200):
+      '''Return record with posted_at.
+
+      Args:
+        target: Target.
+        limit: Cap.
+
+      Returns:
+        One raw record.
+      '''
+      from job_hunter.core.models import RawJobRecord
+      return [RawJobRecord(
+        source_key='lever', url='https://j.example/1',
+        title='DS', posted_at='2026-08-20T00:00:00+00:00',
+      )]
+
+    async def health(self, target):
+      '''Healthy.
+
+      Args:
+        target: Target.
+
+      Returns:
+        True.
+      '''
+      return True
+
+  import job_hunter.graph.nodes as nodes_mod
+  monkeypatch.setattr(nodes_mod, 'build_adapter', lambda key, http: StubAdapter(http))
+
+  state = {'run_id': 1}
+  update = aio.run(fetch_pair({
+    'company_id': 3, 'name': 'X', 'source_key': 'lever', 'board_ref': 'x',
+  }, {'configurable': {'settings': settings}}))
+  assert not update['errors']
+  crawl = CrawlStateRepository(tmp_path / 'app.db')
+  assert crawl.get_cursor('company:3:posted') == '2026-08-20T00:00:00+00:00'

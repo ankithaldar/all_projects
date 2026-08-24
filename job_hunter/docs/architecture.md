@@ -984,3 +984,34 @@ Remaining:
 
 *Companion document:* `roadmap.md` maps every item above onto sequenced
 feature branches with acceptance criteria and the squash-merge workflow.
+
+---
+
+## 26. Hardening changelog
+
+### Loop 1 — 2026-08-24 (`feature_16_hardening_run1`)
+
+End-to-end run/debug pass; nine defects found by exercising real paths:
+
+| # | Defect | Fix |
+|---|--------|-----|
+| 1 | Double-claim: `execute_pending_run` pre-claimed oldest pending, then `RunManager.execute` re-claimed → 'skipped' runs | `execute(run_id=None)` now owns claiming; worker helper no longer pre-claims |
+| 2 | UI-triggered runs stayed `pending` forever unless nightly cron | Worker gained 30s `pending_executor` interval job that drains queued runs |
+| 3 | `load_profile` never loaded candidate skills → skill-coverage always neutral | Reads `candidate_skill_names()` from profile repo |
+| 4 | Raw user text hit FTS5 MATCH unescaped (`+`, quotes) → 500s on `/api/jobs?q=` | `sanitize_fts()` builds AND-of-quoted terms |
+| 5 | Profile UI showed empty salary floor even though settings had 45 | GET `/api/profile` injects floor from settings when unset |
+| 6 | CLI `discover-companies --seeds` silently ignored its argument | `ingest_seeds(settings, seeds_dir)` override plumbed through |
+| 7 | Crawl watermark never stored (`set_success(scope, None)`) → full refetch each poll | fetch_pair stores max posted_at cursor per scope |
+| 8 | Watchdog test polluted global env via `os.environ` direct write | monkeypatch.setenv isolation |
+| 9 | `GatewayChatModel._generate` used deprecated `get_event_loop().run_until_complete` | running-loop detection with `asyncio.run` fallback |
+
+Verification: 46 tests (5 new regressions), live API re-smoke
+(floor injection=45.0, FTS special-chars=200).
+
+---
+
+## 27. Doc keeper
+
+`docs/architecture.md` is updated in the same commit as any behavior
+change it describes (see §26 for the format). Agent briefs live in
+`agents/*.md`; session learnings land in `skills/learnings.md`.
