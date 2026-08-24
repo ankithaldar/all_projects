@@ -6,7 +6,9 @@ Pipeline
 --------
 1. ``load_env()`` hydrates secrets from ``.env`` (local) or Kaggle
    Secrets (kernel) so ``${oc.env:VAR}`` interpolations resolve anywhere.
-2. YAML is loaded, merged with CLI ``overrides`` (dotlist), resolved.
+2. YAML is loaded; a sibling/parent ``configs/base.yaml`` (when present)
+   is merged underneath so experiments declare only their deltas, then
+   CLI ``overrides`` (dotlist) are applied and the result resolved.
 3. The plain dict is validated by
    :class:`knee.config_params.schema.ExperimentConfig`.
 4. ``instantiate`` turns any ``ComponentSpec`` into a live object via
@@ -17,6 +19,7 @@ Pipeline
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Any, TypeVar
 
 from omegaconf import OmegaConf
@@ -30,10 +33,35 @@ T = TypeVar('T')
 __all__ = ['load_config', 'instantiate', 'resolve_target']
 
 
+def _find_base_config(path: Path) -> Path | None:
+  """Locate ``configs/base.yaml`` relative to an experiment YAML.
+
+  Args:
+      path: Resolved path of the experiment YAML being loaded.
+
+  Returns:
+      Base config path when one exists and differs from ``path``,
+      otherwise None.
+  """
+  candidates = [
+    path.parent.parent.parent / 'configs' / 'base.yaml',
+    path.parent / 'base.yaml',
+  ]
+  for candidate in candidates:
+    if candidate.exists() and candidate.resolve() != path.resolve():
+      return candidate
+  return None
+
+
 def load_config(
   path: str, overrides: list[str] | None = None
 ) -> ExperimentConfig:
   """Load, merge, resolve and validate an experiment YAML.
+
+  Experiment YAMLs hold only deltas against ``configs/base.yaml``:
+  whenever a base file sits next to or above the experiment file it is
+  merged underneath, so an experiment only declares what makes it
+  different (single source of shared defaults).
 
   Parameters
   ----------
@@ -43,7 +71,11 @@ def load_config(
       OmegaConf dotlist entries, e.g. ``["train.epochs=3", "seed=7"]``.
   """
   load_env()  # ensure ${oc.env:...} secrets are available before resolve
-  cfg = OmegaConf.load(path)
+  cfg_path = Path(path)
+  cfg = OmegaConf.load(cfg_path)
+  base_path = _find_base_config(cfg_path)
+  if base_path is not None:
+    cfg = OmegaConf.merge(OmegaConf.load(base_path), cfg)
   if overrides:
     cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(overrides))
   OmegaConf.resolve(cfg)

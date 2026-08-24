@@ -208,6 +208,11 @@ class TrainConfig(StrictModel):
   n_folds: int = Field(default=5, ge=2, le=15)
   train_folds: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
   label_source: Literal['gold', 'weak', 'mixed'] = 'mixed'
+  epochs: int | None = Field(
+    default=None,
+    ge=1,
+    description='Shorthand overriding train.trainer.params.max_epochs.',
+  )
   resume: bool = Field(
     default=False,
     description='Auto-resume each fold from its latest checkpoint.',

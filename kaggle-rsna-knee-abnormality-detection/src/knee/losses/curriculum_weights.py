@@ -69,6 +69,10 @@ class ConfidenceRampCurriculum:
   def weight_floor(self, epoch: int) -> float:
     """Compute the floor for an epoch per the hold-then-decay schedule.
 
+    Epochs ``[0, hold_epochs)`` sit at ``start_floor``; the ramp then
+    lowers the floor over ``ramp_epochs`` steps, reaching zero at epoch
+    ``hold_epochs + ramp_epochs - 1`` and staying there.
+
     Args:
         epoch: Current epoch index.
 
@@ -77,8 +81,8 @@ class ConfidenceRampCurriculum:
     """
     if epoch < self.hold_epochs:
       return self.start_floor
-    progress = min((epoch - self.hold_epochs) / self.ramp_epochs, 1.0)
-    return self.start_floor * (1.0 - progress)
+    progress = (epoch - self.hold_epochs + 1) / self.ramp_epochs
+    return self.start_floor * max(1.0 - progress, 0.0)
 
 
 class DynamicLossWeighter:
