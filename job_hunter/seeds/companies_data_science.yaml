@@ -1,0 +1,35 @@
+# Starter target companies for a Staff Data Scientist search in India.
+# board_ref is intentionally absent: the Company Scout fingerprints each
+# domain's careers pages to discover its ATS provider at runtime.
+
+companies:
+  - {name: Razorpay, domain: razorpay.com, vertical_hint: fintech, priority: 4}
+  - {name: CRED, domain: cred.club, vertical_hint: fintech, priority: 4}
+  - {name: PhonePe, domain: phonepe.com, vertical_hint: fintech, priority: 4}
+  - {name: Groww, domain: groww.in, vertical_hint: fintech, priority: 4}
+  - {name: Zerodha, domain: zerodha.com, vertical_hint: fintech, priority: 3}
+  - {name: Upstox, domain: upstox.com, vertical_hint: fintech, priority: 3}
+  - {name: Jupiter, domain: jupiter.money, vertical_hint: fintech, priority: 3}
+  - {name: Flipkart, domain: flipkart.com, vertical_hint: ecommerce, priority: 4}
+  - {name: Meesho, domain: meesho.com, vertical_hint: ecommerce, priority: 4}
+  - {name: Swiggy, domain: swiggy.com, vertical_hint: ecommerce, priority: 4}
+  - {name: Zepto, domain: zeptonow.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Blinkit, domain: blinkit.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Myntra, domain: myntra.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Postman, domain: postman.com, vertical_hint: saas, priority: 4}
+  - {name: Freshworks, domain: freshworks.com, vertical_hint: saas, priority: 4}
+  - {name: Zoho, domain: zoho.com, vertical_hint: saas, priority: 3}
+  - {name: Chargebee, domain: chargebee.com, vertical_hint: saas, priority: 3}
+  - {name: BrowserStack, domain: browserstack.com, vertical_hint: saas, priority: 3}
+  - {name: Hasura, domain: hasura.io, vertical_hint: saas, priority: 3}
+  - {name: Sarvam AI, domain: sarvam.ai, vertical_hint: ai_ml_infra, priority: 4}
+  - {name: Krutrim, domain: krutrim.com, vertical_hint: ai_ml_infra, priority: 3}
+  - {name: Fractal Analytics, domain: fractal.ai, vertical_hint: analytics_consulting, priority: 4}
+  - {name: Tiger Analytics, domain: tigeranalytics.com, vertical_hint: analytics_consulting, priority: 3}
+  - {name: Mu Sigma, domain: mu-sigma.com, vertical_hint: analytics_consulting, priority: 2}
+  - {name: Practo, domain: practo.com, vertical_hint: healthtech, priority: 3}
+  - {name: PharmEasy, domain: pharmeasy.in, vertical_hint: healthtech, priority: 3}
+  - {name: Delhivery, domain: delhivery.com, vertical_hint: logistics, priority: 3}
+  - {name: Rivigo, domain: rivigo.com, vertical_hint: logistics, priority: 2}
+  - {name: Dream11, domain: dream11.com, vertical_hint: gaming_media, priority: 3}
+  - {name: Hotstar, domain: hotstar.com, vertical_hint: gaming_media, priority: 3}
