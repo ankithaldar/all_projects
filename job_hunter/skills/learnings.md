@@ -75,3 +75,24 @@ Append-only log. Format: **Context** → Lesson → Rule.
   keyword overlap without code churn.
 - Rule: providers return None when unavailable; matcher switches to the
   keyword fallback keyed off `NullProvider.model_id`.
+
+## Undeclared transitive deps surface only in clean venvs
+- Context: setup.sh's fresh venv failed on `tiktoken` though tests passed
+  for weeks in the system Anaconda env.
+- Lesson: ad-hoc system installs hide missing dependency declarations.
+- Rule: any package imported by shipped code goes into pyproject
+  dependencies immediately; verify via the clean-room setup.sh path.
+
+## Coerce types at API boundaries
+- Context: `bootstrap(seeds_dir=...)` crashed because argparse passed a
+  string where a Path was expected.
+- Lesson: trust nothing crossing module boundaries — normalize there.
+- Rule: boundary functions do `Path(x)` / type coercion themselves.
+
+## pgrep patterns match your own command line
+- Context: `pgrep -fc 'python main.py worker'` returned inflated counts;
+  a group-kill then hung the shell session.
+- Lesson: bash -c wrappers embed the literal pattern, and negative-pid
+  kills misfire when $! is not a real process-group leader.
+- Rule: bracket-trick patterns (`[m]ain.py worker`), kill by exact PID,
+  and stop foreground children first so EXIT traps fire naturally.
