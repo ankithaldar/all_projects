@@ -37,7 +37,7 @@ FOLDS_LIST = None  # '0,1' then '2,3' per kernel; None = config default
 TIME_BUDGET_HOURS = 11  # clean stop before Kaggle's hard 12 h kill
 AUTO_PUBLISH = 1  # push artifacts to the private dataset post-stage
 DATA_ROOT = '/kaggle/input/competitions/rsna-knee-abnormality-detection'
-DATASET_NAME = 'ah2022_rsna-knee-abnormality-detection'
+DATASET_NAME = 'ah2022-rsna-knee-abnormality-detection'
 # -----------------------------------------------------------------------------
 
 

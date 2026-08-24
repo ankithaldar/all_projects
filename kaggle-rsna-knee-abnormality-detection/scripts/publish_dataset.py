@@ -7,7 +7,7 @@ per-fold OOF parquets, folds CSV, weak labels, teacher checkpoints)
 must leave the machine before the 12 h wall kills it. This script
 mirrors everything resumable from ``$WORK`` into a staging folder and
 pushes it as a single PRIVATE dataset (default:
-``ah2022_rsna-knee-abnormality-detection``) using the Kaggle API:
+``ah2022-rsna-knee-abnormality-detection``) using the Kaggle API:
 
     kaggle datasets init     -> patch dataset-metadata.json ->
     kaggle datasets create   (first push)   |   datasets version   (later)
@@ -23,7 +23,7 @@ and ``KAGGLE_KEY`` (resolution order: env -> .env -> Kaggle Secrets ->
 Usage:
     python scripts/publish_dataset.py \
         --work /kaggle/working \
-        --dataset-name ah2022_rsna-knee-abnormality-detection \
+        --dataset-name ah2022-rsna-knee-abnormality-detection \
         [--message 'folds 0-1 done'] [--dir-mode zip]
 """
 
@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -72,7 +73,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     '--dataset-name',
-    default='ah2022_rsna-knee-abnormality-detection',
+    default='ah2022-rsna-knee-abnormality-detection',
     help='Single private dataset receiving every artifact.',
   )
   parser.add_argument(
@@ -357,12 +358,38 @@ def _verify(username: str, dataset_name: str) -> None:
   )
 
 
+def sanitize_slug(name: str) -> str:
+  """Normalize a desired dataset name into a valid Kaggle slug.
+
+  Kaggle slugs are ``[a-z0-9-]`` only; anything else (e.g. the
+  underscore in ``ah2022_rsna-...``) is rewritten server-side or
+  rejected, silently breaking direct links and future version pushes.
+
+  Args:
+      name: Desired dataset name.
+
+  Returns:
+      Slug with every non-``[a-z0-9-]`` run collapsed to one dash and
+      edge dashes stripped.
+  """
+  slug = re.sub(r'[^a-z0-9-]+', '-', name.lower())
+  return re.sub(r'-{2,}', '-', slug).strip('-')
+
+
 def main() -> None:
   """Snapshot $WORK artifacts and push them to the private dataset."""
 
   args = parse_args()
   log = get_logger('publish_dataset')
   username, _ = resolve_credentials()
+  dataset_name = sanitize_slug(args.dataset_name)
+  if dataset_name != args.dataset_name:
+    log.warning(
+      'dataset name %r normalized to %r (Kaggle slugs allow '
+      '[a-z0-9-] only); use the normalized form in PREV_OUTPUT',
+      args.dataset_name,
+      dataset_name,
+    )
 
   staging = (
     Path(
@@ -370,21 +397,21 @@ def main() -> None:
       or (Path('/kaggle/tmp') if Path('/kaggle/tmp').exists() else '')
       or Path(os.environ.get('TMPDIR', '/tmp'))
     )
-    / f'dataset_stage_{args.dataset_name}'
+    / f'dataset_stage_{dataset_name}'
   )
   staging.mkdir(parents=True, exist_ok=True)
 
   collect_artifacts(args.work, staging)
-  write_metadata(staging, username, args.dataset_name)
+  write_metadata(staging, username, dataset_name)
   stamp = time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())
   message = args.message or f'artifacts {stamp}'
-  push(staging, username, args.dataset_name, message, args.dir_mode)
-  slug = args.dataset_name.lower()
+  push(staging, username, dataset_name, message, args.dir_mode)
   log.info(
-    'next kernel: Add Data -> Your Datasets -> %s, then '
-    'export PREV_OUTPUT=/kaggle/input/%s',
-    args.dataset_name,
-    slug,
+    'next kernel: Add Data -> Your Datasets -> %s (mount: '
+    '/kaggle/input/%s), or set PREV_OUTPUT=/kaggle/input/%s',
+    f'{username}/{dataset_name}',
+    dataset_name,
+    dataset_name,
   )
 
 
