@@ -114,10 +114,13 @@ class RunManager:
     node_var.set(node or None)
     return self._runs.log_event(run_id, level, node, message, data)
 
-  def recover_orphans(self) -> list:
-    '''Fail stale running rows after crashes.
+  def recover_orphans(self, ttl_minutes: int = 120) -> list:
+    '''Fail stale non-terminal rows after crashes.
+
+    Args:
+      ttl_minutes: Age threshold for orphaned runs.
 
     Returns:
       Recovered run ids.
     '''
-    return self._runs.mark_orphans_failed()
+    return self._runs.mark_orphans_failed(ttl_minutes=ttl_minutes)

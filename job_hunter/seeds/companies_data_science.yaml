@@ -33,3 +33,13 @@ companies:
   - {name: Rivigo, domain: rivigo.com, vertical_hint: logistics, priority: 2}
   - {name: Dream11, domain: dream11.com, vertical_hint: gaming_media, priority: 3}
   - {name: Hotstar, domain: hotstar.com, vertical_hint: gaming_media, priority: 3}
+
+  # --- gcc / enterprise expansion
+  - {name: Walmart Global Tech, domain: walmart.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Target in India, domain: target.com, vertical_hint: retail_tech, priority: 3}
+  - {name: Goldman Sachs, domain: goldmansachs.com, vertical_hint: fintech, priority: 3}
+  - {name: American Express, domain: americanexpress.com, vertical_hint: fintech, priority: 3}
+  - {name: Mastercard, domain: mastercard.com, vertical_hint: fintech, priority: 3}
+  - {name: Visa, domain: visa.com, vertical_hint: fintech, priority: 3}
+  - {name: NVIDIA, domain: nvidia.com, vertical_hint: ai_ml_infra, priority: 3}
+  - {name: Microsoft, domain: microsoft.com, vertical_hint: saas, priority: 3}
