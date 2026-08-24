@@ -399,3 +399,176 @@ def NullProvider_model_id() -> str:
   return NullProvider.model_id
 
 
+
+
+def _candidate_skill_ids(settings: AppSettings, candidate: CandidateProfile) -> List[int]:
+  '''Resolve the candidate's stored skill ids.
+
+  Args:
+    settings: Application settings.
+    candidate: Profile.
+
+  Returns:
+    Skill id list.
+  '''
+  from job_hunter.services.skills_taxonomy import SkillsTaxonomy
+  taxonomy = SkillsTaxonomy(settings.db_path)
+  return [
+    taxonomy.resolve(name) or -1
+    for name in candidate.skills
+    if taxonomy.resolve(name) is not None
+  ]
+
+
+async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+  '''Gate, score, rank, and persist recommendations for inserted jobs.
+
+  Args:
+    state: Current state.
+    config: Runnable config.
+
+  Returns:
+    Scored jobs snapshot and counters.
+  '''
+  import json as _json
+  from job_hunter.core.models import ScoredJob
+  from job_hunter.db.repositories.recommendations import RecommendationsRepository
+  from job_hunter.db.repositories.settings import SettingsRepository as SettingsRepo
+  from job_hunter.services.embedder import cosine
+  from job_hunter.services.matcher import (
+    company_fit,
+    gate_failures,
+    recency_score,
+    salary_fit,
+    seniority_fit,
+    semantic_fallback,
+    skill_coverage,
+    title_fit,
+  )
+  from job_hunter.services.scorer import aggregate, normalize_weights, rationale
+
+  settings = _settings_from_config(config)
+  jobs_repo = JobsRepository(settings.db_path)
+  recs_repo = RecommendationsRepository(settings.db_path)
+  weights = normalize_weights(SettingsRepo(settings.db_path).get('scoring_weights', {}))
+  candidate = state['candidate']
+  cand_skill_ids = _candidate_skill_ids(settings, candidate)
+  embeddings = jobs_repo.load_embeddings(str(settings.embeddings.get('model', 'BAAI/bge-small-en-v1.5')))
+  candidate_doc = f"{candidate.summary} {' '.join(candidate.skills)} {' '.join(candidate.target_roles)}"
+  candidate_vector = None
+  if embeddings:
+    from job_hunter.services.embedder import get_embedder
+    embedder = get_embedder(settings)
+    vectors = embedder.embed([candidate_doc[:2000]])
+    candidate_vector = vectors[0] if vectors else None
+
+  scored: List[ScoredJob] = []
+  for job in state.get('inserted') or []:
+    row = jobs_repo.get_with_company(int(job.job_id)) or {}
+    enriched = (state.get('enriched') or {}).get(job.content_hash)
+    failures = gate_failures(candidate, row, enriched)
+    job_skills = _job_skill_rows(jobs_repo, int(job.job_id))
+    must_cov, nice_cov = skill_coverage(cand_skill_ids, job_skills)
+    description = (row.get('description_text') or '')[:2500]
+    vector = embeddings.get(int(job.job_id))
+    if candidate_vector is not None and vector is not None:
+      semantic = max(0.0, min(1.0, (cosine(candidate_vector, vector) + 1.0) / 2.0))
+    else:
+      semantic = semantic_fallback(candidate_doc, f"{row.get('title')} {description}")
+    components = {
+      'skills_must': must_cov,
+      'skills_nice': nice_cov,
+      'semantic': round(semantic, 4),
+      'seniority': seniority_fit(
+        float(candidate.experience_years or 0),
+        row.get('experience_min_yrs'),
+        row.get('experience_max_yrs'),
+      ),
+      'title_fit': title_fit(candidate.target_roles, row.get('title') or ''),
+      'salary_fit': salary_fit(row.get('salary_min_lpa'), row.get('salary_max_lpa'), candidate.salary_floor_lpa),
+      'recency': recency_score(row.get('posted_at')),
+      'company_fit': company_fit(
+        row.get('vertical'),
+        candidate.target_verticals,
+        int(row.get('company_priority') or 3),
+      ),
+    }
+    total, breakdown = aggregate(components, weights)
+    scored.append(ScoredJob(
+      job_id=int(job.job_id),
+      title=row.get('title') or '',
+      url=row.get('url') or '',
+      company_id=job.company_id,
+      company_name=row.get('company_name') or job.raw.company_name,
+      vertical=row.get('vertical') or 'unknown',
+      total_score=total if not failures else 0.0,
+      gate_pass=not failures,
+      gate_failures=failures,
+      breakdown=breakdown,
+      rationale=rationale(components),
+      posted_at=row.get('posted_at'),
+    ))
+
+  passing = sorted(
+    [s for s in scored if s.gate_pass],
+    key=lambda s: (-s.total_score, s.posted_at or ''),
+  )
+  rows = [
+    {
+      'job_id': item.job_id,
+      'total_score': item.total_score,
+      'breakdown': item.breakdown,
+      'rationale': item.rationale,
+    }
+    for item in passing
+  ]
+  written = _persist_recs(recs_repo, int(state['run_id']), rows) if rows else 0
+
+  stats = {
+    'scored': len(scored),
+    'gate_passed': len(passing),
+    'recommendations': written,
+  }
+  return {'scored': scored, 'stats': stats}
+
+
+def _job_skill_rows(jobs_repo, job_id: int) -> List[Dict[str, Any]]:
+  '''Fetch skill link rows for one job.
+
+  Args:
+    jobs_repo: Jobs repository.
+    job_id: Job id.
+
+  Returns:
+    Rows with skill_id/kind.
+  '''
+  from job_hunter.core.db import connect
+  rows = connect(jobs_repo._db_path, readonly=True).execute(
+    'SELECT skill_id, kind FROM job_skills WHERE job_id = ?', (job_id,),
+  ).fetchall()
+  return [dict(row) for row in rows]
+
+
+def _persist_recs(recs_repo, run_id: int, rows: List[Dict[str, Any]]) -> int:
+  '''Persist ranked recommendation rows.
+
+  Args:
+    recs_repo: Recommendations repository.
+    run_id: Run id.
+    rows: Prepared payload rows.
+
+  Returns:
+    Count written.
+  '''
+  normalized = []
+  for position, row in enumerate(rows, start=1):
+    normalized.append({
+      'job_id': row['job_id'],
+      'total_score': row['total_score'],
+      'gate_pass': True,
+      'gate_failures': [],
+      'breakdown': row['breakdown'],
+      'rationale': row['rationale'],
+      'rank': position,
+    })
+  return recs_repo.upsert_many(run_id, 1, normalized)
