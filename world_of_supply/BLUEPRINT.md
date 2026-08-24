@@ -71,6 +71,20 @@ rl/training ─► rl/env ─► rl/{observations,actions,rewards} ─► world/
 Ray/torch imports are confined to `rl/`; the pure simulation and rendering
 run without them.
 
+### Design-pattern map
+
+| Pattern | Where | Purpose |
+|---|---|---|
+| Strategy | `routing.py` (traversable predicate), `rl/rewards.py` (`RewardShaper`), `policies.py` (`ControlPolicy`) | swappable path-finding, reward shaping, and control behavior |
+| Template Method | `facility.py` (`FacilityCell._install_units`) | subclasses install only their units; base owns id/books/act fan-out |
+| Builder | `scenario.py` (`WorldBuilder`) | assembles the full wired world from `ScenarioConfig` |
+| Protocol / duck typing | `base.py` (`Agent`), `rl/rewards.py`, `policies.py` | structural interfaces, no inheritance coupling |
+| Factory Method | `facility.py` (`_distribution_unit`, concrete cells) | unit assembly from one shared `FacilityConfig` |
+| Dispatch table | `rendering/status.py` (`singledispatchmethod`), `rendering/sprites.py` | type-driven formatting and sprite selection |
+| Facade + lazy import | `__init__.py` (PEP 562 `__getattr__`), `rl/__init__.py` | single import surface; torch/ray load only on demand |
+| Value objects | `economy.py`, all `*Config`/`*Economy` dataclasses | immutable-ish money and parameter carriers |
+| Composition | `facility.py` units (storage/consumer/…/seller) | facilities are aggregations of independent agents |
+
 ---
 
 ## 2. Module deep-dive
@@ -299,7 +313,43 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
 **Reward:** `reward = 0.9·global_blend + 0.1·own_total`;
 `global_blend = (1−w)·mean_retail_profit + w·mean_all_profit`; `w: 0→0.8`.
 
-## 5. Migration notes (vs. legacy flat scripts)
+**`EnvConfig` defaults** (`rl/env.py`): `episode_duration=1000`,
+`downsampling_rate=20` (→ 50 decisions/episode),
+`global_reward_weight_producer=0.9`, `global_reward_weight_consumer=0.9`,
+`scenario=ScenarioConfig()`, `seed=None`. Pass as
+`build_ppo_algorithm({'env': EnvConfig(...)})` — the dict is pickled to
+workers, which rebuild their own env copies.
+
+## 5. Test suite (43 tests)
+
+| File | # | Covers |
+|---|---|---|
+| `test_economy.py` | 5 | BalanceSheet arithmetic, `sum()`, repr |
+| `test_storage_manufacturing.py` | 8 | capacity all-or-nothing/partial, atomic take, holding cost, BOM consumption + space rule |
+| `test_transport_distribution.py` | 6 | valid/wrong orders, payment booking, full delivery cycle, truck FSM states |
+| `test_consumer_seller.py` | 3 | demand curve, sell-out, open-order pruning on reception |
+| `test_world_scenario.py` | 5 | 9 facilities registered, supplier connectivity, act() sheets, balance conservation, seeded layout determinism |
+| `test_policies.py` | 3 | full control coverage, retail revenue within 80 ticks |
+| `test_rl_env.py` | 5 | agent/space coverage, normalized obs bounds, downsampling timing, truncation at horizon, curriculum shaping |
+| `test_heuristics_rendering.py` | 5 | scripted actions in-bounds, scripted episode to horizon, status formatter, crossing sprite, PNG render |
+| `test_models.py` | 3 | FacilityNet forward shapes, LSTM state, gradient flow (skipped without torch) |
+
+## 6. Troubleshooting
+
+- **`ModuleNotFoundError: No module named 'world_of_supply'` in Ray workers**
+  → the package is not installed; Ray workers are separate processes and do
+  not inherit `sys.path` shims. Run `pip install -e .` before `train`.
+- **`ValueError: 'workers' has been deprecated`** → old code path; the
+  current `train()` resolves `env_runner_group` first (fixed in `d430f2a`).
+- **Metrics print `None`** → worker crash swallowed by RLLib (usually the
+  wrapper-unwrap issue above) or legacy result schema; both handled, verify
+  you are on the latest `rl/training.py` + `cli.py`.
+- **`plt.show()` does nothing / animation fails headless** → expected off
+  notebooks; use `--render-dir` PNGs or set `MPLBACKEND=Agg`.
+- **`Install gputil for GPU system monitoring`** → harmless Ray warning;
+  `pip install gputil` silences it.
+
+## 7. Migration notes (vs. legacy flat scripts)
 
 - TensorFlow replaced by PyTorch everywhere; RLlib new API stack replaces
   `PPOTFPolicy`/`build_trainer`; `gymnasium` replaces `gym`.
@@ -315,7 +365,19 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
   accessors, Gymnasium wrapper unwrapping, nested result-schema metric
   fallbacks, and attribute-vs-kwargs algorithm settings.
 
-## 6. End-to-end validation (verified run)
+### Legacy file → new module map
+
+| Legacy flat script (deleted) | New modules |
+|---|---|
+| `world_of_supply_environment.py` | `economy`, `base`, `geography`, `routing`, `storage`, `manufacturing`, `transport`, `distribution`, `consumer`, `seller`, `facility`, `world`, `scenario`, `policies` |
+| `world_of_supply_rllib.py` | `rl/agents`, `rl/observations`, `rl/actions`, `rl/rewards`, `rl/env`, `rl/heuristics` |
+| `world_of_supply_rllib_models.py` (TF) | `rl/models` (PyTorch) + `rl/rl_modules` (RLLib wrapper) |
+| `world_of_supply_rllib_training.py` | `rl/training` + `cli.py` |
+| `world_of_supply_renderer.py` | `rendering/sprites`, `rendering/status`, `rendering/renderer` |
+| `world_of_supply_tools.py` | `analytics/tracker`, `analytics/hardware` |
+| `world-of-supply.ipynb` | replaced by `main.py` CLI + `tests/` |
+
+## 8. End-to-end validation (verified run)
 
 | Stage | Command | Observed result |
 |---|---|---|
@@ -331,7 +393,7 @@ wrong-product orders penalized at $500/unit, amplified by the curriculum
 blending global (penalty-laden) profit into every agent's reward. The
 scripted baseline (+234k/episode) is the reference the agents must beat.
 
-## 7. Getting started
+## 9. Getting started
 
 ```bash
 pip install -e '.[dev]'    # REQUIRED for training: Ray workers import the
