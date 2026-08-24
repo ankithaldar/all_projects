@@ -1,0 +1,14 @@
+# Core dependencies of the refactored (PyTorch + Ray 2.x) codebase.
+# The simulation core needs only numpy/networkx; rendering adds PIL/matplotlib/yaml;
+# the RL layer additionally requires torch/gymnasium/ray.
+
+numpy>=1.26.0,<3.0.0          # arrays, observation vectors
+networkx>=3.3                 # A* routing over the facility graph
+matplotlib>=3.9.0             # tracker plots and notebook animation frames
+Pillow>=10.4.0                # ASCII-canvas world rendering (multiline_textbbox, LANCZOS)
+PyYAML>=6.0.2                 # status panel serialization
+
+torch>=2.4.0                  # FacilityNet policy/value network (replaces TensorFlow)
+gymnasium>=1.0.0              # spaces + env API used by the multi-agent wrapper
+ray[rllib]>=2.40.0,<3.0.0     # MultiAgentEnv, PPOConfig builder, new API-stack RLModules
+seaborn>=0.13.2               # SimulationTracker plot styling
