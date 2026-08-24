@@ -21,8 +21,8 @@
 #   git clone --depth 1 "https://x-access-token:$GITHUB_TOKEN@github.com/<user>/<repo>.git" ...
 #
 # Stages (= BLUEPRINT kernels 1-7):
-#   volumes | folds | weak-labels | teacher | student | self-train |
-#   infer | blend | publish | all
+#   volumes | folds | weak-labels | weak-labels-llm | teacher | student |
+#   self-train | infer | blend | publish | all
 #
 # Kaggle budgets (30 GB disk vs ~570 GB data, 12 h/kernel):
 # * Volumes are STREAM-DECODED from /kaggle/input at train/infer time --
@@ -206,6 +206,15 @@ case "$STAGE" in
     # shellcheck disable=SC2086
     run scripts/build_weak_labels.py \
         --config configs/labeling/text_teacher.yaml $teacher_flag ;;
+  weak-labels-llm)
+    # LLM tier via OpenRouter (OPENROUTER_API_KEY secret). Writes the
+    # fused parquet AND its resume cache to canonical $WORK paths so
+    # they land in the SAME published dataset as everything else.
+    run scripts/build_weak_labels_llm.py \
+        --config configs/labeling/text_teacher.yaml \
+        --out "$WEAK_LABELS" --cache "$WORK/llm_label_cache.parquet" \
+        --model "${LLM_MODEL:-openai/gpt-4o-mini}" \
+        --concurrency "${LLM_CONCURRENCY:-8}" ;;
   teacher)
     run scripts/train_text_teacher.py --config configs/labeling/text_teacher.yaml ;;
   student)
@@ -239,7 +248,7 @@ case "$STAGE" in
     export DATA_ROOT WORK EXP PYTHON="$PY"
     bash scripts/run_all.sh ;;
   *)
-    die "unknown stage '$STAGE' (volumes folds weak-labels teacher student self-train infer blend publish all)" ;;
+    die "unknown stage '$STAGE' (volumes folds weak-labels weak-labels-llm teacher student self-train infer blend publish all)" ;;
 esac
 
 # AUTO_PUBLISH=1: push artifacts after every successful stage so a 12 h
