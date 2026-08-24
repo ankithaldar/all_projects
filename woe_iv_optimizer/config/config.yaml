@@ -1,0 +1,61 @@
+# Data source selector
+data_source: "csv"  # Options: "bigquery", "csv", "parquet"
+
+# === BigQuery Settings (if data_source == "bigquery") ===
+bigquery:
+  project_id: "your-gcp-project"
+  dataset_id: "your_dataset"
+  table_id: "your_table"
+
+# === CSV Settings (if data_source == "csv") ===
+csv:
+  file_path: "data/input.csv"
+  gcp_project: "my-gcp-project-id" # Optional, Mandatory if getching from GCP bucket
+  s3_credentials: # Optional, Mandatory if getching from S3 bucket
+    key: "..."
+    secret: "your-secret-key"
+    # token: "..."  # optional for temporary creds
+  separator: ","        # Optional
+  encoding: "utf-8"     # Optional
+
+# === Parquet Settings (if data_source == "parquet") ===
+parquet:
+  file_path: "data/input.parquet"
+
+# Columns
+target_column: "is_default"
+score_column: "model_score"
+
+# Features to process (empty list = auto-detect all non-target columns)
+features: []
+
+# Binning strategies to compare
+binning_strategies:
+  - "equal_width"
+  - "equal_freq"
+  - "chimerge"
+  - "tree_based"
+  - "iv_optimized"
+
+# Constraints
+constraints:
+  min_bin_size: 0.05      # min proportion of total samples per bin
+  max_bins: 10
+  enforce_monotonicity: true
+  min_iv_threshold: 0.02
+
+# Missing value handling
+missing_handling:
+  strategy: "separate_bin"  # options: "separate_bin", "impute_median", "drop"
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Output
+output:
+  log_file: "logs/woe_iv.log"
+  viz_dir: "output/visualizations"
+  viz_format: "png"
+  rules_output: "output/binning_rules.json"
