@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Companies</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Target companies</h1>
+    <div class="card">
+      <div class="row" style="align-items:end">
+        <div><label>Name</label><input id="cName" placeholder="Acme"></div>
+        <div><label>Domain</label><input id="cDomain" placeholder="acme.com"></div>
+        <div><label>Priority (5=pinned)</label><input id="cPrio" type="number" min="1" max="5" value="3"></div>
+        <button class="btn" onclick="addCompany()">Add</button>
+      </div>
+      <div class="row" style="margin-top:12px;align-items:end">
+        <div style="flex:2"><label>Bulk import YAML ({companies: [{name, domain, priority}]})</label>
+          <textarea id="importYaml" rows="3" style="width:100%"></textarea></div>
+        <button class="btn" onclick="importYaml()">Import</button>
+      </div>
+    </div>
+    <div id="table"></div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/companies.html'));
+    async function load() {
+      const rows = await jh.get('/api/companies');
+      const box = document.getElementById('table');
+      if (!rows.length) { box.append(jh.el('div', { class: 'card' }, 'No companies yet — add one above.')); return; }
+      const actionsFor = r => [
+        components.scoreBadge(r.priority * 20),
+        jh.el('button', { class: 'btn', onclick: () => patch(r.id, { status: r.status === 'paused' ? 'active' : 'paused' }) },
+          r.status === 'paused' ? 'Resume' : 'Pause'),
+        jh.el('button', { class: 'btn', onclick: () => patch(r.id, { priority: Math.min(5, (r.priority || 3) + 1) }) }, '+prio'),
+        jh.el('button', { class: 'btn dismiss', onclick: () => jh.del(`/api/companies/${r.id}`).then(load) }, 'Blacklist'),
+      ];
+      box.append(components.table(
+        ['Name', 'Domain', 'ATS', 'Vertical', 'Status', '', '', '', ''],
+        rows,
+        r => [r.name, r.domain || '—', r.ats_provider || '—', r.vertical || '—',
+          r.status, ...actionsFor(r)]));
+    }
+    async function addCompany() {
+      try {
+        await jh.post('/api/companies', {
+          name: document.getElementById('cName').value,
+          domain: document.getElementById('cDomain').value,
+          priority: Number(document.getElementById('cPrio').value) || 3,
+        });
+        jh.toast('Company added'); load();
+      } catch (e) { jh.toast(e.message, true); }
+    }
+    async function importYaml() {
+      try {
+        await jh.post('/api/companies/import', document.getElementById('importYaml').value);
+        jh.toast('Imported'); load();
+      } catch (e) { jh.toast(e.message, true); }
+    }
+    async function patch(id, fields) {
+      try { await jh.patch(`/api/companies/${id}`, fields); load(); }
+      catch (e) { jh.toast(e.message, true); }
+    }
+    load();
+  </script>
+</body>
+</html>

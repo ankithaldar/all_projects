@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Dashboard</h1>
+    <div class="kpis" id="kpis"></div>
+    <h1 style="font-size:16px">Top recommendations (today)</h1>
+    <div id="recs"></div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/'));
+    (async () => {
+      try {
+        const stats = await jh.get('/api/stats/dashboard');
+        document.getElementById('kpis').append(
+          components.kpi('New today', stats.new_today),
+          components.kpi('Saved', stats.saved),
+          components.kpi('Active jobs', stats.active_jobs),
+          components.kpi('Companies', stats.companies));
+      } catch (e) { jh.toast(e.message, true); }
+
+      const recs = await jh.get('/api/recommendations?per_page=8');
+      const box = document.getElementById('recs');
+      if (!recs.length) {
+        box.append(jh.el('div', { class: 'card' },
+          'No recommendations yet. Add companies, upload your resume on the Profile page, then trigger a run from the Runs page.'));
+        return;
+      }
+      for (const rec of recs) {
+        box.append(components.recCard(rec, async (status, r) => {
+          try {
+            await jh.patch(`/api/recommendations/${r.recommendation_id}?status=${status}`);
+            jh.toast(status === 'saved' ? 'Saved' : 'Dismissed');
+            location.reload();
+          } catch (e) { jh.toast(e.message, true); }
+        }));
+      }
+    })();
+  </script>
+</body>
+</html>
