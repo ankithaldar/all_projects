@@ -4,7 +4,7 @@
 
 Usage (Kaggle or local):
     python scripts/prepare_volumes.py \
-        --data-root /kaggle/input/rsna-knee-abnormality-detection \
+        --data-root /kaggle/input/competitions/rsna-knee-abnormality-detection \
         --cache-dir /kaggle/working/volumes_cache \
         --workers 4
 Outputs:

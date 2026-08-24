@@ -71,7 +71,7 @@ class PathsConfig(StrictModel):
       output_dir: Kernel working output root.
   """
 
-  data_root: str = '/kaggle/input/rsna-knee-abnormality-detection'
+  data_root: str = '/kaggle/input/competitions/rsna-knee-abnormality-detection'
   train_csv: str = 'train.csv'
   train_series_csv: str = 'train_series.csv'
   train_series_dir: str = 'train_series'

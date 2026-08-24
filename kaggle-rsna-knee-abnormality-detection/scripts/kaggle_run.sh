@@ -35,7 +35,7 @@
 #   REPO_URL   used to clone when the repo is absent (standalone/curl usage)
 #   GIT_REF    branch/tag to clone
 #   EXP        experiment yaml          (configs/experiment/student_2p5d_effnetv2.yaml)
-#   DATA_ROOT  data dir                 (/kaggle/input/rsna-knee-abnormality-detection)
+#   DATA_ROOT  data dir                 (/kaggle/input/competitions/rsna-knee-abnormality-detection)
 #   WORK       scratch/artifact dir     (/kaggle/working)
 #   WITH_MONAI 1 -> install monai (student_3d_resnet experiment)
 #   FORCE_PIP  1 -> reinstall deps despite the session marker
@@ -82,7 +82,7 @@ export PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
 # --- 1. environment ---------------------------------------------------------
 WORK="${WORK:-/kaggle/working}"
-DATA_ROOT="${DATA_ROOT:-/kaggle/input/rsna-knee-abnormality-detection}"
+DATA_ROOT="${DATA_ROOT:-/kaggle/input/competitions/rsna-knee-abnormality-detection}"
 EXP="${EXP:-configs/experiment/student_2p5d_effnetv2.yaml}"
 FOLDS="${FOLDS:-$WORK/train_folds.csv}"
 VOLUMES_CACHE="${VOLUMES_CACHE:-$WORK/volumes_cache}"

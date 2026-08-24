@@ -15,7 +15,7 @@ model:
   pooling: mean                  # token pooling before classifier head
 
 data:
-  train_csv: /kaggle/input/rsna-knee-abnormality-detection/train.csv
+  train_csv: ${oc.env:DATA_ROOT,/kaggle/input/competitions/rsna-knee-abnormality-detection}/train.csv
   folds_csv: train_folds.csv
   output_dir: /kaggle/working/text_teacher
 
