@@ -118,3 +118,16 @@ def test_gateway_paths_resolve_to_real_files(tmp_path: Path) -> None:
   root = Path(__file__).resolve().parents[2]
   settings = AppSettings(root / 'config' / 'app.yaml')
   assert settings.gateway_config_path.exists(), settings.gateway_config_path
+
+
+def test_profile_extraction_schema_builds(tmp_path: Path) -> None:
+  """ProfileExtraction resolves its annotations (List must be defined).
+
+  Args:
+    tmp_path: Pytest temporary directory (unused).
+  """
+  from job_hunter.services.profile_curator import ProfileExtraction
+  model = ProfileExtraction(skills=['Python'], seniority_keywords=['staff'])
+  assert model.skills == ['Python']
+  fields = ProfileExtraction.model_json_schema()['properties']
+  assert 'skills' in fields and 'seniority_keywords' in fields
