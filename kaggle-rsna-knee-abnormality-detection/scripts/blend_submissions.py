@@ -51,9 +51,14 @@ def main() -> None:
   args = parse_args()
   log = get_logger('blend')
   oof_paths = sorted(Path().glob(args.oof))
-  sub_paths = sorted(Path().glob(args.subs))
+  # Never let a previous blended output join the member pool: re-running
+  # the stage would otherwise feed the blend its own submission.
+  out_name = Path(args.out).name
+  sub_paths = [p for p in sorted(Path().glob(args.subs)) if p.name != out_name]
   assert len(oof_paths) == len(sub_paths) >= 1, (
-    'member count mismatch between --oof and --subs'
+    'member count mismatch between --oof and --subs '
+    f'(oof={len(oof_paths)}, subs={len(sub_paths)} after '
+    f'excluding {out_name})'
   )
 
   names = [p.stem.replace('_oof', '') for p in oof_paths]

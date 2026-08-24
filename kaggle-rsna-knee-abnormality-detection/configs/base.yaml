@@ -109,8 +109,9 @@ datamodule:
   max_series_per_study: 6
   pin_memory: true
   # Per-worker LRU for stream-decoded volumes (no disk cache on Kaggle):
-  lru_max_volumes: 256          # ~256 x 4.7 MB uint8 volumes
-  lru_max_gb: 4                 # byte ceiling per worker
+  # host RAM ~ num_workers x lru_max_gb -- stay inside Kaggle's ~13 GB.
+  lru_max_volumes: 64           # ~64 x 4.7 MB uint8 volumes per worker
+  lru_max_gb: 2                 # byte ceiling per worker
 
 train:
   fold_scheme: iterative_multilabel

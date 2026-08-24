@@ -44,6 +44,30 @@ from knee.helpers.seeding import seed_everything
 MIN_FOLD_SECONDS = 20 * 60
 
 
+def _resolve_precision(amp: str) -> str:
+  """Fall back to fp16-mixed when the GPU predates bf16 tensor cores.
+
+  Kaggle T4/P100/K80 GPUs (compute capability < 8.0) cannot run bf16
+  autocast; Lightning would fail or crawl. CPU-only runs keep bf16
+  untouched (PyTorch emulates it fine there).
+
+  Args:
+      amp: Configured precision string ('bf16', '16-mixed', ...).
+
+  Returns:
+      The precision actually usable on this machine.
+  """
+  if 'bf16' not in amp or not torch.cuda.is_available():
+    return amp
+  major, _ = torch.cuda.get_device_capability(0)
+  if major >= 8:
+    return amp
+  get_logger('train_text_teacher').warning(
+    'pre-Ampere GPU detected; bf16 -> 16-mixed'
+  )
+  return '16-mixed'
+
+
 def parse_args() -> argparse.Namespace:
   """Parse CLI arguments.
 
@@ -69,6 +93,20 @@ def main() -> None:
   ckpt_dir.mkdir(parents=True, exist_ok=True)
 
   df = pd.read_csv(cfg.data.train_csv)
+  # Merge the frozen fold assignment when train.csv lacks it; without a
+  # fold column every fold would train on ALL gold studies and the OOF
+  # parquet would stay empty.
+  if 'fold' not in df.columns and cfg.data.folds_csv:
+    folds_path = Path(cfg.data.folds_csv)
+    if not folds_path.is_absolute():
+      folds_path = Path(cfg.data.train_csv).parent / folds_path
+    if folds_path.exists():
+      df = df.merge(
+        pd.read_csv(folds_path)[['StudyInstanceUID', 'fold']],
+        on='StudyInstanceUID',
+        how='left',
+      )
+      log.info('merged fold column from %s', folds_path)
   gold = df.dropna(subset=[c for c in TARGETS if c in df.columns])
 
   tokenizer = AutoTokenizer.from_pretrained(cfg.model.backbone)
@@ -91,7 +129,7 @@ def main() -> None:
     )
     trainer_kwargs: dict = {
       'max_epochs': cfg.train.epochs,
-      'precision': cfg.train.amp,
+      'precision': _resolve_precision(cfg.train.amp),
       'accelerator': 'auto',
       'devices': 1,
       'accumulate_grad_batches': cfg.train.grad_accum,

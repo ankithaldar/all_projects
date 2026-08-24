@@ -198,14 +198,17 @@ class DataModuleConfig(StrictModel):
   max_series_per_study: int = Field(default=6, ge=1)
   pin_memory: bool = True
   lru_max_volumes: int = Field(
-    default=256,
+    default=64,
     ge=1,
     description='Per-worker LRU capacity in decoded series volumes.',
   )
   lru_max_gb: int = Field(
-    default=4,
+    default=2,
     ge=1,
-    description='Per-worker LRU capacity in GiB of uint8 voxels.',
+    description=(
+      'Per-worker LRU capacity in GiB of uint8 voxels; total host RAM '
+      'is roughly num_workers x this value -- keep it small on Kaggle.'
+    ),
   )
 
 

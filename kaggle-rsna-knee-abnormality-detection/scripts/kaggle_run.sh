@@ -167,9 +167,51 @@ if [ -n "${PREV_OUTPUT:-}" ]; then
 fi
 
 if [ ! -e "$WORK/.deps_ok" ] || [ "${FORCE_PIP:-0}" = '1' ]; then
-  log 'installing python deps'
-  "$PY" -m pip install -q --upgrade pip
-  "$PY" -m pip install -q -r requirements.txt
+  # Fresh containers already ship a CUDA-matched torch/lightning/timm/
+  # transformers stack -- blanket-installing requirements.txt would
+  # waste ~10 min and risk replacing the GPU torch build. Install ONLY
+  # what is actually missing; FORCE_PIP=1 restores the old behavior.
+  # Optional trackers (neptune/wandb) stay out unless already present.
+  log 'checking python deps'
+  MISSING=$("$PY" - <<'EOF'
+import importlib.util
+
+REQUIRED = {
+  'lightning': 'lightning>=2.2',
+  'timm': 'timm>=1.0',
+  'transformers': 'transformers>=4.44',
+  'sentencepiece': 'sentencepiece',
+  'albumentations': 'albumentations>=1.4',
+  'cv2': 'opencv-python-headless',
+  'pydicom': 'pydicom',
+  'pylibjpeg': 'pylibjpeg',
+  'gdcm': 'python-gdcm',
+  'scipy': 'scipy',
+  'sklearn': 'scikit-learn',
+  'iterative_stratification': 'iterative-stratification',
+  'omegaconf': 'omegaconf>=2.3',
+  'pydantic': 'pydantic>=2.6',
+  'dotenv': 'python-dotenv',
+  'kaggle': 'kaggle',
+}
+missing = [
+  spec for module, spec in REQUIRED.items()
+  if importlib.util.find_spec(module) is None
+]
+try:
+  import torch  # noqa: F401  # never replace the CUDA-matched build
+except Exception:
+  missing.insert(0, 'torch>=2.1')
+print('\n'.join(missing))
+EOF
+)
+  if [ -n "$MISSING" ]; then
+    log "installing: $(printf '%s ' $MISSING)"
+    "$PY" -m pip install -q --upgrade pip >/dev/null
+    "$PY" -m pip install -q $MISSING
+  else
+    log 'all core deps already present in this image'
+  fi
   [ "${WITH_MONAI:-0}" = '1' ] && "$PY" -m pip install -q 'monai>=1.3'
   mkdir -p "$WORK" && touch "$WORK/.deps_ok"
 fi
@@ -203,9 +245,13 @@ case "$STAGE" in
   weak-labels)
     teacher_flag=''
     [ -f "$TEACHER_DIR/oof_probs.parquet" ] && teacher_flag="--teacher-dir $TEACHER_DIR"
+    # --out-parquet: write to canonical $WEAK_LABELS (the student stage
+    # and the published dataset both expect it at $WORK root), NOT the
+    # text_teacher config dir.
     # shellcheck disable=SC2086
     run scripts/build_weak_labels.py \
-        --config configs/labeling/text_teacher.yaml $teacher_flag ;;
+        --config configs/labeling/text_teacher.yaml \
+        --out-parquet "$WEAK_LABELS" $teacher_flag ;;
   weak-labels-llm)
     # LLM tier via OpenRouter (OPENROUTER_API_KEY secret). Writes the
     # fused parquet AND its resume cache to canonical $WORK paths so
