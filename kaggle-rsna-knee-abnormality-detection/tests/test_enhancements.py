@@ -96,7 +96,8 @@ class TestLookahead:
     inner = torch.optim.SGD([param], lr=1.0)
     opt = Lookahead(inner, k=2, alpha=0.5)
     for step in range(1, 5):
-      param.grad = torch.ones(())
+      # grad=-1: SGD descends to fast=+1 per step (matches the comment)
+      param.grad = -torch.ones(())
       opt.step()
       if step == 2:
         # fast=2 -> slow = 0*0.5 + 2*0.5 = 1; fast pulled back to slow

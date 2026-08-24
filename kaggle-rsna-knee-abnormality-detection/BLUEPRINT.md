@@ -208,6 +208,11 @@ never an engine change (Open/Closed). Implemented in `optimizers/gradients.py`,
 | 6 | `scripts/infer.py` | ckpts + test cache | `submission.csv` |
 | 7 | `scripts/blend_submissions.py` | submissions | final `submission.csv` |
 
+Every kernel boots through one cell (see `scripts/kaggle_run.sh`
+header): clone **this branch** (`-b competitions/kaggle-rsna-knee-
+abnormality-detection`) and call the dispatcher with a stage name —
+the script handles deps, GPU-precision fallback and stage dispatch.
+
 Push every artifact as a versioned Kaggle Dataset so downstream kernels mount it read-only.
 Secrets (W&B key, etc.) come from `.env` locally; on Kaggle use Add-ons→Secrets (fallback logic in
 `src/knee/utils/env.py`).
@@ -224,6 +229,17 @@ Secrets (W&B key, etc.) come from `.env` locally; on Kaggle use Add-ons→Secret
 
 ## 12. Repository taxonomy (14 packages)
 
+> **Implementation status:** complete. Every module referenced by
+> `scripts/*.py` and `configs/*.yaml` exists under `src/knee/`:
+> losses (`classification.AsymmetricLoss` / `SoftBCEWithLogits`),
+> metrics (`macro_auc`), optimizers
+> (`param_groups_scheduler.build_param_groups` + `WarmupCosineScheduler`),
+> datasets (`folds`, `sampler.BalancedMultiLabelSampler`,
+> `volume_builder.prepare_all`), datamodules (`KneeDataModule`),
+> engines (`text_teacher_lit`, `rule_labeler.RuleBasedLabeler`,
+> `weak_label_builder.WeakLabelBuilder`, `predictor.run_predict`,
+> `ensemble.GreedyBlender` / `save_submission`).
+
 ```
 src/knee/
   activations/      activation factory (relu/gelu/silu/mish)
@@ -231,8 +247,11 @@ src/knee/
   callbacks/        EMA, Discord, unfreezing, AMP watcher,
                     batch/accum tuners, online HP, component swaps
   config_params/    pydantic schemas + loader/instantiate factory
-  datamodules/      fold-scoped LightningDataModule
-  datasets/         DICOM IO, volume cache, study datasets,
+                    (experiment YAMLs merge over configs/base.yaml)
+  datamodules/      fold-scoped LightningDataModule; batch contract:
+                    images(B,S,C,H,W) + meta(B,S,5) + series_mask(B,S)
+                    + y_hard/y_soft(B,12) + sample_weight(B) + is_gold(B)
+  datasets/         DICOM IO, volume cache (npz manifest), study datasets,
                     balanced sampler, frozen folds
   engines/          LightningModules, trainer factory, text teacher,
                     rule/NLI labelers, weak-label builder, predictor,
@@ -246,6 +265,22 @@ src/knee/
   optimizers/       param groups, warmup-cosine, Lookahead,
                     clipping strategies, gradient noise
 ```
+
+### 12.1 Cross-module contracts
+
+- **weak_labels.parquet**: one row per study with `StudyInstanceUID`,
+  the 12 target probability columns, per-class provenance tags
+  `<target>_source ∈ {gold, rule, teacher, none}`, and a scalar
+  `weight` (mean class trust) consumed as sample weight.
+- **volumes cache**: `<cache>/<SeriesInstanceUID>.npz` keyed `volume`
+  (uint8 `(num_slices, image_size, image_size)` after p1–p99 windowing,
+  in-plane resize and uniform depth resampling) plus
+  `volumes_manifest.parquet` carrying ids, `cache_path`, raw slice
+  counts and any acquisition-metadata columns from the series CSV.
+- **Config merge**: experiment YAMLs contain only deltas;
+  `load_config()` merges the nearest `configs/base.yaml` underneath,
+  then applies CLI `--set` dotlist overrides (kaggle_run.sh uses these
+  for path remapping and pre-Ampere precision fallback).
 
 ## 13. Code standards enforcement
 

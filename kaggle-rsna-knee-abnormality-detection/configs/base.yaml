@@ -96,13 +96,13 @@ sampler:
     target: knee.datasets.sampler.BalancedMultiLabelSampler
     params: { oversample_cap: 8.0 }
 
+# Flat wiring consumed by knee.datamodules.knee_datamodule.KneeDataModule
+# (constructed explicitly by scripts/train_image_student.py / infer.py).
 datamodule:
-  target: knee.datamodules.knee_datamodule.KneeDataModule
-  params:
-    batch_size: 8                 # studies per step (x ~4 series each)
-    num_workers: 4
-    max_series_per_study: 6
-    pin_memory: true
+  batch_size: 8                 # studies per step (x ~4 series each)
+  num_workers: 4
+  max_series_per_study: 6
+  pin_memory: true
 
 train:
   fold_scheme: iterative_multilabel

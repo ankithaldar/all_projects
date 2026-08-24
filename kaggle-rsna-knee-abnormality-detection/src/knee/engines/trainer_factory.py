@@ -171,6 +171,8 @@ def build_trainer(
     loggers.append(instantiate(spec, **params))
 
   trainer_params = dict(train_cfg.trainer.params)
+  if train_cfg.epochs is not None:
+    trainer_params['max_epochs'] = int(train_cfg.epochs)
   trainer_params.update(
     default_root_dir=str(paths.output_dir),
     callbacks=callbacks,
