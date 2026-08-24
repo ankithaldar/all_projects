@@ -7,7 +7,7 @@ per-fold OOF parquets, folds CSV, weak labels, teacher checkpoints)
 must leave the machine before the 12 h wall kills it. This script
 mirrors everything resumable from ``$WORK`` into a staging folder and
 pushes it as a single PRIVATE dataset (default:
-``ah2022_-rsna-knee-abnormality-detection``) using the Kaggle API:
+``ah2022_rsna-knee-abnormality-detection``) using the Kaggle API:
 
     kaggle datasets init     -> patch dataset-metadata.json ->
     kaggle datasets create   (first push)   |   datasets version   (later)
@@ -23,7 +23,7 @@ and ``KAGGLE_KEY`` (resolution order: env -> .env -> Kaggle Secrets ->
 Usage:
     python scripts/publish_dataset.py \
         --work /kaggle/working \
-        --dataset-name ah2022_-rsna-knee-abnormality-detection \
+        --dataset-name ah2022_rsna-knee-abnormality-detection \
         [--message 'folds 0-1 done'] [--dir-mode zip]
 """
 
@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     '--dataset-name',
-    default='ah2022_-rsna-knee-abnormality-detection',
+    default='ah2022_rsna-knee-abnormality-detection',
     help='Single private dataset receiving every artifact.',
   )
   parser.add_argument(

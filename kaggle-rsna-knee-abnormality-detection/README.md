@@ -57,7 +57,7 @@ shards are used as a read-only accelerator when present.
 
 Every kernel boots an empty `/kaggle/working`; all resumable state
 therefore lives in **one private Kaggle dataset** (default:
-`ah2022_-rsna-knee-abnormality-detection`).
+`ah2022_rsna-knee-abnormality-detection`).
 
 One-time per kernel setup:
 
@@ -74,7 +74,7 @@ Then:
    dispatching:
 
    ```bash
-   export PREV_OUTPUT=/kaggle/input/ah2022_-rsna-knee-abnormality-detection
+   export PREV_OUTPUT=/kaggle/input/ah2022_rsna-knee-abnormality-detection
    export FOLDS_LIST='2,3'          # this kernel's fold shard
    bash /kaggle/working/repo/scripts/kaggle_run.sh student
    ```
@@ -97,14 +97,16 @@ Budget mechanics baked in:
 - Save Version remains an optional belt-and-braces backup alongside
   the dataset handoff.
 
-First cell of every student kernel:
+First cell of every kernel: copy
+[notebooks/kaggle_cell.py](notebooks/kaggle_cell.py) verbatim (edit
+`REPO_URL` once). It pulls secrets, clones the repo, auto-restores the
+dataset when attached, dispatches the stage and streams output:
 
-```bash
-%%bash
-git clone --depth 1 https://github.com/<user>/<repo>.git /kaggle/working/repo
-export PREV_OUTPUT=/kaggle/input/ah2022_-rsna-knee-abnormality-detection
-export FOLDS_LIST='2,3'                                     # this kernel's shard
-bash /kaggle/working/repo/scripts/kaggle_run.sh student     # AUTO_PUBLISH=1 optional
+```python
+REPO_URL = 'https://github.com/<user>/<repo>.git'  # <-- EDIT ONCE
+STAGE = 'student'                                  # per kernel
+FOLDS_LIST = '2,3'                                 # per kernel
+AUTO_PUBLISH = 1                                   # push artifacts after
 ```
 
 Secrets resolve in order: env vars -> `.env` -> Kaggle Secrets
