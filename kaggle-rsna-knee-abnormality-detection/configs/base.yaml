@@ -7,7 +7,7 @@ name: baseline_2p5d_effnetv2
 seed: 42
 
 paths:
-  data_root: /kaggle/input/rsna-knee-abnormality-detection
+  data_root: ${oc.env:DATA_ROOT,/kaggle/input/competitions/rsna-knee-abnormality-detection}
   train_csv: train.csv
   train_series_csv: train_series.csv
   train_series_dir: train_series

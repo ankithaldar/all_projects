@@ -19,6 +19,7 @@ counts and any metadata columns from the input CSV for downstream use.
 
 from __future__ import annotations
 
+import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -193,6 +194,38 @@ def _process_one(job: dict) -> dict:
     return row
 
 
+def synthesize_series_table(
+  data_root: str, split: str = 'train'
+) -> pd.DataFrame:
+  """Discover series by walking the DICOM tree when no CSV exists.
+
+  Supports nested ``<split>_series/<study>/<series>`` layouts (both ids
+  recorded) and flat ``<split>_series/<series>`` layouts (empty study).
+
+  Args:
+      data_root: Competition dataset root.
+      split: 'train' or 'test'; selects which directory to walk.
+
+  Returns:
+      Frame with StudyInstanceUID/SeriesInstanceUID string columns.
+  """
+  base = Path(data_root) / f'{split}_series'
+  base = base if base.is_dir() else Path(data_root)
+  rows = []
+  for current, dirs, files in os.walk(base):
+    if not any(name.lower().endswith('.dcm') for name in files):
+      continue
+    parts = Path(current).relative_to(base).parts
+    rows.append(
+      {
+        'SeriesInstanceUID': parts[-1],
+        'StudyInstanceUID': parts[-2] if len(parts) > 1 else '',
+      }
+    )
+    dirs[:] = []  # a series dir holds only slices; do not descend
+  return pd.DataFrame(rows, dtype=str)
+
+
 def prepare_all(
   series_csv: str,
   data_root: str,
@@ -216,7 +249,15 @@ def prepare_all(
       cache_path, status]``, preserving extra CSV columns.
   """
   log = get_logger('volume_builder')
-  table = pd.read_csv(series_csv, dtype=str)
+  csv_path = Path(series_csv)
+  if csv_path.exists():
+    table = pd.read_csv(series_csv, dtype=str)
+  else:
+    log.warning(
+      '%s not found; synthesizing series table by walking %s',
+      series_csv, data_root,
+    )
+    table = synthesize_series_table(str(data_root), 'train')
   if 'SeriesInstanceUID' not in table.columns:
     raise ValueError(f'{series_csv} lacks a SeriesInstanceUID column')
   if 'StudyInstanceUID' not in table.columns:

@@ -273,7 +273,9 @@ class KneeDataModule(LightningDataModule):
         split: 'train' or 'test' selects which descriptor table to use.
 
     Returns:
-        Series table covering every study of the split.
+        Series table covering every study of the split; when no cache
+        manifest or CSV exists, the table is synthesized by walking the
+        DICOM tree (see ``volume_builder.synthesize_series_table``).
     """
     cache_dir = self.paths.volumes_cache
     manifest = (
@@ -281,11 +283,15 @@ class KneeDataModule(LightningDataModule):
     )
     if manifest and manifest.exists():
       return pd.read_parquet(manifest)
-    csv_name = (
+    csv_path = Path(self.paths.data_root) / (
       self.paths.test_series_csv if split == 'test'
       else self.paths.train_series_csv
     )
-    return pd.read_csv(str(Path(self.paths.data_root) / csv_name))
+    if csv_path.exists():
+      return pd.read_csv(csv_path)
+    from knee.datasets.volume_builder import synthesize_series_table
+
+    return synthesize_series_table(self.paths.data_root, split)
 
   def _fused_frame(self) -> pd.DataFrame:
     """Merge folds CSV with gold labels and the weak-label parquet."""
