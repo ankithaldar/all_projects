@@ -348,3 +348,54 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
   }
 
 
+async def compute_embeddings(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+  '''Embed newly inserted postings when a provider is available.
+
+  Args:
+    state: Current state.
+    config: Runnable config.
+
+  Returns:
+    Counters for embedded and skipped postings.
+  '''
+  from job_hunter.services.embedder import get_embedder
+
+  settings = _settings_from_config(config)
+  jobs_repo = JobsRepository(settings.db_path)
+  embedder = get_embedder(settings)
+  stats: Dict[str, int] = {'embeddings': 0, 'embedding_skipped': 0}
+  if embedder.model_id == NullProvider_model_id():
+    stats['embedding_skipped'] = len(state.get('inserted') or [])
+    return {'stats': stats}
+  pending = [job for job in state.get('inserted') or [] if job.job_id]
+  if not pending:
+    return {'stats': stats}
+  texts = []
+  for job in pending:
+    row = jobs_repo.get(int(job.job_id)) or {}
+    texts.append(f"{job.raw.title}\n{(row.get('description_text') or '')[:1800]}")
+  try:
+    vectors = embedder.embed(texts)
+  except Exception as exc:
+    logger.warning('embedding failed: %s', exc)
+    stats['embedding_skipped'] = len(pending)
+    return {'stats': stats}
+  if vectors is None:
+    stats['embedding_skipped'] = len(pending)
+    return {'stats': stats}
+  for job, vector in zip(pending, vectors):
+    jobs_repo.save_embedding(int(job.job_id), embedder.model_id, vector)
+    stats['embeddings'] += 1
+  return {'stats': stats}
+
+
+def NullProvider_model_id() -> str:
+  '''Return the fallback provider marker id without importing heavy deps.
+
+  Returns:
+    Marker string.
+  '''
+  from job_hunter.services.embedder import NullProvider
+  return NullProvider.model_id
+
+
