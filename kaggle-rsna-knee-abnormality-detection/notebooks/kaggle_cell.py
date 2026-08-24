@@ -29,8 +29,8 @@ from pathlib import Path
 # ------------------------------- CONFIG -------------------------------------
 REPO_URL = 'https://github.com/ankithaldar/all_projects_02.git'  # <-- EDIT ONCE
 GIT_REF = 'competitions/kaggle-rsna-knee-abnormality-detection'
-# STAGE: volumes|folds|weak-labels|teacher|student|self-train|infer|
-#        blend|publish
+# STAGE: volumes|folds|weak-labels|weak-labels-llm|teacher|student|
+#        self-train|infer|blend|publish
 STAGE = 'student'
 EXP = 'configs/experiment/student_2p5d_effnetv2.yaml'
 FOLDS_LIST = None  # '0,1' then '2,3' per kernel; None = config default
@@ -59,7 +59,12 @@ def _secret(name: str) -> str:
     return os.environ.get(name, '')
 
 
-for _key in ('GITHUB_TOKEN', 'KAGGLE_USERNAME', 'KAGGLE_KEY'):
+for _key in (
+  'GITHUB_TOKEN',
+  'KAGGLE_USERNAME',
+  'KAGGLE_KEY',
+  'OPENROUTER_API_KEY',
+):
   _value = _secret(_key)
   if _value:
     os.environ[_key] = _value
@@ -116,7 +121,11 @@ else:
   print(f'==> {DATASET_NAME} not attached (fresh start?)')
 
 _process = subprocess.Popen(
-  ['bash', f'{REPO_DIR}/kaggle-rsna-knee-abnormality-detection/scripts/kaggle_run.sh', STAGE],
+  [
+    'bash',
+    f'{REPO_DIR}/kaggle-rsna-knee-abnormality-detection/scripts/kaggle_run.sh',
+    STAGE,
+  ],
   env={**os.environ, **_env},
   stdout=subprocess.PIPE,
   stderr=subprocess.STDOUT,
