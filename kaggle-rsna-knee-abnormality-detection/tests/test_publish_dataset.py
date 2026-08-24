@@ -79,11 +79,39 @@ class TestDatasetExists:
     monkeypatch.setattr(pub, '_run_kaggle', lambda args: done)
     assert pub.dataset_exists('u', 'n') is False
 
+  def test_false_on_403_for_missing_datasets(self, monkeypatch):
+    # Current kagglesdk hides existence: absent -> 403 Forbidden.
+    done = subprocess.CompletedProcess(
+      [],
+      1,
+      stdout='',
+      stderr=(
+        '403 Client Error: Forbidden for url: '
+        'https://api.kaggle.com/v1/datasets.DatasetApiService/'
+        'GetDatasetStatus'
+      ),
+    )
+    monkeypatch.setattr(pub, '_run_kaggle', lambda args: done)
+    assert pub.dataset_exists('u', 'n') is False
+
   def test_ambiguous_failure_raises(self, monkeypatch):
-    done = subprocess.CompletedProcess([], 1, stdout='', stderr='403 auth')
+    done = subprocess.CompletedProcess(
+      [], 1, stdout='', stderr='502 bad gateway'
+    )
     monkeypatch.setattr(pub, '_run_kaggle', lambda args: done)
     with pytest.raises(RuntimeError):
       pub.dataset_exists('u', 'n')
+
+
+class TestAuthHint:
+  """Credential failures carry an actionable hint."""
+
+  def test_hint_appended_on_forbidden(self):
+    text = pub._auth_hint('create failed:\n403 Forbidden')
+    assert 'hint:' in text and 'KAGGLE_USERNAME' in text
+
+  def test_no_hint_on_other_failures(self):
+    assert 'hint:' not in pub._auth_hint('boom\n502 bad gateway')
 
 
 class TestPushDecision:

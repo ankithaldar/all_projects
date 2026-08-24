@@ -197,18 +197,42 @@ def dataset_exists(username: str, dataset_name: str) -> bool:
       dataset_name: Dataset slug to probe.
 
   Returns:
-      True when it exists, False on a definitive 404.
+      True when it exists, False when it is absent OR invisible to the
+      credentials (the current kagglesdk backend reports missing
+      datasets as 403 Forbidden instead of the legacy 404 -- it does
+      not disclose existence). A follow-up ``create`` still surfaces
+      genuine credential problems loudly.
 
   Raises:
-      RuntimeError: On ambiguous CLI failures (auth, network, quota).
+      RuntimeError: On ambiguous CLI failures (network, quota).
   """
   done = _run_kaggle(['datasets', 'status', f'{username}/{dataset_name}'])
   if done.returncode == 0:
     return True
-  combined = f'{done.stdout}{done.stderr}'
-  if '404' in combined or 'not found' in combined.lower():
+  combined = f'{done.stdout}{done.stderr}'.lower()
+  if '404' in combined or '403' in combined or 'not found' in combined:
     return False
   raise RuntimeError(f'kaggle datasets status failed:\n{combined.strip()}')
+
+
+def _auth_hint(combined: str) -> str:
+  """Append a credential hint when a failure looks auth-related.
+
+  Args:
+      combined: Raw CLI stdout+stderr text.
+
+  Returns:
+      The original text, plus a hint line for auth-style failures.
+  """
+  lowered = combined.lower()
+  if any(
+    token in lowered for token in ('401', '403', 'unauthorized', 'forbidden')
+  ):
+    return (
+      f'{combined.strip()}\nhint: verify that KAGGLE_USERNAME / '
+      'KAGGLE_KEY secrets belong to the account that owns the dataset'
+    )
+  return combined
 
 
 def push(
@@ -268,7 +292,9 @@ def push(
         log.info('dataset %s/%s %s', username, dataset_name, 'versioned')
         return
       combined = f'{retry.stdout}{retry.stderr}'
-    raise RuntimeError(f'kaggle datasets {action} failed:\n{combined.strip()}')
+    raise RuntimeError(
+      f'kaggle datasets {action} failed:\n{_auth_hint(combined)}'
+    )
   log.info('dataset %s/%s %s (%s)', username, dataset_name, action, message)
 
 
