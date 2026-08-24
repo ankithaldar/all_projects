@@ -64,9 +64,12 @@ def load_profile(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any
     State update.
   '''
   settings = _settings_from_config(config)
-  data = ProfileRepository(settings.db_path).get_profile(1) or {}
+  profiles_repo = ProfileRepository(settings.db_path)
+  data = profiles_repo.get_profile(1) or {}
   floor = SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0)
+  skills = profiles_repo.candidate_skill_names(1)
   candidate = CandidateProfile(
+    skills=skills,
     target_roles=data.get('target_roles') or ['Data Scientist'],
     seniority_keywords=data.get('seniority_keywords') or ['staff', 'senior', 'principal', 'lead'],
     target_verticals=data.get('target_verticals') or [],
@@ -146,9 +149,14 @@ async def fetch_pair(target_data: Dict[str, Any], config: RunnableConfig) -> Dic
         record for record in records
         if not record.posted_at or (record.posted_at >= str(since))
       ]
+    watermarks = [
+      str(record.posted_at) for record in records if record.posted_at
+    ]
     raw_jobs = records
     stats[f"fetched:{target_data['source_key']}"] = len(records)
-    crawl.set_success(scope, cursor=None)
+    crawl.set_success(scope, cursor=max(watermarks) if watermarks else None)
+    if watermarks:
+      crawl.set_success(f'{scope}:posted', cursor=max(watermarks))
   except Exception as exc:
     failures = crawl.set_failure(scope)
     errors.append({

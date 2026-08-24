@@ -98,13 +98,16 @@ class GatewayChatModel(BaseChatModel):
       RuntimeError: When the gateway fails all providers.
     '''
     import asyncio
-    response = asyncio.get_event_loop().run_until_complete(
-      self.client.acomplete_text(
-        session_id=self.session_id,
-        messages=_lc_to_gateway(messages),
-        temperature=self.temperature,
-      ),
+    coroutine = self.client.acomplete_text(
+      session_id=self.session_id,
+      messages=_lc_to_gateway(messages),
+      temperature=self.temperature,
     )
+    try:
+      running = asyncio.get_running_loop()
+    except RuntimeError:
+      running = None
+    response = running.run_until_complete(coroutine) if running else asyncio.run(coroutine)
     message = AIMessage(content=response.content or '')
     return ChatResult(generations=[ChatGeneration(message=message)])
 

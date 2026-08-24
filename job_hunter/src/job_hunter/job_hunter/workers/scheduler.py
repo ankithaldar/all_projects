@@ -114,6 +114,13 @@ def start_scheduler(config_path: str | Path) -> None:
     count = stale_sweep(config_path)
     logger.info('stale sweep marked %s jobs', count)
 
+  def drain_pending() -> None:
+    '''Claim and execute any UI/CLI-enqueued pending run.'''
+    from job_hunter.workers.jobs import execute_pending_run
+    result = execute_pending_run(config_path, run_id=None)
+    if result.get('run_id') is not None:
+      logger.info('drained pending run: %s -> %s', result['run_id'], result['status'])
+
   def run_inbox_scan() -> None:
     '''Scan the manual inbox when that feature is present.'''
     try:
@@ -133,6 +140,7 @@ def start_scheduler(config_path: str | Path) -> None:
   minute, hour, day, month, dow = cron_to_apscheduler(schedule.get('stale_sweep_cron', '0 4 * * *'))
   scheduler.add_job(run_stale_sweep, 'cron', minute=minute, hour=hour, day=day, month=month, day_of_week=dow, id='stale_sweep')
   scheduler.add_job(run_inbox_scan, 'interval', minutes=int(schedule.get('inbox_scan_minutes', 30)), id='inbox_scan')
+  scheduler.add_job(drain_pending, 'interval', seconds=30, id='pending_executor')
 
   logger.info('worker scheduler started (config=%s)', config_path)
   try:

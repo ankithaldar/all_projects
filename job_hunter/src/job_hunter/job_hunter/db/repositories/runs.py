@@ -52,6 +52,17 @@ class RunsRepository:
     ).fetchone()
     return bool(row and row['n'])
 
+  def has_pending(self) -> bool:
+    '''Return whether any run is waiting to be claimed.
+
+    Returns:
+      True when a pending run exists.
+    '''
+    row = connect(self._db_path, readonly=True).execute(
+      "SELECT COUNT(*) AS n FROM runs WHERE status = 'pending'",
+    ).fetchone()
+    return bool(row and row['n'])
+
   def claim_pending(self, run_id: Optional[int] = None) -> Optional[int]:
     '''Atomically claim one pending run for execution.
 
