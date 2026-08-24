@@ -18,6 +18,7 @@ Outputs (under cfg.data.output_dir):
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -42,6 +43,34 @@ from knee.helpers.seeding import seed_everything
 
 #: Never start a fresh fold with less wall-clock left than this.
 MIN_FOLD_SECONDS = 20 * 60
+
+
+def _resolve_folds_csv(folds_csv: str, train_csv: str) -> Path | None:
+  """Locate the frozen folds CSV across Kaggle and local layouts.
+
+  Search order: the literal path, next to train.csv (local runs),
+  the current directory (repo root), then $WORK by filename (Kaggle,
+  where make_folds wrote it and the read-only input mount cannot).
+
+  Args:
+      folds_csv: Configured folds CSV path (may be relative).
+      train_csv: Configured train CSV path.
+
+  Returns:
+      First existing candidate, or None when unresolvable.
+  """
+  given = Path(folds_csv)
+  candidates = [given]
+  if not given.is_absolute():
+    candidates.append(Path(train_csv).parent / given)
+    candidates.append(Path.cwd() / given)
+    candidates.append(
+      Path(os.environ.get('WORK', '/kaggle/working')) / given.name
+    )
+  for candidate in candidates:
+    if candidate.exists():
+      return candidate
+  return None
 
 
 def _resolve_precision(amp: str) -> str:
@@ -97,16 +126,20 @@ def main() -> None:
   # fold column every fold would train on ALL gold studies and the OOF
   # parquet would stay empty.
   if 'fold' not in df.columns and cfg.data.folds_csv:
-    folds_path = Path(cfg.data.folds_csv)
-    if not folds_path.is_absolute():
-      folds_path = Path(cfg.data.train_csv).parent / folds_path
-    if folds_path.exists():
+    folds_path = _resolve_folds_csv(cfg.data.folds_csv, cfg.data.train_csv)
+    if folds_path is not None:
       df = df.merge(
         pd.read_csv(folds_path)[['StudyInstanceUID', 'fold']],
         on='StudyInstanceUID',
         how='left',
       )
       log.info('merged fold column from %s', folds_path)
+    else:
+      log.warning(
+        'folds_csv %r not found in any known location; teacher folds '
+        'degenerate to full-gold training with empty OOF',
+        cfg.data.folds_csv,
+      )
   gold = df.dropna(subset=[c for c in TARGETS if c in df.columns])
 
   tokenizer = AutoTokenizer.from_pretrained(cfg.model.backbone)
