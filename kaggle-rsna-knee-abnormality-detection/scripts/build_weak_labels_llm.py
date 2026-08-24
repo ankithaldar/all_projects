@@ -19,7 +19,7 @@ models label full train sets in single-digit dollars.
 Usage:
     python scripts/build_weak_labels_llm.py \
         --config configs/labeling/text_teacher.yaml \
-        [--model nvidia/nemotron-3-ultra-550b-a55b:free] \
+        [--model stealth/ox-alpha] \
         [--concurrency 2] [--limit 100]
 
 Outputs:
@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument('--config', default='configs/labeling/text_teacher.yaml')
   parser.add_argument(
     '--model',
-    default='nvidia/nemotron-3-ultra-550b-a55b:free',
+    default='stealth/ox-alpha',
     help='OpenRouter model slug.',
   )
   parser.add_argument(

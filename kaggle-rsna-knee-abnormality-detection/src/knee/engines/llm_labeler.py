@@ -116,7 +116,7 @@ class OpenRouterLabeler:
   Args:
       api_key: OpenRouter API key (Bearer token).
       model: OpenRouter model slug, e.g.
-          'nvidia/nemotron-3-ultra-550b-a55b:free'.
+          'stealth/ox-alpha'.
       temperature: Sampling temperature (0 for deterministic labels).
       max_tokens: Completion cap; JSON replies are short.
       max_retries: Attempts before raising LLMLabelError.
@@ -126,7 +126,7 @@ class OpenRouterLabeler:
   def __init__(
     self,
     api_key: str,
-    model: str = 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    model: str = 'stealth/ox-alpha',
     temperature: float = 0.0,
     max_tokens: int = 256,
     max_retries: int = 3,
