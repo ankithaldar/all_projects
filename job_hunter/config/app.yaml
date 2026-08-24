@@ -1,0 +1,61 @@
+# Job Hunter application defaults.
+# Runtime overrides live in the settings table (edited via the UI).
+
+app:
+  host: 127.0.0.1
+  port: 8088
+  log_level: INFO
+
+salary_hard_floor_lpa: 45
+
+schedule:
+  discovery_cron: '15 6 * * *'
+  quick_poll_minutes: 120
+  company_refresh_cron: '30 3 * * 0'
+  stale_sweep_cron: '0 4 * * *'
+  inbox_scan_minutes: 30
+
+sources:
+  greenhouse: {enabled: true, rate_limit_rpm: 30}
+  lever: {enabled: true, rate_limit_rpm: 30}
+  ashby: {enabled: true, rate_limit_rpm: 30}
+  workable: {enabled: true, rate_limit_rpm: 30}
+  smartrecruiters: {enabled: true, rate_limit_rpm: 20}
+  recruitee: {enabled: true, rate_limit_rpm: 20}
+  personio: {enabled: true, rate_limit_rpm: 20}
+  remotive: {enabled: true, rate_limit_rpm: 10}
+  remoteok: {enabled: true, rate_limit_rpm: 10}
+  weworkremotely: {enabled: true, rate_limit_rpm: 10}
+  manual: {enabled: true, rate_limit_rpm: 600}
+
+discovery:
+  max_llm_calls_per_run: 300
+  stale_after_days: 45
+  company_refresh_chunk: 50
+  include_unknown_vertical: false
+  target_verticals: []
+  blocked_verticals: []
+
+scoring_weights:
+  skills_must: 0.30
+  skills_nice: 0.10
+  semantic: 0.25
+  seniority: 0.10
+  title_fit: 0.05
+  salary_fit: 0.10
+  recency: 0.05
+  company_fit: 0.05
+
+embeddings:
+  model: 'BAAI/bge-small-en-v1.5'
+
+mcp:
+  sources:
+    command: '{python}'
+    args: ['-m', 'job_hunter.mcp_servers.sources_server']
+  resume:
+    command: '{python}'
+    args: ['-m', 'job_hunter.mcp_servers.resume_server']
+  store:
+    command: '{python}'
+    args: ['-m', 'job_hunter.mcp_servers.store_server']
