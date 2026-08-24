@@ -56,14 +56,60 @@ class TestCollectArtifacts:
 
 
 class TestWriteMetadata:
-  def test_metadata_matches_tutorial_contract(self, tmp_path: Path):
-    pub.write_metadata(
-      tmp_path, 'ah2022', 'ah2022_rsna-knee-abnormality-detection'
+  """Metadata follows the official ``datasets init`` + patch flow."""
+
+  @staticmethod
+  def _fake_init(template: str | None, code: int = 0):
+    """Build a _run_kaggle stub emulating ``datasets init``.
+
+    Args:
+        template: JSON text the CLI writes into the target folder
+            (None simulates an init failure).
+        code: Exit code to report for the init call.
+    """
+
+    def fake(args: list[str]) -> subprocess.CompletedProcess:
+      if args[1] == 'init':
+        if template is None or code != 0:
+          return subprocess.CompletedProcess([], 1, '', 'init failed')
+        target = Path(args[args.index('-p') + 1])
+        (target / 'dataset-metadata.json').write_text(template)
+        return subprocess.CompletedProcess([], 0, 'ok', '')
+      raise AssertionError(f'unexpected CLI call {args}')
+
+    return fake
+
+  def test_patches_modern_slug_only_template(self, tmp_path, monkeypatch):
+    template = (
+      '{"title": "INSERT_TITLE_HERE", "id": "INSERT_SLUG_HERE", "licenses": []}'
     )
+    monkeypatch.setattr(pub, '_run_kaggle', self._fake_init(template))
+    staging = tmp_path
+    pub.write_metadata(staging, 'ah2022', 'my-ds')
+    metadata = json.loads((staging / 'dataset-metadata.json').read_text())
+    assert metadata == {
+      'title': 'my-ds',
+      'id': 'my-ds',
+      'licenses': [{'name': 'CC0-1.0'}],
+    }
+
+  def test_preserves_owner_slug_template(self, tmp_path, monkeypatch):
+    template = (
+      '{"title": "INSERT_TITLE_HERE",'
+      ' "id": "INSERT_OWNER/INSERT_SLUG",'
+      ' "licenses": [{"name": "CC0-1.0"}]}'
+    )
+    monkeypatch.setattr(pub, '_run_kaggle', self._fake_init(template))
+    pub.write_metadata(tmp_path, 'ah2022', 'my-ds')
     metadata = json.loads((tmp_path / 'dataset-metadata.json').read_text())
-    assert metadata['id'] == ('ah2022/ah2022_rsna-knee-abnormality-detection')
-    assert metadata['title'] == 'ah2022_rsna-knee-abnormality-detection'
-    assert metadata['licenses'], 'Kaggle requires a license entry'
+    assert metadata['id'] == 'ah2022/my-ds'
+
+  def test_fallback_when_init_fails(self, tmp_path, monkeypatch):
+    monkeypatch.setattr(pub, '_run_kaggle', self._fake_init(None))
+    pub.write_metadata(tmp_path, 'ah2022', 'my-ds')
+    metadata = json.loads((tmp_path / 'dataset-metadata.json').read_text())
+    assert metadata['id'] == 'ah2022/my-ds'
+    assert metadata['licenses'] == [{'name': 'CC0-1.0'}]
 
 
 class TestDatasetExists:

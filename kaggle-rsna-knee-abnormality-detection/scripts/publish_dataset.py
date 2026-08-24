@@ -157,22 +157,52 @@ def collect_artifacts(work: str, staging: Path) -> int:
 
 
 def write_metadata(staging: Path, username: str, dataset_name: str) -> None:
-  """Write ``dataset-metadata.json`` expected by the Kaggle CLI.
+  """Produce ``dataset-metadata.json`` via the documented init+edit flow.
 
-  Mirrors the ``kaggle datasets init`` + manual-edit flow from the
-  Kaggle how-to, minus the redundant round trip.
+  Follows the official CLI tutorial exactly:
+  1. ``kaggle datasets init -p <staging>`` generates the template,
+  2. placeholders (``INSERT_TITLE_HERE`` / ``INSERT_SLUG_HERE``) are
+     patched programmatically instead of by hand,
+  3. a license is ensured.
+
+  The template's id shape is preserved: current CLIs emit a bare slug
+  (the username is attached server-side), legacy ones use
+  ``owner/slug``. When init itself fails, a known-good owner/slug file
+  is written as fallback so publishing still works on old CLIs.
 
   Args:
       staging: Folder that will be uploaded.
       username: Kaggle account owning the dataset.
       dataset_name: Dataset slug (single private dataset).
   """
-  metadata = {
-    'title': dataset_name,
-    'id': f'{username}/{dataset_name}',
-    'licenses': [_LICENSE],
-  }
-  (staging / 'dataset-metadata.json').write_text(json.dumps(metadata, indent=2))
+  log = get_logger('publish_dataset')
+  meta_path = staging / 'dataset-metadata.json'
+  metadata: dict = {}
+  done = _run_kaggle(['datasets', 'init', '-p', str(staging)])
+  if done.returncode == 0 and meta_path.exists():
+    try:
+      metadata = json.loads(meta_path.read_text())
+    except json.JSONDecodeError:
+      metadata = {}
+  from_init = bool(metadata)
+  # Preserve whatever id form this CLI vintage expects.
+  slug_only = '/' not in str(metadata.get('id', 'INSERT_SLUG_HERE'))
+  metadata['title'] = dataset_name
+  metadata['id'] = (
+    dataset_name if slug_only and from_init else f'{username}/{dataset_name}'
+  )
+  if not metadata.get('licenses'):
+    metadata['licenses'] = [dict(_LICENSE)]
+  meta_path.write_text(json.dumps(metadata, indent=2))
+  if from_init:
+    log.info(
+      'metadata initialized via kaggle datasets init (id=%s)', metadata['id']
+    )
+  else:
+    log.warning(
+      'kaggle datasets init unavailable; wrote fallback metadata (id=%s)',
+      metadata['id'],
+    )
 
 
 def _run_kaggle(args: list[str]) -> subprocess.CompletedProcess:
@@ -289,13 +319,39 @@ def push(
         ]
       )
       if retry.returncode == 0:
-        log.info('dataset %s/%s %s', username, dataset_name, 'versioned')
+        _verify(username, dataset_name)
+        log.info('dataset %s/%s versioned', username, dataset_name)
         return
       combined = f'{retry.stdout}{retry.stderr}'
     raise RuntimeError(
       f'kaggle datasets {action} failed:\n{_auth_hint(combined)}'
     )
+  _verify(username, dataset_name)
   log.info('dataset %s/%s %s (%s)', username, dataset_name, action, message)
+
+
+def _verify(username: str, dataset_name: str) -> None:
+  """Confirm the pushed dataset is visible (tutorial's verify step).
+
+  Args:
+      username: Kaggle account owning the dataset.
+      dataset_name: Dataset slug.
+  """
+  log = get_logger('publish_dataset')
+  if dataset_exists(username, dataset_name):
+    log.info(
+      'verified: kaggle datasets status %s/%s is reachable',
+      username,
+      dataset_name,
+    )
+  else:
+    # Server-side indexing can lag a few seconds after create.
+    log.warning(
+      'push accepted but %s/%s not yet visible via status; '
+      'check kaggle.com -> Your Work -> Datasets in a moment',
+      username,
+      dataset_name,
+    )
 
 
 def main() -> None:
