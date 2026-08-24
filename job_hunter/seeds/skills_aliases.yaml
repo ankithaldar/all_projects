@@ -1,0 +1,55 @@
+skills:
+  Python: {category: 'language', aliases: ['python3', 'py']}
+  SQL: {category: 'data', aliases: ['sql queries']}
+  R: {category: 'language', aliases: ['rstats']}
+  Scala: {category: 'language'}
+  PyTorch: {category: 'ml', aliases: ['torch']}
+  TensorFlow: {category: 'ml', aliases: ['tf', 'keras']}
+  scikit-learn: {category: 'ml', aliases: ['sklearn']}
+  XGBoost: {category: 'ml', aliases: ['xgb']}
+  LightGBM: {category: 'ml', aliases: ['lgbm']}
+  Pandas: {category: 'data', aliases: ['pandas dataframe']}
+  NumPy: {category: 'data', aliases: ['numpy arrays']}
+  Spark: {category: 'bigdata', aliases: ['pyspark', 'apache spark']}
+  Kafka: {category: 'bigdata', aliases: ['apache kafka']}
+  Airflow: {category: 'orchestration', aliases: ['apache airflow']}
+  dbt: {category: 'orchestration', aliases: ['dbt labs', 'data build tool']}
+  Snowflake: {category: 'data-platform'}
+  Databricks: {category: 'data-platform'}
+  BigQuery: {category: 'data-platform', aliases: ['google bigquery']}
+  Redshift: {category: 'data-platform', aliases: ['aws redshift']}
+  PostgreSQL: {category: 'database', aliases: ['postgres']}
+  MySQL: {category: 'database'}
+  MongoDB: {category: 'database', aliases: ['mongo']}
+  Redis: {category: 'database'}
+  Statistics: {category: 'method', aliases: ['statistical modeling', 'hypothesis testing']}
+  A/B Testing: {category: 'method', aliases: ['ab testing', 'experimentation', 'split testing']}
+  Causal Inference: {category: 'method', aliases: ['causal impact', 'uplift modeling']}
+  Time Series Analysis: {category: 'method', aliases: ['forecasting', 'arima', 'prophet']}
+  Machine Learning: {category: 'method', aliases: ['ml', 'predictive modeling']}
+  Deep Learning: {category: 'method', aliases: ['neural networks']}
+  NLP: {category: 'domain', aliases: ['natural language processing', 'text mining']}
+  Computer Vision: {category: 'domain', aliases: ['cv', 'image recognition']}
+  Recommender Systems: {category: 'domain', aliases: ['recommendation engine', 'personalization']}
+  LLMs: {category: 'ai', aliases: ['large language models', 'gpt', 'generative ai']}
+  RAG: {category: 'ai', aliases: ['retrieval augmented generation']}
+  Prompt Engineering: {category: 'ai'}
+  MLOps: {category: 'platform', aliases: ['model deployment', 'model serving']}
+  Feature Engineering: {category: 'method'}
+  Docker: {category: 'devops', aliases: ['containers']}
+  Kubernetes: {category: 'devops', aliases: ['k8s']}
+  AWS: {category: 'cloud', aliases: ['amazon web services']}
+  GCP: {category: 'cloud', aliases: ['google cloud platform']}
+  Azure: {category: 'cloud', aliases: ['microsoft azure']}
+  Git: {category: 'devops'}
+  Tableau: {category: 'bi'}
+  Power BI: {category: 'bi', aliases: ['powerbi']}
+  Looker: {category: 'bi'}
+  Matplotlib: {category: 'viz', aliases: ['seaborn', 'plotly']}
+  Streamlit: {category: 'viz'}
+  MLflow: {category: 'mlops', aliases: ['ml flow']}
+  Kubeflow: {category: 'mlops'}
+  SageMaker: {category: 'cloud-ml', aliases: ['aws sagemaker']}
+  Vertex AI: {category: 'cloud-ml'}
+  Ray: {category: 'distributed', aliases: ['ray.io']}
+  Hugging Face: {category: 'ai', aliases: ['transformers', 'huggingface']}
