@@ -1015,3 +1015,16 @@ Verification: 46 tests (5 new regressions), live API re-smoke
 `docs/architecture.md` is updated in the same commit as any behavior
 change it describes (see §26 for the format). Agent briefs live in
 `agents/*.md`; session learnings land in `skills/learnings.md`.
+
+### Loop 2 — 2026-08-24 (`fix_gateway_root_path`)
+
+Live-log triage of repeated `/api/profile/resume` 500s:
+
+| # | Defect | Fix |
+|---|--------|-----|
+| 10 | `AppSettings.gateway_root` resolved one level too deep (`job_hunter/job_hunter/llm_gateway`) → `ConfigError` on every resume upload | corrected to `parents[2]`; regression test asserts the YAML exists |
+| 11 | Curator construction sat outside the route's try-block → unhandled 500 instead of clean 502 | moved inside try; clients now get `resume curation unavailable: …` |
+| 12 | With the path fixed, `enrich_jds` re-wrapped an already-built `TokenBudget` (`**model`) and crashed | accepts model or dict |
+
+Verification: 47 tests green; live upload attempt returns structured 502
+(remaining failures are placeholder keys, by design).

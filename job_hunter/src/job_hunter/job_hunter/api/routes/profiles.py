@@ -116,11 +116,11 @@ async def upload_resume(
     raise HTTPException(status_code=413, detail='file too large')
   from job_hunter.llm.client import get_client
   from job_hunter.services.profile_curator import ProfileCurator
-  curator = ProfileCurator(settings, client=get_client(settings))
   try:
+    curator = ProfileCurator(settings, client=get_client(settings))
     result = await curator.ingest_upload(file.filename or f'resume_{int(time.time())}.pdf', data)
   except Exception as exc:
-    raise HTTPException(status_code=502, detail=f'curation failed: {exc}') from exc
+    raise HTTPException(status_code=502, detail=f'resume curation unavailable: {exc}') from exc
   return result
 
 
