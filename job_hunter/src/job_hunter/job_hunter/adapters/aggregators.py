@@ -24,6 +24,35 @@ def _strip_html(html: str) -> str:
   return ' '.join(BeautifulSoup(html or '', 'html.parser').get_text(' ').split())
 
 
+def parse_himalayas(payload: list) -> List[RawJobRecord]:
+  '''Parse Himalayas /jobs/api output.
+
+  Args:
+    payload: Decoded JSON array.
+
+  Returns:
+    Raw job records.
+  '''
+  records: List[RawJobRecord] = []
+  for item in payload or []:
+    if not isinstance(item, dict):
+      continue
+    locations = item.get('location_strings')
+    loc_text = '; '.join(locations) if isinstance(locations, list) else str(locations or '')
+    records.append(RawJobRecord(
+      source_key='himalayas',
+      external_id=str(item.get('id') or ''),
+      url=str(item.get('application_link') or ''),
+      company_name=str(item.get('company_name') or ''),
+      title=str(item.get('title') or '').strip(),
+      location_text=loc_text,
+      description_text=_strip_html(str(item.get('description') or '')),
+      work_mode_hint='remote',
+      posted_at=item.get('posted_at'),
+    ))
+  return [r for r in records if r.title and r.url]
+
+
 def parse_remotive(payload: dict) -> List[RawJobRecord]:
   '''Parse Remotive /api/remote-jobs output.
 
@@ -122,6 +151,7 @@ class AggregatorAdapter(SourceAdapter):
       'rss',
       'https://weworkremotely.com/categories/remote-programming-jobs.rss',
     ),
+    'himalayas': ('json', 'https://himalayas.app/jobs/api'),
   }
 
   async def fetch(self, target: CompanyTarget, limit: int = 200) -> List[RawJobRecord]:
@@ -143,7 +173,11 @@ class AggregatorAdapter(SourceAdapter):
       records = parse_wwr_rss(text)
     else:
       payload = await self._http.get_json(url, rpm=10)
-      parser = parse_remotive if target.source_key == 'remotive' else parse_remoteok
+      parser = {
+        'remotive': parse_remotive,
+        'remoteok': parse_remoteok,
+        'himalayas': parse_himalayas,
+      }[target.source_key]
       records = parser(payload)
     if target.board_ref:
       lowered = target.board_ref.lower()

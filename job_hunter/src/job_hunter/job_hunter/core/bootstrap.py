@@ -31,6 +31,12 @@ def bootstrap(config_path: str | Path, seeds_dir: Path | None = None) -> AppSett
   (settings.data_dir / 'inbox' / 'naukri').mkdir(parents=True, exist_ok=True)
   (settings.data_dir / 'resumes').mkdir(parents=True, exist_ok=True)
   run_migrations(settings.db_path)
+  from job_hunter.core.db import session
+  with session(settings.db_path) as conn:
+    conn.execute(
+      "INSERT OR IGNORE INTO sources (key, kind) VALUES "
+      "('workday', 'ats'), ('himalayas', 'aggregator')",
+    )
 
   import yaml
   from job_hunter.db.repositories.settings import SettingsRepository

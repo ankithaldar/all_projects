@@ -18,6 +18,7 @@ from job_hunter.adapters.personio import PersonioAdapter
 from job_hunter.adapters.recruitee import RecruiteeAdapter
 from job_hunter.adapters.smartrecruiters import SmartRecruitersAdapter
 from job_hunter.adapters.workable import WorkableAdapter
+from job_hunter.adapters.workday import WorkdayAdapter
 from job_hunter.core.errors import AdapterError
 from job_hunter.core.models import CompanyTarget, RawJobRecord
 
@@ -26,6 +27,7 @@ REGISTRY: Dict[str, Type[SourceAdapter]] = {
   'lever': LeverAdapter,
   'ashby': AshbyAdapter,
   'workable': WorkableAdapter,
+  'workday': WorkdayAdapter,
   'smartrecruiters': SmartRecruitersAdapter,
   'recruitee': RecruiteeAdapter,
   'personio': PersonioAdapter,
