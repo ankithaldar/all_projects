@@ -106,6 +106,23 @@ class JobsRepository:
     ).fetchone()
     return dict(row) if row else None
 
+  def get_with_company(self, job_id: int) -> Optional[Dict[str, Any]]:
+    '''Fetch one job joined with its company fields.
+
+    Args:
+      job_id: Job id.
+
+    Returns:
+      Row mapping with company_name, vertical, company_priority.
+    '''
+    row = connect(self._db_path, readonly=True).execute(
+      'SELECT j.*, c.name AS company_name, c.vertical AS vertical, '
+      'c.priority AS company_priority FROM jobs j '
+      'LEFT JOIN companies c ON c.id = j.company_id WHERE j.id = ?',
+      (job_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
   def list_jobs(
     self,
     q: str = '',
