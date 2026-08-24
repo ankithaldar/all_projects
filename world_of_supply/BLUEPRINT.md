@@ -54,7 +54,8 @@ src/world_of_supply/
 │   └── training.py     PPO config builder, train loop, baseline evaluation
 ├── assets/             fonts + logo used by the renderer
 tests/                  pytest suite (simulation, RL env, models, rendering)
-main.py                 shim delegating to world_of_supply.cli
+main.py                 shim delegating to world_of_supply.cli (single-process use)
+.gitignore              render artifacts (out/), caches, egg-info
 ```
 
 Dependency direction (clean layering — no cycles):
@@ -201,12 +202,16 @@ for GAE during training, binds a per-module `TorchMultiCategorical`
 distribution class, and resolves config across Ray versions (`cfg`/`config`).
 
 **Training** (`rl/training.py`): `build_ppo_algorithm()` assembles PPO via
-the modern builder (torch framework; version-tolerant scalar settings;
-`env_runners`; per-policy `MultiRLModuleSpec`). Policies: trainable
+the modern builder (torch framework; `_configure()` applies scalar settings
+version-tolerantly — `lr`/`gamma`/`train_batch_size` are plain attributes on
+new RLLib, `training()` kwargs on older; runner counts go through
+`env_runners` with a `rollout` fallback). Policies: trainable
 `ppo_producer/ppo_consumer` + frozen clones; `make_policy_mapping_fn(
 train_toy_factories_only=True)` mirrors the legacy setup where only toy
-factories learn. `train()` pushes iteration counters into env workers (drives
-the reward curriculum). `evaluate_scripted()` scores heuristics headlessly.
+factories learn. `train()` pushes curriculum counters into every worker env,
+resolving the runner group across RLLib generations and unwrapping
+Gymnasium wrapper chains (see §3). `evaluate_scripted()` scores the
+heuristics headlessly — no Ray required.
 
 **Heuristics** (`rl/heuristics.py`): `ScriptedAgentController` produces a
 full action dict from raw features (fulfillment-ratio reordering) usable
@@ -258,10 +263,27 @@ build_ppo_algorithm → PPOConfig(torch).environment.env_runners.multi_agent.rl_
   policies: ppo_producer/consumer (trained) + frozen clones (not trained)
   mapping_fn: agent_id → policy (toy-only mode freezes everything else)
   modules: FacilityRLModule(FacilityNet) per policy w/ MultiCategorical dist
-train(algo, n):
-  algo.workers.foreach_env(set_iteration(i, n))   # reward curriculum ramp
-  result = algo.train()                           # sample + GAE + PPO update
+train(algo, n):                                  # each iteration
+  worker_set = algo.env_runner_group             # new Ray
+             | algo.workers / algo.workers()     # legacy fallbacks
+  for runner in worker_set:                      # foreach_env_runner / foreach_worker
+    for env in unwrap(runner.env):               # VectorEnv.envs → OrderEnforcing →
+      env.set_iteration(i, n)                    #   .unwrapped; skip None placeholders
+  result = algo.train()                          # sample + GAE + PPO update
+  log: reward  ← episode_reward_mean | env_runners.episode_return_mean
+       steps   ← timesteps_total         | env_runners.num_env_steps_sampled_lifetime
 ```
+
+Version-tolerance notes (Ray 2.5x verified):
+- `Algorithm.workers` is a deprecated callable that *raises* on access in
+  recent releases — `env_runner_group` is probed first, never touched after.
+- Runner envs arrive wrapped (`SyncVectorMultiAgentEnv` → `OrderEnforcing`
+  → `WorldOfSupplyEnv`); `_apply_to_envs()` unwraps via `.unwrapped` and
+  skips `None` placeholder slots (local runners hold no env when remote
+  workers exist).
+- Result dicts no longer carry top-level `episode_reward_mean` /
+  `timesteps_total`; the CLI log falls back to the nested `env_runners`
+  schema.
 
 ---
 
@@ -289,13 +311,38 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
 - Hand-coded baselines now run at action-vector level against the same env;
   mixed hand-coded-in-trainer policies are approximated by frozen PPO-policy
   clones excluded from updates.
+- Ray 2.5x compatibility shims (see §3 training flow): runner-group
+  accessors, Gymnasium wrapper unwrapping, nested result-schema metric
+  fallbacks, and attribute-vs-kwargs algorithm settings.
 
-## 6. Getting started
+## 6. End-to-end validation (verified run)
+
+| Stage | Command | Observed result |
+|---|---|---|
+| Tests | `pytest tests/` | 43 passed |
+| Simulation + render | `simulate --ticks 120 --render-dir out/frames` | 15 PNG frames; balance oscillating around +$3k…+$14k |
+| Chain flow | scripted policy, 400 ticks | retailers sold 40 units by tick 400; global balance **+$28,528** |
+| RL baseline | `baseline --episodes 3` | −4,409 / +234,720 / +234,704 total reward |
+| PPO training | `train --iterations 8 --toy-only` | 16k env steps sampled; curriculum ramping (w = 0.8·i/n reaches 0.7) |
+
+Training rewards start deeply negative and fall further early on — expected
+dynamics: untrained consumers order random products, and ~1/3 of those are
+wrong-product orders penalized at $500/unit, amplified by the curriculum
+blending global (penalty-laden) profit into every agent's reward. The
+scripted baseline (+234k/episode) is the reference the agents must beat.
+
+## 7. Getting started
 
 ```bash
-pip install -e '.[dev]'
+pip install -e '.[dev]'    # REQUIRED for training: Ray workers import the
+                           # installed package, sys.path shims don't propagate
 pytest tests/
-python main.py simulate --ticks 60 --render-dir out/
-python main.py baseline --episodes 3
-python main.py train --iterations 20 --toy-only
+python main.py simulate --ticks 120 --seed 42 --render-dir out/frames
+python main.py baseline --episodes 3 --seed 7
+python main.py train --iterations 8 --toy-only
 ```
+
+CLI subcommands: `simulate` (`--ticks --seed --render-dir`), `baseline`
+(`--episodes --seed`), `train` (`--iterations --toy-only`). A
+`world-of-supply` console script is installed alongside the package.
+Render artifacts land in `out/` (git-ignored).
