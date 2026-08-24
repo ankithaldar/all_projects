@@ -1,0 +1,27 @@
+# Industry vertical taxonomy: rules first, LLM fallback.
+# confidence: rule hit strength; keywords matched against company blurb text.
+
+verticals:
+  ai_ml_infra:
+    keywords: [ai, ml, machine learning, deep learning, llm, mlops, data platform, inference, gpu]
+  fintech:
+    keywords: [payments, lending, neobank, banking, credit, insurance, wealth, upi, trading, broking]
+  ecommerce:
+    keywords: [ecommerce, e-commerce, marketplace, retail, d2c, quick commerce, grocery delivery]
+  saas:
+    keywords: [saas, b2b software, crm, erp, hr tech, developer tools, productivity]
+  healthtech:
+    keywords: [health, telemedicine, pharma, diagnostics, biotech, medtech]
+  edtech:
+    keywords: [education, learning, courses, upskilling, edtech]
+  logistics:
+    keywords: [logistics, supply chain, fleet, shipping, warehousing, mobility]
+  gaming_media:
+    keywords: [gaming, esports, streaming, media, entertainment, ott]
+  analytics_consulting:
+    keywords: [analytics, consulting, data science services, decision science]
+
+default_confidence:
+  domain_hit: 0.9
+  keyword_hit: 0.7
+  llm: 0.6
