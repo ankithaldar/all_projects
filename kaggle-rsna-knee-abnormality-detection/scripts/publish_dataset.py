@@ -53,6 +53,10 @@ ARTIFACT_FILES = (
 
 _LICENSE = {'name': 'CC0-1.0'}
 
+#: Post-push visibility retries (search indexing lags after create).
+_VERIFY_ATTEMPTS = 4
+_VERIFY_WAIT_SECONDS = 5
+
 
 def parse_args() -> argparse.Namespace:
   """Parse CLI arguments.
@@ -332,20 +336,25 @@ def _verify(username: str, dataset_name: str) -> None:
       dataset_name: Dataset slug.
   """
   log = get_logger('publish_dataset')
-  if dataset_exists(username, dataset_name):
-    log.info(
-      'verified: kaggle datasets status %s/%s is reachable',
-      username,
-      dataset_name,
-    )
-  else:
-    # Server-side indexing can lag a few seconds after create.
-    log.warning(
-      'push accepted but %s/%s not yet visible via status; '
-      'check kaggle.com -> Your Work -> Datasets in a moment',
-      username,
-      dataset_name,
-    )
+  reference = f'{username}/{dataset_name}'
+  for attempt in range(_VERIFY_ATTEMPTS):
+    if dataset_exists(username, dataset_name):
+      log.info('verified: kaggle datasets status %s is reachable', reference)
+      return
+    if attempt < _VERIFY_ATTEMPTS - 1:
+      # Server-side indexing can lag tens of seconds after create.
+      log.info(
+        'waiting for %s to appear in search index (%d/%d)...',
+        reference,
+        attempt + 1,
+        _VERIFY_ATTEMPTS,
+      )
+      time.sleep(_VERIFY_WAIT_SECONDS)
+  log.warning(
+    'push accepted but %s not yet visible via status; '
+    'check kaggle.com -> Your Work -> Datasets in a moment',
+    reference,
+  )
 
 
 def main() -> None:

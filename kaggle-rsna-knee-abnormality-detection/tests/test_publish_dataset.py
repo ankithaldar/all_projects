@@ -160,11 +160,30 @@ class TestAuthHint:
     assert 'hint:' not in pub._auth_hint('boom\n502 bad gateway')
 
 
+class TestVerify:
+  """Post-push verification waits out search-index lag."""
+
+  def test_success_first_try(self, monkeypatch):
+    monkeypatch.setattr(pub.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(pub, 'dataset_exists', lambda u, n: True)
+    pub._verify('u', 'n')  # must not raise
+
+  def test_retries_then_gives_up_quietly(self, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(pub.time, 'sleep', sleeps.append)
+    monkeypatch.setattr(pub, '_VERIFY_ATTEMPTS', 3)
+    monkeypatch.setattr(pub, '_VERIFY_WAIT_SECONDS', 7)
+    monkeypatch.setattr(pub, 'dataset_exists', lambda u, n: False)
+    pub._verify('u', 'n')  # warns instead of raising
+    assert sleeps == [7, 7]
+
+
 class TestPushDecision:
   """create on first push; version afterwards; lost-race retry."""
 
   def _stub(self, monkeypatch, expected_cmd: str, responses: dict):
     calls = []
+    monkeypatch.setattr(pub.time, 'sleep', lambda seconds: None)
 
     def fake(args):
       calls.append(args[1])  # args[0] is the group name ('datasets')
