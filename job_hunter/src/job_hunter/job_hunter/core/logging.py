@@ -54,7 +54,7 @@ def setup_logging(level: str = 'INFO', log_dir: Optional[Path] = None) -> None:
       return
     root.setLevel(level.upper())
     formatter = JsonFormatter()
-    console = logging.StreamHandler(sys.stdout)
+    console = logging.StreamHandler(sys.stderr)
     console.setFormatter(formatter)
     root.addHandler(console)
     if log_dir is not None:
