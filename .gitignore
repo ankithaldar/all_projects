@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-generated artefacts (binning reports, local SQLite inputs, logs):
+woe_iv_optimizer/data/
+woe_iv_optimizer/output/
+woe_iv_optimizer/logs/
+*.db
+*.sqlite
+*.sqlite3
