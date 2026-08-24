@@ -1,0 +1,37 @@
+# =============================================================================
+# Text teacher training config (reports -> 12 weak probabilities).
+# Consumed only by scripts/train_text_teacher.py with its own schema
+# (knee.engines.text_teacher_lit.TextTeacherConfig) -- kept separate from
+# image-experiment configs because the input modality differs entirely.
+# =============================================================================
+run_name: xlmr_base_teacher_v1
+seed: 42
+
+model:
+  backbone: xlm-roberta-base     # multilingual; no translation needed
+  n_targets: 12
+  max_length: 512
+  stride: 128                    # sliding window for long reports
+  pooling: mean                  # token pooling before classifier head
+
+data:
+  train_csv: /kaggle/input/rsna-knee-abnormality-detection/train.csv
+  folds_csv: train_folds.csv
+  output_dir: /kaggle/working/text_teacher
+
+train:
+  n_folds_to_train: 5            # one model per fold for honest OOF probs
+  epochs: 3
+  batch_size: 16
+  grad_accum: 2
+  lr: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  amp: bf16
+  early_stopping_patience: 2
+
+fusion:                          # how rule seeds + teacher probs combine
+  rule_confidence_floor: 0.90    # per-class precision measured on gold subset
+  teacher_weight: 1.0            # relative weight of teacher prob in fusion
+  min_positive_prob: 0.35        # below this a class is "confident negative"
+  output_parquet: weak_labels.parquet

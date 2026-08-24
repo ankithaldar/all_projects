@@ -1,0 +1,37 @@
+# =============================================================================
+# Experiment: ConvNeXt-Small 2.5D encoder + transformer study aggregator.
+# Architecture-diversity member for the greedy ensemble.
+# =============================================================================
+name: student_2p5d_convnext_transformer
+
+model:
+  encoder:
+    target: knee.models.encoders.TimmSeriesEncoder
+    params:
+      model_name: convnext_small.fb_in22k_ft_in1k
+      pretrained: true
+      in_chans: 32
+      drop_path_rate: 0.3
+  aggregator:
+    target: knee.layers.aggregators.TransformerAggregator
+    params: { feat_dim: 768, hidden_dim: 512, num_layers: 2, num_heads: 8, dropout: 0.1 }
+
+augment:
+  train:
+    - target: albumentations.RandomResizedCrop
+      params: { size: [384, 384], scale: [0.6, 1.0], ratio: [0.9, 1.1], p: 1.0 }
+    - target: albumentations.Affine
+      params: { rotate: [-15, 15], translate_percent: { x: [-0.06, 0.06], y: [-0.06, 0.06] }, p: 0.75 }
+    - target: albumentations.RandomBrightnessContrast
+      params: { brightness_limit: 0.2, contrast_limit: 0.2, p: 0.6 }
+    - target: albumentations.GridDistortion
+      params: { num_steps: 5, distort_limit: 0.15, p: 0.25 }
+
+datamodule:
+  params:
+    batch_size: 6
+
+train:
+  trainer:
+    params:
+      accumulate_grad_batches: 6

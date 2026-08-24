@@ -1,0 +1,39 @@
+# =============================================================================
+# Diversity candidate: true-3D ResNet on resampled volumes.
+# Inherits everything else from base.yaml (merge order: base -> this file).
+# Usage: python scripts/train_image_student.py \
+#          --config configs/experiment/student_3d_resnet.yaml
+# =============================================================================
+name: student_3d_seresnext
+
+data:
+  num_slices: 64                 # denser volume for 3D convs
+  in_chans: 1                    # single-channel volumetric input
+
+model:
+  encoder:
+    target: knee.models.encoders.Monai3DEncoder
+    params:
+      model_name: seresnext50_32x4d
+      pretrained: false          # no 3D ImageNet weights; train from scratch
+      spatial_dims: 3
+      in_channels: 1
+      dropout_prob: 0.1
+  aggregator:
+    target: knee.layers.aggregators.TransformerAggregator
+    params: { feat_dim: 2048, hidden_dim: 512, num_layers: 2, num_heads: 8, dropout: 0.1 }
+
+optimizer:
+  optimizer:
+    params: { lr: 3.0e-4, weight_decay: 3.0e-2 }
+
+datamodule:
+  params:
+    batch_size: 2
+
+train:
+  trainer:
+    params:
+      max_epochs: 16
+      accumulate_grad_batches: 16
+      precision: bf16-mixed
