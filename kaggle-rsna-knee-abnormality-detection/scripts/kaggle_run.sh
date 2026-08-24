@@ -135,9 +135,20 @@ DATASET_NAME="${DATASET_NAME:-ah2022-rsna-knee-abnormality-detection}"
 # Every Kaggle kernel boots a NEW container: previous outputs exist only
 # as read-only /kaggle/input mounts (after Save Version) and
 # /kaggle/working starts empty. PREV_OUTPUT (one dir or colon-separated
-# several -- normally the immediately preceding kernel's output) is
-# copied forward so finished folds skip, interrupted ones resume and the
-# training script can keep writing into this session's writable $WORK.
+# several) is copied forward so finished folds skip, interrupted ones
+# resume and the training script can keep writing into this session's
+# writable $WORK. Mount layouts vary across Kaggle UIs (/kaggle/input/
+# <slug> vs /kaggle/input/datasets/<owner>/<slug>): when PREV_OUTPUT is
+# unset we auto-discover by slug with a depth-bounded find that never
+# descends into the multi-hundred-GB data payload.
+if [ -z "${PREV_OUTPUT:-}" ] && [ -d /kaggle/input ] && [ -n "$DATASET_NAME" ]; then
+  DISCOVERED=$(find /kaggle/input -maxdepth 3 -type d \
+    -name "$DATASET_NAME" 2>/dev/null | head -n1 || true)
+  if [ -n "$DISCOVERED" ]; then
+    log "discovered dataset mount at $DISCOVERED"
+    PREV_OUTPUT="$DISCOVERED"
+  fi
+fi
 if [ -n "${PREV_OUTPUT:-}" ]; then
   log 'restoring prior kernel artifacts -> '"$WORK"
   mkdir -p "$WORK/checkpoints" "$WORK/predictions"

@@ -24,7 +24,6 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 # ------------------------------- CONFIG -------------------------------------
 REPO_URL = 'https://github.com/ankithaldar/all_projects_02.git'  # <-- EDIT ONCE
@@ -102,8 +101,15 @@ if not _clone(_url, ['-b', GIT_REF]):
       'repository visibility'
     )
 
-# Auto-restore: adopt the artifact dataset when it is attached.
-_prev = Path('/kaggle/input') / DATASET_NAME
+# Auto-restore: adopt the artifact dataset wherever Kaggle mounted it
+# (layouts vary: /kaggle/input/<slug>, /kaggle/input/datasets/<owner>/
+# <slug>, ...). Bounded-depth search -- never walks the data payload.
+sys.path.insert(0, f'{REPO_DIR}/src')
+# Justified late import: the knee package lives in the fresh clone.
+from knee.helpers.mounts import (  # noqa: E402  # pylint: disable=wrong-import-position
+  find_input_mount,
+)
+
 _env = {
   'DATA_ROOT': DATA_ROOT,
   'WORK': WORK,
@@ -114,9 +120,11 @@ _env = {
 }
 if FOLDS_LIST:
   _env['FOLDS_LIST'] = FOLDS_LIST
-if _prev.is_dir():
-  _env['PREV_OUTPUT'] = str(_prev)
-  print(f'==> restoring prior state from {_prev}')
+
+_mount = find_input_mount(DATASET_NAME)
+if _mount:
+  _env['PREV_OUTPUT'] = _mount
+  print(f'==> restoring prior state from {_mount}')
 else:
   print(f'==> {DATASET_NAME} not attached (fresh start?)')
 
