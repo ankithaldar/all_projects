@@ -119,3 +119,28 @@ Append-only log. Format: **Context** → Lesson → Rule.
 - Rule: when a module defines Pydantic models under future-annotations,
   import every annotation name from typing, and add a construct +
   model_json_schema() test to force resolution.
+
+## Ashby public API rejects POST-with-compensation
+- Context: posting-api returned 401 once includeCompensation was sent via POST.
+- Lesson: 'public' ATS endpoints still gate premium params behind auth.
+- Rule: probe with the plainest call first (GET, no params); add params only after confirming baseline access.
+
+## Enterprise ATS coverage = Workday CXS
+- Context: most GCC seed companies failed Greenhouse/Lever detection — they are Workday shops.
+- Lesson: the dominant enterprise pattern is {tenant}.wd{n}.myworkdayjobs.com with a public CXS JSON endpoint.
+- Rule: capture full host + site path as board_ref and paginate CXS by limit/offset.
+
+## Slug-guessing rescues boards hidden from careers pages
+- Context: several companies host greenhouse/lever boards without linking them from probed pages.
+- Lesson: absence of a fingerprint on the company site does not mean absence of a board.
+- Rule: after page probes fail, guess slugs from domain core + alnum name against board-host URL patterns and verify by marker text.
+
+## Caps + backlog healing beat monolithic runs
+- Context: enriching hundreds of JDs at ~40s/call exceeded any command timeout, killing runs mid-flight and orphaning work.
+- Lesson: bounded per-run side-effectful work plus persistent backlog queries convert timeouts into progress-by-installments.
+- Rule: cap side-effectful LLM work per run; on later runs, fall back to oldest unfinished backlog before declaring success.
+
+## Mass string-literal rewrites need placeholder escaping
+- Context: a tokenize-based double→single quote conversion corrupted files containing \\' escapes and docstrings with apostrophes.
+- Lesson: delimiter swaps interact with escape sequences; naive chained replaces break both directions.
+- Rule: placeholder-protect existing escapes before swapping delimiters, gate such passes behind the full test suite, and commit immediately after verification.

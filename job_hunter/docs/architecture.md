@@ -1028,3 +1028,18 @@ Live-log triage of repeated `/api/profile/resume` 500s:
 
 Verification: 47 tests green; live upload attempt returns structured 502
 (remaining failures are placeholder keys, by design).
+
+### Loop 3 — 2026-08-24 (`feature_18_expanded_coverage_v2`)
+
+Coverage expansion to every DS-hiring employer regardless of industry:
+seeds 30 → 117 across all verticals + GCCs (retail_tech/energy taxonomy
+added); Workday CXS adapter; Himalayas aggregator; career-page detector
+v2 (Workday host fingerprint joined as board_ref, Greenhouse/Lever
+slug-guess fallback, bogus-ref guard, bs4 XML warning filtered); Ashby
+plain-GET fix; enrichment per-run cap with self-healing backlog;
+scoring backlog fallback so recommendations converge without refetching;
+DB-settings overrides for run knobs; CLI recovery covers stale pending
+with configurable TTL and a guaranteed finalizer; SIGTERM graceful
+finalization in main.py. Quote-style normalization pass (61 literals).
+Verified: 48 unit tests green; live discovery runs progressing
+(enrichment converges across runs via backlog).

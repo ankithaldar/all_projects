@@ -1,7 +1,4 @@
-# Starter target companies for a Staff Data Scientist search in India.
-# board_ref is intentionally absent: the Company Scout fingerprints each
-# domain's careers pages to discover its ATS provider at runtime.
-
+# Target companies hiring Data Scientists in India (all industries).
 companies:
   - {name: Razorpay, domain: razorpay.com, vertical_hint: fintech, priority: 4}
   - {name: CRED, domain: cred.club, vertical_hint: fintech, priority: 4}
@@ -10,36 +7,113 @@ companies:
   - {name: Zerodha, domain: zerodha.com, vertical_hint: fintech, priority: 3}
   - {name: Upstox, domain: upstox.com, vertical_hint: fintech, priority: 3}
   - {name: Jupiter, domain: jupiter.money, vertical_hint: fintech, priority: 3}
+  - {name: Paytm, domain: paytm.com, vertical_hint: fintech, priority: 3}
+  - {name: Navi, domain: navimoney.com, vertical_hint: fintech, priority: 3}
+  - {name: smallcase, domain: smallcase.com, vertical_hint: fintech, priority: 3}
+  - {name: Dhan, domain: join.dhan.co, vertical_hint: fintech, priority: 3}
+  - {name: BharatPe, domain: bharatpe.com, vertical_hint: fintech, priority: 3}
+  - {name: KreditBee, domain: kreditbee.in, vertical_hint: fintech, priority: 2}
+  - {name: Yubi, domain: go-yubi.com, vertical_hint: fintech, priority: 3}
+  - {name: Perfios, domain: perfios.com, vertical_hint: fintech, priority: 2}
+  - {name: M2P Fintech, domain: m2pfintech.com, vertical_hint: fintech, priority: 3}
+  - {name: Juspay, domain: juspay.in, vertical_hint: fintech, priority: 3}
+  - {name: Setu, domain: setu.co, vertical_hint: fintech, priority: 2}
+  - {name: Zeta, domain: zeta.tech, vertical_hint: fintech, priority: 3}
+  - {name: Fi Money, domain: fi.money, vertical_hint: fintech, priority: 2}
+  - {name: OneCard, domain: getonecard.app, vertical_hint: fintech, priority: 2}
+  - {name: Scapia, domain: scapia.com, vertical_hint: fintech, priority: 2}
+  - {name: MoneyView, domain: moneyview.in, vertical_hint: fintech, priority: 3}
   - {name: Flipkart, domain: flipkart.com, vertical_hint: ecommerce, priority: 4}
   - {name: Meesho, domain: meesho.com, vertical_hint: ecommerce, priority: 4}
   - {name: Swiggy, domain: swiggy.com, vertical_hint: ecommerce, priority: 4}
   - {name: Zepto, domain: zeptonow.com, vertical_hint: ecommerce, priority: 3}
   - {name: Blinkit, domain: blinkit.com, vertical_hint: ecommerce, priority: 3}
   - {name: Myntra, domain: myntra.com, vertical_hint: ecommerce, priority: 3}
+  - {name: BigBasket, domain: bigbasket.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Nykaa, domain: nykaa.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Purplle, domain: purplle.com, vertical_hint: ecommerce, priority: 2}
+  - {name: FirstCry, domain: firstcry.com, vertical_hint: ecommerce, priority: 2}
+  - {name: Urban Company, domain: urbancompany.com, vertical_hint: ecommerce, priority: 3}
+  - {name: CARS24, domain: cars24.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Spinny, domain: spinny.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Zetwerk, domain: zetwerk.com, vertical_hint: ecommerce, priority: 3}
   - {name: Postman, domain: postman.com, vertical_hint: saas, priority: 4}
   - {name: Freshworks, domain: freshworks.com, vertical_hint: saas, priority: 4}
   - {name: Zoho, domain: zoho.com, vertical_hint: saas, priority: 3}
   - {name: Chargebee, domain: chargebee.com, vertical_hint: saas, priority: 3}
   - {name: BrowserStack, domain: browserstack.com, vertical_hint: saas, priority: 3}
   - {name: Hasura, domain: hasura.io, vertical_hint: saas, priority: 3}
+  - {name: Netcore Cloud, domain: netcorecloud.com, vertical_hint: saas, priority: 2}
+  - {name: MoEngage, domain: moengage.com, vertical_hint: saas, priority: 3}
+  - {name: CleverTap, domain: clevertap.com, vertical_hint: saas, priority: 3}
+  - {name: WebEngage, domain: webengage.com, vertical_hint: saas, priority: 2}
+  - {name: LeadSquared, domain: leadsquared.com, vertical_hint: saas, priority: 3}
+  - {name: Whatfix, domain: whatfix.com, vertical_hint: saas, priority: 3}
+  - {name: Darwinbox, domain: darwinbox.com, vertical_hint: saas, priority: 2}
+  - {name: Keka, domain: keka.com, vertical_hint: saas, priority: 2}
+  - {name: Innovaccer, domain: innovaccer.com, vertical_hint: saas, priority: 3}
+  - {name: Sprinto, domain: sprinto.com, vertical_hint: saas, priority: 2}
+  - {name: SpotDraft, domain: spotdraft.com, vertical_hint: saas, priority: 2}
+  - {name: Mindtickle, domain: mindtickle.com, vertical_hint: saas, priority: 2}
   - {name: Sarvam AI, domain: sarvam.ai, vertical_hint: ai_ml_infra, priority: 4}
   - {name: Krutrim, domain: krutrim.com, vertical_hint: ai_ml_infra, priority: 3}
   - {name: Fractal Analytics, domain: fractal.ai, vertical_hint: analytics_consulting, priority: 4}
   - {name: Tiger Analytics, domain: tigeranalytics.com, vertical_hint: analytics_consulting, priority: 3}
   - {name: Mu Sigma, domain: mu-sigma.com, vertical_hint: analytics_consulting, priority: 2}
+  - {name: Quantiphi, domain: quantiphi.com, vertical_hint: ai_ml_infra, priority: 3}
+  - {name: Sigmoid, domain: sigmoidanalytics.com, vertical_hint: analytics_consulting, priority: 2}
+  - {name: Tredence, domain: tredence.com, vertical_hint: analytics_consulting, priority: 2}
+  - {name: LatentView Analytics, domain: latentviewanalytics.com, vertical_hint: analytics_consulting, priority: 2}
+  - {name: Mad Street Den, domain: madstreetden.com, vertical_hint: ai_ml_infra, priority: 2}
+  - {name: Gramener, domain: gramener.com, vertical_hint: analytics_consulting, priority: 1}
   - {name: Practo, domain: practo.com, vertical_hint: healthtech, priority: 3}
   - {name: PharmEasy, domain: pharmeasy.in, vertical_hint: healthtech, priority: 3}
+  - {name: Tata 1mg, domain: 1mg.com, vertical_hint: healthtech, priority: 3}
+  - {name: MFine, domain: mfine.co, vertical_hint: healthtech, priority: 2}
+  - {name: HealthifyMe, domain: healthifyme.com, vertical_hint: healthtech, priority: 2}
+  - {name: CureFit, domain: cure.fit, vertical_hint: healthtech, priority: 2}
+  - {name: Physics Wallah, domain: physicswallah.in, vertical_hint: edtech, priority: 2}
+  - {name: Unacademy, domain: unacademy.com, vertical_hint: edtech, priority: 2}
+  - {name: upGrad, domain: upgrad.com, vertical_hint: edtech, priority: 2}
+  - {name: Scaler, domain: scaler.com, vertical_hint: edtech, priority: 2}
   - {name: Delhivery, domain: delhivery.com, vertical_hint: logistics, priority: 3}
   - {name: Rivigo, domain: rivigo.com, vertical_hint: logistics, priority: 2}
+  - {name: BlackBuck, domain: blackbuck.com, vertical_hint: logistics, priority: 2}
+  - {name: Porter, domain: porter.in, vertical_hint: logistics, priority: 2}
+  - {name: Shiprocket, domain: shiprocket.in, vertical_hint: logistics, priority: 2}
+  - {name: Ninjacart, domain: ninjacart.com, vertical_hint: logistics, priority: 2}
+  - {name: Ola, domain: olacabs.com, vertical_hint: logistics, priority: 2}
+  - {name: Rapido, domain: rapido.bike, vertical_hint: logistics, priority: 2}
   - {name: Dream11, domain: dream11.com, vertical_hint: gaming_media, priority: 3}
   - {name: Hotstar, domain: hotstar.com, vertical_hint: gaming_media, priority: 3}
-
-  # --- gcc / enterprise expansion
-  - {name: Walmart Global Tech, domain: walmart.com, vertical_hint: ecommerce, priority: 3}
+  - {name: Games24x7, domain: games24x7.com, vertical_hint: gaming_media, priority: 2}
+  - {name: Zupee, domain: zupee.com, vertical_hint: gaming_media, priority: 2}
+  - {name: Nazara, domain: nazara.com, vertical_hint: gaming_media, priority: 1}
+  - {name: Walmart Global Tech, domain: walmart.com, vertical_hint: retail_tech, priority: 3}
   - {name: Target in India, domain: target.com, vertical_hint: retail_tech, priority: 3}
+  - {name: Lowe's India, domain: lowes.com, vertical_hint: retail_tech, priority: 2}
   - {name: Goldman Sachs, domain: goldmansachs.com, vertical_hint: fintech, priority: 3}
+  - {name: Morgan Stanley, domain: morganstanley.com, vertical_hint: fintech, priority: 3}
+  - {name: JPMorganChase, domain: jpmorganchase.com, vertical_hint: fintech, priority: 3}
+  - {name: Wells Fargo, domain: wellsfargo.com, vertical_hint: fintech, priority: 2}
+  - {name: Bank of America, domain: bankofamerica.com, vertical_hint: fintech, priority: 2}
   - {name: American Express, domain: americanexpress.com, vertical_hint: fintech, priority: 3}
   - {name: Mastercard, domain: mastercard.com, vertical_hint: fintech, priority: 3}
   - {name: Visa, domain: visa.com, vertical_hint: fintech, priority: 3}
+  - {name: Fidelity Investments, domain: fidelity.com, vertical_hint: fintech, priority: 2}
+  - {name: Cisco, domain: cisco.com, vertical_hint: saas, priority: 2}
+  - {name: Intel, domain: intel.com, vertical_hint: ai_ml_infra, priority: 2}
+  - {name: AMD, domain: amd.com, vertical_hint: ai_ml_infra, priority: 2}
   - {name: NVIDIA, domain: nvidia.com, vertical_hint: ai_ml_infra, priority: 3}
   - {name: Microsoft, domain: microsoft.com, vertical_hint: saas, priority: 3}
+  - {name: IBM, domain: ibm.com, vertical_hint: saas, priority: 2}
+  - {name: Oracle, domain: oracle.com, vertical_hint: saas, priority: 2}
+  - {name: SAP, domain: sap.com, vertical_hint: saas, priority: 2}
+  - {name: Siemens, domain: siemens.com, vertical_hint: logistics, priority: 2}
+  - {name: Bosch, domain: bosch.com, vertical_hint: logistics, priority: 2}
+  - {name: Mercedes-Benz R&D India, domain: mercedes-benz.com, vertical_hint: logistics, priority: 2}
+  - {name: Airbus India, domain: airbus.com, vertical_hint: logistics, priority: 2}
+  - {name: Shell, domain: shell.com, vertical_hint: energy, priority: 2}
+  - {name: Unilever, domain: unilever.com, vertical_hint: ecommerce, priority: 2}
+  - {name: Procter & Gamble, domain: pg.com, vertical_hint: ecommerce, priority: 2}
+  - {name: Johnson & Johnson, domain: jnj.com, vertical_hint: healthtech, priority: 2}

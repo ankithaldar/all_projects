@@ -210,6 +210,42 @@ class JobsRepository:
     conn.close()
     return [h for h in hashes if h not in found]
 
+  def jobs_missing_recommendations(self, limit: int = 100) -> List[Dict[str, Any]]:
+    '''Active postings with no recommendation row yet.
+
+    Args:
+      limit: Max rows.
+
+    Returns:
+      Job rows newest first.
+    '''
+    rows = connect(self._db_path, readonly=True).execute(
+      'SELECT j.id AS job_id, j.title, j.content_hash, j.company_id, '
+      'j.company_raw_name FROM jobs j LEFT JOIN recommendations r '
+      "ON r.job_id = j.id WHERE j.status = 'active' AND r.job_id IS NULL "
+      'ORDER BY j.first_seen_at DESC LIMIT ?',
+      (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+  def jobs_needing_enrichment(self, limit: int = 50) -> List[Dict[str, Any]]:
+    '''Active postings without any extracted skill rows.
+
+    Args:
+      limit: Max rows.
+
+    Returns:
+      Job id/title/content_hash rows, newest first.
+    '''
+    rows = connect(self._db_path, readonly=True).execute(
+      'SELECT j.id AS job_id, j.title, j.content_hash FROM jobs j '
+      'LEFT JOIN job_skills js ON js.job_id = j.id '
+      "WHERE j.status = 'active' AND js.job_id IS NULL "
+      'ORDER BY j.first_seen_at DESC LIMIT ?',
+      (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
   def stale_sweep(self, days: int) -> int:
     '''Mark unseen postings stale and expire their recommendations.
 
