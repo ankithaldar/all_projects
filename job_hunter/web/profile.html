@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Profile</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Candidate profile</h1>
+    <div class="card">
+      <div class="row">
+        <div><label>Target roles (comma-separated)</label><input id="roles"></div>
+        <div><label>Cities</label><input id="cities" placeholder="Bengaluru, Pune"></div>
+      </div>
+      <div class="row">
+        <div><label>Remote preference</label>
+          <select id="remotePref">
+            <option value="any">Any</option><option value="remote">Remote</option>
+            <option value="hybrid">Hybrid</option><option value="onsite">Onsite</option>
+          </select></div>
+        <div><label>Salary floor (LPA)</label><input id="floor" type="number" min="0" step="0.5"></div>
+        <div><label>Experience (years)</label><input id="years" type="number" min="0" step="0.5"></div>
+      </div>
+      <div class="row">
+        <div><label>Target verticals</label><input id="tVerts" placeholder="fintech, ai_ml_infra"></div>
+        <div><label>Relocate ok?</label>
+          <select id="relocate"><option value="no">No</option><option value="yes">Yes</option></select></div>
+      </div>
+      <label>Summary</label>
+      <textarea id="summary" rows="3" style="width:100%"></textarea>
+      <div style="margin-top:12px"><button class="btn save" onclick="save()">Save profile</button></div>
+    </div>
+
+    <h1 style="font-size:16px;margin-top:22px">Resume (LaTeX PDF)</h1>
+    <div class="card">
+      <input type="file" id="resumeFile" accept=".pdf">
+      <button class="btn" onclick="uploadResume()" style="margin-left:10px">Upload &amp; parse</button>
+      <div id="resumeOut" class="meta" style="margin-top:10px"></div>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/profile.html'));
+    const $ = id => document.getElementById(id);
+    async function load() {
+      const p = await jh.get('/api/profile');
+      $('roles').value = (p.target_roles || []).join(', ');
+      $('cities').value = (p.cities || []).join(', ');
+      $('remotePref').value = p.remote_pref || 'any';
+      $('floor').value = p.salary_floor_lpa ?? '';
+      $('years').value = p.experience_years ?? '';
+      $('tVerts').value = (p.target_verticals || []).join(', ');
+      $('relocate').value = p.relocate_ok ? 'yes' : 'no';
+      $('summary').value = p.summary || '';
+    }
+    async function save() {
+      try {
+        await jh.put('/api/profile', {
+          target_roles: $('roles').value.split(',').map(s => s.trim()).filter(Boolean),
+          cities: $('cities').value.split(',').map(s => s.trim()).filter(Boolean),
+          remote_pref: $('remotePref').value,
+          salary_floor_lpa: Number($('floor').value) || null,
+          experience_years: Number($('years').value) || null,
+          target_verticals: $('tVerts').value.split(',').map(s => s.trim()).filter(Boolean),
+          relocate_ok: $('relocate').value === 'yes',
+          summary: $('summary').value,
+        });
+        jh.toast('Profile saved');
+      } catch (e) { jh.toast(e.message, true); }
+    }
+    async function uploadResume() {
+      const file = $('resumeFile').files[0];
+      if (!file) { jh.toast('Choose a PDF first', true); return; }
+      const body = new FormData(); body.append('file', file);
+      $('resumeOut').textContent = 'Parsing via LLM…';
+      try {
+        const res = await fetch('/api/profile/resume', { method: 'POST', body });
+        const out = await res.json();
+        if (!res.ok) throw new Error(out.detail || res.status);
+        $('resumeOut').textContent = out.parsed_ok
+          ? `Parsed ${out.pages} pages · skills: ${(out.skills || []).slice(0, 10).join(', ') || '—'}`
+          : `Parse failed: ${out.reason}`;
+      } catch (e) { $('resumeOut').textContent = ''; jh.toast(e.message, true); }
+    }
+    load();
+  </script>
+</body>
+</html>

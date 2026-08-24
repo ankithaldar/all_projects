@@ -1,0 +1,103 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #262b36;
+  --text: #e6e9ef;
+  --muted: #8b93a3;
+  --accent: #4da3ff;
+  --good: #34c98e;
+  --ok: #e8b64a;
+  --weak: #e06456;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+a { color: var(--accent); text-decoration: none; }
+
+.nav {
+  display: flex; gap: 14px; align-items: center;
+  padding: 10px 20px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 5;
+}
+.nav .brand { font-weight: 700; margin-right: 12px; }
+.nav a { color: var(--muted); padding: 4px 2px; }
+.nav a.active, .nav a:hover { color: var(--text); }
+
+main { max-width: 1100px; margin: 24px auto; padding: 0 20px; }
+h1 { font-size: 20px; margin: 0 0 16px; }
+
+.kpis { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+.kpi {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 20px; min-width: 130px;
+}
+.kpi-value { font-size: 24px; font-weight: 700; color: var(--accent); }
+.kpi-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+}
+.card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.card-head .title { font-weight: 600; color: var(--text); font-size: 15px; }
+.card-head .company { color: var(--muted); }
+.badge {
+  background: #222835; border: 1px solid var(--border);
+  padding: 1px 8px; border-radius: 99px; font-size: 11px; color: var(--muted);
+}
+.meta { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.rationale { margin: 6px 0; color: #c7cdd8; }
+
+.score {
+  font-weight: 700; padding: 2px 9px; border-radius: 7px; font-size: 13px;
+}
+.score.good { background: rgba(52,201,142,.15); color: var(--good); }
+.score.ok   { background: rgba(232,182,74,.15);  color: var(--ok); }
+.score.weak { background: rgba(224,100,86,.15);  color: var(--weak); }
+
+.bars { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 18px; margin-top: 8px; }
+.bar-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.bar-label { width: 78px; }
+.bar-track { flex: 1; height: 5px; background: #222835; border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 100%; }
+.bar-fill.good { background: var(--good); } .bar-fill.ok { background: var(--ok); } .bar-fill.weak { background: var(--weak); }
+.bar-val { width: 32px; text-align: right; }
+
+.actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn {
+  background: #222835; color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 5px 12px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.save.saved { color: var(--good); border-color: var(--good); }
+.gates { color: var(--weak); font-size: 12px; margin-top: 6px; }
+.rec.reviewed { opacity: .55; }
+
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+
+input, select, textarea {
+  background: #10131a; color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 7px 10px; font: inherit;
+}
+label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.row > * { flex: 1; min-width: 140px; }
+
+.toast {
+  position: fixed; bottom: 18px; left: 50%; transform: translate(-50%, 80px);
+  background: var(--panel); border: 1px solid var(--accent);
+  padding: 9px 18px; border-radius: 9px; transition: transform .25s; z-index: 50;
+}
+.toast.show { transform: translate(-50%, 0); }
+.toast.error { border-color: var(--weak); }
+
+.console {
+  background: #0b0d12; border: 1px solid var(--border); border-radius: 10px;
+  height: 340px; overflow-y: auto; padding: 10px 14px; font: 12px/1.5 ui-monospace, monospace;
+}
+.console .error { color: var(--weak); } .console .warn { color: var(--ok); } .console .info { color: var(--muted); }
