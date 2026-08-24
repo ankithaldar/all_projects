@@ -96,3 +96,16 @@ Append-only log. Format: **Context** → Lesson → Rule.
   kills misfire when $! is not a real process-group leader.
 - Rule: bracket-trick patterns (`[m]ain.py worker`), kill by exact PID,
   and stop foreground children first so EXIT traps fire naturally.
+
+## Path arithmetic breaks silently until exercised
+- Context: resume uploads 500'd four times; unit tests stayed green
+  because none constructed the real gateway.
+- Lesson: relative parents[N] chains are invisible bugs until a request
+  touches them; tests that stub the boundary hide layout mistakes.
+- Rule: add existence assertions for resolved config paths
+  (test_gateway_paths_resolve_to_real_files) and smoke the real route.
+
+## Guard rails belong around construction, not just use
+- Context: the 500 became a 502 only after moving get_client() inside try.
+- Lesson: object construction can fail as meaningfully as method calls.
+- Rule: wrap dependency construction and usage in the same error policy.

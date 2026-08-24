@@ -65,7 +65,7 @@ class AppSettings:
   @property
   def gateway_root(self) -> Path:
     '''Return the llm_gateway package directory.'''
-    return Path(__file__).resolve().parents[1] / 'llm_gateway'
+    return Path(__file__).resolve().parents[2] / 'llm_gateway'
 
   @property
   def gateway_config_path(self) -> Path:
