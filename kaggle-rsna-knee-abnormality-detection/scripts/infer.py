@@ -57,7 +57,10 @@ def main() -> None:
     test_studies_csv=args.test_csv,
   )
   dm.setup('predict')
-  ckpts = sorted(Path(args.ckpt_dir).glob('fold*.ckpt'))
+  # Fold-scoped layout (<ckpt-dir>/fold<N>/fold<N>-*.ckpt) with fallback
+  # to the legacy flat layout from earlier kernels. ``last.ckpt`` files
+  # never match the ``fold*`` glob, so only best checkpoints are used.
+  ckpts = sorted(Path(args.ckpt_dir).rglob('fold*.ckpt'))
   assert ckpts, f'no fold checkpoints under {args.ckpt_dir}'
   frame = run_predict(ckpts, dm, cfg.tta)
   missing = set(pd_read_uids(args.test_csv)) - set(frame['StudyInstanceUID'])

@@ -22,11 +22,33 @@
 #
 # Stages (= BLUEPRINT kernels 1-7):
 #   volumes | folds | weak-labels | teacher | student | self-train |
-#   infer | blend | all
+#   infer | blend | publish | all
 #
-# Multi-kernel handoff: publish stage outputs as versioned datasets and point
-# the consumer kernel at them via env overrides before calling this script:
-#   export VOLUMES_CACHE=/kaggle/input/knee-volumes-cache-v1
+# Kaggle budgets (30 GB disk vs ~570 GB data, 12 h/kernel):
+# * Volumes are STREAM-DECODED from /kaggle/input at train/infer time --
+#   building a full volumes_cache is impossible and NOT required.
+# * The 'volumes' stage is an OPTIONAL accelerator producing one bounded,
+#   resumable shard:  export SHARD=i NUM_SHARDS=n (and MIN_FREE_GB).
+#   Publish each shard as its own versioned dataset and mount them all;
+#   partial coverage is fine (misses fall back to live DICOM decode).
+# * TIME_BUDGET_HOURS (default 11) caps training wall-clock per kernel
+#   via Lightning max_time so checkpoints are written cleanly before
+#   Kaggle's hard kill; finished folds persist as per-fold OOF parquets
+#   and are skipped on re-run. Use FOLDS_LIST='0,1' to split folds
+#   across kernels within the ~30 GPU-hour total.
+#
+# Cross-kernel state lives in ONE private Kaggle dataset (DATASET_NAME,
+# default ah2022-rsna-knee-abnormality-detection). Add-ons -> Secrets ->
+# KAGGLE_USERNAME + KAGGLE_KEY, then either:
+#     bash scripts/kaggle_run.sh publish          # push when you choose
+# or  export AUTO_PUBLISH=1                       # ...or after every stage
+# Next kernel: Add Data -> Your Datasets -> that dataset, then
+#     export PREV_OUTPUT=/kaggle/input/<dataset-slug>
+# and the bootstrap copies checkpoints/OOF/folds/labels forward before
+# the stage runs. Save Version remains a belt-and-braces backup.
+#
+# Multi-kernel handoff of OTHER artifacts: publish stage outputs as
+# versioned datasets and point the consumer kernel at them via env:
 #   export FOLDS=/kaggle/input/knee-folds-v1/train_folds.csv
 #   export WEAK_LABELS=/kaggle/input/knee-weak-labels-v1/weak_labels.parquet
 #
@@ -39,6 +61,21 @@
 #   WORK       scratch/artifact dir     (/kaggle/working)
 #   WITH_MONAI 1 -> install monai (student_3d_resnet experiment)
 #   FORCE_PIP  1 -> reinstall deps despite the session marker
+#   TIME_BUDGET_HOURS  training wall-clock cap (default 11)
+#   FOLDS_LIST  folds for the student stage, e.g. '0,1' (default: config)
+#   RESUME      1 (default) -> interrupted folds resume from last.ckpt
+#   PREV_OUTPUT prior kernel output mount(s), colon-separated -- copied
+#               into $WORK before dispatch (fresh-container handoff)
+#   DATASET_NAME private dataset receiving all artifacts
+#                (default ah2022-rsna-knee-abnormality-detection)
+#   AUTO_PUBLISH 1 -> run 'publish' automatically after each stage
+#   PUBLISH_MESSAGE  version note for the dataset push
+#   SHARD/NUM_SHARDS/MIN_FREE_GB  volumes-stage sharding + disk guard
+# =============================================================================
+# Multi-kernel lifecycle (each kernel = fresh container):
+#   kernel N:   ... run stage ... then SAVE VERSION (persists /kaggle/working)
+#   kernel N+1: Add Data -> Your Work -> select kernel N's output, then
+#               export PREV_OUTPUT=/kaggle/input/<kernel-N-output-slug>
 # =============================================================================
 set -euo pipefail
 
@@ -85,9 +122,49 @@ WORK="${WORK:-/kaggle/working}"
 DATA_ROOT="${DATA_ROOT:-/kaggle/input/competitions/rsna-knee-abnormality-detection}"
 EXP="${EXP:-configs/experiment/student_2p5d_effnetv2.yaml}"
 FOLDS="${FOLDS:-$WORK/train_folds.csv}"
-VOLUMES_CACHE="${VOLUMES_CACHE:-$WORK/volumes_cache}"
+# No default cache: volumes stream straight from /kaggle/input. Point
+# VOLUMES_CACHE at one dir or os.pathsep-joined shard mounts to use them
+# as a read-only accelerator.
+VOLUMES_CACHE="${VOLUMES_CACHE:-}"
 WEAK_LABELS="${WEAK_LABELS:-$WORK/weak_labels.parquet}"
 TEACHER_DIR="${TEACHER_DIR:-$WORK/text_teacher}"
+TIME_BUDGET_HOURS="${TIME_BUDGET_HOURS:-11}"
+DATASET_NAME="${DATASET_NAME:-ah2022-rsna-knee-abnormality-detection}"
+
+# --- 1b. restore prior-kernel artifacts (fresh-container handoff) -----------
+# Every Kaggle kernel boots a NEW container: previous outputs exist only
+# as read-only /kaggle/input mounts (after Save Version) and
+# /kaggle/working starts empty. PREV_OUTPUT (one dir or colon-separated
+# several -- normally the immediately preceding kernel's output) is
+# copied forward so finished folds skip, interrupted ones resume and the
+# training script can keep writing into this session's writable $WORK.
+if [ -n "${PREV_OUTPUT:-}" ]; then
+  log 'restoring prior kernel artifacts -> '"$WORK"
+  mkdir -p "$WORK/checkpoints" "$WORK/predictions"
+  for src in ${PREV_OUTPUT//:/ }; do
+    if [ ! -d "$src" ]; then
+      log "warning: PREV_OUTPUT '$src' not mounted; skipping"
+      continue
+    fi
+    if [ -d "$src/checkpoints" ]; then
+      cp -a "$src/checkpoints/." "$WORK/checkpoints/"
+    fi
+    if [ -d "$src/predictions" ]; then
+      cp -a "$src/predictions/." "$WORK/predictions/"
+    fi
+    # Single-file artifacts: only adopt when this session lacks them.
+    if [ -f "$src/train_folds.csv" ] && [ ! -f "$FOLDS" ]; then
+      cp -a "$src/train_folds.csv" "$FOLDS"
+    fi
+    if [ -f "$src/weak_labels.parquet" ] && [ ! -f "$WEAK_LABELS" ]; then
+      cp -a "$src/weak_labels.parquet" "$WEAK_LABELS"
+    fi
+    if [ -d "$src/text_teacher" ] && [ ! -e "$TEACHER_DIR" ]; then
+      cp -a "$src/text_teacher" "$TEACHER_DIR"
+    fi
+  done
+  log "restored: $(find "$WORK/checkpoints" -name '*.ckpt' | wc -l) ckpts, $(ls "$WORK/predictions" 2>/dev/null | wc -l) oof files"
+fi
 
 if [ ! -e "$WORK/.deps_ok" ] || [ "${FORCE_PIP:-0}" = '1' ]; then
   log 'installing python deps'
@@ -107,10 +184,20 @@ fi
 # --- 2. stage dispatch ------------------------------------------------------
 run() { log "$*"; "$PY" "$@"; }
 
+publish_artifacts() {
+  # Push every resumable artifact to ONE private Kaggle dataset
+  # (DATASET_NAME) so the next fresh-container kernel can PREV_OUTPUT it.
+  run scripts/publish_dataset.py --work "$WORK" \
+      --dataset-name "$DATASET_NAME" ${PUBLISH_MESSAGE:+--message "$PUBLISH_MESSAGE"}
+}
+
 case "$STAGE" in
   volumes)
     run scripts/prepare_volumes.py --data-root "$DATA_ROOT" \
-        --cache-dir "$VOLUMES_CACHE" --series-csv train_series.csv --workers 4 ;;
+        --cache-dir "${CACHE_DIR:-$WORK/volumes_cache}" \
+        --series-csv train_series.csv --workers 4 \
+        --shard "${SHARD:-0}" --num-shards "${NUM_SHARDS:-1}" \
+        --min-free-gb "${MIN_FREE_GB:-4}" ;;
   folds)
     run scripts/make_folds.py --train-csv "$DATA_ROOT/train.csv" --out-csv "$FOLDS" ;;
   weak-labels)
@@ -122,10 +209,19 @@ case "$STAGE" in
   teacher)
     run scripts/train_text_teacher.py --config configs/labeling/text_teacher.yaml ;;
   student)
+    cache_flag=''
+    [ -n "$VOLUMES_CACHE" ] && \
+      cache_flag="paths.volumes_cache=$VOLUMES_CACHE"
+    fold_flag=''
+    [ -n "${FOLDS_LIST:-}" ] && fold_flag="--folds $FOLDS_LIST"
+    # RESUME=1 (default): interrupted folds continue from fold<N>/last.ckpt
+    resume_flag="train.resume=${RESUME:-1}"
     # shellcheck disable=SC2086
-    run scripts/train_image_student.py --config "$EXP" --set \
-        "paths.volumes_cache=$VOLUMES_CACHE" "paths.folds_csv=$FOLDS" \
-        "paths.weak_labels_parquet=$WEAK_LABELS" "paths.output_dir=$WORK" $EXTRA_SETS ;;
+    run scripts/train_image_student.py --config "$EXP" $fold_flag --set \
+        "paths.folds_csv=$FOLDS" \
+        "paths.weak_labels_parquet=$WEAK_LABELS" "paths.output_dir=$WORK" \
+        "train.time_budget_hours=$TIME_BUDGET_HOURS" "$resume_flag" \
+        $cache_flag $EXTRA_SETS ;;
   self-train)
     run scripts/self_train.py --config "$EXP" \
         --student-oof "$WORK/predictions/$(basename "$EXP" .yaml)_oof.parquet" --round 2 ;;
@@ -136,12 +232,21 @@ case "$STAGE" in
     run scripts/blend_submissions.py \
         --oof "$WORK/predictions/*_oof.parquet" --gold "$FOLDS" \
         --subs "$WORK/submission_*.csv" --out "$WORK/submission_blended.csv" ;;
+  publish)
+    publish_artifacts ;;
   all)
     log 'full pipeline via scripts/run_all.sh'
     export DATA_ROOT WORK EXP PYTHON="$PY"
     bash scripts/run_all.sh ;;
   *)
-    die "unknown stage '$STAGE' (volumes folds weak-labels teacher student self-train infer blend all)" ;;
+    die "unknown stage '$STAGE' (volumes folds weak-labels teacher student self-train infer blend publish all)" ;;
 esac
+
+# AUTO_PUBLISH=1: push artifacts after every successful stage so a 12 h
+# kill never loses more than one stage of work (publish itself skips).
+if [ "${AUTO_PUBLISH:-0}" = '1' ] && [ "$STAGE" != 'publish' ]; then
+  log 'AUTO_PUBLISH enabled'
+  publish_artifacts
+fi
 
 log "stage '$STAGE' complete"

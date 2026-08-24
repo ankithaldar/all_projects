@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Fold-scoped LightningDataModule over cached study volumes.
+"""Fold-scoped LightningDataModule over streaming study volumes.
 
-Contract with :class:`knee.engines.study_lit_module.KneeStudyLitModule`
--- every batch is a dict::
+Kaggle reality (BLUEPRINT section 9): the DICOM tree is ~570 GB and
+``/kaggle/working`` has 30 GB, so there is **no full volumes cache**.
+Volumes are stream-decoded from the read-only mount through
+:class:`knee.datasets.volume_store.StreamingVolumeStore`, which keeps a
+bounded LRU in RAM and transparently uses a pre-decoded npz shard when
+one is mounted. A batch contract with
+:class:`knee.engines.study_lit_module.KneeStudyLitModule`::
 
     images        (B, S, C, H, W) float32  S=series slots, C=in_chans
     meta          (B, S, 5)       float32  [fluid, fat, plane onehot]
@@ -22,6 +27,7 @@ columns decide provenance).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +47,7 @@ from knee.config_params.schema import (
   SamplerConfig,
   TrainConfig,
 )
-from knee.datasets.volume_builder import decode_series_volume
+from knee.datasets.volume_store import StreamingVolumeStore
 from knee.helpers.seeding import worker_init_fn
 from knee.layers.metadata_encoder import build_meta_vector
 
@@ -82,6 +88,27 @@ def _series_priority(row: pd.Series) -> tuple[int, int]:
   return (0 if 'sagittal' in plane else 1, -int(fluid))
 
 
+def _drop_localizers(table: pd.DataFrame, min_slices: int) -> pd.DataFrame:
+  """Filter localizer series when slice counts are known.
+
+  Args:
+      table: Series table possibly carrying an ``n_slices`` column
+          (from a volumes manifest) or ``SliceCount``/``Instances``
+          (from a descriptor CSV).
+      min_slices: Minimum slices for a diagnostic series.
+
+  Returns:
+          Table with short series removed; unchanged when no count
+          column exists.
+  """
+  for column in ('n_slices', 'SliceCount', 'Instances'):
+    if column in table.columns:
+      counts = pd.to_numeric(table[column], errors='coerce')
+      keep = counts.isna() | (counts >= min_slices)
+      return table[keep].reset_index(drop=True)
+  return table
+
+
 class KneeStudyDataset(Dataset):
   """One item per study: padded series stacks + fused label dict."""
 
@@ -92,20 +119,26 @@ class KneeStudyDataset(Dataset):
     data_root: str,
     transform,
     max_series: int,
+    data_cfg: DataConfig,
+    store: StreamingVolumeStore,
   ) -> None:
     """Precompute per-study series layouts once.
 
     Args:
         frame: Study-level frame with fused labels.
         series_table: Manifest or CSV describing every series.
-        data_root: Dataset root for DICOM fallback decoding.
+        data_root: Dataset root for stream DICOM decoding.
         transform: Stack callable mapping (C,H,W) uint8 -> float array.
         max_series: Series slots per study (padding target).
+        data_cfg: Volume shaping parameters (size/depth/localizer cut).
+        store: Shared streaming volume store (LRU-backed).
     """
     self.frame = frame.reset_index(drop=True)
     self.transform = transform
     self.max_series = max_series
     self.data_root = str(data_root)
+    self.data_cfg = data_cfg
+    self.store = store
     self.series_by_study: dict[str, list[dict]] = {}
     fluid_col = _first_column(series_table, _META_ALIASES['fluid'])
     fat_col = _first_column(series_table, _META_ALIASES['fat'])
@@ -113,13 +146,16 @@ class KneeStudyDataset(Dataset):
     annotated = series_table.copy()
     annotated['_fluid'] = (
       pd.to_numeric(annotated[fluid_col], errors='coerce').fillna(0)
-      if fluid_col else 0.0
+      if fluid_col
+      else 0.0
     )
     annotated['_fat'] = (
       pd.to_numeric(annotated[fat_col], errors='coerce').fillna(0)
-      if fat_col else 0.0
+      if fat_col
+      else 0.0
     )
     annotated['_plane'] = annotated[plane_col] if plane_col else ''
+    annotated = _drop_localizers(annotated, int(data_cfg.min_series_slices))
     for uid, group in annotated.groupby('StudyInstanceUID'):
       ranked = group.assign(
         _p=[_series_priority(r) for _, r in group.iterrows()]
@@ -136,35 +172,6 @@ class KneeStudyDataset(Dataset):
     """
     return len(self.frame)
 
-  def _load_volume(self, row: dict) -> np.ndarray | None:
-    """Fetch one series volume from cache or DICOM fallback.
-
-    Args:
-        row: Series-table record with ids and cache_path.
-
-    Returns:
-        uint8 ``(C, H, W)`` array, or None when undecodable.
-    """
-    cache_path = str(row.get('cache_path', '') or '')
-    if cache_path and Path(cache_path).exists():
-      with np.load(cache_path) as payload:
-        return payload['volume']
-    try:
-      base = Path(self.data_root) / 'train_series'
-      study = str(row.get('StudyInstanceUID', '') or '')
-      series = str(row.get('SeriesInstanceUID', '') or '')
-      candidates = [base / study / series, base / series]
-      directory = next((c for c in candidates if c.is_dir()), None)
-      if directory is None:
-        return None
-      return decode_series_volume(
-        directory,
-        image_size=int(self._image_size),
-        num_slices=int(self._num_slices),
-      )
-    except Exception:  # pylint: disable=broad-exception-caught
-      return None
-
   def __getitem__(self, index: int) -> dict:
     """Assemble one study item.
 
@@ -177,17 +184,16 @@ class KneeStudyDataset(Dataset):
     row = self.frame.iloc[index]
     uid = str(row['StudyInstanceUID'])
     series_rows = self.series_by_study.get(uid, [])
-    volumes = [self._load_volume(source) for source in series_rows]
+    volumes = [self.store.get(source) for source in series_rows]
     usable = [
       (source, volume)
       for source, volume in zip(series_rows, volumes, strict=False)
       if volume is not None
     ]
-    channels, height, width = (
-      usable[0][1].shape if usable else (
-        int(self._num_slices), int(self._image_size), int(self._image_size),
-      )
-    )
+    channels = int(self.data_cfg.num_slices)
+    height = width = int(self.data_cfg.image_size)
+    if usable:
+      channels, height, width = usable[0][1].shape
     images = np.zeros(
       (self.max_series, channels, height, width), dtype=np.float32
     )
@@ -250,8 +256,6 @@ class KneeDataModule(LightningDataModule):
     self.fold = fold
     self.test_studies_csv = test_studies_csv
     self.batch_size = int(dm_cfg.batch_size)
-    self._image_size = int(data_cfg.image_size)
-    self._num_slices = int(data_cfg.num_slices)
     self.train_ds: KneeStudyDataset | None = None
     self.val_ds: KneeStudyDataset | None = None
     self.predict_ds: KneeStudyDataset | None = None
@@ -265,6 +269,36 @@ class KneeDataModule(LightningDataModule):
     """
     self.dm_cfg.batch_size = int(batch_size)
     self.batch_size = int(batch_size)
+
+  def _make_store(self, split: str) -> StreamingVolumeStore:
+    """Build the split's streaming volume store (RAM-bounded, disk-free).
+
+    Args:
+        split: 'train' or 'test'; picks the DICOM tree and cache shards.
+
+    Returns:
+        Store decoding volumes on demand behind an LRU cache. When
+        ``paths.volumes_cache`` is set (single dir or ``os.pathsep``-
+        joined shard mounts) and exists, those npz shards are used
+        read-only; misses fall back to live DICOM decoding.
+    """
+    cache_dir = ''
+    configured = self.paths.volumes_cache or ''
+    if configured:
+      existing = [
+        part
+        for part in configured.split(os.pathsep)
+        if part and Path(part).is_dir()
+      ]
+      cache_dir = os.pathsep.join(existing)
+    return StreamingVolumeStore(
+      data_root=self.paths.data_root,
+      data_cfg=self.data_cfg,
+      split=split,
+      cache_dir=cache_dir,
+      max_items=int(self.dm_cfg.lru_max_volumes),
+      max_bytes=int(self.dm_cfg.lru_max_gb) << 30,
+    )
 
   def _series_table(self, split: str) -> pd.DataFrame:
     """Load the series manifest (cache manifest preferred over CSV).
@@ -284,7 +318,8 @@ class KneeDataModule(LightningDataModule):
     if manifest and manifest.exists():
       return pd.read_parquet(manifest)
     csv_path = Path(self.paths.data_root) / (
-      self.paths.test_series_csv if split == 'test'
+      self.paths.test_series_csv
+      if split == 'test'
       else self.paths.train_series_csv
     )
     if csv_path.exists():
@@ -299,10 +334,12 @@ class KneeDataModule(LightningDataModule):
     present = [t for t in TARGETS if t in folds.columns]
     is_gold = (
       folds[present].notna().all(axis=1).to_numpy()
-      if present else np.zeros(len(folds), bool)
+      if present
+      else np.zeros(len(folds), bool)
     )
     gold_values = (
-      folds[present].fillna(0.0).to_numpy(np.float32) if present
+      folds[present].fillna(0.0).to_numpy(np.float32)
+      if present
       else np.zeros((len(folds), len(TARGETS)), np.float32)
     )
     soft = np.full((len(folds), len(TARGETS)), 0.5, np.float32)
@@ -315,23 +352,22 @@ class KneeDataModule(LightningDataModule):
       weak_probs_frame = weak[
         [c for c in prob_cols if c in weak.columns]
       ].rename(columns={t: f'_w_{t}' for t in TARGETS})
-      folds = folds.merge(weak_probs_frame, on='StudyInstanceUID',
-                          how='left')
-      weak_probs = folds[[f'_w_{t}' for t in TARGETS]].to_numpy(
-        np.float32
-      )
+      folds = folds.merge(weak_probs_frame, on='StudyInstanceUID', how='left')
+      weak_probs = folds[[f'_w_{t}' for t in TARGETS]].to_numpy(np.float32)
       have_weak = np.isfinite(weak_probs).all(axis=1)
       soft = np.where(have_weak[:, None], weak_probs, soft)
       if 'weight' in folds.columns:
         weight = np.where(
-          have_weak, folds['weight'].fillna(1.0).to_numpy(np.float32),
+          have_weak,
+          folds['weight'].fillna(1.0).to_numpy(np.float32),
           weight,
         ).astype(np.float32)
       folds = folds.drop(columns=[f'_w_{t}' for t in TARGETS])
     hard = np.where(is_gold[:, None], gold_values, (soft >= 0.5))
     frame = pd.DataFrame({'StudyInstanceUID': folds['StudyInstanceUID']})
     frame['fold'] = (
-      folds['fold'].to_numpy() if 'fold' in folds.columns
+      folds['fold'].to_numpy()
+      if 'fold' in folds.columns
       else np.full(len(folds), -1)
     )
     frame['_hard'] = list(hard.astype(np.float32))
@@ -384,21 +420,36 @@ class KneeDataModule(LightningDataModule):
     valid_tf = build_transform(self.augment, 'valid', self.data_cfg.in_chans)
     if stage == 'predict':
       self.predict_ds = KneeStudyDataset(
-        self._predict_frame(), self._series_table('test'),
-        self.paths.data_root, valid_tf, self.dm_cfg.max_series_per_study,
+        self._predict_frame(),
+        self._series_table('test'),
+        self.paths.data_root,
+        valid_tf,
+        self.dm_cfg.max_series_per_study,
+        self.data_cfg,
+        self._make_store('test'),
       )
       return
     frame = self._apply_label_policy(self._fused_frame())
     table = self._series_table('train')
+    store = self._make_store('train')
     self.val_ds = KneeStudyDataset(
-      frame[frame['fold'] == self.fold], table, self.paths.data_root,
-      valid_tf, self.dm_cfg.max_series_per_study,
+      frame[frame['fold'] == self.fold],
+      table,
+      self.paths.data_root,
+      valid_tf,
+      self.dm_cfg.max_series_per_study,
+      self.data_cfg,
+      store,
     )
     if stage == 'fit':
       self.train_ds = KneeStudyDataset(
-        frame[frame['fold'] != self.fold], table, self.paths.data_root,
+        frame[frame['fold'] != self.fold],
+        table,
+        self.paths.data_root,
         build_transform(self.augment, 'train', self.data_cfg.in_chans),
         self.dm_cfg.max_series_per_study,
+        self.data_cfg,
+        store,
       )
 
   def _loader(self, dataset: KneeStudyDataset, shuffle: bool):

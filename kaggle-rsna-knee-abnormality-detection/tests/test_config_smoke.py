@@ -80,6 +80,25 @@ class TestInstantiate:
       instantiate(ComponentSpec(target='OrderedDict'))
 
 
+class TestKaggleBudgetFields:
+  """Streaming/LRU + time-budget knobs added for Kaggle's limits."""
+
+  def test_datamodule_defaults_streaming_safe(self):
+    cfg = ExperimentConfig.model_validate(_minimal_config_dict())
+    assert cfg.datamodule.lru_max_volumes >= 1
+    assert cfg.datamodule.lru_max_gb >= 1
+
+  def test_time_budget_rejects_nonpositive(self):
+    payload = _minimal_config_dict()
+    payload['train'] = {'time_budget_hours': 0}
+    with pytest.raises(ValueError):
+      ExperimentConfig.model_validate(payload)
+
+  def test_time_budget_optional(self):
+    cfg = ExperimentConfig.model_validate(_minimal_config_dict())
+    assert cfg.train.time_budget_hours is None
+
+
 class TestDiscordNotifierDisabledByDefault:
   def test_no_webhook_is_noop(self):
     notifier = DiscordNotifier(webhook_url='')

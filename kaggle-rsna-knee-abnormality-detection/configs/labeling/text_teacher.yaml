@@ -29,6 +29,7 @@ train:
   warmup_ratio: 0.1
   amp: bf16
   early_stopping_patience: 2
+  time_budget_hours: 11          # Kaggle 12 h kernel wall -> Lightning max_time
 
 fusion:                          # how rule seeds + teacher probs combine
   rule_confidence_floor: 0.90    # per-class precision measured on gold subset

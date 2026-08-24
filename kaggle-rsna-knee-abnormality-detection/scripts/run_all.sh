@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_all.sh -- end-to-end orchestration of the 7-kernel pipeline.
+# run_all.sh -- end-to-end orchestration of the pipeline stages.
 #
-# On Kaggle each stage runs in its own kernel (see BLUEPRINT section 9);
-# this script chains the identical commands locally or on a beefy box.
-# Every stage is resumable: artifacts land under $WORK and stages skip
-# themselves when their outputs already exist.
+# Kaggle reality: ~570 GB of DICOM vs 30 GB of scratch and a 12 h kernel
+# wall. A full volumes_cache therefore CANNOT be built, so volumes are
+# stream-decoded at train/infer time (see src/knee/datasets/volume_store).
+# Kernel 1 below is OFF by default; enable it only to mint an optional
+# accelerator shard (SHARD=i NUM_SHARDS=n), published as its own dataset.
+#
+# Every stage is resumable: artifacts land under $WORK, finished image
+# folds persist as per-fold OOF parquets and are skipped on re-run, and
+# TIME_BUDGET_HOURS caps training via Lightning max_time.
 #
 # Usage:
 #   DATA_ROOT=/path/to/rsna bash scripts/run_all.sh
@@ -15,6 +20,10 @@
 #   WORK        scratch/artifact dir        (default ./outputs)
 #   FOLDS       folds csv                    (default $WORK/train_folds.csv)
 #   EXP         experiment yaml              (configs/experiment/student_2p5d_effnetv2.yaml)
+#   BUILD_CACHE 1 -> decode an optional volumes shard first (default 0)
+#   SHARD/NUM_SHARDS/MIN_FREE_GB shard selection + free-disk guard
+#   TIME_BUDGET_HOURS wall-clock cap per student invocation (default 11)
+#   FOLDS_LIST  comma fold ids for kernel 5 (default: config's train_folds)
 # =============================================================================
 set -euo pipefail
 
@@ -22,7 +31,7 @@ DATA_ROOT="${DATA_ROOT:?set DATA_ROOT to the competition data directory}"
 WORK="${WORK:-./outputs}"
 EXP="${EXP:-configs/experiment/student_2p5d_effnetv2.yaml}"
 FOLDS="${FOLDS:-$WORK/train_folds.csv}"
-CACHE="$WORK/volumes_cache"
+CACHE="${CACHE:-$WORK/volumes_cache}"
 LABELS="$WORK/weak_labels.parquet"
 PY="${PYTHON:-python}"
 
@@ -31,10 +40,16 @@ done_if() { [ -e "$1" ] && { log "skip $2 ($1 exists)"; return 0; }; }
 
 mkdir -p "$WORK"
 
-# --- kernel 1: volumes ------------------------------------------------------
-done_if "$CACHE/volumes_manifest.parquet" "kernel1:volumes" || \
-  "$PY" scripts/prepare_volumes.py --data-root "$DATA_ROOT" \
-       --cache-dir "$CACHE" --series-csv train_series.csv --workers 4
+# --- kernel 1 (OPTIONAL): bounded volumes shard -----------------------------
+if [ "${BUILD_CACHE:-0}" = '1' ]; then
+  done_if "$CACHE/volumes_manifest.parquet" "kernel1:volumes" || \
+    "$PY" scripts/prepare_volumes.py --data-root "$DATA_ROOT" \
+         --cache-dir "$CACHE" --series-csv train_series.csv --workers 4 \
+         --shard "${SHARD:-0}" --num-shards "${NUM_SHARDS:-1}" \
+         --min-free-gb "${MIN_FREE_GB:-4}"
+else
+  log 'kernel1:volumes skipped (streaming decode is the default)'
+fi
 
 # --- kernel 2: folds --------------------------------------------------------
 done_if "$FOLDS" "kernel2:folds" || \
@@ -51,18 +66,15 @@ done_if "$LABELS" "kernel3:weak-labels(rules)" || \
 done_if "$WORK/text_teacher/oof_probs.parquet" "kernel4:text-teacher" || \
   "$PY" scripts/train_text_teacher.py --config configs/labeling/text_teacher.yaml
 
-# --- kernel 5: image student (all folds) ------------------------------------
-STUDENT_OOF="$WORK/predictions/$(basename "$EXP" .yaml)_oof.parquet"
-done_if "$STUDENT_OOF" "kernel5:image-student" || \
-  "$PY" scripts/train_image_student.py --config "$EXP" --set \
-      "paths.volumes_cache=$CACHE" "paths.folds_csv=$FOLDS" \
-      "paths.weak_labels_parquet=$LABELS" "paths.output_dir=$WORK"
-
-# --- kernel 5b: self-train round 2 (optional; uncomment to enable) ----------
-# LABELS_R2="$WORK/weak_labels_round2.parquet"
-# done_if "$LABELS_R2" "kernel5b:self-train" || \
-#   "$PY" scripts/self_train.py --config "$EXP" --student-oof "$STUDENT_OOF" --round 2
-# Re-run kernel 5 with paths.weak_labels_parquet=$LABELS_R2 before blending.
+# --- kernel 5: image student (fold-sharded, time-budgeted) ------------------
+# No done_if here: the script itself skips completed folds and merges all
+# persisted per-fold OOF parts, so partial shards resume correctly.
+"$PY" scripts/train_image_student.py --config "$EXP" \
+    ${FOLDS_LIST:+--folds "$FOLDS_LIST"} --set \
+    "paths.folds_csv=$FOLDS" \
+    "paths.weak_labels_parquet=$LABELS" "paths.output_dir=$WORK" \
+    "train.time_budget_hours=${TIME_BUDGET_HOURS:-11}" \
+    "train.resume=${RESUME:-1}"
 
 # --- kernel 6: inference ----------------------------------------------------
 "$PY" scripts/infer.py --config "$EXP" --test-csv "$DATA_ROOT/test.csv" \

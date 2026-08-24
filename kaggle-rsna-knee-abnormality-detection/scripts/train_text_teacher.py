@@ -2,6 +2,12 @@
 # -*- coding: utf-8 -*-
 """Kernel 4: train the multilingual text teacher and emit OOF probabilities.
 
+Kaggle budgets: the teacher trains 5 XLM-R folds; a hard kernel kill at
+12 h would lose everything, so this kernel is *resumable* (finished
+fold checkpoints are reloaded, not retrained) and *time-budgeted*
+(``train.time_budget_hours`` feeds Lightning ``max_time`` with the
+remaining wall clock per fold).
+
 Usage:
     python scripts/train_text_teacher.py \
         --config configs/labeling/text_teacher.yaml
@@ -12,6 +18,8 @@ Outputs (under cfg.data.output_dir):
 from __future__ import annotations
 
 import argparse
+import time
+from datetime import timedelta
 from pathlib import Path
 
 import lightning.pytorch as pl
@@ -31,6 +39,9 @@ from knee.engines.text_teacher_lit import (
 )
 from knee.helpers.logging_utils import get_logger
 from knee.helpers.seeding import seed_everything
+
+#: Never start a fresh fold with less wall-clock left than this.
+MIN_FOLD_SECONDS = 20 * 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,62 +75,104 @@ def main() -> None:
   oof = np.zeros((len(df), len(TARGETS)), dtype=np.float32)
   uid_to_idx = {u: i for i, u in enumerate(df['StudyInstanceUID'])}
 
+  budget_hours = cfg.train.time_budget_hours
+  started = time.monotonic()
   for fold in range(cfg.train.n_folds_to_train):
+    ckpt_path = ckpt_dir / f'fold{fold}.ckpt'
     tr = gold[gold['fold'] != fold] if 'fold' in gold.columns else gold
     va = (
       gold[gold['fold'] == fold] if 'fold' in gold.columns else gold.iloc[0:0]
     )
-    train_ds = ReportDataset(
-      tr['Report'].fillna(''), tokenizer, cfg.model.max_length
-    )
 
-    class _TorchDs(torch.utils.data.Dataset):
-      """Wrap report windows with their targets.
-
-      Args:
-          base: Underlying ReportDataset.
-          targets: Aligned target matrix.
-      """
-
-      def __init__(self, base: ReportDataset, targets: np.ndarray) -> None:
-        self.base = base
-        self.targets = targets
-
-      def __len__(self) -> int:
-        return len(self.base)
-
-      def __getitem__(self, i: int) -> dict:
-        item = self.base[i]
-        item['targets'] = torch.from_numpy(self.targets[i])
-        return item
-
-    targets_tr = (
-      tr[list(TARGETS)].to_numpy(np.float32)
-      if len(tr)
-      else np.zeros((0, 12), np.float32)
-    )
-    loader = DataLoader(
-      _TorchDs(train_ds, targets_tr),
-      batch_size=cfg.train.batch_size,
-      shuffle=True,
-      num_workers=2,
-    )
     module = TextTeacherLitModule(
       backbone=cfg.model.backbone,
       lr=cfg.train.lr,
       weight_decay=cfg.train.weight_decay,
     )
-    trainer = pl.Trainer(
-      max_epochs=cfg.train.epochs,
-      precision=cfg.train.amp,
-      accelerator='auto',
-      devices=1,
-      accumulate_grad_batches=cfg.train.grad_accum,
-      default_root_dir=str(out_dir),
-      enable_checkpointing=False,
-      logger=False,
+    trainer_kwargs: dict = {
+      'max_epochs': cfg.train.epochs,
+      'precision': cfg.train.amp,
+      'accelerator': 'auto',
+      'devices': 1,
+      'accumulate_grad_batches': cfg.train.grad_accum,
+      'default_root_dir': str(out_dir),
+      'enable_checkpointing': False,
+      'logger': False,
+    }
+    if ckpt_path.exists():
+      # Resume: reuse the finished fold's weights for OOF prediction.
+      log.info('fold %d checkpoint found; skipping training', fold)
+    else:
+      if budget_hours is not None:
+        remaining_h = float(budget_hours) - (time.monotonic() - started) / 3600
+        if remaining_h * 3600 < MIN_FOLD_SECONDS:
+          log.warning(
+            'stopping before teacher fold %d: %.2f h left < minimum '
+            '%.0f min (re-run to continue)',
+            fold,
+            remaining_h,
+            MIN_FOLD_SECONDS / 60,
+          )
+          break
+        trainer_kwargs['max_time'] = timedelta(
+          hours=max(remaining_h, MIN_FOLD_SECONDS / 3600)
+        )
+      train_ds = ReportDataset(
+        tr['Report'].fillna(''), tokenizer, cfg.model.max_length
+      )
+
+      class _TorchDs(torch.utils.data.Dataset):
+        """Wrap report windows with their targets.
+
+        Args:
+            base: Underlying ReportDataset.
+            targets: Aligned target matrix.
+        """
+
+        def __init__(self, base: ReportDataset, targets: np.ndarray) -> None:
+          self.base = base
+          self.targets = targets
+
+        def __len__(self) -> int:
+          """Number of reports.
+
+          Returns:
+              Dataset length.
+          """
+          return len(self.base)
+
+        def __getitem__(self, i: int) -> dict:
+          """Tokenize one report and attach its targets.
+
+          Args:
+              i: Report position.
+
+          Returns:
+              Dict with input_ids/attention_mask plus target vector.
+          """
+          item = self.base[i]
+          item['targets'] = torch.from_numpy(self.targets[i])
+          return item
+
+      targets_tr = (
+        tr[list(TARGETS)].to_numpy(np.float32)
+        if len(tr)
+        else np.zeros((0, 12), np.float32)
+      )
+      loader = DataLoader(
+        _TorchDs(train_ds, targets_tr),
+        batch_size=cfg.train.batch_size,
+        shuffle=True,
+        num_workers=2,
+      )
+      trainer = pl.Trainer(**trainer_kwargs)
+      trainer.fit(module, loader)
+      trainer.save_checkpoint(ckpt_path)
+      log.info('fold %d trained -> %s', fold, ckpt_path)
+
+    module.load_state_dict(
+      torch.load(ckpt_path, map_location='cpu')['state_dict']
     )
-    trainer.fit(module, loader)
     module.to('cuda' if torch.cuda.is_available() else 'cpu')
     if len(va):
       va_probs = predict_probs(
@@ -131,9 +184,6 @@ def main() -> None:
       )
       for j, u in enumerate(va['StudyInstanceUID']):
         oof[uid_to_idx[u]] = va_probs[j]
-    ckpt_path = ckpt_dir / f'fold{fold}.ckpt'
-    trainer.save_checkpoint(ckpt_path)
-    log.info('fold %d done -> %s', fold, ckpt_path)
 
   oof_frame = df[['StudyInstanceUID']].copy()
   for j, t in enumerate(TARGETS):

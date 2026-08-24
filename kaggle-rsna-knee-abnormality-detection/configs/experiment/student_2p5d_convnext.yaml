@@ -28,8 +28,7 @@ augment:
       params: { num_steps: 5, distort_limit: 0.15, p: 0.25 }
 
 datamodule:
-  params:
-    batch_size: 6
+  batch_size: 6
 
 train:
   trainer:

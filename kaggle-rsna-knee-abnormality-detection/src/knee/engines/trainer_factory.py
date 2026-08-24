@@ -17,6 +17,7 @@ Design notes:
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import lightning.pytorch as pl
@@ -133,9 +134,11 @@ def build_trainer(
 
   Callbacks are instantiated from the config list; a
   ``ModelCheckpoint`` entry automatically receives a fold-scoped
-  ``dirpath`` and filename prefix unless it defines its own. Loggers
-  become a Lightning logger *list*; unconfigured NeptuneLogger specs
-  are dropped rather than raising.
+  ``dirpath`` (``<checkpoints>/fold<N>/``, isolating ``last.ckpt`` per
+  fold so interrupted kernels resume the RIGHT fold) and filename
+  prefix unless it defines its own. Loggers become a Lightning logger
+  *list*; unconfigured NeptuneLogger specs are dropped rather than
+  raising.
 
   Args:
       train_cfg: Validated train section containing trainer, callback
@@ -149,11 +152,12 @@ def build_trainer(
   """
   callbacks: list[pl.Callback] = []
   ckpt_dir = Path(paths.output_dir) / paths.checkpoints_dir
-  ckpt_dir.mkdir(parents=True, exist_ok=True)
+  fold_ckpt_dir = ckpt_dir / f'fold{fold}'
+  fold_ckpt_dir.mkdir(parents=True, exist_ok=True)
   for spec in train_cfg.callbacks:
     params = dict(spec.params)
     if spec.target.endswith('ModelCheckpoint'):
-      params.setdefault('dirpath', str(ckpt_dir))
+      params.setdefault('dirpath', str(fold_ckpt_dir))
       params['filename'] = f'fold{fold}-' + str(
         params.get('filename', '{epoch}')
       )
@@ -173,6 +177,15 @@ def build_trainer(
   trainer_params = dict(train_cfg.trainer.params)
   if train_cfg.epochs is not None:
     trainer_params['max_epochs'] = int(train_cfg.epochs)
+  # Kaggle kernels die hard at the 12 h wall; Lightning's max_time stops
+  # cleanly, running checkpoint/early-stop callbacks one last time. An
+  # explicit YAML max_time always wins over the shorthand budget.
+  if (
+    train_cfg.time_budget_hours is not None and 'max_time' not in trainer_params
+  ):
+    trainer_params['max_time'] = timedelta(
+      hours=float(train_cfg.time_budget_hours)
+    )
   trainer_params.update(
     default_root_dir=str(paths.output_dir),
     callbacks=callbacks,

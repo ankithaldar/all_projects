@@ -28,8 +28,7 @@ optimizer:
     params: { lr: 3.0e-4, weight_decay: 3.0e-2 }
 
 datamodule:
-  params:
-    batch_size: 2
+  batch_size: 2
 
 train:
   trainer:

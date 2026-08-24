@@ -186,12 +186,27 @@ class SamplerConfig(StrictModel):
 
 
 class DataModuleConfig(StrictModel):
-  """Wiring for knee.datamodules.knee_datamodule.KneeDataModule."""
+  """Wiring for knee.datamodules.knee_datamodule.KneeDataModule.
+
+  With no volumes cache (Kaggle's 30 GB disk cannot hold one for ~570 GB
+  of raw DICOM), volumes stream from the read-only mount; the two
+  ``lru_*`` fields bound how much decoded data each worker keeps in RAM.
+  """
 
   batch_size: int = Field(default=8, ge=1, description='Studies per step')
   num_workers: int = 4
   max_series_per_study: int = Field(default=6, ge=1)
   pin_memory: bool = True
+  lru_max_volumes: int = Field(
+    default=256,
+    ge=1,
+    description='Per-worker LRU capacity in decoded series volumes.',
+  )
+  lru_max_gb: int = Field(
+    default=4,
+    ge=1,
+    description='Per-worker LRU capacity in GiB of uint8 voxels.',
+  )
 
 
 class TrainConfig(StrictModel):
@@ -216,6 +231,15 @@ class TrainConfig(StrictModel):
   resume: bool = Field(
     default=False,
     description='Auto-resume each fold from its latest checkpoint.',
+  )
+  time_budget_hours: float | None = Field(
+    default=None,
+    gt=0.0,
+    description=(
+      'Wall-clock cap per Trainer.fit (Kaggle 12 h kernel limit); maps '
+      'to Lightning max_time so folds stop cleanly and checkpoints '
+      'survive for the next kernel.'
+    ),
   )
   grad_clip: ComponentSpec | None = Field(
     default=None,
