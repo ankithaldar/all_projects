@@ -572,3 +572,23 @@ def _persist_recs(recs_repo, run_id: int, rows: List[Dict[str, Any]]) -> int:
       'rank': position,
     })
   return recs_repo.upsert_many(run_id, 1, normalized)
+
+
+async def summarize_run(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+    """Append a Watchdog quality summary to the run's event stream.
+
+    Args:
+      state: Current state.
+      config: Runnable config.
+
+    Returns:
+      Watchdog issue counter.
+    """
+    from job_hunter.services.watchdog import build_report, summarize_issues
+
+    settings = _settings_from_config(config)
+    report = build_report(settings)
+    issues = summarize_issues(report)
+    for issue in issues:
+        logger.warning('watchdog: %s', issue)
+    return {'stats': {'watchdog_issues': len(issues)}}
