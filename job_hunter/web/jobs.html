@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Jobs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Job explorer</h1>
+    <div class="row" style="margin-bottom:14px">
+      <input id="q" placeholder='Search (e.g. "data science" + python)'>
+      <input id="city" placeholder="City" style="max-width:140px">
+      <select id="mode" style="max-width:150px">
+        <option value="">Any mode</option>
+        <option value="remote">Remote</option><option value="hybrid">Hybrid</option>
+        <option value="onsite">Onsite</option><option value="unknown">Unknown</option>
+      </select>
+      <button class="btn" onclick="load()">Search</button>
+    </div>
+    <div id="list"></div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/jobs.html'));
+    async function load() {
+      const qs = jh.qs({
+        q: document.getElementById('q').value,
+        city: document.getElementById('city').value,
+        work_mode: document.getElementById('mode').value,
+        per_page: 50,
+      });
+      const rows = await jh.get(`/api/jobs?${qs}`);
+      const box = document.getElementById('list');
+      if (!rows.length) { box.append(jh.el('div', { class: 'card' }, 'No postings match.')); return; }
+      for (const job of rows) {
+        box.append(jh.el('div', { class: 'card' },
+          jh.el('div', { class: 'card-head' },
+            jh.el('a', { class: 'title', href: job.url, target: '_blank', rel: 'noopener' }, job.title),
+            jh.el('span', { class: 'company' }, job.company_name || job.company_raw_name || ''),
+            jh.el('span', { class: 'badge' }, job.source_key)),
+          jh.el('div', { class: 'meta' },
+            [job.city, job.work_mode,
+              job.salary_min_lpa || job.salary_max_lpa
+                ? `${job.salary_min_lpa ?? '?'}–${job.salary_max_lpa ?? '?'} LPA` : null]
+              .filter(Boolean).join(' · ')),
+          jh.el('div', { class: 'rationale' }, (job.description_text || '').slice(0, 220) + '…')));
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

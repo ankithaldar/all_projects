@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Recommendations</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Recommendations</h1>
+    <div class="row" style="max-width:640px;margin-bottom:16px">
+      <input id="minScore" type="number" placeholder="Min score" min="0" max="100" style="flex:0;width:120px">
+      <select id="status">
+        <option value="">All statuses</option>
+        <option value="new">New</option><option value="saved">Saved</option>
+        <option value="dismissed">Dismissed</option><option value="applied">Applied</option>
+      </select>
+      <select id="vertical"><option value="">All verticals</option></select>
+      <button class="btn" onclick="load()">Filter</button>
+    </div>
+    <label style="display:flex;gap:8px;align-items:center;cursor:pointer;margin:0 0 12px">
+      <input type="checkbox" id="includeGated"> include gate-failed
+    </label>
+    <div id="list"></div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/recommendations.html'));
+    async function act(status, rec) {
+      try {
+        await jh.patch(`/api/recommendations/${rec.recommendation_id}?status=${status}`);
+        jh.toast(status === 'saved' ? 'Saved' : status === 'applied' ? 'Marked applied' : 'Dismissed');
+        load();
+      } catch (e) { jh.toast(e.message, true); }
+    }
+    async function load() {
+      const qs = jh.qs({
+        min_score: document.getElementById('minScore').value,
+        status: document.getElementById('status').value,
+        vertical: document.getElementById('vertical').value,
+        include_gated: document.getElementById('includeGated').checked,
+        per_page: 50,
+      });
+      const recs = await jh.get(`/api/recommendations?${qs}`);
+      const box = document.getElementById('list');
+      box.innerHTML = '';
+      if (!recs.length) { box.append(jh.el('div', { class: 'card' }, 'Nothing here yet.')); return; }
+      for (const rec of recs) {
+        box.append(components.recCard(rec, (status, r) =>
+          act(status, { ...r, recommendation_id: r.recommendation_id })));
+      }
+    }
+    jh.get('/api/companies').then(rows => {
+      const verts = [...new Set(rows.map(r => r.vertical).filter(Boolean))];
+      const sel = document.getElementById('vertical');
+      for (const v of verts) sel.append(jh.el('option', { value: v }, v));
+    });
+    load();
+  </script>
+</body>
+</html>

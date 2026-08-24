@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Job Hunter — Runs</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="nav"></div>
+  <main>
+    <h1>Runs</h1>
+    <div style="margin-bottom:14px">
+      <button class="btn save" id="triggerBtn" onclick="trigger()">▶ Run discovery now</button>
+    </div>
+    <div class="console" id="console" hidden></div>
+    <div id="table"></div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/components.js"></script>
+  <script>
+    document.getElementById('nav').append(components.nav('/runs.html'));
+    let currentEs = null;
+    async function load() {
+      const runs = await jh.get('/api/runs');
+      const box = document.getElementById('table');
+      box.innerHTML = '';
+      if (!runs.length) { box.append(jh.el('div', { class: 'card' }, 'No runs yet.')); return; }
+      box.append(components.table(
+        ['Run', 'Kind', 'Status', 'Triggered by', 'Started', 'Finished'],
+        runs.slice(0, 20),
+        r => [
+          jh.el('a', { href: '#', onclick: (e) => { e.preventDefault(); watch(r.id); } }, `#${r.id}`),
+          r.kind,
+          jh.el('span', {
+            style: 'color:' + ({ success: 'var(--good)', failed: 'var(--weak)' }[r.status] || 'var(--ok)'),
+          }, r.status),
+          r.triggered_by || '', r.started_at || '—', r.finished_at || '—',
+        ]));
+    }
+    function logLine(ev) {
+      const con = document.getElementById('console');
+      con.append(jh.el('div', { class: ev.level },
+        `[${ev.node || ev.level}] ${ev.message}`));
+      con.scrollTop = con.scrollHeight;
+    }
+    async function trigger() {
+      try {
+        const out = await jh.post('/api/runs/discovery');
+        jh.toast(`Run #${out.run_id} queued`);
+        watch(out.run_id);
+      } catch (e) { jh.toast(e.message, true); }
+    }
+    function watch(runId) {
+      if (currentEs) currentEs.close();
+      const con = document.getElementById('console');
+      con.hidden = false; con.innerHTML = `<div>[watching run #${runId}…]</div>`;
+      currentEs = jh.watchRun(runId, logLine, async (done) => {
+        logLine({ level: 'info', node: 'stream', message: `run finished: ${done.status}` });
+        load();
+      });
+    }
+    load();
+  </script>
+</body>
+</html>
