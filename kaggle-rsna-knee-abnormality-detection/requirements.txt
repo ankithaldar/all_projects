@@ -1,0 +1,46 @@
+# =============================================================================
+# Runtime dependencies (Kaggle kernels + local).
+# Dev-only tooling lives in pyproject [project.optional-dependencies] dev:
+#   pip install -e '.[dev]'   -> pytest, ruff
+#   pip install -e '.[monai]' -> true-3D diversity encoder
+# =============================================================================
+
+# Core deep learning
+torch>=2.1
+lightning>=2.2
+timm>=1.0
+
+# Text teacher / zero-shot NLI (weak supervision tiers 2-3)
+transformers>=4.44
+sentencepiece
+
+# Imaging pipeline
+albumentations>=1.4
+opencv-python-headless
+pydicom
+pylibjpeg
+pylibjpeg-libjpeg
+python-gdcm
+
+# Data / metrics / config stack
+pandas
+numpy
+scipy
+scikit-learn
+iterative-stratification
+omegaconf>=2.3
+pydantic>=2.6
+python-dotenv
+
+# Tracking & secrets.
+# All three are OPTIONAL AT RUNTIME: loggers/notifications silently disable
+# themselves when their credentials are absent (see knee/utils/env.py +
+# trainer factory), so kernels run fine with none of them configured.
+requests
+neptune
+wandb>=0.16          # WandbLogger: deterministic per-fold runs, resume='allow',
+                     # log_model='all' -> checkpoints upload as 'model' artifacts
+kaggle
+
+# Optional: true-3D diversity encoder (uncomment when training student_3d_resnet)
+# monai>=1.3

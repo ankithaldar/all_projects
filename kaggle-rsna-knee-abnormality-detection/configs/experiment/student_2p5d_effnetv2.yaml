@@ -1,0 +1,13 @@
+# =============================================================================
+# Experiment: 2.5D EfficientNetV2-S student distilled from the text teacher.
+# Only deltas vs configs/base.yaml; merged on top of it by the loader.
+# =============================================================================
+name: student_2p5d_effnetv2_distilled
+
+paths:
+  volumes_cache: /kaggle/input/knee-volumes-cache-v1
+  weak_labels_parquet: /kaggle/input/knee-weak-labels-v1/weak_labels.parquet
+
+train:
+  label_source: mixed
+  epochs: 12
