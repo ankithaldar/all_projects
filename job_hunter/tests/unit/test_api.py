@@ -78,3 +78,17 @@ def test_settings_roundtrip(client: TestClient) -> None:
   assert put.status_code == 200
   stored = client.get('/api/settings').json()
   assert stored['scoring_weights']['skills_must'] == 0.4
+
+
+def test_fts_search_sanitized_and_functional(client: TestClient) -> None:
+  '''Job search handles raw text safely via FTS sanitization.'''
+  jobs = client.get('/api/jobs?q=data science + python').json()
+  assert isinstance(jobs, list)
+
+
+def test_profile_floor_injected_from_settings(client: TestClient) -> None:
+  '''GET profile surfaces the configured salary floor when unset.'''
+  body = client.put('/api/settings?key=salary_hard_floor_lpa', json=45).json()
+  assert body['status'] == 'saved'
+  profile = client.get('/api/profile').json()
+  assert profile['salary_floor_lpa'] == 45

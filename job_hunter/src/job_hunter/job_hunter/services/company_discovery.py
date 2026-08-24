@@ -43,18 +43,20 @@ def _registrable(url: str) -> str:
   return '.'.join(parts[-2:]) if len(parts) >= 2 else host
 
 
-async def ingest_seeds(settings: AppSettings) -> int:
+async def ingest_seeds(settings: AppSettings, seeds_dir: Path | None = None) -> int:
   '''Upsert every company listed in seeds/*.yaml files.
 
   Args:
     settings: Application settings.
+    seeds_dir: Optional directory override.
 
   Returns:
     Number of seed rows processed.
   '''
   repos = CompaniesRepository(settings.db_path)
   count = 0
-  for path in sorted(Path(settings.seeds_dir).glob('companies_*.yaml')):
+  base = Path(seeds_dir) if seeds_dir else Path(settings.seeds_dir)
+  for path in sorted(base.glob('companies_*.yaml')):
     payload = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     for entry in payload.get('companies') or []:
       repos.upsert(
@@ -210,11 +212,10 @@ async def run_seed_ingestion(config_path: str | Path, seeds_dir: Path) -> int:
   Returns:
     Rows ingested.
   '''
-  settings = AppSettings(config_path)
-  settings.raw.setdefault('_seeds_override', str(seeds_dir))
   from job_hunter.core.bootstrap import bootstrap
   bootstrap(config_path, seeds_dir=seeds_dir)
-  return await ingest_seeds(settings)
+  settings = AppSettings(config_path)
+  return await ingest_seeds(settings, seeds_dir=seeds_dir)
 
 
 _ = asyncio

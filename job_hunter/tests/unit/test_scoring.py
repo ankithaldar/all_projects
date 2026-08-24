@@ -93,3 +93,25 @@ def test_feedback_adjust_bounded() -> None:
   ).DEFAULT_WEIGHTS, dismiss_ratio=1.0)
   assert adjusted['skills_must'] <= DEFAULT_WEIGHTS['skills_must'] + 0.05 + 1e-9
   assert adjusted['semantic'] >= 0.01
+
+
+def test_load_profile_carries_skills(tmp_path: Path, monkeypatch) -> None:
+  '''load_profile populates candidate.skills from stored links.'''
+  from job_hunter.core.config import AppSettings
+  from job_hunter.core.db import run_migrations
+  from job_hunter.db.repositories.profile import ProfileRepository
+  from job_hunter.graph.nodes import load_profile
+  from job_hunter.services.skills_taxonomy import SkillsTaxonomy
+
+  config_path = tmp_path / 'app.yaml'
+  config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
+  monkeypatch.setenv('APP_DATA_DIR', str(tmp_path))
+  settings = AppSettings(config_path)
+  run_migrations(settings.db_path)
+  taxonomy = SkillsTaxonomy(settings.db_path)
+  taxonomy.load_seed({'skills': {'Python': None, 'SQL': None}})
+  profiles = ProfileRepository(settings.db_path)
+  profiles.save_profile({'target_roles': ['Data Scientist']})
+  profiles.set_candidate_skills(taxonomy.resolve_many(['Python', 'SQL']))
+  update = load_profile({}, {'configurable': {'settings': settings}})
+  assert update['candidate'].skills == ['Python', 'SQL']

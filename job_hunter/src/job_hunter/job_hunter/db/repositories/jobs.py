@@ -12,6 +12,19 @@ from typing import Any, Dict, List, Optional
 from job_hunter.core.db import connect, session
 
 
+def sanitize_fts(query: str) -> str:
+  '''Escape user input into a safe AND-of-quoted-terms MATCH expression.
+
+  Args:
+    query: Raw user search text.
+
+  Returns:
+    Sanitized FTS5 MATCH string.
+  '''
+  terms = [t.strip() for t in (query or '').split() if t.strip()]
+  return ' AND '.join('"' + t.replace('"', '""') + '"' for t in terms)
+
+
 class JobsRepository:
   '''CRUD for jobs plus dedupe and search helpers.'''
 
@@ -167,7 +180,7 @@ class JobsRepository:
       params.append(vertical)
     if q:
       base += ' AND j.id IN (SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH ?)'
-      params.append(q.replace('"', '""'))
+      params.append(sanitize_fts(q))
     base += ' ORDER BY COALESCE(j.posted_at, j.first_seen_at) DESC LIMIT ? OFFSET ?'
     params.extend([per_page, (max(1, page) - 1) * per_page])
     rows = connect(self._db_path, readonly=True).execute(base, params).fetchall()
