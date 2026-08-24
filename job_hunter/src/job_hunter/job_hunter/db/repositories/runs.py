@@ -135,8 +135,9 @@ class RunsRepository:
     '''
     with session(self._db_path) as conn:
       rows = conn.execute(
-        "SELECT id FROM runs WHERE status = 'running' AND started_at < "
-        "datetime('now', ?)",
+        'SELECT id FROM runs WHERE '
+        "(status = 'running' AND started_at < datetime('now', ?)) "
+        "OR status = 'pending'",
         (f'-{ttl_minutes} minutes',),
       ).fetchall()
       ids = [int(row['id']) for row in rows]

@@ -271,6 +271,12 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
     }
   run_id = int(state['run_id'])
 
+  db_settings = SettingsRepository(settings.db_path)
+  disc_overrides = db_settings.get('discovery', {}) or {}
+  max_llm_calls = int(disc_overrides.get(
+    'max_llm_calls_per_run',
+    int(settings.discovery.get('max_llm_calls_per_run', 300)),
+  ))
   raw_budget = state.get('budget')
   if isinstance(raw_budget, TokenBudget):
     budget = raw_budget.model_copy()
@@ -280,15 +286,38 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
     budget = TokenBudget(max_calls=int(
       settings.discovery.get('max_llm_calls_per_run', 300),
     ))
+  budget.max_calls = max_llm_calls
   floor = float(SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0))
   enriched_map: Dict[str, Any] = dict(state.get('enriched') or {})
   stats: Dict[str, int] = {}
 
-  for job in state.get('inserted') or []:
+  cap = int(disc_overrides.get(
+    'enrich_per_run_cap',
+    int(settings.discovery.get('enrich_per_run_cap', 40)),
+  ))
+  attempted = 0
+  targets = [
+    {'job_id': int(j.job_id), 'content_hash': j.content_hash, 'title': j.raw.title}
+    for j in state.get('inserted') or [] if j.job_id
+  ]
+  shortfall = cap - len(targets)
+  if shortfall > 0:
+    for back in jobs_repo.jobs_needing_enrichment(limit=shortfall):
+      targets.append({
+        'job_id': int(back['job_id']),
+        'content_hash': back['content_hash'],
+        'title': back['title'],
+      })
+  stats['enrich_backlog'] = max(0, len(targets) - len(state.get('inserted') or []))
+
+  for job in targets:
+    if attempted >= cap:
+      stats['enrich_capped'] = stats.get('enrich_capped', 0) + 1
+      continue
     if not budget.allow():
       stats['enrich_skipped_budget'] = stats.get('enrich_skipped_budget', 0) + 1
       continue
-    row = jobs_repo.get(int(job.job_id))
+    row = jobs_repo.get(int(job['job_id']))
     description = (row or {}).get('description_text') or ''
     if len(description) < 200:
       stats['enrich_skipped_short'] = stats.get('enrich_skipped_short', 0) + 1
@@ -296,19 +325,19 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
     budget.spend()
     try:
       extraction = await analyst.extract(
-        title=job.raw.title,
+        title=job['title'],
         description_text=description,
         session_id=f'{run_id}:jd_analyst',
       )
     except Exception as exc:
-      logger.warning('extraction failed job %s: %s', job.job_id, exc)
+      logger.warning('extraction failed job %s: %s', job['job_id'], exc)
       stats['enrich_failures'] = stats.get('enrich_failures', 0) + 1
       continue
 
-    sal_min = extraction.salary_min_lpa if extraction.salary_min_lpa is not None else job.salary_min_lpa
-    sal_max = extraction.salary_max_lpa if extraction.salary_max_lpa is not None else job.salary_max_lpa
-    mode = extraction.work_mode if extraction.work_mode != WorkMode.UNKNOWN else job.work_mode
-    jobs_repo.update_fields(int(job.job_id), {
+    sal_min = extraction.salary_min_lpa if extraction.salary_min_lpa is not None else row.get('salary_min_lpa')
+    sal_max = extraction.salary_max_lpa if extraction.salary_max_lpa is not None else row.get('salary_max_lpa')
+    mode = extraction.work_mode if extraction.work_mode != WorkMode.UNKNOWN else (row.get('work_mode') or WorkMode.UNKNOWN)
+    jobs_repo.update_fields(int(job['job_id']), {
       'salary_min_lpa': sal_min,
       'salary_max_lpa': sal_max,
       'experience_min_yrs': extraction.experience_min_years,
@@ -332,14 +361,14 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
             'kind': kind,
             'confidence': extraction.confidence,
           })
-    jobs_repo.attach_skill_rows(int(job.job_id), skill_rows)
+    jobs_repo.attach_skill_rows(int(job['job_id']), skill_rows)
 
     passes, reason = apply_salary_floor(extraction, floor)
     if not passes:
       stats['below_salary_floor'] = stats.get('below_salary_floor', 0) + 1
-      logger.info('job %s filtered by floor: %s', job.job_id, reason)
+      logger.info('job %s filtered by floor: %s', job['job_id'], reason)
 
-    enriched_map[job.content_hash] = {
+    enriched_map[job['content_hash']] = {
       'must_have_skills': extraction.must_have_skills,
       'nice_to_have_skills': extraction.nice_to_have_skills,
       'experience_min_years': extraction.experience_min_years,
@@ -475,8 +504,20 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
     vectors = embedder.embed([candidate_doc[:2000]])
     candidate_vector = vectors[0] if vectors else None
 
+  scoring_targets = list(state.get('inserted') or [])
+  if not scoring_targets:
+    for back in jobs_repo.jobs_missing_recommendations(limit=100):
+      scoring_targets.append(type('Stub', (), {
+        'job_id': int(back['job_id']),
+        'content_hash': back['content_hash'],
+        'company_id': back.get('company_id'),
+        'raw': type('R', (), {'title': back['title'], 'company_name': back.get('company_raw_name') or ''})(),
+      })())
+    if scoring_targets:
+      logger.info('scoring %s backlog jobs', len(scoring_targets))
+
   scored: List[ScoredJob] = []
-  for job in state.get('inserted') or []:
+  for job in scoring_targets:
     row = jobs_repo.get_with_company(int(job.job_id)) or {}
     enriched = (state.get('enriched') or {}).get(job.content_hash)
     failures = gate_failures(candidate, row, enriched)

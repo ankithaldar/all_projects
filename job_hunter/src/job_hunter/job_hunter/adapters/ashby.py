@@ -89,12 +89,7 @@ class AshbyAdapter(SourceAdapter):
       Raw job records.
     '''
     url = f'https://api.ashbyhq.com/posting-api/job-board/{target.board_ref}'
-    payload = await self._http.get_json(
-      url,
-      params={'includeCompensation': 'true'},
-      method='POST',
-      rpm=30,
-    )
+    payload = await self._http.get_json(url, method='GET', rpm=30)
     return parse_payload(dict(payload), self.source_key)[:limit]
 
   async def health(self, target: CompanyTarget) -> bool:
@@ -109,7 +104,7 @@ class AshbyAdapter(SourceAdapter):
     try:
       await self._http.get_json(
         f'https://api.ashbyhq.com/posting-api/job-board/{target.board_ref}',
-        method='POST',
+        method='GET',
       )
       return True
     except Exception:
