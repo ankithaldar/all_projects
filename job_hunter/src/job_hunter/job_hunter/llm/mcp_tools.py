@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from job_hunter.core.config import AppSettings
+
+logger = logging.getLogger(__name__)
 
 
 class MCPClientManager:
@@ -34,20 +37,46 @@ class MCPClientManager:
     self.sessions: Dict[str, ClientSession] = {}
 
   async def open(self) -> None:
-    '''Launch all configured servers over stdio.'''
+    '''Launch configured servers over stdio, skipping broken ones.'''
     if self._stack is not None:
       return
     stack = AsyncExitStack()
+    env = self._child_env()
     for name, spec in self._settings.mcp.items():
-      command = str(spec.get('command', '{python}')).replace(
-        '{python}', __import__('sys').executable,
-      )
-      params = StdioServerParameters(command=command, args=list(spec.get('args', [])))
-      read, write = await stack.enter_async_context(stdio_client(params))
-      session = await stack.enter_async_context(ClientSession(read, write))
-      await session.initialize()
-      self.sessions[name] = session
+      try:
+        command = str(spec.get('command', '{python}')).replace(
+          '{python}', __import__('sys').executable,
+        )
+        params = StdioServerParameters(
+          command=command,
+          args=list(spec.get('args', [])),
+          env=env,
+          cwd=str(self._settings.app_root),
+        )
+        read, write = await stack.enter_async_context(stdio_client(params))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        self.sessions[name] = session
+      except Exception as exc:
+        logger.warning('mcp server %s unavailable: %s', name, exc)
     self._stack = stack
+
+  def _child_env(self) -> Dict[str, str]:
+    '''Build an environment exposing top-level packages to child servers.
+
+    Returns:
+      Environment mapping with PYTHONPATH including the source root.
+    '''
+    import os
+    env = dict(os.environ)
+    src_root = str(self._settings.app_root / 'src' / 'job_hunter')
+    existing = env.get('PYTHONPATH', '')
+    parts = [part for part in existing.split(os.pathsep) if part]
+    if src_root not in parts:
+      parts.insert(0, src_root)
+    env['PYTHONPATH'] = os.pathsep.join(parts)
+    env.setdefault('JH_APP_CONFIG', str(self._settings.config_path))
+    return env
 
   async def close(self) -> None:
     '''Shut down all sessions.'''
