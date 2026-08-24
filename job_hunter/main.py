@@ -60,12 +60,34 @@ def main() -> int:
     return 0
 
   if args.command == 'run-discovery':
-    import asyncio
-    from job_hunter.workers.jobs import execute_pending_run, enqueue_run
+    import signal
+    from job_hunter.workers.jobs import (
+      enqueue_run, execute_pending_run, recover_orphans,
+    )
     config_path = args.config
-    run_id = asyncio.run(enqueue_run(config_path, kind='discovery'))
-    result = asyncio.run(execute_pending_run(config_path, run_id))
-    print(f'run {result["run_id"]} finished: {result["status"]}')
+    orphans = recover_orphans(config_path, ttl_minutes=5)
+    if orphans:
+      print(f'recovered stale runs: {orphans}')
+
+    def _graceful(signum, frame):
+      raise KeyboardInterrupt(f'signal {signum}')
+
+    signal.signal(signal.SIGTERM, _graceful)
+    run_id = enqueue_run(config_path, kind='discovery')
+    try:
+      result = execute_pending_run(config_path, run_id)
+      print(f'run {result["run_id"]} finished: {result["status"]}')
+    except BaseException as exc:  # noqa: B036 - deliberate broad catch
+      print(f'run {run_id} aborted: {type(exc).__name__}: {exc}')
+    finally:
+      from job_hunter.db.repositories.runs import RunsRepository
+      from job_hunter.workers.jobs import _settings
+      row = RunsRepository(_settings(config_path)).get(run_id) or {}
+      if row.get('status') == 'running':
+        RunsRepository(_settings(config_path)).finish(
+          run_id, 'failed', {}, error_text='runner terminated',
+        )
+        print(f'run {run_id} finalized as failed')
     return 0
 
   if args.command == 'discover-companies':

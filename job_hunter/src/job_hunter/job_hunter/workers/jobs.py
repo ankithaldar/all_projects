@@ -68,17 +68,18 @@ def execute_pending_run(
   return asyncio.run(manager.execute(run_id))
 
 
-def recover_orphans(config_path: str | Path) -> list:
-  '''Fail stale running rows from crashed workers.
+def recover_orphans(config_path: str | Path, ttl_minutes: int = 120) -> list:
+  '''Fail stale non-terminal runs from crashed workers.
 
   Args:
     config_path: app.yaml path.
+    ttl_minutes: Age threshold for orphaned runs.
 
   Returns:
     Recovered run ids.
   '''
   from job_hunter.services.run_manager import RunManager
-  return RunManager(_settings(config_path)).recover_orphans()
+  return RunManager(_settings(config_path)).recover_orphans(ttl_minutes)
 
 
 def stale_sweep(config_path: str | Path) -> int:
