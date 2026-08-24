@@ -161,8 +161,35 @@ def build_ppo_algorithm(
   return config.build(env=WorldOfSupplyEnv)
 
 
+def _apply_to_envs(env, fn):
+  '''Apply a callable to every underlying environment instance.
+
+  New RLLib runners wrap environments in a Gymnasium ``VectorEnv`` whose
+  children live under ``.envs`` and may carry additional Gymnasium wrappers;
+  older paths expose the bare environment. Local placeholder runners without
+  an environment are skipped safely.
+
+  Args:
+    env: An environment, vector environment, or ``None``.
+    fn: Callable receiving each concrete (unwrapped) environment.
+  '''
+  if env is None:
+    return
+  sub_envs = getattr(env, 'envs', None)
+  if sub_envs is None:
+    candidates = [env]
+  else:
+    candidates = list(sub_envs)
+  for candidate in candidates:
+    if candidate is not None:
+      fn(getattr(candidate, 'unwrapped', candidate))
+
+
 def train(algorithm, n_iterations: int, log=lambda iteration, result: None) -> object:
   '''Run PPO iterations with curriculum progress reporting.
+
+  Works across Ray 2.x releases by resolving the env-runner group through
+  whichever accessor the installed version exposes.
 
   Args:
     algorithm: Built RLLib algorithm.
@@ -172,10 +199,30 @@ def train(algorithm, n_iterations: int, log=lambda iteration, result: None) -> o
   Returns:
     object: The trained algorithm.
   '''
+
+  def resolve_worker_set():
+    '''Fetch the collection of rollout workers version-tolerantly.
+
+    Returns:
+      object: EnvRunnerGroup (new Ray) or WorkerSet (older Ray).
+    '''
+    try:
+      return algorithm.env_runner_group
+    except AttributeError:
+      return algorithm.workers() if callable(algorithm.workers) else algorithm.workers
+
   for iteration in range(n_iterations):
-    algorithm.workers.foreach_worker(
-        lambda worker: worker.foreach_env(lambda env: env.set_iteration(iteration, n_iterations))
-    )
+    worker_set = resolve_worker_set()
+    if hasattr(worker_set, 'foreach_env_runner'):
+      worker_set.foreach_env_runner(
+          lambda runner: _apply_to_envs(
+              runner.env, lambda env: env.set_iteration(iteration, n_iterations)
+          )
+      )
+    else:
+      worker_set.foreach_worker(
+          lambda worker: worker.foreach_env(lambda env: env.set_iteration(iteration, n_iterations))
+      )
     result = algorithm.train()
     log(iteration, result)
   return algorithm

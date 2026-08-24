@@ -84,14 +84,19 @@ def run_training(iterations: int, train_toy_factories_only: bool) -> int:
   def log(iteration: int, result: dict) -> None:
     '''Print compact training progress.
 
+    Resolves metric locations across RLLib result-schema versions.
+
     Args:
       iteration: Iteration index.
       result: RLLib result dictionary.
     '''
+    runners = result.get('env_runners') or {}
     reward = result.get('episode_reward_mean')
     if reward is None:
-      reward = (result.get('env_runners') or {}).get('episode_return_mean')
+      reward = runners.get('episode_return_mean')
     timesteps = result.get('timesteps_total')
+    if timesteps is None:
+      timesteps = runners.get('num_env_steps_sampled_lifetime')
     print(f'iteration {iteration}: reward_mean={reward} timesteps={timesteps}')
 
   algorithm = build_ppo_algorithm(
