@@ -55,6 +55,22 @@ class TestCollectArtifacts:
       pub.collect_artifacts(str(empty), tmp_path / 'stage')
 
 
+class TestSanitizeSlug:
+  """Kaggle slugs are [a-z0-9-]; everything else must be normalized."""
+
+  def test_underscore_becomes_dash(self):
+    assert (
+      pub.sanitize_slug('ah2022_rsna-knee-abnormality-detection')
+      == 'ah2022-rsna-knee-abnormality-detection'
+    )
+
+  def test_mixed_punctuation_and_case(self):
+    assert pub.sanitize_slug('  My__Weird!!Name  ') == 'my-weird-name'
+
+  def test_valid_slug_unchanged(self):
+    assert pub.sanitize_slug('already-fine-123') == 'already-fine-123'
+
+
 class TestWriteMetadata:
   """Metadata follows the official ``datasets init`` + patch flow."""
 

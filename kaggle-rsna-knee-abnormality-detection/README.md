@@ -57,7 +57,7 @@ shards are used as a read-only accelerator when present.
 
 Every kernel boots an empty `/kaggle/working`; all resumable state
 therefore lives in **one private Kaggle dataset** (default:
-`ah2022_rsna-knee-abnormality-detection`).
+`ah2022-rsna-knee-abnormality-detection`).
 
 One-time per kernel setup:
 
@@ -74,7 +74,7 @@ Then:
    dispatching:
 
    ```bash
-   export PREV_OUTPUT=/kaggle/input/ah2022_rsna-knee-abnormality-detection
+   export PREV_OUTPUT=/kaggle/input/ah2022-rsna-knee-abnormality-detection
    export FOLDS_LIST='2,3'          # this kernel's fold shard
    bash /kaggle/working/repo/scripts/kaggle_run.sh student
    ```

@@ -38,7 +38,7 @@
 #   across kernels within the ~30 GPU-hour total.
 #
 # Cross-kernel state lives in ONE private Kaggle dataset (DATASET_NAME,
-# default ah2022_rsna-knee-abnormality-detection). Add-ons -> Secrets ->
+# default ah2022-rsna-knee-abnormality-detection). Add-ons -> Secrets ->
 # KAGGLE_USERNAME + KAGGLE_KEY, then either:
 #     bash scripts/kaggle_run.sh publish          # push when you choose
 # or  export AUTO_PUBLISH=1                       # ...or after every stage
@@ -67,7 +67,7 @@
 #   PREV_OUTPUT prior kernel output mount(s), colon-separated -- copied
 #               into $WORK before dispatch (fresh-container handoff)
 #   DATASET_NAME private dataset receiving all artifacts
-#                (default ah2022_rsna-knee-abnormality-detection)
+#                (default ah2022-rsna-knee-abnormality-detection)
 #   AUTO_PUBLISH 1 -> run 'publish' automatically after each stage
 #   PUBLISH_MESSAGE  version note for the dataset push
 #   SHARD/NUM_SHARDS/MIN_FREE_GB  volumes-stage sharding + disk guard
@@ -129,7 +129,7 @@ VOLUMES_CACHE="${VOLUMES_CACHE:-}"
 WEAK_LABELS="${WEAK_LABELS:-$WORK/weak_labels.parquet}"
 TEACHER_DIR="${TEACHER_DIR:-$WORK/text_teacher}"
 TIME_BUDGET_HOURS="${TIME_BUDGET_HOURS:-11}"
-DATASET_NAME="${DATASET_NAME:-ah2022_rsna-knee-abnormality-detection}"
+DATASET_NAME="${DATASET_NAME:-ah2022-rsna-knee-abnormality-detection}"
 
 # --- 1b. restore prior-kernel artifacts (fresh-container handoff) -----------
 # Every Kaggle kernel boots a NEW container: previous outputs exist only
