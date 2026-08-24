@@ -82,6 +82,7 @@ class RawJobRecord(BaseModel):
 class NormalizedJob(BaseModel):
   '''Canonical job row ready for persistence.'''
 
+  job_id: Optional[int] = None
   raw: RawJobRecord
   canonical_url: str
   content_hash: str
