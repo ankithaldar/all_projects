@@ -58,11 +58,11 @@ class TestCollectArtifacts:
 class TestWriteMetadata:
   def test_metadata_matches_tutorial_contract(self, tmp_path: Path):
     pub.write_metadata(
-      tmp_path, 'ah2022', 'ah2022_-rsna-knee-abnormality-detection'
+      tmp_path, 'ah2022', 'ah2022_rsna-knee-abnormality-detection'
     )
     metadata = json.loads((tmp_path / 'dataset-metadata.json').read_text())
-    assert metadata['id'] == ('ah2022/ah2022_-rsna-knee-abnormality-detection')
-    assert metadata['title'] == 'ah2022_-rsna-knee-abnormality-detection'
+    assert metadata['id'] == ('ah2022/ah2022_rsna-knee-abnormality-detection')
+    assert metadata['title'] == 'ah2022_rsna-knee-abnormality-detection'
     assert metadata['licenses'], 'Kaggle requires a license entry'
 
 
