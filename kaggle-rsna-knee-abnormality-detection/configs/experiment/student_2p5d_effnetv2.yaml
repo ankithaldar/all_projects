@@ -1,13 +1,16 @@
 # =============================================================================
 # Experiment: 2.5D EfficientNetV2-S student distilled from the text teacher.
 # Only deltas vs configs/base.yaml; merged on top of it by the loader.
+# Volumes stream from the DICOM mount (no volumes cache fits Kaggle disk);
+# mount optional npz shards via --set paths.volumes_cache=<dir[:dir...]>.
 # =============================================================================
 name: student_2p5d_effnetv2_distilled
 
 paths:
-  volumes_cache: /kaggle/input/knee-volumes-cache-v1
   weak_labels_parquet: /kaggle/input/knee-weak-labels-v1/weak_labels.parquet
 
 train:
   label_source: mixed
   epochs: 12
+  # Split folds across kernels: ~30 GPU-hours total / 12 h per kernel.
+  time_budget_hours: 11

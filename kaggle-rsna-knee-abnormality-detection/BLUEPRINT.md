@@ -39,8 +39,9 @@ noise-tolerant losses, and a diverse ensemble blended on honest OOF.
 ## 2. Data preprocessing
 
 1. **DICOM decode**: `pydicom` + `pylibjpeg`/`gdcm` plugins for JPEG-lossless/J2K transfer syntaxes.
-   Decode once → cache `.npz` volumes keyed by `SeriesInstanceUID` (uint16, original HU-free MR intensities,
-   plus stored `InstanceNumber` order). Kaggle kernels are I/O-bound on DICOM; caching turns days into hours.
+   Decode on demand behind a RAM-bounded LRU (`src/knee/datasets/volume_store.py`) -- the ~570 GB
+   tree cannot be cached whole on Kaggle's 30 GB disk, so kernels stream-decode from the read-only
+   mount; optional npz *shards* (kernel 1) accelerate later stages when mounted.
 2. **Slice ordering**: sort by `ImagePositionPatient · slice_normal` when tags exist in the 86-tag allowlist;
    fallback to `InstanceNumber`; final fallback SOP UID sort. Verify ordering visually for ≥20 series.
 3. **Windowing/normalization**: per-series percentile normalization (p1–p99) → uint8; MR has no absolute scale,
@@ -196,17 +197,31 @@ never an engine change (Open/Closed). Implemented in `optimizers/gradients.py`,
 5. Budget: inference of 1300 studies × ~4 series × 32 slices must fit kernel limits — precomputed npz cache +
    fp16 + batch 32 keeps full ensemble <2 h.
 
-## 9. Kaggle execution plan
+## 9. Kaggle execution plan (30 GB disk / 12 h kernel / ~30 GPU-hours)
+
+> **Cache reality check:** the raw tree is ~570 GB, so a complete
+> `volumes_cache` can never exist on Kaggle. Volumes are
+> **stream-decoded** from the read-only mount at train/infer time via a
+> RAM-bounded LRU (`src/knee/datasets/volume_store.py`); the caching
+> kernel below is an *optional accelerator* producing resumable,
+> disk-guarded **shards** published as separate datasets.
 
 | # | Kernel (script) | Input | Output artifact |
 |---|---|---|---|
-| 1 | `scripts/prepare_volumes.py` | DICOMs | `volumes_cache/` dataset (~compressed npz) |
+| 1 | `scripts/prepare_volumes.py` *(optional)* | DICOMs | one bounded npz shard + `volumes_manifest.parquet` |
 | 2 | `scripts/make_folds.py` | train.csv | `train_folds.csv` |
-| 3 | `scripts/train_text_teacher.py` + `build_weak_labels.py` | reports + folds | `weak_labels.parquet` dataset |
-| 4 | `scripts/train_image_student.py` | cache + folds + weak labels | fold ckpts + OOF |
-| 5 | `scripts/self_train.py` | ckpts + cache | relabeled parquet → re-run 4 (2 rounds) |
-| 6 | `scripts/infer.py` | ckpts + test cache | `submission.csv` |
+| 3 | `scripts/train_text_teacher.py` + `build_weak_labels.py` | reports + folds | `weak_labels.parquet` dataset (small) |
+| 4 | `scripts/train_image_student.py --folds 0,1` | folds + weak labels (+ shards) | fold ckpts + per-fold OOF parquets |
+| 5 | `scripts/self_train.py` | ckpts + OOF | relabeled parquet -> re-run 4 (max 2 rounds) |
+| 6 | `scripts/infer.py` | ckpts + test DICOMs | `submission.csv` |
 | 7 | `scripts/blend_submissions.py` | submissions | final `submission.csv` |
+
+Budget mechanics: `train.time_budget_hours` maps to Lightning
+``max_time`` so every fold stops cleanly inside the 12 h wall;
+completed folds persist as `<name>_oof_fold{N}.parquet` and are skipped
+when the same command re-runs in the next kernel. Spread folds over
+kernels (`--folds 0,1` then `--folds 2,3 ...`) to stay within ~30
+GPU-hours.
 
 Every kernel boots through one cell (see `scripts/kaggle_run.sh`
 header): clone **this branch** (`-b competitions/kaggle-rsna-knee-
@@ -272,11 +287,13 @@ src/knee/
   the 12 target probability columns, per-class provenance tags
   `<target>_source ∈ {gold, rule, teacher, none}`, and a scalar
   `weight` (mean class trust) consumed as sample weight.
-- **volumes cache**: `<cache>/<SeriesInstanceUID>.npz` keyed `volume`
-  (uint8 `(num_slices, image_size, image_size)` after p1–p99 windowing,
-  in-plane resize and uniform depth resampling) plus
+- **volumes cache (optional shards)**: `<shard>/<SeriesInstanceUID>.npz`
+  keyed `volume` (uint8 `(num_slices, image_size, image_size)` after
+  p1-p99 windowing, in-plane resize and uniform depth resampling) plus
   `volumes_manifest.parquet` carrying ids, `cache_path`, raw slice
   counts and any acquisition-metadata columns from the series CSV.
+  Shards are read-only accelerators; training/inference stream-decode
+  any series missing from them.
 - **Config merge**: experiment YAMLs contain only deltas;
   `load_config()` merges the nearest `configs/base.yaml` underneath,
   then applies CLI `--set` dotlist overrides (kaggle_run.sh uses these

@@ -14,7 +14,12 @@ paths:
   test_csv: test.csv
   test_series_csv: test_series.csv
   test_series_dir: test_series
-  volumes_cache: null            # e.g. /kaggle/input/knee-volumes-cache-v1
+  # Kaggle disk (30 GB) cannot hold a cache of the ~570 GB DICOM tree, so
+  # volumes STREAM from the read-only mount by default. Point this at one
+  # dir -- or os.pathsep-joined optional npz shards built by
+  # scripts/prepare_volumes.py -- to use them as a read-only accelerator;
+  # misses fall back to live decode.
+  volumes_cache: null
   folds_csv: train_folds.csv
   weak_labels_parquet: null      # e.g. /kaggle/input/knee-weak-labels-v1/weak_labels.parquet
   checkpoints_dir: checkpoints   # resolved under output_dir at runtime
@@ -103,6 +108,9 @@ datamodule:
   num_workers: 4
   max_series_per_study: 6
   pin_memory: true
+  # Per-worker LRU for stream-decoded volumes (no disk cache on Kaggle):
+  lru_max_volumes: 256          # ~256 x 4.7 MB uint8 volumes
+  lru_max_gb: 4                 # byte ceiling per worker
 
 train:
   fold_scheme: iterative_multilabel
@@ -110,6 +118,7 @@ train:
   train_folds: [0, 1, 2, 3, 4]
   label_source: mixed             # gold hard labels + weak soft labels
   resume: false                   # auto-resume folds from latest/W&B checkpoint
+  time_budget_hours: null         # e.g. 11 -> Lightning max_time cap (12 h kernel limit)
   grad_noise: 0.0                 # >0 enables GradientNoiseInjector(eta)
   amp_fallback: false             # restart fit in fp32 on AMP divergence
   grad_clip: null                 # e.g. {target: knee.optimizers.gradients.AdaptiveClipping, params: {multiplier: 1.5}}
@@ -129,7 +138,9 @@ train:
       deterministic: false
   callbacks:
     - target: lightning.pytorch.callbacks.ModelCheckpoint
-      params: { monitor: val_macro_auc, mode: max, save_top_k: 1, filename: "{epoch}-{val_macro_auc:.4f}" }
+      params: { monitor: val_macro_auc, mode: max, save_top_k: 1, save_last: true, filename: "{epoch}-{val_macro_auc:.4f}" }
+      # save_last -> fold<N>/last.ckpt carries exact optimizer/EMA state
+      # so a fold interrupted by the 12 h kernel wall resumes epoch-level.
     - target: lightning.pytorch.callbacks.LearningRateMonitor
       params: { logging_interval: epoch }              # per-group LRs into the logger
     - target: lightning.pytorch.callbacks.EarlyStopping

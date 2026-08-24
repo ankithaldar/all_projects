@@ -45,16 +45,66 @@ export DATA_ROOT=/path/to/rsna
 bash scripts/run_all.sh         # kernels 1->7 with resumable stages
 ```
 
-## Kaggle workflow
+## Kaggle workflow (30 GB disk, 12 h/kernel, ~30 GPU-hours)
 
-Each `scripts/*.py` stage maps to one notebook kernel; push artifacts
-(volume cache, folds, weak labels, checkpoints) as versioned datasets and
-point `paths.*` overrides at them via `--set` dotlists:
+The DICOM tree is ~570 GB -- a full volumes cache CANNOT fit and is not
+required. Volumes **stream-decode** from the read-only `/kaggle/input`
+mount through a bounded LRU RAM cache
+(`src/knee/datasets/volume_store.StreamingVolumeStore`); any mounted npz
+shards are used as a read-only accelerator when present.
+
+### Multi-kernel lifecycle (fresh container every kernel)
+
+Every kernel boots an empty `/kaggle/working`; all resumable state
+therefore lives in **one private Kaggle dataset** (default:
+`ah2022_-rsna-knee-abnormality-detection`).
+
+One-time per kernel setup:
+
+- Add-ons -> Secrets -> `KAGGLE_USERNAME`, `KAGGLE_KEY`.
+- After the dataset exists once: Add Data -> Your Datasets -> attach it.
+
+Then:
+
+1. **Kernel N**: run stages; push state with
+   `bash scripts/kaggle_run.sh publish` (or `export AUTO_PUBLISH=1` to
+   push after every successful stage -- a 12 h kill then costs at most
+   one stage of work).
+2. **Kernel N+1**: point the bootstrap at the mounted dataset before
+   dispatching:
+
+   ```bash
+   export PREV_OUTPUT=/kaggle/input/ah2022_-rsna-knee-abnormality-detection
+   export FOLDS_LIST='2,3'          # this kernel's fold shard
+   bash /kaggle/working/repo/scripts/kaggle_run.sh student
+   ```
+
+   The bootstrap copies checkpoints/OOF/folds/labels forward into the
+   writable `/kaggle/working`: finished folds skip instantly,
+   interrupted folds resume epoch-level from
+   `checkpoints/fold<N>/last.ckpt` (`RESUME=1` default), and new folds'
+   artifacts land in `$WORK` ready for the next `publish`.
+
+Budget mechanics baked in:
+
+- **Fold sharding**: `FOLDS_LIST='0,1'` then `'2,3'` ... per kernel;
+  per-fold OOF parquets make re-running idempotent.
+- **Time budget**: `train.time_budget_hours` -> Lightning `max_time`,
+  sized to remaining wall clock (default 11 h), so kernels end with
+  valid checkpoints instead of being hard-killed.
+- Deps reinstall automatically in each fresh container (~2-3 min);
+  GPU quota is consumed per kernel, so skipped folds cost nothing.
+- Save Version remains an optional belt-and-braces backup alongside
+  the dataset handoff.
+
+First cell of every student kernel:
 
 ```bash
-python scripts/train_image_student.py --config configs/experiment/$EXP.yaml \
-    --set paths.volumes_cache=/kaggle/input/knee-volumes-cache-v1 \
-          paths.weak_labels_parquet=/kaggle/input/knee-weak-labels-v1/weak_labels.parquet
+%%bash
+git clone --depth 1 https://github.com/<user>/<repo>.git /kaggle/working/repo
+export PREV_OUTPUT=/kaggle/input/ah2022_-rsna-knee-abnormality-detection
+export FOLDS_LIST='2,3'                                     # this kernel's shard
+bash /kaggle/working/repo/scripts/kaggle_run.sh student     # AUTO_PUBLISH=1 optional
 ```
 
 Secrets resolve in order: env vars -> `.env` -> Kaggle Secrets

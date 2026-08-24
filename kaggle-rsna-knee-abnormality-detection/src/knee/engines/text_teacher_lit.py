@@ -62,6 +62,14 @@ class _TeacherTrainCfg(BaseModel):
   warmup_ratio: float = Field(default=0.1, ge=0, le=1)
   amp: str = 'bf16'
   early_stopping_patience: int = Field(default=2, ge=1)
+  time_budget_hours: float | None = Field(
+    default=None,
+    gt=0,
+    description=(
+      'Wall-clock cap for the whole fold loop (Kaggle 12 h kernel '
+      'limit); each Trainer gets the remaining time as max_time.'
+    ),
+  )
 
 
 class _TeacherFusionCfg(BaseModel):
