@@ -18,6 +18,8 @@ verticals:
     keywords: [logistics, supply chain, fleet, shipping, warehousing, mobility]
   gaming_media:
     keywords: [gaming, esports, streaming, media, entertainment, ott]
+  retail_tech:
+    keywords: [retail, store, merchandising]
   analytics_consulting:
     keywords: [analytics, consulting, data science services, decision science]
 
