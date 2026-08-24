@@ -109,3 +109,13 @@ Append-only log. Format: **Context** → Lesson → Rule.
 - Context: the 500 became a 502 only after moving get_client() inside try.
 - Lesson: object construction can fail as meaningfully as method calls.
 - Rule: wrap dependency construction and usage in the same error policy.
+
+## `from __future__ import annotations` + Pydantic = lazy NameErrors
+- Context: `ProfileExtraction` used `List[str]` but profile_curator.py
+  never imported List; every resume upload failed at validation time
+  with "not fully defined ... call model_rebuild()".
+- Lesson: postponed annotations turn missing typing imports into runtime
+  failures on first validation, not at class definition.
+- Rule: when a module defines Pydantic models under future-annotations,
+  import every annotation name from typing, and add a construct +
+  model_json_schema() test to force resolution.
