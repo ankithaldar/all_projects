@@ -79,7 +79,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument(
     '--dir-mode',
     default='zip',
-    choices=['skip', 'zip', 'tar', 'gzip'],
+    choices=['skip', 'zip', 'tar'],
     help='How subdirectories (checkpoints/foldN/) are uploaded.',
   )
   parser.add_argument(
@@ -282,42 +282,36 @@ def push(
       dir_mode: Subdirectory handling passed to the CLI.
   """
   log = get_logger('publish_dataset')
+  # -t/--keep-tabular: OOF parquets must upload byte-identical (the CLI
+  # otherwise converts tabular files to CSV, per datasets.md).
+  keep_tabular = ['-t']
+
+  def _push_cmd(action: str) -> list[str]:
+    """Assemble the argv for a create/version call.
+
+    Args:
+        action: 'create' or 'version'.
+
+    Returns:
+        Full argument vector after the program name.
+    """
+    cmd = ['datasets', action, *keep_tabular]
+    if action == 'version':
+      cmd += ['-m', message]
+    return [*cmd, '-p', str(staging), '-r', dir_mode]
+
   if dataset_exists(username, dataset_name):
-    done = _run_kaggle(
-      [
-        'datasets',
-        'version',
-        '-m',
-        message,
-        '-p',
-        str(staging),
-        '--dir-mode',
-        dir_mode,
-      ]
-    )
+    done = _run_kaggle(_push_cmd('version'))
     action = 'versioned'
   else:
-    done = _run_kaggle(
-      ['datasets', 'create', '-p', str(staging), '--dir-mode', dir_mode]
-    )
+    done = _run_kaggle(_push_cmd('create'))
     action = 'created'
   if done.returncode != 0:
     combined = f'{done.stdout}{done.stderr}'
     # A lost race between probe and push ("already exists") is safe to
     # retry as a version push.
     if action == 'created' and 'already exist' in combined.lower():
-      retry = _run_kaggle(
-        [
-          'datasets',
-          'version',
-          '-m',
-          message,
-          '-p',
-          str(staging),
-          '--dir-mode',
-          dir_mode,
-        ]
-      )
+      retry = _run_kaggle(_push_cmd('version'))
       if retry.returncode == 0:
         _verify(username, dataset_name)
         log.info('dataset %s/%s versioned', username, dataset_name)
