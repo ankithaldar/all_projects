@@ -48,6 +48,7 @@ def build_discovery_graph(checkpointer: Optional[Any] = None):
   builder.add_node('enrich_jds', node_fns.enrich_jds)
   builder.add_node('compute_embeddings', node_fns.compute_embeddings)
   builder.add_node('score_rank_persist', node_fns.score_rank_persist)
+  builder.add_node('summarize_run', node_fns.summarize_run)
 
   builder.set_entry_point('load_profile')
   builder.add_edge('load_profile', 'build_plan')
@@ -56,7 +57,8 @@ def build_discovery_graph(checkpointer: Optional[Any] = None):
   builder.add_edge('normalize_dedupe', 'enrich_jds')
   builder.add_edge('enrich_jds', 'compute_embeddings')
   builder.add_edge('compute_embeddings', 'score_rank_persist')
-  builder.add_edge('score_rank_persist', '__end__')
+  builder.add_edge('score_rank_persist', 'summarize_run')
+  builder.add_edge('summarize_run', '__end__')
   return builder.compile(checkpointer=checkpointer)
 
 
