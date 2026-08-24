@@ -214,7 +214,7 @@ case "$STAGE" in
         --config configs/labeling/text_teacher.yaml \
         --out "$WEAK_LABELS" --cache "$WORK/llm_label_cache.parquet" \
         --model "${LLM_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}" \
-        --concurrency "${LLM_CONCURRENCY:-8}" ;;
+        --concurrency "${LLM_CONCURRENCY:-2}" ;;
   teacher)
     run scripts/train_text_teacher.py --config configs/labeling/text_teacher.yaml ;;
   student)

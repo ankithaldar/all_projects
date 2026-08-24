@@ -20,7 +20,7 @@ Usage:
     python scripts/build_weak_labels_llm.py \
         --config configs/labeling/text_teacher.yaml \
         [--model nvidia/nemotron-3-ultra-550b-a55b:free] \
-        [--concurrency 8] [--limit 100]
+        [--concurrency 2] [--limit 100]
 
 Outputs:
     <output_dir>/weak_labels.parquet  (+ llm_label_cache.parquet)
@@ -59,7 +59,10 @@ def parse_args() -> argparse.Namespace:
     help='OpenRouter model slug.',
   )
   parser.add_argument(
-    '--concurrency', type=int, default=8, help='Parallel API calls.'
+    '--concurrency',
+    type=int,
+    default=2,
+    help='Parallel API calls (free-tier models: keep low).',
   )
   parser.add_argument(
     '--limit',

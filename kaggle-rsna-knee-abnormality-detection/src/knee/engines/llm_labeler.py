@@ -239,7 +239,7 @@ def label_many(
   texts: pd.Series,
   label_fn,
   cache_path: str | None = None,
-  concurrency: int = 8,
+  concurrency: int = 2,
   flush_every: int = 25,
 ) -> pd.DataFrame:
   """Label many reports concurrently behind a persistent disk cache.
