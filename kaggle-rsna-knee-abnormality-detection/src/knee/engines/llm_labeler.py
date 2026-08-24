@@ -10,9 +10,11 @@ Tier 2). Design notes:
 * SRP/DIP: this module owns *transport + schema* (one report -> one
   labeled vector); orchestration/caching lives with callers through an
   injectable ``label_fn`` so kernels stay testable without network.
-* Robustness: strict JSON contract with fence/prose stripping, retries
-  with exponential backoff on 429/5xx/timeouts, and a hard fallback
-  signal (``LLMLabelError``) that callers may route to Tier-1 rules.
+* Robustness: API-level ``response_format: json_object`` constraint
+  with automatic per-provider fallback when rejected, strict JSON
+  contract in the prompt, fence/prose-tolerant parsing, retries with
+  exponential backoff on 429/5xx/timeouts, and a hard failure signal
+  (``LLMLabelError``) that callers may route to Tier-1 rules.
 * Cost: one call per study at roughly 500-1500 tokens; flash-class
   models keep full-train labeling in the few-dollar range.
 """
@@ -90,8 +92,51 @@ def parse_llm_json(text: str) -> dict:
   return parsed if isinstance(parsed, dict) else {}
 
 
+def strip_to_findings(mapping: dict) -> dict:
+  """Keep ONLY the canonical finding keys from a model reply.
+
+  Everything else -- rationales, summaries, confidence notes, wrapper
+  objects like ``{"findings": {...}}`` -- is stripped so downstream
+  fusion sees exactly the 12 competition targets and nothing more.
+
+  Args:
+      mapping: Parsed JSON object from the model reply.
+
+  Returns:
+      Dict restricted to the TARGETS keys that are present.
+  """
+  known = {target: mapping[target] for target in TARGETS if target in mapping}
+  if not known:
+    # Some models nest the findings under a single wrapper key
+    # (e.g. {"findings": {...}}); descend once before giving up.
+    nested = [v for v in mapping.values() if isinstance(v, dict)]
+    if len(nested) == 1:
+      inner = nested[0]
+      known = {target: inner[target] for target in TARGETS if target in inner}
+  return known
+
+
+def _coerce(value) -> float:  # noqa: ANN001 - model output is untyped
+  """Convert one model value into a [0, 1] probability.
+
+  Args:
+      value: Number, numeric string, or anything unparsable.
+
+  Returns:
+      Clamped float; 0.5 (unknown) when the value cannot be parsed.
+  """
+  try:
+    result = float(value)
+  except (TypeError, ValueError):
+    return 0.5
+  return min(max(result, 0.0), 1.0)
+
+
 def apply_schema(mapping: dict) -> tuple[np.ndarray, np.ndarray]:
   """Project a model reply onto the canonical 12-target vectors.
+
+  Non-finding keys are stripped first (:func:`strip_to_findings`), so
+  extra model chatter can never influence the label vectors.
 
   Args:
       mapping: Finding-name -> {0, 0.5, 1} mapping from the model.
@@ -101,8 +146,9 @@ def apply_schema(mapping: dict) -> tuple[np.ndarray, np.ndarray]:
       (missing keys -> 0.5) and mask marks definite answers (values
       other than 0.5) that downstream fusion may trust.
   """
+  findings = strip_to_findings(mapping)
   probs = np.array(
-    [float(mapping.get(target, 0.5)) for target in TARGETS],
+    [_coerce(findings.get(target, 0.5)) for target in TARGETS],
     dtype=np.float32,
   )
   np.clip(probs, 0.0, 1.0, out=probs)
@@ -131,6 +177,7 @@ class OpenRouterLabeler:
     max_tokens: int = 256,
     max_retries: int = 3,
     timeout: int = 90,
+    force_json: bool = True,
   ) -> None:
     """Store request configuration.
 
@@ -141,6 +188,10 @@ class OpenRouterLabeler:
         max_tokens: Reply token cap.
         max_retries: Total attempts per report.
         timeout: Request timeout seconds.
+        force_json: Send ``response_format: json_object`` so compliant
+            providers hard-constrain output to JSON. Models that reject
+            the flag are auto-detected and fall back to prompt-only
+            enforcement (the parser tolerates decorations either way).
     """
     if not api_key:
       raise ValueError('api_key must be non-empty')
@@ -150,6 +201,57 @@ class OpenRouterLabeler:
     self.max_tokens = max_tokens
     self.max_retries = max(1, int(max_retries))
     self.timeout = timeout
+    self.force_json = force_json
+    self._json_mode_ok = True
+
+  def _build_payload(self, report: str) -> dict:
+    """Assemble the chat-completions request body for one report.
+
+    Args:
+        report: Verbatim report text (any language).
+
+    Returns:
+        Request payload dict; includes the JSON response format while
+        it is known to be supported by the routed provider.
+    """
+    payload = {
+      'model': self.model,
+      'temperature': self.temperature,
+      'max_tokens': self.max_tokens,
+      'messages': [
+        {'role': 'system', 'content': _SYSTEM_PROMPT},
+        {'role': 'user', 'content': report},
+      ],
+    }
+    if self.force_json and self._json_mode_ok:
+      payload['response_format'] = {'type': 'json_object'}
+    return payload
+
+  @staticmethod
+  def _rejects_json_mode(status_code: int, body: str) -> bool:
+    """Detect providers that refuse ``response_format`` outright.
+
+    Args:
+        status_code: HTTP status of the failed call.
+        body: Response body text.
+
+    Returns:
+        True when the failure is a JSON-mode capability rejection
+        (as opposed to auth/billing/schema errors).
+    """
+    if status_code != 400:
+      return False
+    lowered = body.lower()
+    return any(
+      token in lowered
+      for token in (
+        'response_format',
+        'json_object',
+        'json mode',
+        'not supported',
+        'unsupported',
+      )
+    )
 
   def _post(self, report: str) -> str:
     """Call the chat endpoint once, retrying transient failures.
@@ -164,15 +266,6 @@ class OpenRouterLabeler:
         LLMLabelError: After exhausting retries.
     """
     log = get_logger('llm_labeler')
-    payload = {
-      'model': self.model,
-      'temperature': self.temperature,
-      'max_tokens': self.max_tokens,
-      'messages': [
-        {'role': 'system', 'content': _SYSTEM_PROMPT},
-        {'role': 'user', 'content': report},
-      ],
-    }
     headers = {
       'Authorization': f'Bearer {self.api_key}',
       'Content-Type': 'application/json',
@@ -183,13 +276,23 @@ class OpenRouterLabeler:
       try:
         response = requests.post(
           _OPENROUTER_URL,
-          json=payload,
+          json=self._build_payload(report),
           headers=headers,
           timeout=self.timeout,
         )
         if response.status_code == 200:
           return response.json()['choices'][0]['message']['content']
         last_error = f'{response.status_code}: {response.text[:300]}'
+        if self._rejects_json_mode(response.status_code, response.text):
+          # Provider cannot honor response_format; degrade gracefully
+          # to prompt-only enforcement and retry immediately.
+          self._json_mode_ok = False
+          log.warning(
+            'model %r rejected json response_format; '
+            'falling back to prompt-only JSON contract',
+            self.model,
+          )
+          continue
         if response.status_code not in (429, 500, 502, 503, 504):
           break  # permanent (auth/billing/schema): do not retry
         wait = float(response.headers.get('Retry-After', 2**attempt))

@@ -18,6 +18,7 @@ from knee.engines.llm_labeler import (
   label_many,
   parse_llm_json,
   report_key,
+  strip_to_findings,
 )
 
 _FULL_REPLY = {
@@ -78,6 +79,52 @@ class TestApplySchema:
     index = {t: i for i, t in enumerate(TARGETS)}
     assert probs[index['ACL']] == 1.0
     assert probs[index['Fracture']] == 0.0
+
+
+class TestStripToFindings:
+  """Only the 12 finding keys survive; all model chatter is dropped."""
+
+  def test_extra_keys_are_stripped(self):
+    mapping = {
+      **_FULL_REPLY,
+      'rationale': 'The ACL is torn because...',
+      'summary': 'multiple injuries',
+      'confidence': 0.87,
+      'language': 'de',
+    }
+    stripped = strip_to_findings(mapping)
+    assert set(stripped) == set(TARGETS)
+    assert 'rationale' not in stripped
+
+  def test_nested_wrapper_is_unwrapped(self):
+    mapping = {'findings': dict(_FULL_REPLY), 'notes': 'reviewed'}
+    stripped = strip_to_findings(mapping)
+    assert set(stripped) == set(TARGETS)
+
+  def test_unparsable_values_become_unknown(self):
+    probs, mask = apply_schema({'ACL': 'present', 'MCL': '0'})
+    index = {t: i for i, t in enumerate(TARGETS)}
+    assert probs[index['ACL']] == pytest.approx(0.5)
+    assert not mask[index['ACL']]
+    assert probs[index['MCL']] == pytest.approx(0.0)
+    assert mask[index['MCL']]
+
+  def test_end_to_end_reply_with_chatter(self):
+    reply = (
+      'Sure! Here is my assessment:\n'
+      '```json\n'
+      '{"ACL": 1, "MCL": 0, "rationale": "signal changes", '
+      '"summary": "see report"}\n'
+      '```\n'
+      'Let me know if you need anything else.'
+    )
+    probs, mask = apply_schema(parse_llm_json(reply))
+    index = {t: i for i, t in enumerate(TARGETS)}
+    assert probs[index['ACL']] == pytest.approx(1.0)
+    assert probs[index['MCL']] == pytest.approx(0.0)
+    assert bool(mask[index['ACL']])
+    # Unknown findings default to 0.5 despite the surrounding chatter.
+    assert not bool(mask[index['Fracture']])
 
 
 class TestOpenRouterLabeler:
