@@ -48,6 +48,10 @@ def measure_rule_precision(
 ) -> pd.Series:
   """Per-target precision of affirmative rule seeds on gold-labeled studies.
 
+  Pandas suffix gotcha: ``merge(suffixes=...)`` renames only *colliding*
+  columns, so the mask frames are renamed explicitly before joining --
+  ``{target}_m`` then always exists regardless of overlaps.
+
   Args:
       gold: Frame with StudyInstanceUID + binary TARGETS.
       probs: Rule seed probabilities aligned by StudyInstanceUID.
@@ -56,22 +60,20 @@ def measure_rule_precision(
   Returns:
       Series mapping target -> precision (NaN where no seeds exist).
   """
+  mask = mask.rename(columns={t: f'{t}_m' for t in TARGETS})
   joined = gold.merge(
     probs, on='StudyInstanceUID', suffixes=('_gold', '_rule')
-  ).merge(mask, on='StudyInstanceUID', suffixes=('', '_m'))
+  ).merge(mask, on='StudyInstanceUID')
   precisions = {}
   for t in TARGETS:
-    sel = (
-      (joined[f'{t}_m'] > 0.5) & (joined[f'{t}_gold'] >= 0)
-      if f'{t}_gold' in joined
-      else None
-    )
-    if sel is None:
+    gold_col, rule_col, mask_col = f'{t}_gold', f'{t}_rule', f'{t}_m'
+    required = {gold_col, rule_col, mask_col}
+    if not required.issubset(joined.columns):
       continue
-    seeded = joined[sel]
-    positive_seeds = seeded[seeded[f'{t}_rule'] > 0.5]
+    seeded = joined[joined[mask_col] > 0.5]
+    positive_seeds = seeded[seeded[rule_col] > 0.5]
     precisions[t] = (
-      float((positive_seeds[f'{t}_gold'] > 0.5).mean())
+      float((positive_seeds[gold_col] > 0.5).mean())
       if len(positive_seeds)
       else np.nan
     )
