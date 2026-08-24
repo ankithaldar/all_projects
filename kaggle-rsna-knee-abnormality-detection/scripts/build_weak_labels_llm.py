@@ -19,7 +19,8 @@ models label full train sets in single-digit dollars.
 Usage:
     python scripts/build_weak_labels_llm.py \
         --config configs/labeling/text_teacher.yaml \
-        [--model openai/gpt-4o-mini] [--concurrency 8] [--limit 100]
+        [--model nvidia/nemotron-3-ultra-550b-a55b:free] \
+        [--concurrency 8] [--limit 100]
 
 Outputs:
     <output_dir>/weak_labels.parquet  (+ llm_label_cache.parquet)
@@ -54,7 +55,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument('--config', default='configs/labeling/text_teacher.yaml')
   parser.add_argument(
     '--model',
-    default='openai/gpt-4o-mini',
+    default='nvidia/nemotron-3-ultra-550b-a55b:free',
     help='OpenRouter model slug.',
   )
   parser.add_argument(
