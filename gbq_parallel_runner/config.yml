@@ -1,0 +1,43 @@
+base_config: # Keys not to be changed
+  billing_project: ''
+
+  run_id: '${placeholder_01}_${placeholder_n}'
+
+  # project_id
+  project_id: ''
+
+
+  # dataset_ids
+  dataset_id: ''
+
+
+  # other configurations
+
+
+  # run configs
+  default_timeout: 3600
+  max_concurrency: 6
+  max_retries: 3
+  max_backoff_seconds: 30
+
+
+
+sql_level_maps: # Keys not to be changed
+  0:
+    - sqls/drops.sql
+  1:
+    - sqls/etl.sql
+  2:
+    - sqls/drops.sql
+
+run_configs: # Keys not to be changed
+
+  - scheduled_time: "YYYY-MM-DDTHH:MM:SSZ"
+    key_01: ''
+    key_02: ''
+    key_0n: ''
+
+  - scheduled_time: "YYYY-MM-DDTHH:MM:SSZ"
+    key_01: ''
+    key_02: ''
+    key_0n: ''
