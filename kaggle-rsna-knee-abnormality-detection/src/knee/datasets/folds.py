@@ -78,7 +78,5 @@ def fold_summary(folds_df: pd.DataFrame) -> pd.DataFrame:
   grouped = folds_df.groupby('fold')
   summary = grouped.size().rename('n_studies').to_frame()
   for col in cols:
-    summary[col] = grouped[col].apply(
-      lambda s: float((s.fillna(0) > 0).sum())
-    )
+    summary[col] = grouped[col].apply(lambda s: float((s.fillna(0) > 0).sum()))
   return summary

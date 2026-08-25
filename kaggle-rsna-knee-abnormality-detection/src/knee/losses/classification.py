@@ -77,10 +77,9 @@ class AsymmetricLoss(nn.Module):
     los_neg = (1.0 - targets) * torch.log(xs_neg.clamp_min(self.eps))
     loss = -(los_pos + los_neg)
     if self.gamma_neg > 0 or self.gamma_pos > 0:
-      focal = (
-        torch.pow(1.0 - xs_pos, self.gamma_pos) * targets
-        + torch.pow(xs_neg, self.gamma_neg) * (1.0 - targets)
-      )
+      focal = torch.pow(1.0 - xs_pos, self.gamma_pos) * targets + torch.pow(
+        xs_neg, self.gamma_neg
+      ) * (1.0 - targets)
       loss = loss * focal
     per_sample = loss.mean(dim=-1)
     if reduction == 'mean':
@@ -136,8 +135,7 @@ class SoftBCEWithLogits(nn.Module):
     probs = torch.sigmoid(logits / self.temperature)
     probs = probs.clamp(self.eps, 1.0 - self.eps)
     loss = -(
-      targets * torch.log(probs)
-      + (1.0 - targets) * torch.log(1.0 - probs)
+      targets * torch.log(probs) + (1.0 - targets) * torch.log(1.0 - probs)
     )
     per_sample = loss.mean(dim=-1)
     if reduction == 'mean':

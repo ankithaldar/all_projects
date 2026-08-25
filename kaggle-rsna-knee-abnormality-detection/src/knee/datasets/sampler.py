@@ -55,9 +55,9 @@ class BalancedMultiLabelSampler:
     pos_counts = targets.sum(axis=1)
     with np.errstate(invalid='ignore', divide='ignore'):
       raw = np.where(
-        pos_counts > 0, (targets * inverse).sum(axis=1) / np.maximum(
-          pos_counts, 1.0
-        ), 1.0,
+        pos_counts > 0,
+        (targets * inverse).sum(axis=1) / np.maximum(pos_counts, 1.0),
+        1.0,
       )
     mean = raw.mean()
     weights = np.where(mean > 0, raw / max(mean, self.eps), 1.0)

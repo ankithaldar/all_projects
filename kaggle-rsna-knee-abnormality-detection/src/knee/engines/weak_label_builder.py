@@ -89,8 +89,8 @@ class WeakLabelBuilder:
     gold = np.full((n, n_targets), np.nan, np.float32)
     for c, target in enumerate(TARGETS):
       if target in studies.columns:
-        gold[:, c] = (
-          pd.to_numeric(studies[target], errors='coerce').to_numpy(np.float32)
+        gold[:, c] = pd.to_numeric(studies[target], errors='coerce').to_numpy(
+          np.float32
         )
     teacher_values = np.full((n, n_targets), np.nan, np.float32)
     if teacher_oof is not None:
@@ -117,8 +117,7 @@ class WeakLabelBuilder:
     for c in range(n_targets):
       use_rule = gated[:, c] & ~is_gold[:, c]
       use_teacher = (
-        np.isfinite(teacher_values[:, c])
-        & ~is_gold[:, c] & ~use_rule
+        np.isfinite(teacher_values[:, c]) & ~is_gold[:, c] & ~use_rule
       )
       probs[is_gold[:, c], c] = np.clip(gold[is_gold[:, c], c], 0, 1)
       weights[is_gold[:, c], c] = 1.0

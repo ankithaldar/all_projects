@@ -30,6 +30,7 @@ import shutil
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -109,22 +110,16 @@ def series_dir(
   )
 
 
-def _sort_paths(paths: list) -> list:
-  """Order slices anatomically with graceful tag fallbacks.
+def _order_datasets(datasets: list) -> list:
+  """Order parsed DICOM datasets anatomically with tag fallbacks.
 
   Args:
-      paths: Paths to single-frame DICOM files of one series.
+      datasets: Readable datasets of one series (pixel decompression
+          may still be lazy inside pydicom).
 
   Returns:
-      Paths ordered along the slice axis.
+      Datasets ordered along the slice axis.
   """
-  try:
-    # pylint: disable=import-outside-toplevel
-    import pydicom
-
-    datasets = [pydicom.dcmread(str(p), stop_before_pixels=True) for p in paths]
-  except Exception:  # pylint: disable=broad-exception-caught
-    return sorted(paths, key=lambda p: p.name)
   positions = [getattr(ds, 'ImagePositionPatient', None) for ds in datasets]
   if all(p is not None for p in positions) and len(datasets) > 1:
     delta = np.array(positions[1], dtype=float) - np.array(
@@ -136,16 +131,15 @@ def _sort_paths(paths: list) -> list:
       keys = [
         float(np.dot(np.array(p, dtype=float), normal)) for p in positions
       ]
-      return [p for _, p in sorted(zip(keys, paths, strict=False))]
+      return [ds for _, ds in sorted(zip(keys, datasets, strict=False))]
   numbers = [getattr(ds, 'InstanceNumber', None) for ds in datasets]
   if all(n is not None for n in numbers):
     order = sorted(range(len(numbers)), key=lambda i: int(numbers[i]))
-    return [paths[i] for i in order]
+    return [datasets[i] for i in order]
   uids = [
-    str(getattr(ds, 'SOPInstanceUID', p.name))
-    for ds, p in zip(datasets, paths, strict=False)
+    str(getattr(ds, 'SOPInstanceUID', idx)) for idx, ds in enumerate(datasets)
   ]
-  return [p for _, p in sorted(zip(uids, paths, strict=False))]
+  return [ds for _, ds in sorted(zip(uids, datasets, strict=False))]
 
 
 def decode_series_volume(
@@ -153,14 +147,24 @@ def decode_series_volume(
   image_size: int,
   num_slices: int,
   percentile_clip: tuple[float, float] = (1.0, 99.0),
+  decode_workers: int = 6,
 ) -> np.ndarray:
   """Decode one DICOM series into a fixed-shape uint8 volume.
+
+  Hot-path notes (this is the streaming pipeline's bottleneck):
+  - each file is parsed ONCE (pixel decompression stays lazy inside
+    pydicom until ``pixel_array``),
+  - slice decompression runs in a thread pool -- JPEG-lossless/J2K
+    codecs release the GIL, so this scales across cores,
+  - windowing percentiles use a deterministic voxel subsample instead
+    of concatenating every slice's pixels.
 
   Args:
       directory: Directory holding the series' DICOM files.
       image_size: In-plane resize target (square).
       num_slices: Output depth after uniform resampling.
       percentile_clip: Windowing percentiles over non-zero voxels.
+      decode_workers: Thread-pool width for reads + decompression.
 
   Returns:
       uint8 array ``(num_slices, image_size, image_size)``.
@@ -172,21 +176,57 @@ def decode_series_volume(
   import cv2
   import pydicom
 
-  paths = _sort_paths(sorted(Path(directory).glob('*.dcm')))
-  slices = []
-  lo, hi = percentile_clip
-  for path in paths:
-    try:
-      arr = pydicom.dcmread(str(path)).pixel_array.astype(np.float32)
-    except Exception:  # pylint: disable=broad-exception-caught
-      continue
-    slices.append(arr)
-  if not slices:
+  paths = sorted(Path(directory).glob('*.dcm'))
+  if not paths:
     raise ValueError(f'no readable DICOM slices in {directory}')
-  stack = [s for s in slices if s.size]
+
+  def _read(path: Path):
+    """Parse one DICOM file; unreadable files become None.
+
+    Args:
+        path: Slice file path.
+
+    Returns:
+        Parsed dataset or None.
+    """
+    try:
+      return pydicom.dcmread(str(path))
+    except Exception:  # pylint: disable=broad-exception-caught
+      return None
+
+  def _pixels(ds):
+    """Decompress one slice to float32, or None on failure.
+
+    Args:
+        ds: Parsed dataset.
+
+    Returns:
+        float32 pixel array or None.
+    """
+    try:
+      arr = ds.pixel_array.astype(np.float32)
+      return arr if arr.size else None
+    except Exception:  # pylint: disable=broad-exception-caught
+      return None
+
+  lo, hi = percentile_clip
+  with ThreadPoolExecutor(max_workers=max(1, decode_workers)) as pool:
+    readable = [ds for ds in pool.map(_read, paths) if ds is not None]
+    if not readable:
+      raise ValueError(f'no readable DICOM slices in {directory}')
+    ordered = _order_datasets(readable)
+    stack = [arr for arr in pool.map(_pixels, ordered) if arr is not None]
+  if not stack:
+    raise ValueError(f'no readable DICOM slices in {directory}')
+
   reference_shape = stack[0].shape
   stack = [s for s in stack if s.shape == reference_shape]
   pooled = np.concatenate([s.ravel() for s in stack])
+  if pooled.size > 2_000_000:
+    sample_idx = np.random.default_rng(0).choice(
+      pooled.size, 2_000_000, replace=False
+    )
+    pooled = pooled[sample_idx]
   nonzero = pooled[pooled > 0]
   source = nonzero if nonzero.size >= max(1024, pooled.size // 100) else pooled
   p_lo, p_hi = np.percentile(source, [lo, hi])
