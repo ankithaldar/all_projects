@@ -257,18 +257,28 @@ class KneeStudyLitModule(pl.LightningModule):
       self.grad_noise.inject(params)
 
   def configure_gradient_clipping(
-    self, optimizer, gradient_clip_val=None, gradient_clip_threshold=None
+    self,
+    optimizer,
+    gradient_clip_val=None,
+    gradient_clip_algorithm=None,
   ) -> None:
     """Route automatic-mode clipping through the configured strategy.
+
+    Signature mirrors ``LightningModule.configure_gradient_clipping``
+    exactly -- Lightning calls it with keyword arguments we must accept
+    (a drifted signature crashes every optimizer step).
 
     Args:
         optimizer: Optimizer about to step.
         gradient_clip_val: Trainer-level norm ceiling (fallback).
-        gradient_clip_threshold: Unused PL hook parameter.
+        gradient_clip_algorithm: Trainer-level algorithm hint ('norm'
+            or 'value'), forwarded untouched to the base hook.
     """
     if self.grad_clip is None:
       super().configure_gradient_clipping(
-        optimizer, gradient_clip_val, gradient_clip_threshold
+        optimizer,
+        gradient_clip_val=gradient_clip_val,
+        gradient_clip_algorithm=gradient_clip_algorithm,
       )
       return
     self._apply_gradient_control()
