@@ -49,6 +49,7 @@ ARTIFACT_FILES = (
   'train_folds.csv',
   'weak_labels.parquet',
   'weak_labels_round*.parquet',
+  'vol_cache_index.parquet',
   'submission*.csv',
 )
 

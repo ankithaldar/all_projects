@@ -155,25 +155,44 @@ def load_folds(path: Path) -> pd.DataFrame:
   return folds
 
 
+def load_index(path: Path) -> pd.DataFrame:
+  """Read the series-level cache index, tolerating absence.
+
+  Args:
+      path: vol_cache_index.parquet location.
+
+  Returns:
+      Frame with [SeriesInstanceUID, StudyInstanceUID, vol_shard];
+      empty (correctly typed) when the file does not exist yet.
+  """
+  if not path.exists():
+    return pd.DataFrame(
+      {
+        'SeriesInstanceUID': pd.Series(dtype=str),
+        'StudyInstanceUID': pd.Series(dtype=str),
+        _VOL_SHARD_COL: pd.Series(dtype=str),
+      }
+    )
+  return pd.read_parquet(path)
+
+
 def plan_work(
-  table: pd.DataFrame, folds: pd.DataFrame, work_dir: Path
+  table: pd.DataFrame, index: pd.DataFrame, work_dir: Path
 ) -> pd.DataFrame:
   """Series still needing decode, in deterministic order.
 
-  Done means: annotated with a shard OR already present as npz in the
-  local cache (covers crashes between push and annotation).
+  Done means: present in the series-level index OR already on disk as
+  npz in the local cache (covers crashes between push and indexing).
 
   Args:
       table: All known series.
-      folds: Folds frame possibly carrying vol_shard annotations.
+      index: Series-level cache index frame.
       work_dir: Local cache root scanned for stray completed files.
 
   Returns:
       Subset of ``table`` ordered by SeriesInstanceUID.
   """
-  done = set(
-    folds.loc[folds[_VOL_SHARD_COL].fillna('') != '', 'SeriesInstanceUID']
-  )
+  done = set(index['SeriesInstanceUID'])
   cache_root = work_dir / 'volumes_cache'
   if cache_root.is_dir():
     done |= {p.stem for p in cache_root.rglob('*.npz')}
@@ -181,20 +200,20 @@ def plan_work(
   return remaining.sort_values('SeriesInstanceUID').reset_index(drop=True)
 
 
-def next_shard_index(folds: pd.DataFrame, base_slug: str) -> int:
-  """One past the highest published shard number in the annotations.
+def next_shard_index(shard_names: list[str], base_slug: str) -> int:
+  """One past the highest published shard number.
 
   Args:
-      folds: Folds frame with vol_shard annotations.
+      shard_names: vol_shard values from index/folds.
       base_slug: Sanitized base name; shards look like f'{base}-{nn}'.
 
   Returns:
       Zero-based index for the OPEN shard.
   """
-  used = folds[_VOL_SHARD_COL].dropna().astype(str)
   highest = -1
   prefix = f'{base_slug}-vol'
-  for value in used:
+  for value in shard_names:
+    value = str(value)
     if value.startswith(prefix):
       try:
         highest = max(highest, int(value[len(prefix) :]))
@@ -203,21 +222,54 @@ def next_shard_index(folds: pd.DataFrame, base_slug: str) -> int:
   return highest + 1
 
 
-def annotate(
-  folds: pd.DataFrame, uids: list[str], shard_name: str
+def annotate_index(
+  index: pd.DataFrame,
+  rows: list[dict],
 ) -> pd.DataFrame:
-  """Stamp the shard name onto every decoded study-series row.
+  """Append freshly cached series to the series-level index.
 
   Args:
-      folds: Folds frame (mutated copy returned).
-      uids: SeriesInstanceUIDs that now live in ``shard_name``.
-      shard_name: Published dataset slug.
+      index: Current index frame.
+      rows: Dicts with SeriesInstanceUID/StudyInstanceUID/vol_shard.
 
   Returns:
-      Updated folds frame.
+      Updated index frame.
+  """
+  out = index.copy()
+  added = pd.DataFrame(rows, columns=list(out.columns))
+  return pd.concat([out, added], ignore_index=True)
+
+
+def stamp_completed_studies(
+  folds: pd.DataFrame,
+  table: pd.DataFrame,
+  cached_series: set[str],
+  shard_name: str,
+) -> pd.DataFrame:
+  """Mark studies whose ENTIRE mapped series set is now cached.
+
+  Args:
+      folds: Study-level folds frame (copy returned).
+      table: All-series table mapping studies to series.
+      cached_series: SeriesInstanceUIDs known to be cached.
+      shard_name: Shard that completed these studies.
+
+  Returns:
+      Folds frame with vol_shard stamped for newly complete studies.
   """
   out = folds.copy()
-  out.loc[out['SeriesInstanceUID'].isin(uids), _VOL_SHARD_COL] = shard_name
+  mapped = (
+    table.groupby('StudyInstanceUID')['SeriesInstanceUID'].apply(set).to_dict()
+  )
+  complete = [
+    study
+    for study, series_set in mapped.items()
+    if series_set and series_set.issubset(cached_series)
+  ]
+  mask = out['StudyInstanceUID'].isin(complete) & (
+    out[_VOL_SHARD_COL].fillna('') == ''
+  )
+  out.loc[mask, _VOL_SHARD_COL] = shard_name
   return out
 
 
@@ -232,7 +284,9 @@ def main() -> None:
   folds_path = Path(args.train_folds)
   folds = load_folds(folds_path)
   table = load_series_table(args.data_root, args.series_csv)
-  todo = plan_work(table, folds, Path(args.work))
+  index_path = Path(args.work) / 'vol_cache_index.parquet'
+  index = load_index(index_path)
+  todo = plan_work(table, index, Path(args.work))
   log.info(
     '%d/%d series already cached; %d to go',
     len(table) - len(todo),
@@ -245,7 +299,7 @@ def main() -> None:
 
   cfg = DataConfig(image_size=args.image_size, num_slices=args.num_slices)
   cache_root = Path(args.work) / 'volumes_cache'
-  shard_idx = next_shard_index(folds, base_slug)
+  shard_idx = next_shard_index(index[_VOL_SHARD_COL].tolist(), base_slug)
   shard_dir = cache_root / f'{base_slug}-vol{shard_idx:02d}'
   shard_name = f'{base_slug}-vol{shard_idx:02d}'
   shard_dir.mkdir(parents=True, exist_ok=True)
@@ -257,18 +311,40 @@ def main() -> None:
   floor_bytes = int(args.min_free_gb * (1 << 30))
 
   def close_shard() -> None:
-    """Publish the open shard and record it in train_folds.csv."""
+    """Publish the open shard; update index + study-level folds."""
     nonlocal shard_idx, shard_dir, shard_name
-    nonlocal manifest_rows, shard_uids, folds
+    nonlocal manifest_rows, shard_uids, folds, index
     if not shard_uids:
       return
     pd.DataFrame(manifest_rows).to_parquet(shard_dir / _MANIFEST)
     write_metadata(shard_dir, username, shard_name)
     push(shard_dir, username, shard_name, f'{len(shard_uids)} volumes', 'skip')
-    folds = annotate(folds, shard_uids, shard_name)
+    # Series-level truth: who is cached, and in which shard dataset.
+    index = annotate_index(
+      index,
+      [
+        {
+          'SeriesInstanceUID': uid,
+          'StudyInstanceUID': str(
+            table.loc[
+              table['SeriesInstanceUID'] == uid, 'StudyInstanceUID'
+            ].iloc[0]
+          ),
+          _VOL_SHARD_COL: shard_name,
+        }
+        for uid in shard_uids
+      ],
+    )
+    index.to_parquet(index_path)
+    # Study-level convenience stamp in train_folds.csv: fires only when
+    # a study's FULL mapped series set is cached.
+    cached = set(index['SeriesInstanceUID'])
+    folds = stamp_completed_studies(folds, table, cached, shard_name)
     folds.to_csv(folds_path, index=False)
     log.info(
-      'published %s (%d volumes); folds updated', shard_name, len(shard_uids)
+      'published %s (%d volumes); index + folds updated',
+      shard_name,
+      len(shard_uids),
     )
     for npz in shard_dir.glob('*.npz'):
       npz.unlink()  # freed: the dataset now owns these bytes
@@ -334,7 +410,7 @@ def main() -> None:
       last_push = time.monotonic()
 
   close_shard()
-  remaining_after = plan_work(table, load_folds(folds_path), Path(args.work))
+  remaining_after = plan_work(table, load_index(index_path), Path(args.work))
   log.info(
     'session done: %d series newly cached, %d remain (re-run '
     "'cache-volumes' to continue)",

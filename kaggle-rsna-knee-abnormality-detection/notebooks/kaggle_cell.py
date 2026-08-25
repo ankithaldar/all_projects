@@ -109,7 +109,7 @@ if not _clone(_url, ['-b', GIT_REF]):
 # Auto-restore: adopt the artifact dataset wherever Kaggle mounted it
 # (layouts vary: /kaggle/input/<slug>, /kaggle/input/datasets/<owner>/
 # <slug>, ...). Bounded-depth search -- never walks the data payload.
-sys.path.insert(0, f'{REPO_DIR}/src')
+sys.path.insert(0, f'{REPO_DIR}/kaggle-rsna-knee-abnormality-detection/src')
 # Justified late import: the knee package lives in the fresh clone.
 from knee.helpers.mounts import (  # noqa: E402  # pylint: disable=wrong-import-position
   find_input_mount,
