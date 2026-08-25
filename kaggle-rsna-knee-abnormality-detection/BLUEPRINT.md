@@ -68,13 +68,28 @@ Three-tier cascade, each tier gated by measured precision on the gold-labeled su
   else unknown. Calibrate per-class thresholds on gold subset; emit confidence = precision measured on gold.
 
 ### Tier 2 — Neural text teacher (recall ≈ 85–95%, this is the workhorse)
-- Backbone: `xlm-roberta-base` (or `microsoft/mdeberta-v3-base`) — multilingual by design, no translation needed.
+- Backbone: `xlm-roberta-base` (or `mdeberta-v3-base`) — multilingual by design, no translation needed.
 - Train on **gold-labeled studies only**, input = report text, output = 12 BCE heads.
 - Long reports: stride-sliding-window inference with max-pooling over windows.
 - Predict soft probs for ALL unlabeled studies → these are distillation targets.
 - Validate teacher itself against gold subset with held-out fold — its OOF macro-AUC upper-bounds what
   the image student can inherit from it.
 - Optional boost: pseudo-label self-training of the teacher (round 2 trained on rules+round1 labels).
+
+### Tier 2-LLM — Zero-shot API labeling via OpenRouter (`engines/llm_labeler.py`)
+- GPU-free alternative to the trained teacher: a chat model reads each
+  multilingual report directly; fusion is identical (LLM takes the
+  `teacher_oof` slot in `WeakLabelBuilder`).
+- JSON is enforced at three layers: `response_format: json_object`
+  (auto-fallback when a provider rejects it), a strict prompt contract
+  ({0, 0.5, 1} per finding, negation-aware, any language), and a
+  finding-only parser that strips fences/prose and keeps exactly the 12
+  target keys (rationales/wrapper objects are dropped; unparsable
+  values become 0.5 = unknown rather than crashing a long run).
+- Definite answers carry a trust mask; 0.5 entries stay unknown so
+  rule seeds can fill them.
+- Per-report disk cache (SHA-1 keyed) makes 12 h kernels resumable and
+  prevents double billing; concurrency defaults low for free tiers.
 
 ### Tier 3 — Zero-shot NLI fallback (only if gold subset too small)
 - `mDeBERTa-v3-base-xnli-multilingual-nli-2mil` with entailment hypotheses
@@ -93,7 +108,9 @@ Recommended primary: **2.5D per-series encoder + attention-MIL study aggregator*
 per series s:  stack K slices → (K,384,384) → treat K as channels (or 3 groups of K/3)
                timm backbone (tf_efficientnetv2_s / convnext_small.fb_in22k / maxvit_tiny_224)
                → GAP → 1280-d series feature
-metadata:      [fluid_sensitive, fat_suppression, plane_onehot(3)] → MLP → 32-d embedding (added)
+metadata:      [fluid_sensitive, fat_suppression, plane_onehot(3)] → MLP → M-d
+               embedding, learned Linear projection to D_enc, then ADDED to each
+               series feature (per-series conditioning; width-agnostic)
 study level:   transformer/attention pooling over series features (masked MIL)
 head:          linear → 12 sigmoid logits
 ```
@@ -210,27 +227,37 @@ never an engine change (Open/Closed). Implemented in `optimizers/gradients.py`,
 |---|---|---|---|
 | 1 | `scripts/prepare_volumes.py` *(optional)* | DICOMs | one bounded npz shard + `volumes_manifest.parquet` |
 | 2 | `scripts/make_folds.py` | train.csv | `train_folds.csv` |
-| 3 | `scripts/train_text_teacher.py` + `build_weak_labels.py` | reports + folds | `weak_labels.parquet` dataset (small) |
-| 4 | `scripts/train_image_student.py --folds 0,1` | folds + weak labels (+ shards) | fold ckpts + per-fold OOF parquets |
-| 5 | `scripts/self_train.py` | ckpts + OOF | relabeled parquet -> re-run 4 (max 2 rounds) |
-| 6 | `scripts/infer.py` | ckpts + test DICOMs | `submission.csv` |
-| 7 | `scripts/blend_submissions.py` | submissions | final `submission.csv` |
+| 3a | `scripts/build_weak_labels.py` (rules-only pass) | reports | `weak_labels.parquet` |
+| 3b | `scripts/train_text_teacher.py` *(GPU path)* **or** `build_weak_labels_llm.py` *(API path)* | reports + folds / OPENROUTER key | `text_teacher/oof_probs.parquet` or `llm_label_cache.parquet` |
+| 3c | `scripts/build_weak_labels.py --teacher-dir …` (re-fuse) | 3b output | upgraded `weak_labels.parquet` |
+| 4 | `scripts/train_image_student.py --folds 0,1` (repeat shards) | folds + weak labels (+ shards) | fold ckpts (`fold{N}/last.ckpt`) + per-fold OOF parquets |
+| 5 | `scripts/self_train.py` *(optional)* | ckpts + OOF | relabeled parquet -> re-run 4 (max 2 rounds) |
+| 6 | `scripts/infer.py` | all fold ckpts + test DICOMs | `submission.csv` |
+| 7 | `scripts/blend_submissions.py` | submissions + OOF + folds | final blended submission |
+| -- | `scripts/publish_dataset.py` (or `AUTO_PUBLISH=1`) | everything in `$WORK` | ONE private dataset carrying cross-kernel state |
 
 Budget mechanics: `train.time_budget_hours` maps to Lightning
 ``max_time`` so every fold stops cleanly inside the 12 h wall;
 completed folds persist as `<name>_oof_fold{N}.parquet` and are skipped
-when the same command re-runs in the next kernel. Spread folds over
+when the same command re-runs in the next kernel; interrupted folds
+resume epoch-level from `checkpoints/fold{N}/last.ckpt`
+(`train.resume`, on by default in the dispatcher). Spread folds over
 kernels (`--folds 0,1` then `--folds 2,3 ...`) to stay within ~30
 GPU-hours.
 
-Every kernel boots through one cell (see `scripts/kaggle_run.sh`
-header): clone **this branch** (`-b competitions/kaggle-rsna-knee-
-abnormality-detection`) and call the dispatcher with a stage name —
-the script handles deps, GPU-precision fallback and stage dispatch.
+Every kernel boots through one paste-ready cell
+(`notebooks/kaggle_cell.py`): it pulls secrets, clones the repo,
+auto-discovers the attached artifact dataset at ANY mount layout
+(`/kaggle/input/<slug>` or nested `datasets/<owner>/<slug>`), restores
+state into the writable `/kaggle/working` and dispatches a stage with
+live output. The dispatcher installs only deps missing from the image
+(the CUDA-matched torch stack is reused), falls back to fp16-mixed on
+pre-Ampere GPUs and publishes artifacts when `AUTO_PUBLISH=1`.
 
-Push every artifact as a versioned Kaggle Dataset so downstream kernels mount it read-only.
-Secrets (W&B key, etc.) come from `.env` locally; on Kaggle use Add-ons→Secrets (fallback logic in
-`src/knee/utils/env.py`).
+Secrets come from `.env` locally; on Kaggle use Add-ons -> Secrets
+(fallback logic in `src/knee/helpers/env.py`). Required: KAGGLE_USERNAME,
+KAGGLE_KEY (publishing), GITHUB_TOKEN (private repos); optional:
+OPENROUTER_API_KEY (LLM tier), DISCORD_WEBHOOK_URL, tracking keys.
 
 ## 10. Risks & pitfalls checklist
 
@@ -241,6 +268,10 @@ Secrets (W&B key, etc.) come from `.env` locally; on Kaggle use Add-ons→Secret
 - [ ] Rare classes may be absent in some folds' validation split → guard NaN in fold AUC, rely on 5-fold pooled OOF.
 - [ ] Teacher trained on gold subset will memorize if reports duplicate phrasing — always hold out gold folds for teacher eval too.
 - [ ] Final-round self-training can drift: cap at 2 rounds, keep round-0 model in ensemble as anchor.
+- [ ] LLM tier: budget per-report cost before full runs (`--limit 100` spot-check); rate limits throttle
+      free models (keep concurrency low; the disk cache makes retries free); hallucinated findings are
+      mitigated by the {0, 0.5, 1} contract + trust mask, but still validate LLM labels against the gold
+      subset (macro-AUC) before trusting them over rule seeds.
 
 ## 12. Repository taxonomy (14 packages)
 
@@ -266,12 +297,14 @@ src/knee/
   datamodules/      fold-scoped LightningDataModule; batch contract:
                     images(B,S,C,H,W) + meta(B,S,5) + series_mask(B,S)
                     + y_hard/y_soft(B,12) + sample_weight(B) + is_gold(B)
-  datasets/         DICOM IO, volume cache (npz manifest), study datasets,
+  datasets/         volume_store (stream decode + bounded LRU), volume
+                    builder (optional npz shards), study datasets,
                     balanced sampler, frozen folds
   engines/          LightningModules, trainer factory, text teacher,
-                    rule/NLI labelers, weak-label builder, predictor,
-                    greedy blender
-  helpers/          secrets (.env/Kaggle), seeding, logging
+                    rule/NLI labelers, OpenRouter LLM labeler,
+                    weak-label builder, predictor, greedy blender
+  helpers/          secrets (.env/Kaggle), input-mount discovery,
+                    seeding, logging
   layers/           MIL/transformer aggregators, metadata encoder
   loggers/          Discord notifier transport
   losses/           ASL/focal/soft-BCE + curriculum/DWA weighting
