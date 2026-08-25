@@ -2,15 +2,23 @@
 # ==============================================================================
 # World of Supply - Google Colab bootstrap
 #
+# The project lives in the `world_of_supply/` subfolder of the
+# all_projects_02 repository, on branch `world_of_supply/main` (the repo
+# default branch is `main`). This script clones, checks out the right
+# branch, and descends into the subfolder automatically.
+#
 # Usage in a Colab notebook cell:
-#   !GIT_URL=https://github.com/<you>/<your-repo>.git bash colab_run.sh
+#   !GIT_URL=https://github.com/ankithaldar/all_projects_02.git \
+#     bash /content/all_projects_02/world_of_supply/colab_run.sh
 #
 # Or upload the project folder to /content/world_of_supply first, then:
 #   !bash colab_run.sh
 #
 # Optional environment variables:
-#   GIT_URL           git repo to clone (default: use existing PROJECT_DIR)
-#   PROJECT_DIR       project location (default: /content/world_of_supply)
+#   GIT_URL           repo to clone (default: ankithaldar/all_projects_02)
+#   GIT_BRANCH        branch to check out (default: world_of_supply/main)
+#   PROJECT_DIR       clone/target location (default: /content/all_projects_02)
+#   PROJECT_SUBDIR    project subfolder inside the repo (default: world_of_supply)
 #   OUT_DIR           artifact output (default: /content/wos_outputs)
 #   TRAIN_ITERATIONS  PPO iterations to run (default: 3)
 #   NUM_EPI           baseline episodes (default: 2)
@@ -20,8 +28,10 @@
 # ==============================================================================
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/content/world_of_supply}"
-GIT_URL="${GIT_URL:-}"
+PROJECT_DIR="${PROJECT_DIR:-/content/all_projects_02}"
+GIT_URL="${GIT_URL:-https://github.com/ankithaldar/all_projects_02.git}"
+GIT_BRANCH="${GIT_BRANCH:-world_of_supply/main}"
+PROJECT_SUBDIR="${PROJECT_SUBDIR:-world_of_supply}"
 OUT_DIR="${OUT_DIR:-/content/wos_outputs}"
 TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-3}"
 NUM_EPI="${NUM_EPI:-2}"
@@ -54,13 +64,29 @@ free -h | awk 'NR<=2 {print}'
 echo '== [2/7] Fetch project =='
 if [ -n "$GIT_URL" ]; then
   rm -rf "$PROJECT_DIR"
-  git clone --depth 1 "$GIT_URL" "$PROJECT_DIR"
+  if ! git clone --depth 1 -b "$GIT_BRANCH" "$GIT_URL" "$PROJECT_DIR" 2>/dev/null; then
+    echo "Shallow clone of branch '$GIT_BRANCH' failed - falling back to full clone" >&2
+    git clone "$GIT_URL" "$PROJECT_DIR"
+    git -C "$PROJECT_DIR" checkout "$GIT_BRANCH"
+  fi
 elif [ ! -d "$PROJECT_DIR" ]; then
   echo "ERROR: $PROJECT_DIR not found. Set GIT_URL or upload the project there." >&2
   exit 1
 fi
-cd "$PROJECT_DIR"
-git log --oneline -1 2>/dev/null || true
+
+if [ -f "$PROJECT_DIR/$PROJECT_SUBDIR/main.py" ]; then
+  PROJECT_ROOT="$PROJECT_DIR"
+  cd "$PROJECT_DIR/$PROJECT_SUBDIR"
+elif [ -f "$PROJECT_DIR/main.py" ]; then
+  PROJECT_ROOT="$PROJECT_DIR"
+  cd "$PROJECT_DIR"
+else
+  echo "ERROR: no main.py under $PROJECT_DIR (looked in '$PROJECT_SUBDIR' subfolder too)." >&2
+  exit 1
+fi
+echo "Repository: $(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null || echo 'local')"
+echo "Branch:     $(git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null || echo 'unknown')"
+echo "Project:    $PWD"
 
 echo '== [3/7] Install dependencies =='
 "$PYTHON_BIN" -m pip install -q --upgrade pip
