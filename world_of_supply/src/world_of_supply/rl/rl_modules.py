@@ -126,6 +126,9 @@ if HAS_RAY_RLMODULES:
     def _forward(self, batch: dict) -> dict:
       '''Shared computation producing logits and value predictions.
 
+      When the module is recurrent, RLLib-provided ``state_in`` tensors are
+      fed into the LSTM so state actually carries across timesteps.
+
       Args:
         batch: Input batch containing observations under ``'obs'``.
 
@@ -134,7 +137,12 @@ if HAS_RAY_RLMODULES:
       '''
       obs = batch['obs']
       tensor = torch.as_tensor(np.asarray(obs), dtype=torch.float32)
-      logits, values, _ = self.net(tensor)
+      state = None
+      if self.net.use_lstm:
+        raw_state = batch.get(Columns.STATE_IN)
+        if raw_state is not None:
+          state = [torch.as_tensor(np.asarray(part), dtype=torch.float32) for part in raw_state]
+      logits, values, _ = self.net(tensor, state)
       return {_ACTION_DIST_INPUTS_KEY: logits, _VF_PREDS_KEY: values}
 
     def forward_inference(self, batch: dict, **kwargs) -> dict:

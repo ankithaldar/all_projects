@@ -12,6 +12,27 @@ import torch
 from torch import nn
 
 
+def _normalize_lstm_state(part: torch.Tensor, batch_size: int) -> torch.Tensor:
+  '''Reshape an LSTM state tensor to PyTorch's ``(layers, batch, dim)``.
+
+  RLLib delivers state batch-first; PyTorch expects layer-first.
+
+  Args:
+    part: Incoming ``h`` or ``c`` tensor.
+    batch_size: Current batch size (used to synthesize zeros).
+
+  Returns:
+    torch.Tensor: Tensor shaped ``(1, batch, cell_size)``.
+  '''
+  if part is None:
+    return torch.zeros(1, batch_size, 1)
+  if part.dim() == 2:
+    return part.unsqueeze(0)
+  if part.dim() == 3 and part.shape[0] != 1:
+    return part.transpose(0, 1)
+  return part
+
+
 class FacilityNet(nn.Module):
   '''MLP/LSTM trunk with multi-discrete policy and value heads.
 
@@ -95,8 +116,11 @@ class FacilityNet(nn.Module):
     if self.use_lstm:
       if observations.dim() == 2:
         observations = observations.unsqueeze(1)
-      h, c = state if state is not None else self.initial_state(observations.shape[0])
-      features, (h, c) = self.lstm(self.trunk(observations), (h, c))
+      if state is not None:
+        state = [_normalize_lstm_state(part, observations.shape[0]) for part in state]
+      else:
+        state = self.initial_state(observations.shape[0])
+      features, (h, c) = self.lstm(self.trunk(observations), tuple(state))
       features = features[:, -1, :]
       new_state = [h.contiguous(), c.contiguous()]
     else:
