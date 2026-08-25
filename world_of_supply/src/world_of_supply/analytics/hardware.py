@@ -6,13 +6,34 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import shutil
+import subprocess
+
+
+def _print_lspci_gpus() -> None:
+  '''Print NVIDIA devices via lspci when the tool is available.'''
+  if not shutil.which('lspci'):
+    return
+  try:
+    result = subprocess.run(
+        ['lspci'],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+  except (OSError, subprocess.TimeoutExpired):
+    return
+  gpu_lines = [line for line in result.stdout.splitlines() if 'nvidia' in line.lower()]
+  print(f'GPU status: {chr(10).join(gpu_lines)}' if gpu_lines else 'GPU status: none found')
 
 
 def print_hardware_status() -> None:
   '''Print CPU, memory, and GPU availability information.
 
-  GPU detection uses PyTorch when installed; Ray GPU visibility is reported
-  when a Ray runtime is present. Missing components degrade to a note.
+  GPU detection uses lspci plus PyTorch when installed; Ray GPU visibility
+  is reported when a Ray runtime is present. Missing components degrade to
+  a note.
   '''
   print('Number of CPU cores:', multiprocessing.cpu_count())
   if os.path.exists('/proc/meminfo'):
@@ -20,6 +41,7 @@ def print_hardware_status() -> None:
       for line in meminfo:
         if line.startswith('Mem'):
           print(line.strip())
+  _print_lspci_gpus()
 
   try:
     import torch

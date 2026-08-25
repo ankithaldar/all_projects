@@ -36,3 +36,18 @@ def test_open_orders_prune_after_full_reception():
 
   warehouse.consumer.on_order_reception(source.id, 'toy_car', 5)
   assert source.id not in warehouse.consumer.open_orders
+
+
+def test_scripted_policy_counts_all_stock_toward_capacity():
+  from world_of_supply.facility import FacilityControl
+  from world_of_supply.policies import ScriptedSupplyChainPolicy
+
+  world = WorldBuilder.build(ScenarioConfig(), seed=2)
+  retailer = world.get_facilities(RetailerCell)[0]
+  retailer.storage.try_add_units({'toy_car': 9})
+  source = retailer.consumer.sources[0]
+  retailer.consumer._shift_open_order(source.id, 'toy_car', 5)
+
+  product, source_index = ScriptedSupplyChainPolicy()._select_source(retailer)
+
+  assert product is None and source_index is None

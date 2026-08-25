@@ -60,6 +60,29 @@ def test_railroad_sprite_picks_crossing_glyph():
   assert glyph == '╬'
 
 
+def test_truck_status_uses_legacy_words(env):
+  from world_of_supply.rendering.status import WorldStatusFormatter
+
+  env.reset(seed=0)
+  formatter = WorldStatusFormatter()
+  toy_factory = [f for f in env.world.facilities.values() if f.__class__.__name__ == 'ToyFactoryCell'][0]
+  truck = toy_factory.distribution.fleet[0]
+  assert formatter.status(truck) == 'IDLE'
+
+  destination = [f for f in env.world.facilities.values() if f.__class__.__name__ == 'WarehouseCell'][0]
+  truck.schedule(env.world, destination, 'toy_car', 3)
+  truck.payload = 3
+  for _ in range(truck.path_len()):
+    truck.act()
+  assert formatter.status(truck).startswith('UNLD toy_car:')
+
+  truck.act()
+  line = formatter.status(truck)
+  assert line.startswith('BACK ') and line.endswith('-> home')
+  fleet_line = formatter._fleet_line(truck)
+  assert '/' in fleet_line or '-' in fleet_line
+
+
 def test_ascii_renderer_produces_image(env):
   pillow = pytest.importorskip('PIL')
   from world_of_supply.rendering.renderer import AsciiWorldRenderer

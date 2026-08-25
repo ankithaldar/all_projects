@@ -97,6 +97,23 @@ def test_transport_state_transitions():
   assert truck.state in (TransportState.UNLOADING, TransportState.RETURNING)
 
 
+def test_unfitting_units_are_lost_not_retained():
+  world = WorldBuilder.build(ScenarioConfig(), seed=5)
+  toy_factory = world.get_facilities(ToyFactoryCell)[0]
+  warehouse = world.get_facilities(WarehouseCell)[0]
+  truck = toy_factory.distribution.fleet[0]
+  truck.schedule(world, warehouse, 'toy_car', 5)
+  truck.payload = 5
+  warehouse.storage.try_add_units({'toy_car': 18})
+
+  delivered = truck.try_unloading()
+
+  assert delivered == 2
+  assert truck.payload == 0
+  assert warehouse.storage.used_capacity() == 20
+  assert sum(sum(c.values()) for c in warehouse.consumer.open_orders.values()) == 0
+
+
 def test_distribution_unit_assembly_uses_config():
   economy = DistributionEconomy(unit_price=10)
   assert economy.profit(3) == 30

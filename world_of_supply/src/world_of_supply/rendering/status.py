@@ -92,7 +92,7 @@ class WorldStatusFormatter:
     substatus: list = [f'Balance: {facility.economy.total_balance}']
     if isinstance(facility.distribution, DistributionUnit):
       substatus.append(
-          ['Fleet:', [self.status(truck) for truck in facility.distribution.fleet]]
+          ['Fleet:', [self._fleet_line(truck) for truck in facility.distribution.fleet]]
       )
       substatus.append(
           ['Inbound orders:', [self._order_line(order) for order in facility.distribution.order_queue]]
@@ -131,6 +131,18 @@ class WorldStatusFormatter:
     '''
     return f'{order.product_id}:{order.quantity} at ${order.unit_price} -> {order.destination.id}'
 
+  def _fleet_line(self, truck: Transport) -> str:
+    '''Describe one truck with its route progress bar (legacy format).
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: Status line followed by a route progress bar.
+    '''
+    progress = ascii_progress_bar(truck.location_pointer, max(truck.path_len() - 1, 0), 5)
+    return f'{self.status(truck)} {progress}'
+
   @status.register
   def _(self, truck: Transport) -> str:
     '''Describe the current activity of one truck.
@@ -139,7 +151,7 @@ class WorldStatusFormatter:
       truck: Transport snapshot.
 
     Returns:
-      str: One of LOAD/MOVE/UNLD/BACK/IDLE style lines.
+      str: One of LOAD/MOVE/UNLD/BACK/IDLE lines.
     '''
     state = truck.state
     destination = truck.destination.id if truck.destination is not None else 'home'
@@ -148,10 +160,11 @@ class WorldStatusFormatter:
       return 'IDLE'
     if state == TransportState.LOADING:
       return f'LOAD {truck.product_id}:{truck.requested_quantity} -> {destination}'
-    if state in (TransportState.EN_ROUTE, TransportState.UNLOADING):
-      progress = ascii_progress_bar(truck.location_pointer, max(truck.path_len() - 1, 1), 5)
-      return f'MOVE {cargo} -> {destination} [{progress}]'
-    return f'BACK -> home from {destination}'
+    if state == TransportState.EN_ROUTE:
+      return f'MOVE {cargo} -> {destination}'
+    if state == TransportState.UNLOADING:
+      return f'UNLD {cargo} -> {destination}'
+    return f'BACK {destination} -> home'
 
   @status.register
   def _(self, storage: StorageUnit) -> list:

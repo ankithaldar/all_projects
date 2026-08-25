@@ -177,8 +177,8 @@ class Transport(Agent):
   def try_unloading(self) -> int:
     '''Deposit the payload into the destination storage.
 
-    Units that do not fit are lost; a successful deposit notifies the
-    destination consumer so its open-order book is updated.
+    Units that do not fit are lost (legacy semantics); a successful deposit
+    notifies the destination consumer so its open-order book is updated.
 
     Returns:
       int: Number of units actually delivered.
@@ -188,7 +188,7 @@ class Transport(Agent):
     delivered = deposited.get(self.product_id, 0)
     if delivered > 0:
       self.destination.consumer.on_order_reception(self.source.id, self.product_id, delivered)
-      self.payload -= delivered
+    self.payload = 0
     return delivered
 
   def act(self, control=None) -> BalanceSheet:
