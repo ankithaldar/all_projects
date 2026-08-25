@@ -28,13 +28,18 @@ import sys
 # ------------------------------- CONFIG -------------------------------------
 REPO_URL = 'https://github.com/ankithaldar/all_projects_02.git'  # <-- EDIT ONCE
 GIT_REF = 'competitions/kaggle-rsna-knee-abnormality-detection'
-# STAGE: volumes|folds|weak-labels|weak-labels-llm|teacher|student|
-#        self-train|infer|blend|publish
+# STAGE: volumes|cache-volumes|folds|weak-labels|weak-labels-llm|
+#        teacher|student|self-train|infer|blend|publish
+# cache-volumes: fills volume shards over time (VOL_MINUTES budget),
+# auto-publishing <DATASET_NAME>-volNN datasets and deleting local
+# copies on disk pressure; progress tracked in train_folds.csv.
+# Keep AUTO_PUBLISH=1 so the updated folds file ships too.
 STAGE = 'student'
 EXP = 'configs/experiment/student_2p5d_effnetv2.yaml'
 FOLDS_LIST = None  # '0,1' then '2,3' per kernel; None = config default
 TIME_BUDGET_HOURS = 11  # clean stop before Kaggle's hard 12 h kill
 AUTO_PUBLISH = 1  # push artifacts to the private dataset post-stage
+VOL_MINUTES = 480  # cache-volumes decode budget per kernel (hours-scale)
 DATA_ROOT = '/kaggle/input/competitions/rsna-knee-abnormality-detection'
 DATASET_NAME = 'ah2022-rsna-knee-abnormality-detection'
 # -----------------------------------------------------------------------------
@@ -117,6 +122,7 @@ _env = {
   'DATASET_NAME': DATASET_NAME,
   'AUTO_PUBLISH': str(AUTO_PUBLISH),
   'TIME_BUDGET_HOURS': str(TIME_BUDGET_HOURS),
+  'VOL_MINUTES': str(VOL_MINUTES),
 }
 if FOLDS_LIST:
   _env['FOLDS_LIST'] = FOLDS_LIST
