@@ -37,3 +37,13 @@ def test_gradient_flows_through_both_heads():
 
   grads = [parameter.grad for parameter in net.parameters()]
   assert all(grad is not None for grad in grads)
+
+
+def test_multi_layer_trunk_matches_legacy_widths():
+  net = FacilityNet(obs_dim=50, action_nvec=[8, 6], hidden_size=128, hidden_layers=2)
+  linear_layers = [m for m in net.trunk if isinstance(m, torch.nn.Linear)]
+  assert len(linear_layers) == 2
+  assert linear_layers[0].out_features == 128
+  assert linear_layers[1].in_features == 128
+  logits, _, _ = net(torch.zeros(2, 50))
+  assert logits.shape == (2, 14)

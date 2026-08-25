@@ -68,18 +68,24 @@ def run_baseline(episodes: int, seed: int | None) -> int:
   return 0
 
 
-def run_training(iterations: int, train_toy_factories_only: bool) -> int:
+def run_training(
+    iterations: int,
+    train_toy_factories_only: bool,
+    curriculum_warehouses: bool = False,
+) -> int:
   '''Launch PPO training via RLLib.
 
   Args:
     iterations: Number of training iterations.
     train_toy_factories_only: Freeze non-toy-factory agents.
+    curriculum_warehouses: Promote warehouses to trainable policies at 25%
+      and 35% of the iterations, mirroring the legacy curriculum.
 
   Returns:
     int: Exit code.
   '''
   from world_of_supply.rl.env import EnvConfig
-  from world_of_supply.rl.training import build_ppo_algorithm, train
+  from world_of_supply.rl.training import build_ppo_algorithm, describe_model, train
 
   def log(iteration: int, result: dict) -> None:
     '''Print compact training progress.
@@ -97,13 +103,26 @@ def run_training(iterations: int, train_toy_factories_only: bool) -> int:
     timesteps = result.get('timesteps_total')
     if timesteps is None:
       timesteps = runners.get('num_env_steps_sampled_lifetime')
-    print(f'iteration {iteration}: reward_mean={reward} timesteps={timesteps}')
+    extras = []
+    for source, key in (
+        (runners, 'episode_return_max'),
+        (runners, 'episode_return_min'),
+        (runners, 'episode_len_mean'),
+    ):
+      if source.get(key) is not None:
+        extras.append(f'{key}={source[key]}')
+    suffix = ' '.join(extras)
+    print(f'iteration {iteration}: reward_mean={reward} timesteps={timesteps} {suffix}'.rstrip())
 
+  print(describe_model())
+  curriculum = ()
+  if curriculum_warehouses:
+    curriculum = ((0.25, 'WarehouseCell'), (0.35, 'WarehouseCell'))
   algorithm = build_ppo_algorithm(
       {'env': EnvConfig()},
       train_toy_factories_only=train_toy_factories_only,
   )
-  train(algorithm, iterations, log)
+  train(algorithm, iterations, log, curriculum=curriculum)
   return 0
 
 
@@ -128,6 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
   training = subparsers.add_parser('train', help='Train PPO policies (requires ray)')
   training.add_argument('--iterations', type=int, default=5)
   training.add_argument('--toy-only', action='store_true')
+  training.add_argument('--curriculum-warehouses', action='store_true')
 
   return parser
 
@@ -146,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     return run_simulation(args.ticks, args.seed, args.render_dir)
   if args.command == 'baseline':
     return run_baseline(args.episodes, args.seed)
-  return run_training(args.iterations, args.toy_only)
+  return run_training(args.iterations, args.toy_only, args.curriculum_warehouses)
 
 
 if __name__ == '__main__':

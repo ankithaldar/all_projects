@@ -16,7 +16,6 @@ except ImportError:
 from gymnasium.spaces import Box, Dict as DictSpace, MultiDiscrete
 
 from world_of_supply.economy import BalanceSheet
-from world_of_supply.facility import RawMaterialsFactoryCell, ValueAddFactoryCell
 from world_of_supply.rl.actions import PRICE_LEVELS, ActionDecoder
 from world_of_supply.rl.agents import consumer_agent_id, is_producer, producer_agent_id
 from world_of_supply.rl.observations import ObservationEncoder
