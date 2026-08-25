@@ -222,14 +222,16 @@ class KneeStudyLitModule(pl.LightningModule):
       prog_bar=True,
       sync_dist=True,
     )
-    if self.global_step % 25 == 0:
-      # Progress bar is disabled on streamed kernels; stdout lines are
-      # the only visible proof that steps are advancing.
+    # Heartbeat keyed on BATCHES (always advancing), not optimizer
+    # steps: with accumulate_grad_batches=8 a step lands only every
+    # ~48 s at streaming-decode speed, which read as a hang.
+    self._batches_seen = getattr(self, '_batches_seen', 0) + 1
+    if self._batches_seen == 1 or self._batches_seen % 20 == 0:
       get_logger('student').info(
-        'step %d | epoch %d | batch %d | loss %.4f',
-        int(self.global_step),
+        'batch %d seen | epoch %d | opt-step %d | loss %.4f',
+        self._batches_seen,
         int(self.current_epoch),
-        int(batch_idx),
+        int(self.global_step),
         float(loss.detach()),
       )
     if self.automatic_optimization:

@@ -234,6 +234,17 @@ if nvidia-smi -L 2>/dev/null | grep -Eqi 'T4|P100|P4|K80'; then
   EXTRA_SETS='train.trainer.params.precision=16-mixed'
 fi
 
+# Multi-GPU: use every visible GPU via DDP. Each rank runs its own
+# dataloader (workers/LRU/prefetch duplicate), which is why the
+# datamodule defaults are so lean; accumulate_grad_batches halves so the
+# EFFECTIVE batch stays constant: bs x gpus x accum = 4 x N x 8/N = 32.
+# Single-GPU kernels keep base.yaml's safe devices=1.
+GPU_COUNT=$(nvidia-smi -L 2>/dev/null | grep -c . || true)
+if [ "${GPU_COUNT:-0}" -ge 2 ]; then
+  log "multi-GPU detected ($GPU_COUNT): DDP on, accum -> 4"
+  EXTRA_SETS="$EXTRA_SETS train.trainer.params.devices=$GPU_COUNT train.trainer.params.strategy=ddp train.trainer.params.accumulate_grad_batches=4"
+fi
+
 # --- 2. stage dispatch ------------------------------------------------------
 run() { log "$*"; "$PY" "$@"; }
 

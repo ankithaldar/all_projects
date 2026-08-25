@@ -109,7 +109,7 @@ sampler:
 # below keep a single-rank run comfortably inside that envelope.
 datamodule:
   batch_size: 4                 # studies per step
-  num_workers: 2
+  num_workers: 3                # each worker = own LRU + prefetch pipeline
   max_series_per_study: 6
   pin_memory: false             # pinned staging doubles big-batch copies
   prefetch_factor: 2

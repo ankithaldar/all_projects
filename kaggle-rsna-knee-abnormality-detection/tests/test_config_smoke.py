@@ -92,8 +92,9 @@ class TestKaggleBudgetFields:
     """Host-RAM envelope: batch bytes x in-flight must stay bounded.
 
     batch ~ bs x max_series x in_chans x image_size^2 x 4 B; loader
-    holds ~(workers x prefetch + 1) batches plus model state. Kaggle
-    GPU pods have ~13-15 GB shared with any DDP ranks.
+    holds ~(workers x prefetch + 2) batches. LRU reality: the byte cap
+    is a ceiling, but actual retention is volume_count x ~4.7 MB
+    (32x384^2 uint8) -- budget with the real number.
     """
     cfg = ExperimentConfig.model_validate(_minimal_config_dict())
     dm = cfg.datamodule
@@ -106,7 +107,14 @@ class TestKaggleBudgetFields:
       / 1024**2
     )
     in_flight = dm.num_workers * dm.prefetch_factor + 2  # +main+staging
-    total_gb = batch_mb * in_flight / 1024 + dm.num_workers * dm.lru_max_gb
+    lru_gb = (
+      dm.num_workers
+      * dm.lru_max_volumes
+      * cfg.data.num_slices
+      * cfg.data.image_size**2
+      / 1024**3
+    )
+    total_gb = batch_mb * in_flight / 1024 + lru_gb
     assert total_gb < 8, f'defaults would use ~{total_gb:.1f} GB host RAM'
     # Single-device default: DDP doubles every host-side pipeline.
     assert cfg.train.trainer.params.get('devices') == 1
