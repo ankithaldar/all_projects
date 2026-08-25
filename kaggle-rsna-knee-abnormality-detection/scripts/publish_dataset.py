@@ -251,8 +251,38 @@ def dataset_exists(username: str, dataset_name: str) -> bool:
   raise RuntimeError(f'kaggle datasets status failed:\n{combined.strip()}')
 
 
+#: Substrings that mark a Kaggle-side transient failure worth retrying.
+_TRANSIENT_TOKENS = (
+  '429',
+  '500',
+  '502',
+  '503',
+  '504',
+  'timeout',
+  'bad gateway',
+  'service unavailable',
+  'temporarily',
+)
+
+
+def _is_transient(combined: str) -> bool:
+  """Classify CLI failure text as retryable server-side trouble.
+
+  Args:
+      combined: Raw CLI stdout+stderr text.
+
+  Returns:
+      True when the failure looks like a gateway/rate-limit blip.
+  """
+  lowered = combined.lower()
+  return any(token in lowered for token in _TRANSIENT_TOKENS)
+
+
 def _auth_hint(combined: str) -> str:
   """Append a credential hint when a failure looks auth-related.
+
+  Gateway timeouts embed words like 'Forbidden' in their HTML error
+  pages, so the check is gated on NOT being a known-transient text.
 
   Args:
       combined: Raw CLI stdout+stderr text.
@@ -261,6 +291,8 @@ def _auth_hint(combined: str) -> str:
       The original text, plus a hint line for auth-style failures.
   """
   lowered = combined.lower()
+  if _is_transient(combined):
+    return combined
   if any(
     token in lowered for token in ('401', '403', 'unauthorized', 'forbidden')
   ):
@@ -276,9 +308,10 @@ def push(
 ) -> None:
   """Create the dataset on first push, else publish a new version.
 
-  Follows the documented API flow: patch
-  ``dataset-metadata.json`` -> ``datasets create`` initially and
-  ``datasets version -m <msg>`` afterwards.
+  Follows the documented API flow (patch ``dataset-metadata.json`` ->
+  ``datasets create`` initially, ``datasets version -m <msg>`` after).
+  Transient gateway failures (429/5xx/timeouts) are retried with
+  exponential backoff -- they are server-side, not credential issues.
 
   Args:
       staging: Folder holding the snapshot plus metadata.
@@ -286,11 +319,12 @@ def push(
       dataset_name: Dataset slug.
       message: Human-readable version note.
       dir_mode: Subdirectory handling passed to the CLI.
+
+  Raises:
+      RuntimeError: On permanent failure or exhausted retries.
   """
   log = get_logger('publish_dataset')
-  # -t/--keep-tabular: OOF parquets must upload byte-identical (the CLI
-  # otherwise converts tabular files to CSV, per datasets.md).
-  keep_tabular = ['-t']
+  keep_tabular = ['-t']  # parquet must upload byte-identical
 
   def _push_cmd(action: str) -> list[str]:
     """Assemble the argv for a create/version call.
@@ -306,28 +340,40 @@ def push(
       cmd += ['-m', message]
     return [*cmd, '-p', str(staging), '-r', dir_mode]
 
-  if dataset_exists(username, dataset_name):
-    done = _run_kaggle(_push_cmd('version'))
-    action = 'versioned'
-  else:
-    done = _run_kaggle(_push_cmd('create'))
-    action = 'created'
-  if done.returncode != 0:
+  attempts = 4
+  delay = 10.0
+  combined = ''
+  action = 'version' if dataset_exists(username, dataset_name) else 'create'
+  for attempt in range(attempts):
+    done = _run_kaggle(_push_cmd(action))
+    if done.returncode == 0:
+      _verify(username, dataset_name)
+      verb = 'created' if action == 'create' else 'versioned'
+      log.info('dataset %s/%s %s (%s)', username, dataset_name, verb, message)
+      return
     combined = f'{done.stdout}{done.stderr}'
-    # A lost race between probe and push ("already exists") is safe to
-    # retry as a version push.
-    if action == 'created' and 'already exist' in combined.lower():
-      retry = _run_kaggle(_push_cmd('version'))
-      if retry.returncode == 0:
-        _verify(username, dataset_name)
-        log.info('dataset %s/%s versioned', username, dataset_name)
-        return
-      combined = f'{retry.stdout}{retry.stderr}'
-    raise RuntimeError(
-      f'kaggle datasets {action} failed:\n{_auth_hint(combined)}'
+    lowered = combined.lower()
+    # Lost race between probe and push -> flip to a version push for
+    # free (does not consume retry budget).
+    if action == 'create' and 'already exist' in lowered:
+      action = 'version'
+      continue
+    if not _is_transient(combined):
+      raise RuntimeError(
+        f'kaggle datasets {action} failed:\n{_auth_hint(combined)}'
+      )
+    log.warning(
+      'transient kaggle API failure (%d/%d); retrying in %.0fs: %.200s',
+      attempt + 1,
+      attempts,
+      min(delay * (2**attempt), 60),
+      combined.strip(),
     )
-  _verify(username, dataset_name)
-  log.info('dataset %s/%s %s (%s)', username, dataset_name, action, message)
+    time.sleep(min(delay * (2**attempt), 60))
+  raise RuntimeError(
+    f'kaggle datasets {action} failed after {attempts} attempts:\n'
+    f'{combined.strip()[:400]}'
+  )
 
 
 def _verify(username: str, dataset_name: str) -> None:
