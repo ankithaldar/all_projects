@@ -116,7 +116,7 @@ class DistributionUnit(Agent):
       return 0
     if order.product_id != self.facility.bom.output_product_id:
       penalty = self.economy.wrong_order_penalty * order.quantity
-      self.economy.total_wrong_order_penalties += penalty
+      self.economy.total_wrong_order_penalties -= penalty
       return penalty
     order.unit_price = self.economy.unit_price
     self.order_queue.append(order)
@@ -144,7 +144,7 @@ class DistributionUnit(Agent):
       sheets += truck.act()
 
     pending_penalty = self.economy.pending_order_penalty * len(self.order_queue)
-    self.economy.total_pending_order_penalties += pending_penalty
+    self.economy.total_pending_order_penalties -= pending_penalty
     revenue = self.economy.order_checkin
     self.economy.order_checkin = 0
     return BalanceSheet(revenue, -pending_penalty) + sheets

@@ -464,6 +464,14 @@ Default-layout tests assert 9 facilities — update them if you change tiers.
   BOM-related products; fleet status strings restored to legacy
   LOAD/MOVE/UNLD/BACK format with route progress bars; `lspci` GPU probe
   returned to `analytics/hardware`.
+- Third (tick-exact) audit fix: legacy runs the arrival flip and the unload
+  in the SAME `Transport.act` call (two sequential `if` blocks); the port
+  had used `elif`, delaying delivery by one tick and one freight charge.
+  Now tick-exact, verified by a forced-path trace comparison.
+- Empirical parity harness: legacy vs refactored are compared side-by-side
+  (layout, sheets, storage/manufacturing/seller/consumer sequences,
+  transport trace, scripted policy, reward formula, observation features,
+  action decoding) — legacy sources live in `src/legacy/`.
 
 ### Legacy file → new module map
 
@@ -515,3 +523,127 @@ Render artifacts land in `out/` (git-ignored).
 3.10–3.13, `pip install -e .`, tests, demo, baseline, short training) —
 see the usage header in the script; artifacts go to `/content/wos_outputs`
 or Google Drive with `MOUNT_DRIVE=1`.
+
+## Appendix A — Legacy → refactored API map (1:1)
+
+Legacy sources: `src/legacy/` (reference-only, TensorFlow/Ray-1.x era).
+Every legacy symbol and where it lives now; ✱ = intentional behavior fix.
+
+### `world_of_supply_environment.py`
+
+| Legacy | Refactored | Notes |
+|---|---|---|
+| `BalanceSheet` (+ `total/__add__/__sub__/__radd__/__repr__`) | `economy.BalanceSheet` | identical API |
+| `Cell`, `TerrainCell`, `RailroadCell` | `geography.Cell/TerrainCell/RailroadCell` | identical |
+| `Agent` (ABC, `act`) | `base.Agent` (Protocol) | structural typing |
+| `Transport` attrs: `source, destination, path, location_pointer, step, payload, product_id, requested_quantity, economy` | `transport.Transport` (same names) | + derived `state` property |
+| `Transport.schedule/path_len/is_enroute/current_location/try_loading/try_unloading/act` | same methods | `try_unloading` returns delivered count; leftovers lost ✱ |
+| `Transport.Economy.step_balance_sheet(transport)` | `TransportEconomy.step_balance_sheet(payload, step)` | args flattened |
+| `BillOfMaterials` (+ `input_units_per_lot`) | `manufacturing.BillOfMaterials` | `inputs` has `default_factory` |
+| `StorageUnit.Economy.step_balance_sheet(storage)` | `StorageEconomy.step_balance_sheet(used_capacity)` | |
+| `StorageUnit.Config` | fields folded into `FacilityConfig` | |
+| `StorageUnit.used/available_capacity/try_add_units/try_take_units/take_available/act` | `storage.StorageUnit` same methods | |
+| `DistributionUnit.Economy` (`unit_price, wrong_order_penatly, pending_order_penalty, order_checkin, total_*`; `profit`) | `DistributionEconomy` | typo fixed: `wrong_order_penalty`; penalty tallies stay negative ✱ |
+| `DistributionUnit.Config` | fields folded into `FacilityConfig` | |
+| `DistributionUnit.Control(unit_price)` | `FacilityControl.unit_price` | one shared control object |
+| `DistributionUnit.Order` | `distribution.Order` | |
+| `DistributionUnit.place_order/act`, attrs `fleet, order_queue` | `distribution.DistributionUnit` same | freight costs booked as losses ✱ (legacy sign bug) |
+| `ManufacturingUnit.Economy.cost/step_balance_sheet` | `ManufacturingEconomy.step_balance_sheet` | `cost` folded in |
+| `ManufacturingUnit.act`, `Config.unit_manufacturing_cost` | `manufacturing.ManufacturingUnit.act`, `FacilityConfig` field | |
+| `ConsumerUnit.Economy` (purchase/received totals) | `consumer.ConsumerEconomy` | |
+| `ConsumerUnit.Control` (3 fields) | `FacilityControl.consumer_*` | |
+| `ConsumerUnit.act/on_order_reception/_update_open_orders` | `consumer.ConsumerUnit` (`_shift_open_order`) | setdefault-prune: tolerates unsolicited deliveries ✱ |
+| `SellerUnit.Economy` (+ `market_demand/profit/step_balance_sheet`) | `seller.SellerEconomy` | `profit`/sheet folded into `SellerUnit.act` |
+| `FacilityCell.Config` (5-way dataclass inheritance) | `facility.FacilityConfig` (flat dataclass) | |
+| `FacilityCell.EconomyConfig` | `FacilityConfig.initial_balance` | |
+| `FacilityCell.Economy.deposit` | `FacilityEconomy.deposit` | |
+| `FacilityCell.Control` (multi-inheritance) | `facility.FacilityControl` | all-optional fields |
+| `FacilityCell.__init__(x, y, world, config, economy_config)` | `FacilityCell.__init__(x, y, world, config)` | configs merged |
+| per-subclass `__init__` overrides | `_install_units` (Template Method) | |
+| `create_distribution_unit` | `facility._distribution_unit` | |
+| `RawMaterials/Steel/Lumber/ValueAdd/Toy/Warehouse/RetailerCell` | same class names in `facility.py` | |
+| `World.Economy.global_balance` | `world.WorldEconomy.global_balance` | |
+| `World.Control/StepOutcome` | `world.Control/StepOutcome` | |
+| `World.generate_id/act/create_cell/place_cell/is_railroad/is_traversable/get_facilities` | `world.World` same methods | `act` iterates registry; + `register_facility` |
+| `World.c_tostring/map_to_graph` | `routing.build_traversable_graph` | int node encoding; cache invalidated on cell change ✱ |
+| `World.find_path(x1, y1, x2, y2)` (lru_cache on method) | `World.find_path(start, goal)` | tuple args; stale-world cache leak fixed ✱ |
+| `WorldBuilder.create(x, y)` | `WorldBuilder.build(config, seed)` | + seeded railroad jitter; elbow always defined ✱ |
+| `WorldBuilder.default_facility_config/default_economy_config` | `FacilityConfig` + `ScenarioConfig` | |
+| `WorldBuilder.connect_cells/build_railroad` | `WorldBuilder._connect/_build_railroad` | unbound `xi` NameError fixed ✱ |
+| `SimpleControlPolicy.compute_control` | `policies.ScriptedSupplyChainPolicy.compute_control` | |
+| `SimpleControlPolicy._find_source` | `._select_source` | booked = full occupancy ✱ |
+| `SimpleControlPolicy.find_exporting_sources` | static method, same name | |
+| `default_facility_control` (inner fn) | inlined `FacilityControl(...)` | |
+
+### `world_of_supply_rllib.py`
+
+| Legacy | Refactored | Notes |
+|---|---|---|
+| `Utils.agentid_producer/consumer` | `rl.agents.producer_agent_id/consumer_agent_id` | |
+| `Utils.is_producer_agent/is_consumer_agent` | `rl.agents.is_producer/is_consumer` | |
+| `Utils.agentid_to_fid` | `rl.agents.facility_id_of` | |
+| `RewardCalculator.calculate_reward/_retailer_profit` | `rl.rewards.RetailerProfitRewardShaper.shape` (+ `_curriculum_weight`) | weights via constructor, not env_config; empty-mean guard ✱ |
+| `StateCalculator.world_to_state` | `ObservationEncoder.encode_world` | returns (vectors, raws) same shape |
+| `StateCalculator._state` | `ObservationEncoder.encode_facility` | |
+| `StateCalculator._add_global/_add_bom/_add_distributor/_add_consumer_features` | folded into `encode_facility` | export-mask stride fixed ✱ (`[source][product]` row-major) |
+| `StateCalculator._serialize_state` | `ObservationEncoder._flatten` + `normalize` | zero-range NaN guard ✱ |
+| `StateCalculator._safe_div/_balance_norm` | dropped | dead/commented code |
+| `ActionCalculator.action_dictionary_to_control` | `rl.actions.ActionDecoder.decode` | |
+| `ActionCalculator._actions_to_control` + `get_or_zero` | `ActionDecoder._decode_facility` + `element()` | source index clamped ≥0 ✱; product index mod len ✱ |
+| price/rate/small-control dicts | `PRICE_LEVELS/RATE_LEVELS/QUANTITY_LEVELS` | module constants |
+| `WorldOfSupplyEnv.__init__/reset/step/set_iteration` | `rl.env.WorldOfSupplyEnv` | Gymnasium API: `reset(seed, options)`, 5-tuple step, `terminated`+`truncated` with `__all__` |
+| `WorldOfSupplyEnv.agent_ids()` (method) | `agent_ids`/`possible_agents`/`agents` attributes | RLLib checker requirement |
+| `WorldOfSupplyEnv.n_products/_product_ids` | `product_ids` attribute | sorted → deterministic ✱ (legacy `list(set)`) |
+| — | `coerce_env_config`, `scripted_actions()` | new: dict-config normalization; scripted-action helper |
+| `SimplePolicy` (+ `compute_actions/learn_on_batch/get/set_weights/get_config_from_env`) | dropped as RLLib policies | see `Producer/ConsumerSimplePolicy` below |
+| `ProducerSimplePolicy._action` | `rl.heuristics.ScriptedProducer.action` | class→price-index table identical |
+| `ConsumerSimplePolicy._action/_find_source` | `rl.heuristics.ScriptedConsumer.action` | same fulfillment-ratio logic on raw features |
+| — | `rl.heuristics.ScriptedAgentController` | full action dict per world (replaces in-trainer hand-coded policies) |
+
+### `world_of_supply_rllib_models.py`
+
+| Legacy (TensorFlow) | Refactored (PyTorch) | Notes |
+|---|---|---|
+| `FacilityNet.__init__(hiddens_size=256, cell_size=64)` | `rl.models.FacilityNet(hidden_size=256, hidden_layers=1, lstm_cell_size=64, use_lstm=False)` | MLP default (legacy ran MLPs too); LSTM optional |
+| keras `Input/Dense/LSTM/Dense` graph | `torch.nn.Sequential` trunk + `policy_head` + `value_head` | logits concat for MultiDiscrete |
+| `forward_rnn(inputs, state, seq_lens)` | `forward(observations, state)` | + `_normalize_lstm_state` batch→layer first |
+| `get_initial_state` (list of np zeros) | `FacilityNet.initial_state(batch)` list; RLModule `get_initial_state` dict `{h, c}` | new-stack contract |
+| `value_function()` | `value_head` + `FacilityRLModule.compute_values` | ValueFunctionAPI for GAE |
+| — | `rl.rl_modules.FacilityRLModule` | `action_dist_inputs`/`vf_preds` keys, bound `TorchMultiCategorical`, `cfg`/`config` resolution |
+
+### `world_of_supply_rllib_training.py`
+
+| Legacy | Refactored | Notes |
+|---|---|---|
+| `env_config` dict (`episod_duration`, weights, `downsampling_rate`) | `rl.env.EnvConfig` dataclass (`episode_duration` — typo fixed) | passed as `{'env': EnvConfig}`; coerced in env |
+| `policies` dict + `policy_mapping_global` | `TRAINABLE_POLICIES`/`FROZEN_POLICIES` + `PolicySpec`s | frozen clones replace in-trainer hand-coded policies |
+| `create_policy_mapping_fn/mapping_fn` | `make_policy_mapping_fn` | returns `(fn, mutable_state)` |
+| `update_policy_map` (disabled stub) | `apply_curriculum` + `train(curriculum=...)` | functional again; CLI `--curriculum-warehouses` |
+| `print_model_summaries` | `describe_model()` | torch reprs, legacy widths 128×2 / 256×2 |
+| `print_training_results` | `cli.run_training.log` | nested-schema fallbacks |
+| `play_baseline` (no-learning trainer) | `evaluate_scripted` (+ `cli baseline`) | env-direct, no RLLib needed |
+| `train_ppo` | `build_ppo_algorithm` + `train` (+ `cli train`) | PPOConfig builder; version-tolerant settings/runner access |
+| `filter_keys` | inline dict comprehension | |
+
+### `world_of_supply_renderer.py`
+
+| Legacy | Refactored | Notes |
+|---|---|---|
+| `Utils.ascii_progress_bar(done, limit, bar_lenght_char)` | `rendering.status.ascii_progress_bar(..., bar_length)` | typo fixed |
+| `WorldRenderer.plot_sequence_images` | `rendering.renderer.NotebookAnimator.plot_sequence_images` | |
+| `AsciiWorldStatusPrinter.status(world/facility/transport/storage)` (multipledispatch) | `WorldStatusFormatter.status` (`singledispatchmethod`) | stdlib dispatch; legacy LOAD/MOVE/UNLD/BACK words kept |
+| `AsciiWorldStatusPrinter.cell_status` | dropped | unused |
+| `AsciiWorldStatusPrinter.counter` | `counter_to_dict` | |
+| `AsciiWorldRenderer.render` + inner `new_layer` | `AsciiWorldRenderer.render` + `_ascii_layers` | |
+| `to_yaml` | inline `yaml.dump` | |
+| `railroad_sprite` | `rendering.sprites.railroad_glyph` + `renderer._railroad_sprite` | table-driven |
+| `multiline_textsize` / `Image.ANTIALIAS` | `multiline_textbbox` / `Image.LANCZOS` | Pillow ≥10 |
+| `resources/` cwd-relative fonts | `world_of_supply/assets/` via `importlib.resources` | |
+
+### `world_of_supply_tools.py`
+
+| Legacy | Refactored | Notes |
+|---|---|---|
+| `SimulationTracker(eposod_len, n_episod, ...)` | `analytics.tracker.SimulationTracker(episode_length, n_episodes, ...)` | typos fixed; empty-name guard |
+| `SimulationTracker.add_sample/render` | same methods | same 3-panel plot |
+| `print_hardware_status` (TF `device_lib`, `ray.init(num_gpus=1)`) | `analytics.hardware.print_hardware_status` | torch CUDA probe + `lspci`; GPU-optional ray init |
