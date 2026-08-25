@@ -56,6 +56,18 @@ def test_episode_truncates_at_horizon():
   assert truncated['__all__'] is True
 
 
+def test_env_config_coercion_shapes():
+  from world_of_supply.rl.env import EnvConfig, WorldOfSupplyEnv, coerce_env_config
+
+  assert coerce_env_config(None).episode_duration == 1000
+  assert coerce_env_config(EnvConfig(episode_duration=5)).episode_duration == 5
+  assert coerce_env_config({'env': EnvConfig(episode_duration=7)}).episode_duration == 7
+  assert coerce_env_config({'episode_duration': 9}).episode_duration == 9
+
+  env = WorldOfSupplyEnv({'env': EnvConfig(episode_duration=100, downsampling_rate=10)})
+  assert env.config.episode_duration == 100
+
+
 def test_reward_shaper_shapes_curriculum():
   from world_of_supply.economy import BalanceSheet
   from world_of_supply.rl.rewards import RetailerProfitRewardShaper

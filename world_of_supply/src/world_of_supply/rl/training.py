@@ -116,6 +116,7 @@ def build_ppo_algorithm(
     num_workers: int = 2,
     use_lstm: bool = False,
     train_toy_factories_only: bool = False,
+    env_class=None,
 ):
   '''Assemble a PPO algorithm over :class:`WorldOfSupplyEnv`.
 
@@ -134,6 +135,8 @@ def build_ppo_algorithm(
     num_workers: Parallel rollout workers.
     use_lstm: Enable the recurrent variant of FacilityNet.
     train_toy_factories_only: Freeze all non-toy-factory agents.
+    env_class: Optional env subclass (e.g. with a custom reward shaper);
+      defaults to :class:`WorldOfSupplyEnv`.
 
   Returns:
     Algorithm: Built (not yet trained) PPO algorithm.
@@ -164,6 +167,8 @@ def build_ppo_algorithm(
 
   config = PPOConfig()
   config = _configure(config, lr=lr, gamma=gamma, train_batch_size=train_batch_size)
+  environment_class = env_class or WorldOfSupplyEnv
+  config = config.environment(env=environment_class, env_config=env_config)
   runners = config.env_runners if hasattr(config, 'env_runners') else config.rollout
   worker_key = 'num_env_runners' if hasattr(config, 'env_runners') else 'num_rollout_workers'
   config = runners(
@@ -199,7 +204,7 @@ def build_ppo_algorithm(
           )
       )
   )
-  algorithm = config.build(env=WorldOfSupplyEnv)
+  algorithm = config.build(env=environment_class)
   setattr(algorithm, CURRICULUM_ATTR, curriculum_state)
   return algorithm
 

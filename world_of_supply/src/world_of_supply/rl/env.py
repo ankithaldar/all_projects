@@ -45,6 +45,37 @@ class EnvConfig:
   seed: int | None = None
 
 
+def coerce_env_config(config) -> 'EnvConfig':
+  '''Normalize RLLib-supplied environment configuration.
+
+  RLLib forwards ``env_config`` to the env constructor verbatim, so the
+  value may be an :class:`EnvConfig`, a ``{'env': EnvConfig}`` wrapper (the
+  shape used by :func:`world_of_supply.rl.training.build_ppo_algorithm`), a
+  dict of EnvConfig fields, or ``None``.
+
+  Args:
+    config: Any supported configuration shape.
+
+  Returns:
+    EnvConfig: Normalized configuration.
+
+  Raises:
+    TypeError: If the shape cannot be interpreted.
+  '''
+  if config is None:
+    return EnvConfig()
+  if isinstance(config, EnvConfig):
+    return config
+  if isinstance(config, dict):
+    if set(config) == {'env'}:
+      inner = config['env']
+      if isinstance(inner, EnvConfig):
+        return inner
+      return EnvConfig(**inner)
+    return EnvConfig(**config)
+  raise TypeError(f'Cannot interpret env config of type {type(config).__name__}')
+
+
 class WorldOfSupplyEnv(_MultiAgentEnvBase):
   '''RLlib-compatible multi-agent environment over the simulated economy.
 
@@ -66,7 +97,7 @@ class WorldOfSupplyEnv(_MultiAgentEnvBase):
       config: Environment configuration; defaults are used when omitted.
     '''
     super().__init__()
-    self.config = config or EnvConfig()
+    self.config = coerce_env_config(config)
     self.reference_world = WorldBuilder.build(self.config.scenario, seed=0)
 
     self.product_ids = sorted({
