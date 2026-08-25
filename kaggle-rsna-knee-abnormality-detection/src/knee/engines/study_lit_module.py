@@ -30,6 +30,7 @@ from knee.config_params.schema import (
   OptimizerConfig,
   TrainConfig,
 )
+from knee.helpers.logging_utils import get_logger
 from knee.losses.classification import SoftBCEWithLogits
 from knee.losses.curriculum_weights import (
   CurriculumController,
@@ -212,7 +213,6 @@ class KneeStudyLitModule(pl.LightningModule):
     Returns:
         Scalar loss (consumed by Lightning in automatic mode).
     """
-    del batch_idx
     _, _, loss = self._compute_terms(batch)
     self.log(
       'train_loss',
@@ -222,6 +222,16 @@ class KneeStudyLitModule(pl.LightningModule):
       prog_bar=True,
       sync_dist=True,
     )
+    if self.global_step % 25 == 0:
+      # Progress bar is disabled on streamed kernels; stdout lines are
+      # the only visible proof that steps are advancing.
+      get_logger('student').info(
+        'step %d | epoch %d | batch %d | loss %.4f',
+        int(self.global_step),
+        int(self.current_epoch),
+        int(batch_idx),
+        float(loss.detach()),
+      )
     if self.automatic_optimization:
       return loss
     # --- manual optimization (dual optimizers) ------------------------ #

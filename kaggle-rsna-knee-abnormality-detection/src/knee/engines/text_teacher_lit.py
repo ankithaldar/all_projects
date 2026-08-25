@@ -279,14 +279,16 @@ class TextTeacherLitModule(pl.LightningModule):
     groups = [
       {
         'params': [
-          p for n, p in self.named_parameters()
+          p
+          for n, p in self.named_parameters()
           if not any(nd in n for nd in no_decay)
         ],
         'weight_decay': self.weight_decay,
       },
       {
         'params': [
-          p for n, p in self.named_parameters()
+          p
+          for n, p in self.named_parameters()
           if any(nd in n for nd in no_decay)
         ],
         'weight_decay': 0.0,
@@ -336,14 +338,15 @@ def predict_probs(
       'input_ids'
     ]
     starts = range(0, max(len(ids) - max_length, 0) + 1, step)
-    chunks = [ids[start:start + max_length] for start in starts] or [ids[
-      :max_length]]
+    chunks = [ids[start : start + max_length] for start in starts] or [
+      ids[:max_length]
+    ]
     for chunk in chunks:
       windows.append((text_index, chunk))
   scores = np.zeros((len(texts), module.hparams['n_targets']), np.float32)
   seen = np.zeros(len(texts), bool)
   for start in range(0, len(windows), batch_size):
-    chunk_batch = windows[start:start + batch_size]
+    chunk_batch = windows[start : start + batch_size]
     encoded = tokenizer.pad(
       [{'input_ids': chunk} for _, chunk in chunk_batch],
       padding=True,
@@ -359,9 +362,7 @@ def predict_probs(
   return scores
 
 
-def oof_frame_from_matrix(
-  uids, matrix: np.ndarray
-) -> pd.DataFrame:
+def oof_frame_from_matrix(uids, matrix: np.ndarray) -> pd.DataFrame:
   """Package an OOF probability matrix as a parquet-ready frame.
 
   Args:

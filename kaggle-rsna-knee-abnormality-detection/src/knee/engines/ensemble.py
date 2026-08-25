@@ -131,9 +131,7 @@ class GreedyBlender:
     mixture = None
     for name, weight in active.items():
       contribution = prepared[name] * (weight / total)
-      mixture = (
-        contribution if mixture is None else mixture + contribution
-      )
+      mixture = contribution if mixture is None else mixture + contribution
     return mixture
 
   def fit(
@@ -170,9 +168,7 @@ class GreedyBlender:
       aligned[name] = merged[list(TARGETS)].to_numpy(np.float64)
 
     gold_values = clean_gold[list(TARGETS)].to_numpy(np.float64)
-    prepared = {
-      name: self._prepare(values) for name, values in aligned.items()
-    }
+    prepared = {name: self._prepare(values) for name, values in aligned.items()}
     start = max(prepared, key=lambda n: self._score(prepared[n], gold_values))
     self.selected_, self.weights_ = [start], {start: 1.0}
     self.best_score_ = self._score(prepared[start], gold_values)
@@ -190,9 +186,7 @@ class GreedyBlender:
             for name, weight in self.weights_.items()
           }
           trial_weights[candidate] = alpha
-          score = self._score(
-            self._blend(prepared, trial_weights), gold_values
-          )
+          score = self._score(self._blend(prepared, trial_weights), gold_values)
           if score - self.best_score_ > best_gain:
             best_gain, next_score = score - self.best_score_, score
             best_pick, best_alpha = candidate, alpha
