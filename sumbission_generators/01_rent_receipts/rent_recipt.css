@@ -1,0 +1,328 @@
+:root {
+    --primary-color: #2c3e50;
+    --accent-color: #2980b9;
+    --error-color: #c0392b;
+    --success-color: #27ae60;
+    --border-color: #bdc3c7;
+    --bg-color: #f4f6f7;
+    --paper-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-color);
+    color: #333;
+    line-height: 1.6;
+    padding: 20px;
+}
+
+/* Layout Structure */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+}
+
+@media (max-width: 900px) {
+    .container {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Form Section */
+.form-card {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: var(--paper-shadow);
+    height: fit-content;
+}
+
+h2 {
+    margin-bottom: 20px;
+    color: var(--primary-color);
+    border-bottom: 2px solid var(--accent-color);
+    padding-bottom: 10px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+input, select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 1rem;
+    transition: border-color 0.3s;
+}
+
+input:focus, select:focus {
+    border-color: var(--accent-color);
+    outline: none;
+}
+
+.row {
+    display: flex;
+    gap: 15px;
+}
+
+.row .form-group {
+    flex: 1;
+}
+
+.btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 25px;
+}
+
+button {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1rem;
+    transition: opacity 0.2s;
+    flex: 1;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+.btn-primary { background-color: var(--accent-color); color: white; }
+.btn-secondary { background-color: var(--primary-color); color: white; }
+.btn-outline { background-color: transparent; border: 1px solid var(--primary-color); color: var(--primary-color); }
+
+/* Receipt Preview Section */
+.preview-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#receipt-container {
+    background: white;
+    width: 210mm; /* A4 width */
+    min-height: 297mm; /* A4 height */
+    padding: 20mm;
+    box-shadow: var(--paper-shadow);
+    position: relative;
+    overflow: hidden;
+    transform-origin: top center;
+}
+
+/* Responsive scaling for preview on small screens */
+@media (max-width: 850px) {
+    #receipt-container {
+        width: 100%;
+        min-height: auto;
+        padding: 15mm;
+    }
+}
+
+.receipt-header {
+    text-align: center;
+    border: 2px solid #333;
+    padding: 20px;
+    margin-bottom: 30px;
+}
+
+.receipt-title {
+    font-size: 24px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.receipt-id {
+    text-align: right;
+    margin-bottom: 10px;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.receipt-content {
+    font-size: 16px;
+    margin-bottom: 40px;
+}
+
+.receipt-row {
+    margin-bottom: 15px;
+    display: flex;
+}
+
+.receipt-label {
+    width: 140px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.receipt-value {
+    flex-grow: 1;
+    border-bottom: 1px dotted #999;
+}
+
+.declaration-text {
+    margin-top: 30px;
+    margin-bottom: 40px;
+    text-align: justify;
+    font-style: italic;
+}
+
+.amount-highlight {
+    font-weight: bold;
+    text-decoration: underline;
+}
+
+.signature-section {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 60px;
+    align-items: flex-end;
+}
+
+.signature-box {
+    text-align: center;
+    width: 200px;
+}
+
+/* New Signature Image Styles */
+.signature-image {
+    max-width: 150px;
+    height: auto;
+    display: none; /* Hidden by default, shown by JS */
+    margin-bottom: 5px; /* Space between image and line */
+}
+
+.signature-line {
+    border-top: 1px solid #000;
+    margin-top: 5px; /* Reduced margin since image is above */
+    padding-top: 5px;
+    font-weight: bold;
+}
+
+.disclaimer {
+    font-size: 10px;
+    color: #666;
+    margin-top: 30px;
+    border-top: 1px solid #ddd;
+    padding-top: 10px;
+    text-align: center;
+}
+
+/* Toast Notification */
+#toast {
+    visibility: hidden;
+    min-width: 250px;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    border-radius: 4px;
+    padding: 16px;
+    position: fixed;
+    z-index: 1;
+    left: 50%;
+    bottom: 30px;
+    transform: translateX(-50%);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    font-size: 15px;
+}
+
+#toast.show {
+    visibility: visible;
+    animation: fadein 0.5s, fadeout 0.5s 2.5s;
+}
+
+#toast.error { background-color: var(--error-color); }
+#toast.success { background-color: var(--success-color); }
+
+@keyframes fadein {
+    from {bottom: 0; opacity: 0;}
+    to {bottom: 30px; opacity: 1;}
+}
+
+@keyframes fadeout {
+    from {bottom: 30px; opacity: 1;}
+    to {bottom: 0; opacity: 0;}
+}
+
+/* ==================== PRINT STYLES ==================== */
+@media print {
+    @page {
+        size: A4;
+        margin: 0;
+    }
+
+    body {
+        background: white;
+        padding: 0;
+        -webkit-print-color-adjust: exact;
+    }
+
+    .container {
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Hide all UI elements */
+    .form-card,
+    .btn-group,
+    .preview-header,
+    #toast {
+        display: none !important;
+    }
+
+    .preview-section {
+        display: block;
+        width: 100%;
+    }
+
+    #receipt-container {
+        box-shadow: none;
+        width: 100%;
+        margin: 0;
+        padding: 15mm 20mm;
+        border: none;
+    }
+
+    /* Ensure text is pure black for official documents */
+    * {
+        color: #000 !important;
+        text-shadow: none !important;
+    }
+
+    /* Force border printing */
+    .receipt-header {
+        border-color: #000 !important;
+    }
+
+    .signature-line {
+        border-top-color: #000 !important;
+    }
+
+    /* Ensure signature image is displayed during print */
+    .signature-image {
+        display: block !important;
+    }
+}
