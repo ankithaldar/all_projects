@@ -144,6 +144,9 @@ train:
       log_every_n_steps: 10          # streamed cells: show life signs often
       enable_progress_bar: false     # tqdm spam in non-TTY stdout; metric
                                      # lines + decode summaries tell the story
+      num_sanity_val_steps: 2        # pre-flight loop check; decodes ~2x24
+                                     # volumes that never reach training (set
+                                     # 0/1 to trim warm-up time)
       check_val_every_n_epoch: 1
       deterministic: false
   callbacks:
