@@ -1,0 +1,531 @@
+/* ============================================================
+   EaseMyTrip E-Ticket — reproduction of
+   "EaseMyTrip Flight E-Ticket for flights.pdf"
+
+   Scale note: the PDF page is A4 (595x842pt) = 793x1123 CSS px.
+   Every value below is expressed in CSS px at 96dpi, so
+   1 PDF point = 1.3333 CSS px.
+   ============================================================ */
+
+:root {
+  --page-bg: #f1f0f0;
+  --sheet-bg: #ffffff;
+  --ink: #000000;
+  --muted: #6b6b6b;
+  --rule: #dedede;
+  --card-border: #e1e1e1;
+  --card-divider: #e9e8e8;
+  --panel-bg: #f2f9ff;
+  --panel-border: #6ebaf7;
+  --link-blue: #2196f3;
+  --table-border: #ccd5dc;
+  --table-head-bg: #f6f7f8;
+  --banner-bg: #e8f2f6;
+  --banner-link: #0000ee;
+  --sheet-width: 680px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--page-bg);
+  color: var(--ink);
+  font-family: Arial, "Liberation Sans", Helvetica, "Segoe UI", sans-serif;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.page {
+  width: var(--sheet-width);
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0 4px;
+  background: var(--sheet-bg);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------- header */
+
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 17px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.topbar .logo {
+  width: 116px;
+  height: auto;
+  display: block;
+}
+
+.ticket-meta {
+  text-align: right;
+}
+
+.ticket-meta h1 {
+  margin: -5px 0 0;
+  font-size: 18.5px;
+  line-height: 1.38;
+  font-weight: 700;
+}
+
+.ticket-meta p {
+  margin: 0;
+  font-size: 10.9px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------- titles */
+
+.section-title {
+  margin: 11px 0 12px;
+  font-size: 15.4px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------- flight leg */
+
+.flight .section-title { margin-bottom: 12.5px; }
+
+/* the return leg's heading sits lower than the first one (see pdf) */
+.flight + .travellers + .flight .section-title { margin-top: 22px; }
+
+.leg {
+  border: 1px solid var(--card-border);
+  border-radius: 2px;
+  background: var(--sheet-bg);
+}
+
+.leg-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 19px 5px 12px;
+  border-bottom: 1px solid var(--card-divider);
+}
+
+.leg-route .city {
+  font-size: 14.4px;
+  font-weight: 700;
+  vertical-align: baseline;
+}
+
+.leg-route .plane {
+  width: 12.4px;
+  height: 10px;
+  margin: 0 6px;
+  vertical-align: -1px;
+}
+
+.leg-date {
+  margin: 1px 0 0;
+  font-size: 12.6px;
+  color: var(--link-blue);
+}
+
+.leg-pnr {
+  margin: 15px 0 0;
+  font-size: 13.9px;
+  white-space: nowrap;
+}
+
+.leg-pnr b { font-weight: 700; }
+
+.leg-body {
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  margin: 15px 18px 15px;
+  padding: 12px 0 13px;
+}
+
+/* the onward leg's blue panel carries extra breathing room in the pdf */
+.leg--roomy .leg-body { padding: 27px 0 28px; }
+
+/* a journey with stops renders one leg card per flight segment */
+.leg + .leg { margin-top: 12px; }
+
+.airline {
+  display: flex;
+  align-items: flex-start;
+  gap: 5.5px;
+  padding: 0 11px;
+}
+
+.airline-logo {
+  width: 31px;
+  height: 31px;
+  display: block;
+}
+
+/* airlines without a logo image fall back to a code badge */
+.airline-badge {
+  width: 31px;
+  height: 31px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid var(--panel-border);
+  color: #0b3c68;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.airline-text { line-height: 1.3; }
+
+.airline-name {
+  margin: 0;
+  font-size: 12.4px;
+  font-weight: 700;
+}
+
+.airline-no {
+  margin: 0;
+  font-size: 9.2px;
+}
+
+.airline-no .muted { color: var(--muted); }
+
+.timeline {
+  display: grid;
+  grid-template-columns: 1fr 108px 1fr;
+  align-items: start;
+  margin: 7.5px 0 0;
+}
+
+.stop { line-height: 1.25; }
+
+/* the pdf pushes the departure/arrival blocks a couple of px towards the
+   duration line, so nudge them instead of re-balancing the grid columns */
+.stop-dep { text-align: right; padding-right: 2px; }
+.stop-arr { text-align: left; margin-left: -2px; }
+
+.stop-date {
+  margin: 0;
+  font-size: 9.4px;
+}
+
+.stop-time {
+  margin: 3.5px 0 0;
+  font-size: 16.5px;
+  font-weight: 700;
+}
+
+.stop-airport {
+  margin: 4.5px 0 0;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.duration {
+  text-align: center;
+  padding-top: 25px;
+  position: relative;
+  left: -3.5px;
+}
+
+.duration-text {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.duration-line {
+  display: block;
+  width: 82px;
+  height: auto;
+  margin: 1px auto 0;
+}
+
+.leg-meta {
+  margin: 16px 0 0;
+  padding: 0 11px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.leg-meta .icon {
+  width: 11.6px;
+  height: 11.6px;
+  vertical-align: -1px;
+  margin-right: 2px;
+}
+
+/* ---------------------------------------------------------- tables */
+
+.travellers { margin-top: 0; }
+
+.travellers .section-title {
+  margin: 24px 0 7.5px;
+}
+
+.table-scroll { overflow-x: auto; }
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.grid th,
+.grid td {
+  border: 1px solid var(--table-border);
+  padding: 8px;
+  text-align: left;
+  vertical-align: middle;
+  font-weight: 400;
+  font-size: 8px;
+  line-height: 1.36;
+}
+
+.grid thead th {
+  background: var(--table-head-bg);
+  font-weight: 700;
+  font-size: 9.3px;
+  line-height: 10.9px;
+  padding: 7.5px 8px;
+}
+
+.travellers-table { table-layout: fixed; }
+
+.travellers-table { min-width: 660px; }
+
+/* the passenger column stays unsorted, so it gets no pointer */
+.travellers-table thead th:not(:first-child) { cursor: pointer; }
+
+.travellers-table th:nth-child(1) { width: 118px; }
+.travellers-table th:nth-child(2) { width: 64px; }
+.travellers-table th:nth-child(3) { width: 77px; }
+.travellers-table th:nth-child(4) { width: 67px; }
+.travellers-table th:nth-child(5) { width: 37px; }
+.travellers-table th:nth-child(6) { width: 37px; }
+.travellers-table th:nth-child(7) { width: 55px; }
+.travellers-table th:nth-child(8) { width: 44px; }
+.travellers-table th:nth-child(9) { width: 172px; }
+
+.travellers-table td.strong { font-weight: 700; }
+
+.col-barcode { text-align: right; padding-right: 9px; }
+
+.barcode {
+  display: block;
+  width: 155px;
+  height: auto;
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------- fare summary */
+
+.fare-intro {
+  margin: 0 0 9px;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.fare .section-title { margin: 21px 0 6px; }
+
+.fare-grid {
+  display: grid;
+  grid-template-columns: 254px 1fr;
+  gap: 13px;
+  align-items: start;
+}
+
+.fare-table { table-layout: auto; }
+
+.fare-table .col-label { width: 130px; }
+.fare-table .col-amount { width: 124px; }
+
+.fare-table th,
+.fare-table td { font-size: 8px; line-height: 1.36; padding: 7.5px 8px; }
+
+.fare-table thead th {
+  font-size: 9.3px;
+  line-height: 10.9px;
+  padding: 8px;
+}
+
+.fare-table .num { text-align: right; }
+
+.fare-table tr.total td {
+  font-size: 10.4px;
+  line-height: 1.28;
+  font-weight: 700;
+}
+
+.cancel-table { margin-bottom: 11px; table-layout: auto; }
+
+.cancel-table .col-type { width: 82px; }
+.cancel-table .col-time { width: 141px; }
+.cancel-table .col-air { width: 180px; }
+
+.cancel-table th,
+.cancel-table td {
+  font-size: 11.8px;
+  line-height: 1.2;
+  text-align: center;
+  padding: 3px 6px;
+}
+
+.cancel-table thead th {
+  font-size: 12.3px;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 6px;
+}
+
+.cancel-table thead tr:first-child th { padding: 4px 6px; }
+
+.cancel-table--compact tbody td { padding-top: 0; padding-bottom: 0; }
+
+.cancel-table td.num { text-align: center; }
+
+.cancel-table .rowspan { vertical-align: middle; }
+
+.cancel-note {
+  border-top: 1px solid #cacaca;
+  padding-top: 27px;
+  margin: 12px 0 0;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 9.1px;
+  font-weight: 700;
+  line-height: 1.27;
+}
+
+.cancel-note p { margin: 0; }
+
+/* ---------------------------------------------------------- banner + button */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 0;
+  padding: 9px 14px;
+  border-radius: 12px;
+  background: var(--banner-bg);
+  font-size: 10.9px;
+}
+
+.banner-icon {
+  width: 15.5px;
+  height: 18.5px;
+  flex: 0 0 auto;
+}
+
+.banner a { color: var(--banner-link); }
+
+.hotel-sale { margin: 36px 0 0; }
+
+.hotel-sale button {
+  font-family: inherit;
+  font-size: 12.2px;
+  line-height: 1.2;
+  color: var(--ink);
+  background: #efefef;
+  border: 1px solid #767676;
+  border-radius: 2px;
+  padding: 1px 6px;
+}
+
+/* ---------------------------------------------------------- terms */
+
+.terms { margin-top: 10.6px; }
+
+.terms .section-title { margin-bottom: 9.3px; }
+
+.terms-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.terms-list li { margin: 0 0 12.4px; }
+
+.terms-list h4 {
+  margin: 0;
+  font-size: 9.1px;
+  font-weight: 700;
+  line-height: 1.19;
+}
+
+.terms-list p {
+  margin: 1px 0 0;
+  font-size: 9.4px;
+  line-height: 1.23;
+}
+
+.terms-list a { color: var(--banner-link); }
+
+/* ---------------------------------------------------------- contact */
+
+.contact { margin-top: 30px; }
+
+.contact-title {
+  font-size: 11.1px;
+  margin: 0 0 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.contact p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.24;
+}
+
+.contact p.gap { margin-top: 12.4px; }
+
+.contact p.gap-lg { margin-top: 18.7px; }
+
+.policy {
+  display: block;
+  width: 542px;
+  max-width: 100%;
+  height: auto;
+  margin-top: 22px;
+}
+
+/* ---------------------------------------------------------- responsive */
+
+@media (max-width: 700px) {
+  .page { padding: 0 10px; }
+  .fare-grid { grid-template-columns: 1fr; }
+  .timeline { grid-template-columns: 1fr; gap: 10px; text-align: center; }
+  .stop-dep, .stop-arr { text-align: center; }
+  .duration-line { margin: 2px auto 0; }
+  .leg-body { margin: 12px 8px 16px; }
+  .banner { flex-wrap: wrap; }
+}
+
+@media print {
+  @page { size: A4; margin: 0; }
+  body { background: #fff; }
+  .page { width: var(--sheet-width); max-width: 100%; margin: 0 auto; padding: 0 4px; }
+  .leg, .leg-body, .grid, .banner { break-inside: avoid; }
+  .table-scroll { overflow: visible; }
+  .travellers-table { min-width: 0; }
+  .flight { break-inside: avoid; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

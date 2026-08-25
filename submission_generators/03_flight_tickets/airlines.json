@@ -1,0 +1,10 @@
+[
+  { "id": "spicejet", "name": "SpiceJet", "prefix": "SG", "logo": "assets/spicejet.png", "contact": "+91 (0)124 4983410, +91 (0)124 7101600" },
+  { "id": "indigo", "name": "IndiGo", "prefix": "6E", "logo": "assets/indigo.png", "contact": "0124-6173838, 0124-4973838" },
+  { "id": "air_india", "name": "Air India", "prefix": "AI", "logo": "", "contact": "" },
+  { "id": "vistara", "name": "Vistara", "prefix": "UK", "logo": "", "contact": "" },
+  { "id": "akasa_air", "name": "Akasa Air", "prefix": "QP", "logo": "", "contact": "" },
+  { "id": "air_india_express", "name": "Air India Express", "prefix": "AIX", "logo": "", "contact": "" },
+  { "id": "go_first", "name": "Go First", "prefix": "G8", "logo": "", "contact": "" },
+  { "id": "air_asia", "name": "AirAsia India", "prefix": "I5", "logo": "", "contact": "" }
+]

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="ticket.css">
+</head>
+<body>
+<div class="page">
+
+  <!-- ================= HEADER ================= -->
+  <header class="topbar">
+    <img class="logo" src="assets/logo.png" alt="EaseMyTrip">
+    <div class="ticket-meta">
+      <h1>E-Ticket</h1>
+      <p>Booking ID - {{BOOKING_ID}}</p>
+      <p>Booking on - {{BOOKED_ON}}</p>
+    </div>
+  </header>
+
+  <!-- ================= JOURNEYS ================= -->
+  <!-- main.js fills this with one flight section + traveller table per journey -->
+  {{JOURNEYS}}
+
+  <!-- ================= FARE SUMMARY ================= -->
+  <section class="fare">
+    <h2 class="section-title">Fare Summary</h2>
+    <p class="fare-intro">{{FARE_INTRO}}</p>
+    <div class="fare-grid">
+      <table class="grid fare-table">
+        <colgroup>
+          <col class="col-label"><col class="col-amount">
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col">Fare Details</th>
+            <th scope="col" class="num">Amount (&#8377;)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Basic Fare</td><td class="num">&#8377; {{FARE_BASIC}}</td></tr>
+          <tr><td>Taxes</td><td class="num">&#8377; {{FARE_TAXES}}</td></tr>
+          {{FARE_FEE_ROWS}}
+          <tr><td>Discount</td><td class="num">&#8377; (-) {{FARE_DISCOUNT}}</td></tr>
+          <tr class="total"><td>Total</td><td class="num">&#8377; {{FARE_TOTAL}}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="cancel-wrap">
+        {{CANCEL_TABLES}}
+        <div class="cancel-note">
+          <p>Cancellation Charges</p>
+          <p>EaseMyTrip Fee: &#8377; {{EMT_FEE}} per pax per sector</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="banner">
+    <img class="banner-icon" src="assets/clipboard.png" alt="">
+    <span>You can always view, change or cancel your booking online at:
+      <a href="https://mybookings.easemytrip.com">mybookings.easemytrip.com</a>
+    </span>
+  </p>
+
+  <p class="hotel-sale"><button type="button">Hotel Sale</button></p>
+
+  <!-- ================= TERMS ================= -->
+  <section class="terms">
+    <h2 class="section-title">Terms &amp; Conditions</h2>
+    <ol class="terms-list">
+      <li>
+        <h4>1) Check-In Times and Procedures</h4>
+        <p>Passengers must adhere to the check-in times specified by the airlines. Typically, check-in counters close 60 minutes to 2 hour before domestic flights and 2 hours before for any international flights. Late arrival may result in denied boarding without compensation</p>
+      </li>
+      <li>
+        <h4>2) Valid ID Proofs, Transit Visa, and Travel Documentation Requirements</h4>
+        <p>For domestic travel, passengers must carry valid government-issued ID. International travelers need a valid passport and any required visas. It is the passenger's responsibility to obtain and carry all necessary travel documents, including transit visas where applicable. Transit visa requirements differ based on the transit country and the traveler's nationality. We recommend passengers to confirm these requirements with relevant embassies or consulates before traveling. EaseMyTrip cannot be held responsible for denied boarding or entry due to the absence of proper travel documents."</p>
+      </li>
+      <li>
+        <h4>3) Baggage Policy</h4>
+        <p>Baggage allowance varies by airline and ticket class. Excess baggage may incur additional charges. EaseMyTrip is not liable for any loss, damage, or delay in the delivery of baggage by the airline.</p>
+      </li>
+      <li>
+        <h4>4) Cancellation, Rescheduling, and Refund Guidelines</h4>
+        <p>Cancellations and rescheduling of flights are subject to the terms and conditions of the respective airlines. If you wish to cancel or reschedule your flight, you can do so through the 'My Booking' section on the EaseMyTrip website/app or by contacting EaseMyTrip customer care. Be aware that airlines may impose cancellation or rescheduling fees, and EaseMyTrip may charge an additional service fee for processing these requests. In the case of a flight cancellation initiated by the airline, customers are advised to claim their refund via the 'My Booking' section on the EaseMyTrip website or app. Refunds, after deducting any applicable airline and EaseMyTrip fees, will be credited to the original payment method. The processing times for refunds can vary, depending on the policies of the airline and the bank involved.<br><!-- pdf keeps an empty line here --></p>
+      </li>
+      <li>
+        <h4>5) Denied Boarding, Flight Delays, and Cancellations</h4>
+        <p>EaseMyTrip is not liable for denied boarding, changes in flight schedules, delays, or cancellations made by airlines. Airlines will directly communicate any changes in over booking, flight schedules, delays, or cancellations to customers, as their contact details are provided to the airlines.</p>
+      </li>
+      <li>
+        <h4>6) Special Assistance and Requests</h4>
+        <p>Passengers requiring special assistance should inform either EaseMyTrip or the airline at least 48 hours before departure. Fulfillment of such requests is at the airline's discretion."</p>
+      </li>
+      <li>
+        <h4>7) Travel Insurance/assurance Policy</h4>
+        <p>Travel insurance/assurance can be purchased by users to safeguard against unforeseen events such as trip cancellations and medical emergencies. This option is governed by the specific terms and exclusions set by the insurance provider. Please note that EaseMyTrip holds no responsibility for any claims that are rejected by the insurance provider.</p>
+      </li>
+      <li>
+        <h4>8) Customer Service and Complaint Handling</h4>
+        <p>Customers with booking-related queries or complaints should reach out to EaseMyTrip directly for efficient resolution. Our dedicated customer service team is committed to assisting you with any issues or concerns. For inquiries specific to airlines, such as flight changes or luggage queries, we will coordinate with the respective airline on your behalf.</p>
+      </li>
+      <li>
+        <h4>9) Convenience Fee Policy</h4>
+        <p>The convenience fee charged during booking is non-refundable in case of ticket cancellation by the user or the flight cancellation has been made by the airline.</p>
+      </li>
+      <li>
+        <h4>10) Kindly refer to this link to check the conditions of carriage.<a href="#">T&amp;C</a></h4>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ================= CONTACT ================= -->
+  <section class="contact">
+    <h2 class="section-title contact-title">Company Contact Details</h2>
+    <p>Easy Trip Planners Ltd.</p>
+    <p>EaseMyTrip Contact Centre: Call 011-43131313, 011-43030303 for immediate assistance. Our team is available 24/7.</p>
+    <p>Email Address: For detailed inquiries or if you prefer writing, email us at care@easemytrip.com.</p>
+    {{AIRLINE_CONTACTS}}
+    <img class="policy" src="assets/baggage-policy.png" alt="Cabin baggage policy: items not allowed and items allowed only in hand baggage">
+  </section>
+
+</div>
+</body>
+</html>

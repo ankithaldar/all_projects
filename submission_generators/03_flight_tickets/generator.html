@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flight E-Ticket Generator</title>
+
+  <!-- External Libraries via CDN -->
+  <!-- Code128 Barcode Generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.7.0/bwip-js-min.js"
+    integrity="sha512-MDtabmDetsQATsClilUhXqOmgQraxAmYDYWTaxzvAD9S0qaJJKMj/WqnxC7VnEAVULW637yr/KZGPbwdvArCJw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <!-- Basic XSS Sanitization -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js"
+    integrity="sha512-78KH17QLT5e55GJqP76vutp1D2iAoy06WcYBXB6iBCsmO6wWzx0Qdg8EDpm8mKXv68BcvHOyeeP4wxAL0twJGQ=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+  <link rel="stylesheet" href="main.css">
+</head>
+<body>
+
+  <div class="app-container">
+    <!-- Controls Panel -->
+    <aside class="controls-panel" id="controls-panel">
+      <header style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+        <h2>🎫 E-Ticket Creator</h2>
+        <div class="toggle-switch" onclick="toggleDarkMode()">
+          <span>🌓</span> Theme
+        </div>
+      </header>
+
+      <div id="status-msg" class="alert"></div>
+
+      <form id="ticket-form" onsubmit="event.preventDefault(); generateTicket();">
+
+        <h3>Booking</h3>
+        <div class="form-group">
+          <label for="booking-id">Booking ID</label>
+          <input type="text" id="booking-id" data-path="booking.id" maxlength="12" required>
+          <small class="hint">Unique per ticket - generated, and never reused on this browser.</small>
+        </div>
+        <div class="form-group">
+          <label for="booked-on">Booked On</label>
+          <input type="datetime-local" id="booked-on" data-path="booking.bookedOn" required>
+        </div>
+
+        <h3>Passengers</h3>
+        <div id="passengers-list"></div>
+        <button type="button" class="secondary full-width add-block" data-action="add-passenger">
+          <span>＋ Add Passenger</span>
+        </button>
+
+        <h3>Journeys</h3>
+        <small class="hint">One journey is one flight, or a chain of flights with stops. Add an Onward and a Return journey to get both on a single ticket.</small>
+        <div id="journeys-list"></div>
+        <button type="button" class="secondary full-width add-block" data-action="add-journey">
+          <span>＋ Add Journey</span>
+        </button>
+
+        <h3>Fare Summary</h3>
+        <div class="row">
+          <div class="form-group">
+            <label for="fare-basic">Basic Fare (&#8377;)</label>
+            <input type="number" id="fare-basic" data-path="fare.basic" min="0" step="1" value="0">
+          </div>
+          <div class="form-group">
+            <label for="fare-taxes">Taxes (&#8377;)</label>
+            <input type="number" id="fare-taxes" data-path="fare.taxes" min="0" step="1" value="0">
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label for="fare-discount">Discount (&#8377;)</label>
+            <input type="number" id="fare-discount" data-path="fare.discount" min="0" step="1" value="0">
+          </div>
+          <div class="form-group">
+            <label for="fare-emt">EMT Fee / pax / sector (&#8377;)</label>
+            <input type="number" id="fare-emt" data-path="fare.emtFee" min="0" step="1" value="300">
+          </div>
+        </div>
+
+        <h4 class="sub-head">Other fees &amp; surcharges</h4>
+        <div id="fee-rows"></div>
+        <button type="button" class="secondary full-width add-block" data-action="add-fee">
+          <span>＋ Add Fee Row</span>
+        </button>
+
+        <h3>Cancellation Charges</h3>
+        <small class="hint">One table per route on the ticket.</small>
+        <div id="cancel-rows"></div>
+        <button type="button" class="secondary full-width add-block" data-action="add-cancel">
+          <span>＋ Add Charge Row</span>
+        </button>
+
+        <div class="actions">
+          <button type="submit" class="primary full-width">
+            <span>⚡ Generate Ticket</span>
+          </button>
+          <button type="button" id="btn-print" class="secondary" onclick="printTicket()" disabled>
+            <span>🖨️ Print / Save PDF</span>
+          </button>
+          <button type="button" class="danger full-width" onclick="confirmReset()">
+            <span>🗑️ Reset Form</span>
+          </button>
+        </div>
+      </form>
+    </aside>
+
+    <!-- Preview Panel -->
+    <main class="preview-panel">
+      <div class="toolbar">
+        <span>Zoom:</span>
+        <input type="range" id="zoom-slider" min="0.4" max="3" step="0.05" value="1" oninput="updateZoom(this.value)">
+        <span id="zoom-val">100%</span>
+      </div>
+
+      <div id="preview-wrapper">
+        <iframe id="preview"></iframe>
+      </div>
+    </main>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
