@@ -510,3 +510,8 @@ CLI subcommands: `simulate` (`--ticks --seed --render-dir`), `baseline`
 (`--episodes --seed`), `train` (`--iterations --toy-only`). A
 `world-of-supply` console script is installed alongside the package.
 Render artifacts land in `out/` (git-ignored).
+
+**Google Colab:** `colab_run.sh` bootstraps everything (interpreter pick
+3.10–3.13, `pip install -e .`, tests, demo, baseline, short training) —
+see the usage header in the script; artifacts go to `/content/wos_outputs`
+or Google Drive with `MOUNT_DRIVE=1`.
