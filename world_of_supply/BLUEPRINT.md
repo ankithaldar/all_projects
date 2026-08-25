@@ -243,6 +243,16 @@ directly with `env.step()` — no Ray required.
 
 ## 3. Codeflows
 
+### Episode lifecycle
+
+```
+reset(seed) → WorldBuilder.build(scenario, seed) → encode obs for all 18 agents
+loop up to episode_duration / downsampling_rate decisions (default 50):
+    agent actions → decode → world ticks (1 + 19 no-ops) → rewards → obs
+until time_step ≥ episode_duration → truncated['__all__'] = True
+info dicts carry raw per-agent features on every step (feeds heuristics/debug)
+```
+
 ### One decision step
 
 ```
@@ -322,12 +332,28 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
 **Reward:** `reward = 0.9·global_blend + 0.1·own_total`;
 `global_blend = (1−w)·mean_retail_profit + w·mean_all_profit`; `w: 0→0.8`.
 
+**Money ledger** — who books what:
+
+| Event | Buyer/owner ledger | Counterparty |
+|---|---|---|
+| Order placement (valid) | loss `−price·qty` (prepayment) | seller revenue `+price·qty` same tick |
+| Wrong-product order | loss `−$500·qty` | seller stats only (`total_wrong_order_penalties`) |
+| Queued order, per tick | — | seller loss `−$4` per queued order |
+| Production lot | — | owner loss `−$100·units` |
+| Storage holding, per tick | — | owner loss `−$1·stored unit` |
+| Freight, per moving tick | — | owner loss `−$1·payload·cell` |
+| Retail sale | — | owner profit `+price·sold` (demand-capped) |
+| Initial capital | profit `+$1000/$2000/$3000` by tier | — |
+
 **`EnvConfig` defaults** (`rl/env.py`): `episode_duration=1000`,
 `downsampling_rate=20` (→ 50 decisions/episode),
 `global_reward_weight_producer=0.9`, `global_reward_weight_consumer=0.9`,
 `scenario=ScenarioConfig()`, `seed=None`. Pass as
-`build_ppo_algorithm({'env': EnvConfig(...)})` — the dict is pickled to
-workers, which rebuild their own env copies.
+`build_ppo_algorithm({'env': EnvConfig(...)})`; RLLib forwards the dict to
+worker env constructors, where `coerce_env_config()` accepts a wrapped
+`{'env': EnvConfig}`, a bare `EnvConfig`, a dict of EnvConfig fields, or
+`None`. Custom reward shapers inject via `env_class=MyEnv` on
+`build_ppo_algorithm`.
 
 ## 5. Test suite (51 tests)
 
@@ -344,7 +370,59 @@ workers, which rebuild their own env copies.
 | `test_models.py` | 4 | FacilityNet forward shapes, LSTM state, gradient flow, legacy-width 2-layer trunk (skipped without torch) |
 | `test_training.py` | 4 | role mapping, toy-only freezing, curriculum promotion at thresholds, idempotence |
 
-## 6. Troubleshooting
+## 6. Extension guide
+
+**Add a facility type** (e.g. a battery factory):
+1. `facility.py`: subclass the unit mix you need and override `_install_units`.
+2. `scenario.py`: instantiate it inside `WorldBuilder.build` and connect roads.
+3. `rendering/renderer.py`: add a letter to `_FACILITY_GLYPHS`.
+4. Scripted baselines: add a price to `policies.py` `_DEFAULT_PRICES` and
+   `rl/heuristics.py` `_CLASS_PRICE_INDEX`.
+Observation one-hots, action spaces, and encoder dims adapt automatically
+(facility types and products are discovered from the reference world).
+
+**Add a product**: declare it in BOMs in `scenario.py` (producer output +
+consumer inputs); the sorted product list — and therefore observation blocks
+and consumer action width — updates itself. Update the `PRODUCT_IDS`
+informational constant to match.
+
+**Change action levels**: edit `PRICE_LEVELS`/`RATE_LEVELS`/`QUANTITY_LEVELS`
+in `rl/actions.py`. Note the env builds `MultiDiscrete([len(PRICE_LEVELS), 6])`
+— keep the rate/quantity tuple length and the env space in sync.
+
+**Custom rewards**: implement the `RewardShaper` protocol
+(`shape(step_sheets, iteration, n_iterations) -> {agent_id: float}`) and
+inject it by subclassing the env — remote workers rebuild envs from the
+class, so subclassing (not attribute patching) is the reliable path:
+
+```python
+class MyEnv(WorldOfSupplyEnv):
+  def __init__(self, config=None):
+    super().__init__(config)
+    self.reward_shaper = MyRewardShaper()
+
+algo = build_ppo_algorithm({'env': EnvConfig()}, env_class=MyEnv)
+```
+
+**Scenario variants**: any `ScenarioConfig(...)` overrides (tier counts,
+balances, capacities, costs, grid size) flow through `WorldBuilder.build`.
+Default-layout tests assert 9 facilities — update them if you change tiers.
+
+## 7. Glossary
+
+| Term | Meaning |
+|---|---|
+| Simulation tick | One `World.act` — every unit steps once |
+| Decision tick | One `env.step` — applies controls, then `downsampling_rate−1` untouched ticks |
+| Open order | Units ordered but not yet received, tracked per buyer per source per product |
+| Booked inventory | Storage occupancy plus all open orders; the reorder stop-limit |
+| Prepayment | Buyers pay `price·qty` at order placement; seller books revenue the same tick |
+| Wrong order | Ordering a product the supplier does not output → $500/unit penalty |
+| Frozen policy | A policy clone excluded from `policies_to_train`; samples actions, never learns |
+| Curriculum promotion | Moving a facility prefix from frozen to trainable PPO policies at an iteration threshold |
+| Global blend | Curriculum-weighted mix of mean retailer revenue and mean facility profit in every reward |
+
+## 8. Troubleshooting
 
 - **`ModuleNotFoundError: No module named 'world_of_supply'` in Ray workers**
   → the package is not installed; Ray workers are separate processes and do
@@ -359,7 +437,7 @@ workers, which rebuild their own env copies.
 - **`Install gputil for GPU system monitoring`** → harmless Ray warning;
   `pip install gputil` silences it.
 
-## 7. Migration notes (vs. legacy flat scripts)
+## 9. Migration notes (vs. legacy flat scripts)
 
 - TensorFlow replaced by PyTorch everywhere; RLlib new API stack replaces
   `PPOTFPolicy`/`build_trainer`; `gymnasium` replaces `gym`.
@@ -374,6 +452,10 @@ workers, which rebuild their own env copies.
 - Ray 2.5x compatibility shims (see §3 training flow): runner-group
   accessors, Gymnasium wrapper unwrapping, nested result-schema metric
   fallbacks, and attribute-vs-kwargs algorithm settings.
+- Training config propagation: `env_config` is now attached to the RLLib
+  config and worker envs normalize wrapped/field-dict shapes via
+  `coerce_env_config()` (previously workers silently used default
+  `EnvConfig`, ignoring episode duration/downsampling/seed overrides).
 - Second (semantic) parity audit fixes: truck leftovers are lost on unload
   (payload zeroed, matching legacy — an earlier refactor wrongly retained
   them); scripted-policy booking counts total storage occupancy, not just
@@ -393,7 +475,7 @@ workers, which rebuild their own env copies.
 | `world_of_supply_tools.py` | `analytics/tracker`, `analytics/hardware` |
 | `world-of-supply.ipynb` | replaced by `main.py` CLI + `tests/` |
 
-## 8. End-to-end validation (verified run)
+## 10. End-to-end validation (verified run)
 
 | Stage | Command | Observed result |
 |---|---|---|
@@ -410,7 +492,7 @@ wrong-product orders penalized at $500/unit, amplified by the curriculum
 blending global (penalty-laden) profit into every agent's reward. The
 scripted baseline (+234k/episode) is the reference the agents must beat.
 
-## 9. Getting started
+## 11. Getting started
 
 ```bash
 pip install -e '.[dev]'    # REQUIRED for training: Ray workers import the
