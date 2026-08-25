@@ -88,6 +88,29 @@ class TestKaggleBudgetFields:
     assert cfg.datamodule.lru_max_volumes >= 1
     assert cfg.datamodule.lru_max_gb >= 1
 
+  def test_datamodule_defaults_fit_kaggle_ram(self):
+    """Host-RAM envelope: batch bytes x in-flight must stay bounded.
+
+    batch ~ bs x max_series x in_chans x image_size^2 x 4 B; loader
+    holds ~(workers x prefetch + 1) batches plus model state. Kaggle
+    GPU pods have ~13-15 GB shared with any DDP ranks.
+    """
+    cfg = ExperimentConfig.model_validate(_minimal_config_dict())
+    dm = cfg.datamodule
+    batch_mb = (
+      dm.batch_size
+      * dm.max_series_per_study
+      * cfg.data.in_chans
+      * cfg.data.image_size**2
+      * 4
+      / 1024**2
+    )
+    in_flight = dm.num_workers * dm.prefetch_factor + 2  # +main+staging
+    total_gb = batch_mb * in_flight / 1024 + dm.num_workers * dm.lru_max_gb
+    assert total_gb < 8, f'defaults would use ~{total_gb:.1f} GB host RAM'
+    # Single-device default: DDP doubles every host-side pipeline.
+    assert cfg.train.trainer.params.get('devices') == 1
+
   def test_time_budget_rejects_nonpositive(self):
     payload = _minimal_config_dict()
     payload['train'] = {'time_budget_hours': 0}
