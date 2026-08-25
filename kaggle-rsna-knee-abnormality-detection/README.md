@@ -10,21 +10,24 @@ all training studies but are withheld at test time, so the architecture is a
 
 ```
 configs/            YAML experiments (omegaconf + pydantic-validated)
+notebooks/          kaggle_cell.py -- paste-ready first cell for kernels
 src/knee/
   activations/      activation factory shared by layers/models
   augmentations/    2.5D stack transforms + GPU differentiable ops
   callbacks/        EMA, Discord updates, progressive unfreezing,
                     AMP watcher, batch/accum tuners, online HP, swaps
   config_params/    ComponentSpec schema + loader/instantiate factory
-  datamodules/      fold-scoped LightningDataModule
-  datasets/         DICOM decode, volume cache, study datasets,
-                    balanced multilabel sampler, frozen folds
+  datamodules/      fold-scoped LightningDataModule (stream-decoding)
+  datasets/         volume_store (stream decode + LRU), volume_builder
+                    (optional npz shards), study datasets, balanced
+                    multilabel sampler, frozen folds
   engines/          KneeStudyLitModule, trainer factory, text teacher,
-                    rule/NLI labelers, weak-label builder, TTA
-                    predictor, greedy blender
-  helpers/          secrets (.env/Kaggle), seeding, logging
+                    rule/NLI labelers, OpenRouter LLM labeler,
+                    weak-label builder, TTA predictor, greedy blender
+  helpers/          secrets (.env/Kaggle), input-mount discovery,
+                    seeding, logging
   layers/           attention-MIL / transformer aggregators,
-                    metadata encoder
+                    metadata encoder (+ projection into model fusion)
   loggers/          Discord notifier transport, W&B io helpers
   losses/           ASL/focal/soft-BCE + curriculum/DWA weighting
   metrics/          macro ROC-AUC with NaN-class accounting
@@ -32,9 +35,30 @@ src/knee/
                     composite study model
   optimizers/       param groups, warmup-cosine, Lookahead,
                     clipping strategies, gradient noise
-scripts/            kernel entrypoints (see run_all.sh)
+scripts/            kernel entrypoints (dispatcher: kaggle_run.sh;
+                    artifact publishing: publish_dataset.py)
 tests/              dependency-light smoke tests
 ```
+
+## Stages and the files they touch
+
+State lives in `/kaggle/working`; `publish` mirrors it to one private
+Kaggle dataset, and every kernel's bootstrap restores it. Files under
+`$DATA_ROOT` (train.csv, DICOMs, test.csv) come from the read-only
+input mount.
+
+| Stage | Needs in `WORK` | Writes |
+|---|---|---|
+| `folds` | -- | `train_folds.csv` |
+| `volumes` *(opt.)* | -- | `volumes_cache/*.npz` + manifest |
+| `weak-labels` | ○ `text_teacher/oof_probs.parquet` | `weak_labels.parquet` |
+| `weak-labels-llm` | secret `OPENROUTER_API_KEY`; ○ cache | `weak_labels.parquet`, `llm_label_cache.parquet` |
+| `teacher` | ✓ `train_folds.csv`; ○ own ckpts (resume) | `text_teacher/ckpts/*`, `oof_probs.parquet` |
+| `student` | ✓ `train_folds.csv`, ✓ `weak_labels.parquet`, `$EXP`; ○ ckpts/OOF (resume/skip) | `checkpoints/fold{N}/*`, `predictions/*_oof_fold{N}.parquet`, merged `*_oof.parquet` |
+| `self-train` | ✓ `predictions/<name>_oof.parquet` | `weak_labels_round2.parquet` |
+| `infer` | ✓ ≥1 fold checkpoint | `submission_<exp>.csv` |
+| `blend` | ✓ OOF frames, ✓ `train_folds.csv`, ✓ submissions | `submission_blended.csv` |
+| `publish` | all of the above | remote dataset |
 
 ## Quick start (local)
 
@@ -42,7 +66,7 @@ tests/              dependency-light smoke tests
 pip install -r requirements.txt
 cp .env.example .env            # fill DISCORD_WEBHOOK_URL / NEPTUNE_* if desired
 export DATA_ROOT=/path/to/rsna
-bash scripts/run_all.sh         # kernels 1->7 with resumable stages
+bash scripts/run_all.sh         # stages with resumable artifacts
 ```
 
 ## Kaggle workflow (30 GB disk, 12 h/kernel, ~30 GPU-hours)
@@ -61,8 +85,12 @@ therefore lives in **one private Kaggle dataset** (default:
 
 One-time per kernel setup:
 
-- Add-ons -> Secrets -> `KAGGLE_USERNAME`, `KAGGLE_KEY`.
-- After the dataset exists once: Add Data -> Your Datasets -> attach it.
+- Add-ons -> Secrets -> `KAGGLE_USERNAME`, `KAGGLE_KEY` (dataset
+  publishing), `GITHUB_TOKEN` (private repo), and
+  `OPENROUTER_API_KEY` (only for `weak-labels-llm`).
+- After the dataset exists once: Add Data -> Your Datasets -> attach it
+  (any mount layout works -- the bootstrap discovers the slug at
+  `/kaggle/input/<slug>` or nested `datasets/<owner>/<slug>`).
 
 Then:
 
@@ -92,10 +120,12 @@ Budget mechanics baked in:
 - **Time budget**: `train.time_budget_hours` -> Lightning `max_time`,
   sized to remaining wall clock (default 11 h), so kernels end with
   valid checkpoints instead of being hard-killed.
-- Deps reinstall automatically in each fresh container (~2-3 min);
-  GPU quota is consumed per kernel, so skipped folds cost nothing.
-- Save Version remains an optional belt-and-braces backup alongside
-  the dataset handoff.
+- Deps install is import-checked: the image's CUDA-matched torch /
+  lightning / timm / transformers stack is reused, only genuinely
+  missing packages are pip-installed (~1 min, `FORCE_PIP=1` overrides).
+- GPU quota is consumed per kernel, so skipped/resumed folds cost
+  nothing; Save Version remains an optional belt-and-braces backup
+  alongside the dataset handoff.
 
 First cell of every kernel: copy
 [notebooks/kaggle_cell.py](notebooks/kaggle_cell.py) verbatim (edit
@@ -110,8 +140,20 @@ AUTO_PUBLISH = 1                                   # push artifacts after
 ```
 
 Secrets resolve in order: env vars -> `.env` -> Kaggle Secrets
-(`src/knee/utils/env.py`). Discord updates and Neptune tracking activate
-automatically when their keys exist; both are silent no-ops otherwise.
+(`src/knee/helpers/env.py`). Discord updates and Neptune tracking
+activate automatically when their keys exist; both are silent no-ops
+otherwise.
+
+## LLM weak-label tier (optional)
+
+`weak-labels-llm` replaces the trained XLM-R teacher with an OpenRouter
+chat model (default `stealth/ox-alpha`; override via `LLM_MODEL`):
+every training report is labeled zero-shot in any language, replies are
+hard-constrained to JSON (`response_format`, prompt contract, and a
+finding-only parser that strips rationales/wrappers), results cache to
+disk so 12 h kills never re-bill, and fusion still runs through
+`WeakLabelBuilder` (gold > rule seeds > LLM). Concurrency defaults to 2
+(`LLM_CONCURRENCY`) to respect rate limits.
 
 ## Engineering standards
 
