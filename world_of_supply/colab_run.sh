@@ -33,7 +33,7 @@ GIT_URL="${GIT_URL:-https://github.com/ankithaldar/all_projects_02.git}"
 GIT_BRANCH="${GIT_BRANCH:-world_of_supply/main}"
 PROJECT_SUBDIR="${PROJECT_SUBDIR:-world_of_supply}"
 OUT_DIR="${OUT_DIR:-/content/wos_outputs}"
-TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-3}"
+TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-200}"
 NUM_EPI="${NUM_EPI:-2}"
 export PYTHONUNBUFFERED=1
 
@@ -112,7 +112,7 @@ fi
 mkdir -p "$OUT_DIR/frames"
 
 echo '== [6/7] Demo: simulate + render + baseline =='
-"$PYTHON_BIN" main.py simulate --ticks 60 --seed 42 --render-dir "$OUT_DIR/frames" 2>&1 | grep -E '^--- tick (1|60)/' || true
+"$PYTHON_BIN" main.py simulate --ticks 5000 --seed 42 --render-dir "$OUT_DIR/frames" 2>&1 | grep -E '^--- tick (1|60)/' || true
 echo "frames rendered: $(ls "$OUT_DIR/frames" | wc -l) (in $OUT_DIR/frames)"
 "$PYTHON_BIN" main.py baseline --episodes "$NUM_EPI" --seed 7
 
