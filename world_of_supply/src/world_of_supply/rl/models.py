@@ -28,6 +28,7 @@ class FacilityNet(nn.Module):
       obs_dim: int,
       action_nvec: list[int],
       hidden_size: int = 256,
+      hidden_layers: int = 1,
       lstm_cell_size: int = 64,
       use_lstm: bool = False,
   ) -> None:
@@ -36,7 +37,8 @@ class FacilityNet(nn.Module):
     Args:
       obs_dim: Flattened observation dimension.
       action_nvec: Category counts per MultiDiscrete branch.
-      hidden_size: Width of the fully connected trunk.
+      hidden_size: Width of the fully connected trunk layers.
+      hidden_layers: Number of Linear+ReLU layers before the heads.
       lstm_cell_size: Hidden size of the optional LSTM.
       use_lstm: Enable the recurrent layer.
     '''
@@ -45,10 +47,10 @@ class FacilityNet(nn.Module):
     self.cell_size = lstm_cell_size if use_lstm else 0
     self.action_nvec = list(action_nvec)
 
-    self.trunk = nn.Sequential(
-        nn.Linear(obs_dim, hidden_size),
-        nn.ReLU(),
-    )
+    layers: list[nn.Module] = [nn.Linear(obs_dim, hidden_size), nn.ReLU()]
+    for _ in range(max(hidden_layers - 1, 0)):
+      layers.extend([nn.Linear(hidden_size, hidden_size), nn.ReLU()])
+    self.trunk = nn.Sequential(*layers)
     trunk_out = hidden_size
     if use_lstm:
       self.lstm = nn.LSTM(hidden_size, lstm_cell_size, batch_first=True)

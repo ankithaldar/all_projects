@@ -9,19 +9,37 @@ from world_of_supply.rl.agents import is_producer
 TRAINABLE_POLICIES = ('ppo_producer', 'ppo_consumer')
 FROZEN_POLICIES = ('frozen_producer', 'frozen_consumer')
 TOY_FACTORY_PREFIX = 'ToyFactoryCell'
+CURRICULUM_ATTR = 'world_of_supply_curriculum_state'
+
+# Legacy parity: producer MLP [128, 128], consumer MLP [256, 256].
+POLICY_MODEL_CONFIGS = {
+    'producer': {'hidden_size': 128, 'hidden_layers': 2},
+    'consumer': {'hidden_size': 256, 'hidden_layers': 2},
+}
 
 
-def make_policy_mapping_fn(train_toy_factories_only: bool = False):
+def make_policy_mapping_fn(train_toy_factories_only: bool = False, state: dict | None = None):
   '''Create a policy-mapping function over agent ids.
 
+  The mapping consults a mutable state dict so a training curriculum can
+  promote additional facility classes to the trainable policies mid-run
+  (restoring the legacy ``update_policy_map`` capability).
+
   Args:
-    train_toy_factories_only: When True, only toy-factory agents map to the
-      trainable PPO policies; all others use frozen clones, mirroring the
-      legacy curriculum setup.
+    train_toy_factories_only: When True, only toy-factory agents start on
+      the trainable PPO policies; all others use frozen clones.
+    state: Optional mutable dict ``{'trainable_prefixes': set[str],
+      'all_trainable': bool}``; created when omitted.
 
   Returns:
-    Callable[[str], str]: Mapping from agent id to policy name.
+    tuple: ``(mapping_fn, state)`` — the callable maps agent ids to policy
+    names, the state enables curriculum updates.
   '''
+  if state is None:
+    state = {
+        'trainable_prefixes': {TOY_FACTORY_PREFIX} if train_toy_factories_only else set(),
+        'all_trainable': not train_toy_factories_only,
+    }
 
   def mapping_fn(agent_id: str, episode=None) -> str:
     '''Resolve the policy for one agent.
@@ -33,14 +51,36 @@ def make_policy_mapping_fn(train_toy_factories_only: bool = False):
     Returns:
       str: Policy name.
     '''
-    trainable = True
-    if train_toy_factories_only and not agent_id.startswith(TOY_FACTORY_PREFIX):
-      trainable = False
+    trainable = state['all_trainable'] or agent_id.startswith(tuple(state['trainable_prefixes']))
     role = 'producer' if is_producer(agent_id) else 'consumer'
     prefix = 'ppo' if trainable else 'frozen'
     return f'{prefix}_{role}'
 
-  return mapping_fn
+  return mapping_fn, state
+
+
+def apply_curriculum(state: dict | None, iteration: int, n_iterations: int, schedule) -> set[str]:
+  '''Promote facility-class prefixes to trainable policies at thresholds.
+
+  Mirrors the legacy curriculum: e.g. ``((0.25, 'WarehouseCell'),)``
+  promotes warehouses once 25% of the iterations have completed.
+
+  Args:
+    state: Mapping state created by :func:`make_policy_mapping_fn`.
+    iteration: Current iteration index.
+    n_iterations: Total planned iterations.
+    schedule: Sequence of ``(fraction, prefix)`` thresholds.
+
+  Returns:
+    set[str]: The currently trainable prefixes (empty when all agents are
+    trainable regardless of state).
+  '''
+  if state is None or state.get('all_trainable'):
+    return set()
+  for fraction, prefix in schedule or ():
+    if iteration >= int(fraction * n_iterations):
+      state['trainable_prefixes'].add(prefix)
+  return set(state['trainable_prefixes'])
 
 
 def _configure(config, **settings):
@@ -120,6 +160,7 @@ def build_ppo_algorithm(
       )
       for name in (*TRAINABLE_POLICIES, *FROZEN_POLICIES)
   }
+  mapping_fn, curriculum_state = make_policy_mapping_fn(train_toy_factories_only)
 
   config = PPOConfig()
   config = _configure(config, lr=lr, gamma=gamma, train_batch_size=train_batch_size)
@@ -135,7 +176,7 @@ def build_ppo_algorithm(
       )
       .multi_agent(
           policies=policy_specs,
-          policy_mapping_fn=make_policy_mapping_fn(train_toy_factories_only),
+          policy_mapping_fn=mapping_fn,
           policies_to_train=list(TRAINABLE_POLICIES),
       )
       .rl_module(
@@ -148,7 +189,7 @@ def build_ppo_algorithm(
                           producer_space if name.endswith('producer') else consumer_space
                       ),
                       model_config={
-                          'hidden_size': 256,
+                          **POLICY_MODEL_CONFIGS['producer' if name.endswith('producer') else 'consumer'],
                           'lstm_cell_size': 64,
                           'use_lstm': use_lstm,
                       },
@@ -158,7 +199,42 @@ def build_ppo_algorithm(
           )
       )
   )
-  return config.build(env=WorldOfSupplyEnv)
+  algorithm = config.build(env=WorldOfSupplyEnv)
+  setattr(algorithm, CURRICULUM_ATTR, curriculum_state)
+  return algorithm
+
+
+def describe_model(use_lstm: bool = False) -> str:
+  '''Render the architecture of the producer and consumer policy networks.
+
+  Replacement for the legacy ``print_model_summaries``: builds one
+  FacilityNet per role exactly as the trainer would and returns their
+  ``repr`` strings.
+
+  Args:
+    use_lstm: Match the recurrent trainer variant.
+
+  Returns:
+    str: Multi-line architecture description.
+  '''
+  from world_of_supply.rl.env import EnvConfig, WorldOfSupplyEnv
+  from world_of_supply.rl.models import FacilityNet
+
+  env = WorldOfSupplyEnv(EnvConfig())
+  lines = []
+  for role in ('producer', 'consumer'):
+    agent_id = env.agent_ids[0] if role == 'producer' else env.agent_ids[1]
+    net = FacilityNet(
+        obs_dim=int(env.observation_space[agent_id].shape[0]),
+        action_nvec=list(env.action_space[agent_id].nvec),
+        hidden_size=POLICY_MODEL_CONFIGS[role]['hidden_size'],
+        hidden_layers=POLICY_MODEL_CONFIGS[role]['hidden_layers'],
+        lstm_cell_size=64,
+        use_lstm=use_lstm,
+    )
+    lines.append(f'=== {role} ({type(net).__name__}) ===')
+    lines.append(str(net))
+  return '\n'.join(lines)
 
 
 def _apply_to_envs(env, fn):
@@ -185,16 +261,19 @@ def _apply_to_envs(env, fn):
       fn(getattr(candidate, 'unwrapped', candidate))
 
 
-def train(algorithm, n_iterations: int, log=lambda iteration, result: None) -> object:
+def train(algorithm, n_iterations: int, log=lambda iteration, result: None, curriculum=()) -> object:
   '''Run PPO iterations with curriculum progress reporting.
 
   Works across Ray 2.x releases by resolving the env-runner group through
-  whichever accessor the installed version exposes.
+  whichever accessor the installed version exposes. When a curriculum
+  schedule is given, facility-class prefixes are promoted to the trainable
+  policies as iteration thresholds pass (legacy ``update_policy_map``).
 
   Args:
     algorithm: Built RLLib algorithm.
     n_iterations: Number of training iterations.
     log: Callback ``(iteration, result_dict)`` invoked after each iteration.
+    curriculum: Sequence of ``(fraction, prefix)`` promotion thresholds.
 
   Returns:
     object: The trained algorithm.
@@ -211,7 +290,13 @@ def train(algorithm, n_iterations: int, log=lambda iteration, result: None) -> o
     except AttributeError:
       return algorithm.workers() if callable(algorithm.workers) else algorithm.workers
 
+  curriculum_state = getattr(algorithm, CURRICULUM_ATTR, None)
+  promoted_seen: set[str] = set()
   for iteration in range(n_iterations):
+    promoted = apply_curriculum(curriculum_state, iteration, n_iterations, curriculum)
+    if promoted and promoted != promoted_seen:
+      print(f'curriculum: trainable facility prefixes now {sorted(promoted)}')
+      promoted_seen = set(promoted)
     worker_set = resolve_worker_set()
     if hasattr(worker_set, 'foreach_env_runner'):
       worker_set.foreach_env_runner(

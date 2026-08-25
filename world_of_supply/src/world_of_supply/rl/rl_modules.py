@@ -7,7 +7,6 @@ from __future__ import annotations
 try:
   from ray.rllib.core.columns import Columns
   from ray.rllib.core.rl_module.apis.value_function_api import ValueFunctionAPI
-  from ray.rllib.core.rl_module.rl_module import RLModule
   from ray.rllib.core.rl_module.torch.torch_rl_module import TorchRLModule
 
   HAS_RAY_RLMODULES = True
@@ -100,6 +99,7 @@ if HAS_RAY_RLMODULES:
           obs_dim=int(obs_space.shape[0]),
           action_nvec=nvec,
           hidden_size=int(config.get('hidden_size', 256)),
+          hidden_layers=int(config.get('hidden_layers', 1)),
           lstm_cell_size=int(config.get('lstm_cell_size', 64)),
           use_lstm=bool(config.get('use_lstm', False)),
       )

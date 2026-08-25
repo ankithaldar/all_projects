@@ -219,13 +219,17 @@ distribution class, and resolves config across Ray versions (`cfg`/`config`).
 the modern builder (torch framework; `_configure()` applies scalar settings
 version-tolerantly — `lr`/`gamma`/`train_batch_size` are plain attributes on
 new RLLib, `training()` kwargs on older; runner counts go through
-`env_runners` with a `rollout` fallback). Policies: trainable
-`ppo_producer/ppo_consumer` + frozen clones; `make_policy_mapping_fn(
-train_toy_factories_only=True)` mirrors the legacy setup where only toy
-factories learn. `train()` pushes curriculum counters into every worker env,
-resolving the runner group across RLLib generations and unwrapping
-Gymnasium wrapper chains (see §3). `evaluate_scripted()` scores the
-heuristics headlessly — no Ray required.
+`env_runners` with a `rollout` fallback). Per-policy networks match the
+legacy widths (`POLICY_MODEL_CONFIGS`: producer 128×2, consumer 256×2).
+Policies: trainable `ppo_producer/ppo_consumer` + frozen clones;
+`make_policy_mapping_fn()` returns a mapping plus a mutable state dict so
+`apply_curriculum()` can promote facility prefixes mid-run (restores the
+legacy `update_policy_map`; CLI flag `--curriculum-warehouses` promotes
+warehouses at 25%/35%). `train()` pushes curriculum counters into every
+worker env, resolving the runner group across RLLib generations and
+unwrapping Gymnasium wrapper chains (see §3). `describe_model()` prints the
+per-role architectures (legacy `print_model_summaries`).
+`evaluate_scripted()` scores the heuristics headlessly — no Ray required.
 
 **Heuristics** (`rl/heuristics.py`): `ScriptedAgentController` produces a
 full action dict from raw features (fulfillment-ratio reordering) usable
@@ -277,7 +281,8 @@ build_ppo_algorithm → PPOConfig(torch).environment.env_runners.multi_agent.rl_
   policies: ppo_producer/consumer (trained) + frozen clones (not trained)
   mapping_fn: agent_id → policy (toy-only mode freezes everything else)
   modules: FacilityRLModule(FacilityNet) per policy w/ MultiCategorical dist
-train(algo, n):                                  # each iteration
+train(algo, n, curriculum=()):                   # each iteration
+  apply_curriculum(state, i, n, curriculum)      # promote prefixes at fractions
   worker_set = algo.env_runner_group             # new Ray
              | algo.workers / algo.workers()     # legacy fallbacks
   for runner in worker_set:                      # foreach_env_runner / foreach_worker
@@ -320,7 +325,7 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
 `build_ppo_algorithm({'env': EnvConfig(...)})` — the dict is pickled to
 workers, which rebuild their own env copies.
 
-## 5. Test suite (43 tests)
+## 5. Test suite (48 tests)
 
 | File | # | Covers |
 |---|---|---|
@@ -332,7 +337,8 @@ workers, which rebuild their own env copies.
 | `test_policies.py` | 3 | full control coverage, retail revenue within 80 ticks |
 | `test_rl_env.py` | 5 | agent/space coverage, normalized obs bounds, downsampling timing, truncation at horizon, curriculum shaping |
 | `test_heuristics_rendering.py` | 5 | scripted actions in-bounds, scripted episode to horizon, status formatter, crossing sprite, PNG render |
-| `test_models.py` | 3 | FacilityNet forward shapes, LSTM state, gradient flow (skipped without torch) |
+| `test_models.py` | 4 | FacilityNet forward shapes, LSTM state, gradient flow, legacy-width 2-layer trunk (skipped without torch) |
+| `test_training.py` | 4 | role mapping, toy-only freezing, curriculum promotion at thresholds, idempotence |
 
 ## 6. Troubleshooting
 
@@ -386,6 +392,7 @@ workers, which rebuild their own env copies.
 | Chain flow | scripted policy, 400 ticks | retailers sold 40 units by tick 400; global balance **+$28,528** |
 | RL baseline | `baseline --episodes 3` | −4,409 / +234,720 / +234,704 total reward |
 | PPO training | `train --iterations 8 --toy-only` | 16k env steps sampled; curriculum ramping (w = 0.8·i/n reaches 0.7) |
+| Curriculum + summaries | `train --iterations 4 --toy-only --curriculum-warehouses` | warehouses promoted at iteration 1 (`int(0.25·4)`); producer 128×2 / consumer 256×2 summaries printed |
 
 Training rewards start deeply negative and fall further early on — expected
 dynamics: untrained consumers order random products, and ~1/3 of those are
@@ -402,6 +409,7 @@ pytest tests/
 python main.py simulate --ticks 120 --seed 42 --render-dir out/frames
 python main.py baseline --episodes 3 --seed 7
 python main.py train --iterations 8 --toy-only
+python main.py train --iterations 20 --toy-only --curriculum-warehouses
 ```
 
 CLI subcommands: `simulate` (`--ticks --seed --render-dir`), `baseline`
