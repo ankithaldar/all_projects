@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Delta Boarding Pass</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="pass-container delta-theme">
+    <!-- Header -->
+    <div class="header">
+      <div class="airline-logo">DELTA</div>
+      <div class="flight-class">ECONOMY</div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid-layout">
+      <div class="info-group">
+        <span class="label">PASSENGER</span>
+        <span class="value passenger-name">{{title}} {{firstname}} {{lastname}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">FLIGHT</span>
+        <span class="value">{{flight}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">FROM</span>
+        <span class="value airport">{{from}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">TO</span>
+        <span class="value airport">{{to}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">DATE</span>
+        <span class="value">{{departDate}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">BOARDING</span>
+        <span class="value">{{boardTime}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">GATE</span>
+        <span class="value highlight">{{gate}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">SEAT</span>
+        <span class="value highlight">{{seat}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">SEQ</span>
+        <span class="value">{{seq}}</span>
+      </div>
+      <div class="info-group">
+        <span class="label">ZONE</span>
+        <span class="value">{{zone}}</span>
+      </div>
+    </div>
+
+    <!-- Barcode Section -->
+    <div class="barcode-section">
+      <div class="barcode-img">{{barcode}}</div>
+      <div class="pnr-code">PNR: {{pnr}}</div>
+    </div>
+  </div>
+</body>
+
+</html>
