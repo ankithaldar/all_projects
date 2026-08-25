@@ -52,6 +52,18 @@ class KneeStudyModel(nn.Module):
     self.encoder = encoder
     self.aggregator = aggregator
     self.metadata_encoder = metadata_encoder
+    # Additive per-series conditioning requires both branches to live in
+    # the aggregator's input space; project the (small) metadata
+    # embedding up to the encoder feature dim instead of forcing YAMLs
+    # to duplicate encoder-specific widths in out_dim.
+    feat_dim = int(getattr(self.aggregator, 'feat_dim', 0))
+    if feat_dim <= 0:
+      raise ValueError(
+        'aggregator must expose feat_dim matching its encoder output; '
+        'got '
+        f'{type(self.aggregator).__name__} without a positive feat_dim'
+      )
+    self.meta_proj = nn.Linear(int(metadata_encoder.out_dim), feat_dim)
     head_dim = aggregator.out_dim + metadata_encoder.out_dim
     self.head = nn.Sequential(
       nn.Dropout(head_dropout), nn.Linear(head_dim, n_targets)
@@ -72,7 +84,7 @@ class KneeStudyModel(nn.Module):
       series_mask = images.new_ones(b, s, dtype=torch.bool)
 
     meta_emb = self.metadata_encoder(meta)  # (B,S,M)
-    fused = feats + meta_emb  # per-series conditioning
+    fused = feats + self.meta_proj(meta_emb)  # (B,S,D_enc), conditioned
     study_emb = self.aggregator(fused, series_mask)  # (B,H)
 
     mask_f = series_mask.unsqueeze(-1).to(meta_emb.dtype)
