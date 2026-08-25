@@ -217,7 +217,9 @@ MultiDiscrete logits + scalar value head; `initial_state()` support.
 ValueFunctionAPI)` wires FacilityNet into RLLib's new API stack: emits
 `action_dist_inputs` in all forward modes, `vf_preds` + `compute_values()`
 for GAE during training, binds a per-module `TorchMultiCategorical`
-distribution class, and resolves config across Ray versions (`cfg`/`config`).
+distribution class, resolves config across Ray versions (`cfg`/`config`),
+and — when recurrent — feeds RLLib's `state_in` tensors into the LSTM
+(normalizing batch-first to layer-first) so state carries across timesteps.
 
 **Training** (`rl/training.py`): `build_ppo_algorithm()` assembles PPO via
 the modern builder (torch framework; `_configure()` applies scalar settings
