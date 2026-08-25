@@ -21,7 +21,7 @@
 #   git clone --depth 1 "https://x-access-token:$GITHUB_TOKEN@github.com/<user>/<repo>.git" ...
 #
 # Stages (= BLUEPRINT kernels 1-7):
-#   volumes | folds | weak-labels | weak-labels-llm | teacher | student |
+ folds | folds | weak-labels | weak-labels-llm | teacher | student |
 #   self-train | infer | blend | publish | all
 #
 # Kaggle budgets (30 GB disk vs ~570 GB data, 12 h/kernel):
@@ -149,6 +149,17 @@ if [ -z "${PREV_OUTPUT:-}" ] && [ -d /kaggle/input ] && [ -n "$DATASET_NAME" ]; 
     PREV_OUTPUT="$DISCOVERED"
   fi
 fi
+# Volume-cache shards (<base>-volNN) auto-attach as read-only caches:
+# discover every mounted shard and feed the joined list to VOLUMES_CACHE
+# (the streaming store prefers npz hits, falls back to live decode).
+if [ -d /kaggle/input ] && [ -n "$DATASET_NAME" ] && [ -z "${VOLUMES_CACHE:-}" ]; then
+  SHARD_LIST=$(find /kaggle/input -maxdepth 3 -type d \
+    -name "${DATASET_NAME}-vol*" 2>/dev/null | sort | paste -sd: || true)
+  if [ -n "$SHARD_LIST" ]; then
+    log "volume shards attached: $(echo "$SHARD_LIST" | tr ':' ' ' | wc -w)"
+    VOLUMES_CACHE="$SHARD_LIST"
+  fi
+fi
 if [ -n "${PREV_OUTPUT:-}" ]; then
   log 'restoring prior kernel artifacts -> '"$WORK"
   mkdir -p "$WORK/checkpoints" "$WORK/predictions"
@@ -262,6 +273,17 @@ case "$STAGE" in
         --series-csv train_series.csv --workers 4 \
         --shard "${SHARD:-0}" --num-shards "${NUM_SHARDS:-1}" \
         --min-free-gb "${MIN_FREE_GB:-4}" ;;
+  cache-volumes)
+    # Incremental shard caching: decodes within VOL_MINUTES, publishes
+    # <DATASET_NAME>-volNN datasets, tracks progress in train_folds.csv
+    # (vol_shard column) which AUTO_PUBLISH ships in the main dataset.
+    run scripts/cache_volumes.py --data-root "$DATA_ROOT" \
+        --train-folds "$FOLDS" --work "$WORK" \
+        --base-name "$DATASET_NAME" --series-csv train_series.csv \
+        --minutes "${VOL_MINUTES:-480}" \
+        --push-every-minutes "${VOL_PUSH_EVERY_MINUTES:-20}" \
+        --shard-size "${VOL_SHARD_SIZE:-1500}" \
+        --min-free-gb "${MIN_FREE_GB:-6}" ;;
   folds)
     run scripts/make_folds.py --train-csv "$DATA_ROOT/train.csv" --out-csv "$FOLDS" ;;
   weak-labels)
@@ -316,7 +338,7 @@ case "$STAGE" in
     export DATA_ROOT WORK EXP PYTHON="$PY"
     bash scripts/run_all.sh ;;
   *)
-    die "unknown stage '$STAGE' (volumes folds weak-labels weak-labels-llm teacher student self-train infer blend publish all)" ;;
+    die "unknown stage '$STAGE' (volumes cache-volumes folds weak-labels weak-labels-llm teacher student self-train infer blend publish all)" ;;
 esac
 
 # AUTO_PUBLISH=1: push artifacts after every successful stage so a 12 h
