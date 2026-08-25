@@ -3,21 +3,21 @@
 # World of Supply - Google Colab bootstrap
 #
 # The project lives in the `world_of_supply/` subfolder of the
-# all_projects_02 repository, on branch `world_of_supply/main` (the repo
+# all_projects repository, on branch `world_of_supply/main` (the repo
 # default branch is `main`). This script clones, checks out the right
 # branch, and descends into the subfolder automatically.
 #
 # Usage in a Colab notebook cell:
-#   !GIT_URL=https://github.com/ankithaldar/all_projects_02.git \
-#     bash /content/all_projects_02/world_of_supply/colab_run.sh
+#   !GIT_URL=https://github.com/ankithaldar/all_projects.git \
+#     bash /content/all_projects/world_of_supply/colab_run.sh
 #
 # Or upload the project folder to /content/world_of_supply first, then:
 #   !bash colab_run.sh
 #
 # Optional environment variables:
-#   GIT_URL           repo to clone (default: ankithaldar/all_projects_02)
+#   GIT_URL           repo to clone (default: ankithaldar/all_projects)
 #   GIT_BRANCH        branch to check out (default: world_of_supply/main)
-#   PROJECT_DIR       clone/target location (default: /content/all_projects_02)
+#   PROJECT_DIR       clone/target location (default: /content/all_projects)
 #   PROJECT_SUBDIR    project subfolder inside the repo (default: world_of_supply)
 #   OUT_DIR           artifact output (default: /content/wos_outputs)
 #   TRAIN_ITERATIONS  PPO iterations to run (default: 3)
@@ -28,12 +28,12 @@
 # ==============================================================================
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/content/all_projects_02}"
-GIT_URL="${GIT_URL:-https://github.com/ankithaldar/all_projects_02.git}"
+PROJECT_DIR="${PROJECT_DIR:-/content/all_projects}"
+GIT_URL="${GIT_URL:-https://github.com/ankithaldar/all_projects.git}"
 GIT_BRANCH="${GIT_BRANCH:-world_of_supply/main}"
 PROJECT_SUBDIR="${PROJECT_SUBDIR:-world_of_supply}"
 OUT_DIR="${OUT_DIR:-/content/wos_outputs}"
-TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-3}"
+TRAIN_ITERATIONS="${TRAIN_ITERATIONS:-200}"
 NUM_EPI="${NUM_EPI:-2}"
 export PYTHONUNBUFFERED=1
 
@@ -112,7 +112,7 @@ fi
 mkdir -p "$OUT_DIR/frames"
 
 echo '== [6/7] Demo: simulate + render + baseline =='
-"$PYTHON_BIN" main.py simulate --ticks 60 --seed 42 --render-dir "$OUT_DIR/frames" 2>&1 | grep -E '^--- tick (1|60)/' || true
+"$PYTHON_BIN" main.py simulate --ticks 5000 --seed 42 --render-dir "$OUT_DIR/frames" 2>&1 | grep -E '^--- tick (1|60)/' || true
 echo "frames rendered: $(ls "$OUT_DIR/frames" | wc -l) (in $OUT_DIR/frames)"
 "$PYTHON_BIN" main.py baseline --episodes "$NUM_EPI" --seed 7
 
