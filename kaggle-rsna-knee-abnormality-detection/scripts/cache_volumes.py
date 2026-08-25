@@ -273,6 +273,42 @@ def stamp_completed_studies(
   return out
 
 
+def adopt_orphans(
+  cache_root: Path,
+  shard_dir: Path,
+  manifest_rows: list[dict],
+  shard_uids: list[str],
+) -> int:
+  """Move npz files from earlier failed-push shards into the open shard.
+
+  A previous session may have died after decoding but before its
+  dataset push succeeded; those volumes are perfectly good and must
+  not be stranded (local scratch does not survive kernels).
+
+  Args:
+      cache_root: Local volumes_cache root.
+      shard_dir: The CURRENT open shard folder.
+      manifest_rows: Open shard's manifest list (extended in place).
+      shard_uids: Open shard's uid list (extended in place).
+
+  Returns:
+      Number of adopted volumes.
+  """
+  adopted = 0
+  for npz in sorted(cache_root.rglob('*.npz')):
+    if npz.parent == shard_dir:
+      continue
+    target = shard_dir / npz.name
+    if target.exists():
+      npz.unlink()
+      continue
+    npz.replace(target)
+    manifest_rows.append({'SeriesInstanceUID': npz.stem, 'status': 'adopted'})
+    shard_uids.append(npz.stem)
+    adopted += 1
+  return adopted
+
+
 def main() -> None:
   """Decode within budget, publishing closed shards periodically."""
 
@@ -305,20 +341,52 @@ def main() -> None:
   shard_dir.mkdir(parents=True, exist_ok=True)
   manifest_rows: list[dict] = []
   shard_uids: list[str] = []
+  adopted = adopt_orphans(cache_root, shard_dir, manifest_rows, shard_uids)
+  if adopted:
+    log.info('adopted %d orphaned volumes from failed pushes', adopted)
 
   started = time.monotonic()
   last_push = started
   floor_bytes = int(args.min_free_gb * (1 << 30))
+  push_failures = 0
 
   def close_shard() -> None:
-    """Publish the open shard; update index + study-level folds."""
+    """Publish the open shard; update index + study-level folds.
+
+    On publish failure the local npz files are KEPT and the shard is
+    NOT rotated -- a later trigger retries with the full set.
+    """
     nonlocal shard_idx, shard_dir, shard_name
-    nonlocal manifest_rows, shard_uids, folds, index
+    nonlocal manifest_rows, shard_uids, folds, index, push_failures
     if not shard_uids:
       return
     pd.DataFrame(manifest_rows).to_parquet(shard_dir / _MANIFEST)
     write_metadata(shard_dir, username, shard_name)
-    push(shard_dir, username, shard_name, f'{len(shard_uids)} volumes', 'skip')
+    try:
+      push(
+        shard_dir,
+        username,
+        shard_name,
+        f'{len(shard_uids)} volumes',
+        'skip',
+      )
+    except RuntimeError as exc:
+      push_failures += 1
+      log.error(
+        'publish of %s failed (attempt %d): %s\n'
+        'local npz copies KEPT; retried on next trigger/kernel',
+        shard_name,
+        push_failures,
+        exc,
+      )
+      if push_failures >= 3:
+        log.error(
+          'three consecutive publish failures; ending session without '
+          'losing any decoded volume'
+        )
+        raise SystemExit(2) from exc
+      return
+    push_failures = 0
     # Series-level truth: who is cached, and in which shard dataset.
     index = annotate_index(
       index,

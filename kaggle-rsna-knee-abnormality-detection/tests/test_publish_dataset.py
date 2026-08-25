@@ -165,17 +165,6 @@ class TestDatasetExists:
       pub.dataset_exists('u', 'n')
 
 
-class TestAuthHint:
-  """Credential failures carry an actionable hint."""
-
-  def test_hint_appended_on_forbidden(self):
-    text = pub._auth_hint('create failed:\n403 Forbidden')
-    assert 'hint:' in text and 'KAGGLE_USERNAME' in text
-
-  def test_no_hint_on_other_failures(self):
-    assert 'hint:' not in pub._auth_hint('boom\n502 bad gateway')
-
-
 class TestVerify:
   """Post-push verification waits out search-index lag."""
 
@@ -238,3 +227,71 @@ class TestPushDecision:
     monkeypatch.setattr(pub, 'dataset_exists', lambda u, n: False)
     pub.push(tmp_path, 'u', 'n', 'msg', 'zip')
     assert calls == ['create', 'version']
+
+
+class TestTransientRetries:
+  """504/502/429 gateway blips must be retried, not fatal."""
+
+  @staticmethod
+  def _patch_sleep(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(pub.time, 'sleep', sleeps.append)
+    return sleeps
+
+  def test_504_then_success(self, tmp_path: Path, monkeypatch):
+    sleeps = self._patch_sleep(monkeypatch)
+    calls = []
+
+    def fake(args):
+      calls.append(args[1])
+      if len(calls) == 1:
+        return subprocess.CompletedProcess(
+          [],
+          1,
+          '',
+          '504 Server Error: Gateway Timeout for url: .../CreateDataset',
+        )
+      return subprocess.CompletedProcess([], 0, 'ok', '')
+
+    monkeypatch.setattr(pub, '_run_kaggle', fake)
+    monkeypatch.setattr(pub, 'dataset_exists', lambda u, n: False)
+    pub.push(tmp_path, 'u', 'n', 'msg', 'zip')
+    assert calls == ['create', 'create']
+    assert sleeps and sleeps[0] > 0
+
+  def test_exhausted_transient_raises_without_auth_hint(
+    self, tmp_path: Path, monkeypatch
+  ):
+    self._patch_sleep(monkeypatch)
+    monkeypatch.setattr(pub, 'dataset_exists', lambda u, n: False)
+
+    def fake(args):
+      return subprocess.CompletedProcess(
+        [],
+        1,
+        '',
+        '504 Server Error: Gateway Timeout for url: .../CreateDataset',
+      )
+
+    monkeypatch.setattr(pub, '_run_kaggle', fake)
+    with pytest.raises(RuntimeError) as err:
+      pub.push(tmp_path, 'u', 'n', 'msg', 'zip')
+    assert 'hint:' not in str(err.value)
+    assert 'after 4 attempts' in str(err.value)
+
+
+class TestAuthHint:
+  """Credential failures carry an actionable hint."""
+
+  def test_hint_appended_on_forbidden(self):
+    text = pub._auth_hint('create failed:\n403 Forbidden')
+    assert 'hint:' in text and 'KAGGLE_USERNAME' in text
+
+  def test_no_hint_on_gateway_timeout(self):
+    text = pub._auth_hint(
+      'create failed:\n504 Gateway Timeout (html says Forbidden somewhere)'
+    )
+    assert 'hint:' not in text
+
+  def test_no_hint_on_other_failures(self):
+    assert 'hint:' not in pub._auth_hint('boom\n502 bad gateway')
