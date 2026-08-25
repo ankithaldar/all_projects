@@ -1,0 +1,518 @@
+/* =========================================================================
+   IndiGo boarding pass — web check-in
+   Loaded by template.html via <style>@import url("style.css")</style>.
+
+   Design canvas: 1630 × 693 px (matches the source artwork 1:1).
+   The card is a fixed-size "ticket"; .pass-frame scales it to the viewport
+   so it stays pixel-identical at 1630px wide and proportional below that.
+
+   The generator renders this into a 210mm × 297mm (A4) iframe, so <body> is
+   pinned to exactly one A4 page: no scrollbars, print/PDF output is 1:1 with
+   the iframe, and html2canvas captures a correctly proportioned page.
+   ========================================================================= */
+
+/* ---------- fonts ---------- */
+@font-face {
+  font-family: "Fira Sans";
+  src: url("assets/fira-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Sans";
+  src: url("assets/fira-sans-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Sans";
+  src: url("assets/fira-sans-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Sans";
+  src: url("assets/fira-sans-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- reset ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* One A4 page, always. Guarantees clientWidth never shrinks to a scrollbar. */
+  overflow: hidden;
+}
+
+body {
+  /* A4 print canvas, matching the generator's iframe (main.css). */
+  width: 210mm;
+  height: 297mm;
+  /* Horizontal padding == GUTTER in logic.js, so the scale maths is exact. */
+  padding: 18mm 16px 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+
+  background: #fff;
+  color: #2b3037;
+  font-family: "Fira Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Keep the navy header and the barcode black when printed. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1,
+p,
+figure {
+  margin: 0;
+}
+
+img {
+  display: block;
+  border: 0;
+}
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =========================================================================
+   ticket shell
+   ========================================================================= */
+.pass-frame {
+  width: calc(1630px * var(--pass-scale, 1));
+  height: calc(693px * var(--pass-scale, 1));
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.pass {
+  /*
+    NOTE: --pass-scale is deliberately NOT re-declared here. logic.js sets it on
+    .pass-frame and this rule used to shadow it with a local `1`, which pinned
+    transform: scale() to 1 and clipped the ticket inside .pass-frame.
+  */
+  position: relative;
+  width: 1630px;
+  height: 693px;
+  padding: 2px;
+  border-radius: 24px;
+  background: #fff;
+  overflow: hidden;
+  transform: scale(var(--pass-scale, 1));
+  transform-origin: top left;
+}
+
+/* ticket outline — drawn as an overlay so the 2px rule sits exactly where the
+   artwork has it (1px in from the left, 4px from the top, 1px up from the bottom) */
+.pass::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 0;
+  bottom: 1px;
+  left: 1px;
+  border: 2px solid #1d1d46;
+  border-radius: 24px;
+  pointer-events: none;
+}
+
+/* =========================================================================
+   header bar
+   ========================================================================= */
+.pass__header {
+  display: grid;
+  grid-template-columns: 1185px 1fr;
+  height: 114px;
+  background: #030096;
+  color: #fff;
+}
+
+.pass__header-main {
+  display: flex;
+  align-items: center;
+  padding: 5px 0 0 54px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.brand__wordmark {
+  width: 112px;
+  height: 30.6px;
+}
+
+.brand__plane {
+  width: 52px;
+  height: 51.4px;
+  margin-left: 11px;
+}
+
+.pass__doc-title {
+  position: relative;
+  top: -3px;
+  margin-left: 33px;
+  font-size: 29.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+.pass__terminal {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 30px 0 32px;
+  border-left: 2px solid #fff;
+  font-size: 28.2px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   body: main panel + stub
+   ========================================================================= */
+.pass__body {
+  display: flex;
+  height: 573px;
+}
+
+.pass__main {
+  position: relative;
+  flex: 0 0 1185px;
+  min-width: 0;
+  padding-left: 13.5px;
+  padding-right: 34px;
+}
+
+.pass__stub {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  border-left: 3px solid #3a356c;
+  padding-left: 24px;
+  padding-right: 26px;
+}
+
+/* ---------- passenger / route line ---------- */
+.pass__passenger {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 39px 0 0 24.5px;
+}
+
+.pass__name {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pass__route {
+  font-size: 27.8px;
+  font-weight: 600;
+  line-height: 1;
+  color: #2b3037;
+  white-space: nowrap;
+}
+
+/* ---------- 5-box fact strip ---------- */
+.facts {
+  width: 1149px;
+  margin: 54px 0 0 5.5px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 17px 0;
+}
+
+.facts td {
+  height: 122px;
+  padding: 12px 19px 0;
+  border: 2.5px solid #150a5e;
+  border-radius: 6px;
+  vertical-align: top;
+}
+
+.fact__label {
+  display: block;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.15;
+  color: #4a4c50;
+  white-space: nowrap;
+}
+
+.fact__value {
+  display: block;
+  margin-top: 18px;
+  font-size: 29px;
+  font-weight: 700;
+  line-height: 1;
+  color: #2f2f37;
+  white-space: nowrap;
+}
+
+/* ---------- main footer: barcode + details ---------- */
+.pass__footer {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 31px;
+}
+
+/* {{barcode}} expands to a bare <img>, so it needs a sized wrapper. */
+.pass__qr {
+  flex: 0 0 auto;
+  width: 219px;
+  height: 219px;
+  margin-top: -9px;
+}
+
+.pass__qr img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pass__footer-info {
+  flex: 1 1 auto;
+  margin-left: 20px;
+}
+
+.details {
+  width: 576px;
+  table-layout: fixed;
+}
+
+.details th,
+.details td {
+  height: 59.5px;
+  padding: 0;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.details th:nth-of-type(1) { width: 79px; }
+.details td:nth-of-type(1) { width: 205px; }
+.details th:nth-of-type(2) { width: 147px; }
+.details td:nth-of-type(2) { width: 145px; }
+
+.details__label {
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.6px;
+  color: #4a4c50;
+}
+
+.details__value {
+  font-size: 28.1px;
+  font-weight: 700;
+  line-height: 1;
+  color: #2f2f37;
+}
+
+.pass__note {
+  margin-top: 46.5px;
+  font-size: 19.2px;
+  font-weight: 400;
+  line-height: 1;
+  color: #4a4c4f;
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   stub
+   ========================================================================= */
+.stub__name {
+  margin: 37px 0 0 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: #2b3037;
+  white-space: nowrap;
+}
+
+.stub__route {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 40px;
+}
+
+.stub__from {
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+  color: #3a3c40;
+  white-space: nowrap;
+}
+
+.stub__arrow {
+  position: absolute;
+  left: 181px;
+  top: 50%;
+  width: 36px;
+  height: 31px;
+  margin-top: -15.5px;
+}
+
+.stub__arrow::before {
+  content: "";
+  position: absolute;
+  top: 14px;
+  left: 0;
+  width: 22px;
+  height: 3px;
+  background: #3a3c40;
+}
+
+.stub__arrow::after {
+  content: "";
+  position: absolute;
+  top: 4.5px;
+  left: 9.5px;
+  width: 21px;
+  height: 21px;
+  border-top: 3px solid #3a3c40;
+  border-right: 3px solid #3a3c40;
+  transform: rotate(45deg);
+}
+
+.stub__to {
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 4.5px;
+  margin-right: 9px;
+  color: #2f2f37;
+}
+
+.stub__details {
+  width: 100%;
+  margin-top: 37px;
+}
+
+.stub__details th {
+  width: 234px;
+}
+
+.stub__details th,
+.stub__details td,
+.stub__seat th,
+.stub__seat td {
+  height: 52px;
+  padding: 0;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.stub__details td {
+  text-align: left;
+  padding-bottom: 8px;
+}
+
+.stub__seat td {
+  text-align: right;
+}
+
+.stub__label {
+  font-size: 27px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.8px;
+  color: #33343a;
+}
+
+.stub__value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: #2f3239;
+}
+
+.stub__foot {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 38px;
+}
+
+/* {{barcode}} expands to a bare <img>, so it needs a sized wrapper. */
+.stub__qr {
+  flex: 0 0 auto;
+  width: 153px;
+  height: 153px;
+  margin-top: -14px;
+}
+
+.stub__qr img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.stub__seat {
+  width: 111px;
+  margin-left: 12px;
+  margin-top: 6px;
+}
+
+.stub__seat th {
+  width: 87px;
+}
+
+/* =========================================================================
+   print
+   ========================================================================= */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+/* =========================================================================
+   responsive: keep the ticket proportional inside any viewport
+   ========================================================================= */
+@media (max-width: 1660px) {
+  .pass-frame {
+    max-width: 100%;
+  }
+}

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IndiGo {{flight}} &middot; {{from}} to {{to}} &middot; Boarding Pass</title>
+
+<!--
+  ==========================================================================
+  IndiGo web check-in boarding pass — template for the boarding pass generator.
+
+  Contract with ../main.js:
+    * Each double-brace token below is substituted literally by injectData(),
+      which scans the whole file - HTML comments included. Only the keys
+      present in main.js `formData` are real, and this comment deliberately
+      spells them with spaces so it is never itself substituted:
+        title firstname lastname from to departDate departTime arrivalDate
+        arrivalTime flight gate seat pnr seq zone boardTime barcode
+      An unknown key is simply left behind as visible text, so inventing one
+      here is the fastest way to ship a broken pass.
+    * main.js only injects airlines/indigo/style.css when the template contains
+      no <style> element, so the @import below is what actually loads it. It
+      keeps style.css the single source of truth for the design and keeps the
+      document in standards mode (main.js would otherwise prepend its <style>
+      ahead of the DOCTYPE and trigger quirks mode).
+    * main.js renders this file with document.write() into an iframe on
+      generator.html, so this document inherits generator.html's base URL.
+      <base> below re-roots every relative URL at this airline's folder, which
+      is what lets assets/, style.css and logic.js stay plain relative paths.
+      That path is relative to generator.html, NOT to this file: the template
+      only resolves when the generator loads it, never when opened directly.
+  ==========================================================================
+-->
+<base href="airlines/indigo/">
+<style>@import url("style.css");</style>
+</head>
+<body>
+
+<!-- ============ BOARDING PASS ============ -->
+<div class="pass-frame">
+<article class="pass" aria-label="IndiGo boarding pass, flight {{flight}}, {{from}} to {{to}}">
+
+  <!-- ---------- header bar ---------- -->
+  <header class="pass__header">
+    <div class="pass__header-main">
+      <span class="brand">
+        <!-- Wordmark + plane are white-on-transparent PNGs, meant for the navy bar -->
+        <img class="brand__wordmark" src="assets/indigo-wordmark.png" alt="IndiGo" width="2501" height="686">
+        <img class="brand__plane" src="assets/indigo-plane.png" alt="" width="694" height="689">
+      </span>
+      <h1 class="pass__doc-title">Boarding Pass (Web Check-In)</h1>
+    </div>
+    <!--
+      IndiGo's own passes print the departure terminal, but the generator has
+      no field for it and every IATA code maps to more than one terminal, so
+      this is artwork-accurate rather than data-driven. See logic.js NOTES.
+    -->
+    <p class="pass__terminal">Your Departure Terminal is T1</p>
+  </header>
+
+  <div class="pass__body">
+
+    <!-- ---------- main panel ---------- -->
+    <section class="pass__main">
+
+      <div class="pass__passenger">
+        <p class="pass__name" data-passenger>{{lastname}}/{{firstname}} {{title}}</p>
+        <!--
+          The artwork reads "BENGALURU (T1) TO KOLKATA"; the generator only
+          collects IATA codes, so this reads "BLR (T1) TO CCU" like the stub does.
+          data-city-for marks the two codes as the hook a future lookup in
+          logic.js would rewrite once airports.json is usable. See logic.js NOTES.
+        -->
+        <p class="pass__route"><span data-city-for="{{from}}">{{from}}</span> (T1) TO <span data-city-for="{{to}}">{{to}}</span></p>
+      </div>
+
+      <table class="facts">
+        <caption><span class="visually-hidden">Flight, gate, boarding and seat details</span></caption>
+        <tbody>
+          <tr>
+            <td class="fact">
+              <span class="fact__label">Flight</span>
+              <!-- logic.js normalises "6E442" to "6E 442" -->
+              <span class="fact__value" data-flight>{{flight}}</span>
+            </td>
+            <td class="fact">
+              <span class="fact__label">Gate</span>
+              <span class="fact__value">{{gate}}</span>
+            </td>
+            <td class="fact">
+              <span class="fact__label">Boarding Time</span>
+              <!-- logic.js renders "07:30" as "0730 Hrs" -->
+              <span class="fact__value" data-board-time>{{boardTime}}</span>
+            </td>
+            <td class="fact">
+              <span class="fact__label">Boarding</span>
+              <span class="fact__value">Zone {{zone}}</span>
+            </td>
+            <td class="fact">
+              <span class="fact__label">Seat</span>
+              <span class="fact__value" data-seat>{{seat}}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="pass__footer">
+        <!-- The barcode token expands to the <img> that main.js renders with
+             bwip-js; CSS sizes it. No barcode artwork is shipped in assets/. -->
+        <div class="pass__qr">{{barcode}}</div>
+
+        <div class="pass__footer-info">
+          <table class="details">
+            <caption><span class="visually-hidden">Booking details</span></caption>
+            <tbody>
+              <tr>
+                <th scope="row" class="details__label">Date</th>
+                <!-- main.js formats dates as "MAR 19, 2026"; logic.js reorders to "19 Mar 2026" -->
+                <td class="details__value" data-date>{{departDate}}</td>
+                <th scope="row" class="details__label">Departure</th>
+                <td class="details__value" data-depart-time>{{departTime}}</td>
+              </tr>
+              <tr>
+                <th scope="row" class="details__label">Seq</th>
+                <td class="details__value" data-seq>{{seq}}</td>
+                <!-- Not a generator field; see logic.js NOTES. -->
+                <th scope="row" class="details__label">Services</th>
+                <td class="details__value">CPML, CPTR</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p class="pass__note">Gate is subject to change and will close 25 minutes prior to departure</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ---------- detachable stub ---------- -->
+    <aside class="pass__stub" aria-label="Boarding pass stub">
+
+      <p class="stub__name" data-passenger>{{lastname}}/{{firstname}} {{title}}</p>
+
+      <p class="stub__route">
+        <span class="stub__from" data-from>{{from}} (T1)</span>
+        <span class="stub__arrow" role="img" aria-label="to"></span>
+        <span class="stub__to" data-to>{{to}}</span>
+      </p>
+
+      <table class="stub__details">
+        <caption><span class="visually-hidden">Flight summary</span></caption>
+        <tbody>
+          <tr>
+            <th scope="row" class="stub__label">Flight</th>
+            <td class="stub__value" data-flight>{{flight}}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="stub__label">Date</th>
+            <td class="stub__value" data-date>{{departDate}}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="stub__label">PNR</th>
+            <td class="stub__value" data-pnr>{{pnr}}</td>
+          </tr>
+          <tr>
+            <th scope="row" class="stub__label">Services</th>
+            <td class="stub__value">CPML, CPTR</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="stub__foot">
+        <!--
+          main.js builds one BCBP payload per run, so the stub reuses it rather
+          than carrying a separate, shorter stub payload.
+        -->
+        <div class="stub__qr">{{barcode}}</div>
+        <table class="stub__seat">
+          <caption><span class="visually-hidden">Seat and sequence number</span></caption>
+          <tbody>
+            <tr>
+              <th scope="row" class="stub__label">Seat</th>
+              <td class="stub__value" data-seat>{{seat}}</td>
+            </tr>
+            <tr>
+              <th scope="row" class="stub__label">Seq</th>
+              <td class="stub__value" data-seq>{{seq}}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </aside>
+
+  </div>
+</article>
+</div>
+
+<!--
+  Per-airline behaviour (scale-to-fit + token formatting). The generator has no
+  hook for airline scripts, so the template pulls it in itself; <base> resolves
+  it to airlines/indigo/logic.js.
+-->
+<script src="logic.js"></script>
+</body>
+</html>
