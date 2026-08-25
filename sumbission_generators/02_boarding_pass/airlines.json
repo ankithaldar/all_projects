@@ -1,0 +1,50 @@
+[
+  {
+    "id": "zzz_sample",
+    "name": "Sample",
+    "folder": "zzz_sample",
+    "encoder": "azteccodecompact"
+  },
+  {
+    "id": "air_asia",
+    "name": "Air Asia",
+    "folder": "air_asia",
+    "encoder": "azteccode"
+  },
+  {
+    "id": "air_india",
+    "name": "Air India",
+    "folder": "air_india",
+    "encoder": "azteccode"
+  },
+  {
+    "id": "air_india_express",
+    "name": "Air India Express",
+    "folder": "air_india_express",
+    "encoder": "azteccode"
+  },
+  {
+    "id": "akasa_air",
+    "name": "Akasa Air",
+    "folder": "akasa_air",
+    "encoder": "pdf417compact"
+  },
+  {
+    "id": "alliance_air",
+    "name": "Alliance Air",
+    "folder": "alliance_air",
+    "encoder": "azteccode"
+  },
+  {
+    "id": "indigo",
+    "name": "Indigo",
+    "folder": "indigo",
+    "encoder": "azteccodecompact"
+  },
+  {
+    "id": "spice_jet",
+    "name": "Spice Jet",
+    "folder": "spice_jet",
+    "encoder": "azteccode"
+  }
+]
