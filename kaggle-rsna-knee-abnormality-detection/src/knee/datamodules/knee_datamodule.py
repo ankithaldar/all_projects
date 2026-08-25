@@ -190,7 +190,7 @@ class KneeStudyDataset(Dataset):
       # Series decodes are I/O bound (DICOM reads + resize): run the
       # study's series concurrently so one item no longer pays
       # serial multi-second latency before the first GPU step.
-      with ThreadPoolExecutor(max_workers=min(4, len(series_rows))) as pool:
+      with ThreadPoolExecutor(max_workers=min(6, len(series_rows))) as pool:
         volumes = list(pool.map(self.store.get, series_rows))
     elif series_rows:
       volumes = [self.store.get(series_rows[0])]

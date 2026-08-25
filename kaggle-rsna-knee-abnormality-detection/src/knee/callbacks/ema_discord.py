@@ -127,6 +127,8 @@ class DiscordCallback(pl.Callback):
 
   # ----------------------------- hooks ------------------------------ #
   def on_fit_start(self, trainer, pl_module) -> None:
+    if not trainer.is_global_zero:
+      return  # DDP: notify once, from rank 0 only
     self._t_start = time.monotonic()
     n_params = sum(p.numel() for p in pl_module.parameters()) / 1e6
     fold = getattr(trainer.datamodule, 'fold', 'n/a')
@@ -137,6 +139,8 @@ class DiscordCallback(pl.Callback):
     )
 
   def on_validation_epoch_end(self, trainer, unused_pl_module) -> None:
+    if not trainer.is_global_zero:
+      return  # DDP: notify once, from rank 0 only
     epoch = trainer.current_epoch
     improved = False
     score = trainer.callback_metrics.get('val_macro_auc')
@@ -164,6 +168,8 @@ class DiscordCallback(pl.Callback):
     )
 
   def on_fit_end(self, trainer, unused_pl_module) -> None:
+    if not trainer.is_global_zero:
+      return  # DDP: notify once, from rank 0 only
     mins = (time.monotonic() - (self._t_start or time.monotonic())) / 60
     best = (
       f'\nbest val_macro_auc: {self._best_score:.4f}'

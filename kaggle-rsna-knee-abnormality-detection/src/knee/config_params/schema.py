@@ -199,7 +199,7 @@ class DataModuleConfig(StrictModel):
 
   batch_size: int = Field(default=4, ge=1, description='Studies per step')
   num_workers: int = Field(
-    default=2,
+    default=3,
     ge=0,
     description='Loader workers; each carries its own LRU + prefetch.',
   )
