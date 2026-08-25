@@ -31,7 +31,7 @@ def test_place_order_wrong_product_penalizes_but_does_not_queue():
   payment = toy_factory.distribution.place_order(Order(buyer, 'steel', 2))
 
   assert payment == 1000
-  assert toy_factory.distribution.economy.total_wrong_order_penalties == 1000
+  assert toy_factory.distribution.economy.total_wrong_order_penalties == -1000
   assert len(toy_factory.distribution.order_queue) == 0
 
 

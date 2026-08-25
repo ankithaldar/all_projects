@@ -211,7 +211,7 @@ class Transport(Agent):
           self.location_pointer += self.step
         else:
           self.step = -1
-    elif self.step < 0:
+    if self.step < 0:
       if self.location_pointer == last_index and self.payload > 0:
         self.try_unloading()
       if self.payload == 0:

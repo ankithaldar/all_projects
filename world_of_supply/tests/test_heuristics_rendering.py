@@ -74,11 +74,13 @@ def test_truck_status_uses_legacy_words(env):
   truck.payload = 3
   for _ in range(truck.path_len()):
     truck.act()
-  assert formatter.status(truck).startswith('UNLD toy_car:')
-
-  truck.act()
   line = formatter.status(truck)
   assert line.startswith('BACK ') and line.endswith('-> home')
+
+  truck.step = -1
+  truck.location_pointer = truck.path_len() - 1
+  truck.payload = 3
+  assert formatter.status(truck).startswith('UNLD toy_car:3')
   fleet_line = formatter._fleet_line(truck)
   assert '/' in fleet_line or '-' in fleet_line
 
