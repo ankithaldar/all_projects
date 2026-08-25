@@ -103,13 +103,19 @@ sampler:
 
 # Flat wiring consumed by knee.datamodules.knee_datamodule.KneeDataModule
 # (constructed explicitly by scripts/train_image_student.py / infer.py).
+# Host-RAM rule of thumb: batch ~ bs x 6 x 32 x 384^2 x 4B (~450 MB at
+# bs=4); loader keeps ~(workers x prefetch + 1) of those. Kaggle pods
+# have ~13-15 GB shared by TWO DDP ranks when devices=2 -- the defaults
+# below keep a single-rank run comfortably inside that envelope.
 datamodule:
-  batch_size: 8                 # studies per step (x ~4 series each)
-  num_workers: 4
+  batch_size: 4                 # studies per step
+  num_workers: 2
   max_series_per_study: 6
-  pin_memory: true
+  pin_memory: false             # pinned staging doubles big-batch copies
+  prefetch_factor: 2
+  persistent_workers: true      # keeps each worker's warm LRU alive
   # Per-worker LRU for stream-decoded volumes (no disk cache on Kaggle):
-  # host RAM ~ num_workers x lru_max_gb -- stay inside Kaggle's ~13 GB.
+  # host RAM ~ num_workers x lru_max_gb -- stay inside Kaggle's ~13-15 GB.
   lru_max_volumes: 64           # ~64 x 4.7 MB uint8 volumes per worker
   lru_max_gb: 2                 # byte ceiling per worker
 
@@ -130,9 +136,10 @@ train:
     params:
       max_epochs: 12
       accelerator: auto
-      devices: auto
+      devices: 1                    # DDP on T4x2 doubles host RAM; opt in
+                                    # (devices: auto) only if memory allows
       precision: bf16-mixed
-      accumulate_grad_batches: 4
+      accumulate_grad_batches: 8    # bs=4 x accum 8 = effective batch 32
       gradient_clip_val: 10.0
       log_every_n_steps: 50
       check_val_every_n_epoch: 1

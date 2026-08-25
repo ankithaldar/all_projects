@@ -473,14 +473,20 @@ class KneeDataModule(LightningDataModule):
         replacement=True,
       )
       shuffle = False
+    workers = int(self.dm_cfg.num_workers)
+    loader_kwargs: dict = {}
+    if workers > 0:
+      loader_kwargs['prefetch_factor'] = int(self.dm_cfg.prefetch_factor)
+      loader_kwargs['persistent_workers'] = bool(self.dm_cfg.persistent_workers)
     return DataLoader(
       dataset,
       batch_size=self.batch_size,
       shuffle=shuffle,
       sampler=sampler,
-      num_workers=self.dm_cfg.num_workers,
+      num_workers=workers,
       pin_memory=self.dm_cfg.pin_memory,
       worker_init_fn=worker_init_fn,
+      **loader_kwargs,
     )
 
   def train_dataloader(self) -> DataLoader:

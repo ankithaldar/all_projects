@@ -28,9 +28,9 @@ augment:
       params: { num_steps: 5, distort_limit: 0.15, p: 0.25 }
 
 datamodule:
-  batch_size: 6
+  batch_size: 4
 
 train:
   trainer:
     params:
-      accumulate_grad_batches: 6
+      accumulate_grad_batches: 12

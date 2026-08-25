@@ -189,14 +189,28 @@ class DataModuleConfig(StrictModel):
   """Wiring for knee.datamodules.knee_datamodule.KneeDataModule.
 
   With no volumes cache (Kaggle's 30 GB disk cannot hold one for ~570 GB
-  of raw DICOM), volumes stream from the read-only mount; the two
-  ``lru_*`` fields bound how much decoded data each worker keeps in RAM.
+  of raw DICOM), volumes stream from the read-only mount; the ``lru_*``
+  fields bound how much decoded data each worker keeps in RAM. Host-RAM
+  budget rule of thumb: batch_bytes ~= batch_size x max_series x
+  in_chans x image_size^2 x 4 B (e.g. 4x6x32x384^2x4 ~ 450 MB), and the
+  loader holds ~(num_workers x prefetch_factor + 1) of those plus the
+  main-process copy -- stay inside Kaggle's ~13-15 GB.
   """
 
-  batch_size: int = Field(default=8, ge=1, description='Studies per step')
-  num_workers: int = 4
+  batch_size: int = Field(default=4, ge=1, description='Studies per step')
+  num_workers: int = Field(
+    default=2,
+    ge=0,
+    description='Loader workers; each carries its own LRU + prefetch.',
+  )
   max_series_per_study: int = Field(default=6, ge=1)
-  pin_memory: bool = True
+  pin_memory: bool = Field(
+    default=False,
+    description=(
+      'Pinned staging doubles large-batch host copies; enable only '
+      'when input feeding is the bottleneck.'
+    ),
+  )
   lru_max_volumes: int = Field(
     default=64,
     ge=1,
@@ -208,6 +222,18 @@ class DataModuleConfig(StrictModel):
     description=(
       'Per-worker LRU capacity in GiB of uint8 voxels; total host RAM '
       'is roughly num_workers x this value -- keep it small on Kaggle.'
+    ),
+  )
+  prefetch_factor: int = Field(
+    default=2,
+    ge=1,
+    description='Batches pre-fetched per worker (ignored at 0 workers).',
+  )
+  persistent_workers: bool = Field(
+    default=True,
+    description=(
+      'Keep workers alive between epochs: preserves the warm LRU and '
+      'avoids fork storms on the 12 h wall.'
     ),
   )
 
@@ -263,6 +289,9 @@ class TrainConfig(StrictModel):
       target='lightning.pytorch.Trainer',
       params={
         'max_epochs': 12,
+        # Single device by default: DDP doubles every host-side
+        # pipeline and Kaggle pods share ~13-15 GB across ranks.
+        'devices': 1,
         'precision': 'bf16-mixed',
         'gradient_clip_val': 10.0,
       },
