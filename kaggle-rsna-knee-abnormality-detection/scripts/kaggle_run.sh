@@ -21,8 +21,8 @@
 #   git clone --depth 1 "https://x-access-token:$GITHUB_TOKEN@github.com/<user>/<repo>.git" ...
 #
 # Stages (= BLUEPRINT kernels 1-7):
- folds | folds | weak-labels | weak-labels-llm | teacher | student |
-#   self-train | infer | blend | publish | all
+#   volumes | cache-volumes | folds | weak-labels | weak-labels-llm |
+#   teacher | student | self-train | infer | blend | publish | all
 #
 # Kaggle budgets (30 GB disk vs ~570 GB data, 12 h/kernel):
 # * Volumes are STREAM-DECODED from /kaggle/input at train/infer time --
@@ -177,6 +177,10 @@ if [ -n "${PREV_OUTPUT:-}" ]; then
     # Single-file artifacts: only adopt when this session lacks them.
     if [ -f "$src/train_folds.csv" ] && [ ! -f "$FOLDS" ]; then
       cp -a "$src/train_folds.csv" "$FOLDS"
+    fi
+    if [ -f "$src/vol_cache_index.parquet" ] && \
+       [ ! -f "$WORK/vol_cache_index.parquet" ]; then
+      cp -a "$src/vol_cache_index.parquet" "$WORK/"
     fi
     if [ -f "$src/weak_labels.parquet" ] && [ ! -f "$WEAK_LABELS" ]; then
       cp -a "$src/weak_labels.parquet" "$WEAK_LABELS"
