@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indian HRA Rent Receipt Generator (Section 10(13A) Compliant)</title>
+    <link rel="stylesheet" href="rent_recipt.css">
+</head>
+<body>
+
+    <!-- <header>
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: var(--primary-color);">HRA Rent Receipt Generator</h1>
+            <p style="color: #666;">Compliant with Section 10(13A) of the Income Tax Act, 1961</p>
+        </div>
+    </header> -->
+
+    <div class="container">
+        <!-- INPUT SECTION -->
+        <section class="form-card" id="input-section">
+            <h2>Receipt Details</h2>
+            <form id="receiptForm">
+                <div class="row">
+                    <div class="form-group">
+                        <label for="receiptDate">Date of Payment</label>
+                        <input type="date" id="receiptDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="monthYear">Rent Period (Month/Year)</label>
+                        <input type="month" id="monthYear" required>
+                    </div>
+                </div>
+
+                <h3 style="margin: 20px 0 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; color: var(--primary-color);">Tenant Details</h3>
+
+                <div class="form-group">
+                    <label for="tenantName">Tenant Name (You)</label>
+                    <input type="text" id="tenantName" placeholder="e.g. Rahul Kumar" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="tenantPan">Tenant PAN </label>
+                    <input type="text" id="tenantPan" placeholder="ABCDE1234F" maxlength="10" style="text-transform: uppercase;">
+                    <small id="panHint" style="color: var(--accent-color); display: none;">Required for tax exemption (Rent > ₹1L/yr)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="propertyAddress">Property Address (Rented Premises)</label>
+                    <input type="text" id="propertyAddress" placeholder="Full address with pin code" required>
+                </div>
+
+                <h3 style="margin: 20px 0 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; color: var(--primary-color);">Landlord Details</h3>
+
+                <div class="form-group">
+                    <label for="landlordName">Landlord Name</label>
+                    <input type="text" id="landlordName" placeholder="e.g. Sharmila Properties" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="landlordPan">Landlord PAN <span style="font-weight:normal; font-size: 0.8em; color: #666;">(Mandatory if Annual Rent > ₹1,00,000)</span></label>
+                    <input type="text" id="landlordPan" placeholder="ABCDE1234F" maxlength="10" style="text-transform: uppercase;">
+                    <small id="panHint" style="color: var(--accent-color); display: none;">Required for tax exemption (Rent > ₹1L/yr)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="amount">Rent Amount (₹)</label>
+                    <input type="number" id="amount" placeholder="0.00" min="1" step="0.01" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="paymentMode">Payment Mode</label>
+                    <select id="paymentMode">
+                        <option value="Cash">Cash</option>
+                        <option value="Cheque">Cheque</option>
+                        <option value="Online Transfer/NEFT/RTGS/IMPS">Online Transfer / NEFT / RTGS / IMPS</option>
+                        <option value="Demand Draft">Demand Draft</option>
+                    </select>
+                </div>
+
+                <div class="btn-group">
+                    <button type="button" class="btn-primary" onclick="generateReceipt()">Generate Receipt</button>
+                    <button type="button" class="btn-secondary" onclick="printReceipt()" id="printBtn" disabled>Print Receipt</button>
+                    <button type="button" class="btn-outline" onclick="resetForm()">New Receipt</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- PREVIEW SECTION -->
+        <section class="preview-section">
+            <!-- <div style="margin-bottom: 10px; color: #666; font-weight: 600;">Live Preview (A4 Layout)</div> -->
+
+            <div id="receipt-container">
+                <!-- Receipt ID - Auto Generated -->
+                <div class="receipt-id">Receipt No: <span id="r-id">RR-PENDING</span></div>
+
+                <div class="receipt-header">
+                    <div class="receipt-title">Rent Receipt</div>
+                </div>
+
+                <div class="receipt-content">
+                    <div class="receipt-row">
+                        <span class="receipt-label">Received with thanks from:</span>
+                        <span class="receipt-value" id="r-tenantName">[Tenant Name]</span>
+                    </div>
+
+                    <div class="declaration-text">
+                        The sum of <span class="amount-highlight" id="r-amountWords">[Rupees in Words]/-</span>
+                        (₹ <span id="r-amountFigures">[0.00]</span>)
+                        for rent of the property at <span id="r-property" style="text-decoration: underline;">[Property Address]</span>
+                        for the period of <span id="r-period">[Month Year]</span>.
+                    </div>
+
+                    <div class="receipt-row">
+                        <span class="receipt-label">Payment Mode:</span>
+                        <span class="receipt-value" id="r-mode">[Mode]</span>
+                    </div>
+
+                    <div class="receipt-row" id="panRow">
+                        <span class="receipt-label">Landlord PAN:</span>
+                        <span class="receipt-value" id="r-pan">[PAN Number]</span>
+                    </div>
+                </div>
+
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <!-- Signature Image: Points to root folder by default -->
+                        <img src="landlordsignature.png" alt="Landlord Signature" class="signature-img" id="sigImg"
+                            onerror="this.style.display='none'" width="200" height="55">
+
+                        <div class="signature-line">Landlord Signature</div>
+                        <div style="margin-top: 5px; font-size: 0.9rem;" id="r-date">[Date]</div>
+                    </div>
+                </div>
+
+                <!-- <div class="disclaimer">
+                    <strong>Disclaimer:</strong> For HRA claims under Section 10(13A). If annual rent exceeds ₹1,00,000, landlord PAN is mandatory.
+                    Compliance with state stamp duty laws is the user’s responsibility.
+                </div> -->
+            </div>
+        </section>
+    </div>
+
+    <!-- Toast Notification Element -->
+    <div id="toast">Message here</div>
+
+    <script src="rent_recipt.js"></script>
+</body>
+</html>
