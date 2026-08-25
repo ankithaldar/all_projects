@@ -113,8 +113,10 @@ BOM availability; books production cost.
 **`transport.py`** — one truck with an explicit state machine
 (`TransportState.IDLE/LOADING/EN_ROUTE/UNLOADING/RETURNING`) derived from
 `step` (+1/-1/0) and `location_pointer`. `schedule()` precomputes the route;
-`try_unloading` delivers what fits (rest is lost) and notifies the buyer's
-consumer unit. Freight cost per tick = `payload × cost × |step|`.
+`try_unloading` delivers what fits and **zeroes the payload regardless —
+units that do not fit are lost** (legacy semantics, verified by test) — and
+notifies the buyer's consumer unit for the delivered volume. Freight cost
+per tick = `payload × cost × |step|`.
 
 **`distribution.py`** — `DistributionUnit`: FIFO `order_queue`;
 `place_order` returns the buyer payment immediately (prepayment semantics):
@@ -155,7 +157,8 @@ railroads with jittered elbows (seeded rng; always defined, unlike legacy).
 
 **`policies.py`** — `ScriptedSupplyChainPolicy` (Strategy): fixed prices per
 class ($400/$1000/$1400/$1800), rate 4 lots, reorder quantity 8; stops
-ordering when broke or booked stock exceeds capacity; picks the most
+ordering when broke or when **total storage occupancy plus all open orders**
+exceeds capacity (legacy booked-inventory rule); picks the most
 under-stocked BOM input from a random exporting supplier.
 
 ### Rendering & analytics
@@ -163,7 +166,8 @@ under-stocked BOM input from a random exporting supplier.
 - **`rendering/sprites.py`**: neighbor-aware box-drawing glyphs (══║╔╬…).
 - **`rendering/status.py`**: `WorldStatusFormatter` uses
   `singledispatchmethod` to format worlds/facilities/trucks/storages into
-  YAML-safe nested lists; ASCII progress bars.
+  YAML-safe nested lists; trucks use the legacy LOAD/MOVE/UNLD/BACK wording
+  with route progress bars in fleet listings.
 - **`rendering/renderer.py`**: three text layers (railroads, en-route trucks
   `*`, facility letters S/L/T/W/R) composited onto a dark PIL canvas with the
   logo and 3-column YAML status panels; fonts/logo load from package assets
@@ -325,18 +329,18 @@ $1000/$2000/$3000 by tier, episode 1000 ticks @ downsampling 20 → 50 decisions
 `build_ppo_algorithm({'env': EnvConfig(...)})` — the dict is pickled to
 workers, which rebuild their own env copies.
 
-## 5. Test suite (48 tests)
+## 5. Test suite (51 tests)
 
 | File | # | Covers |
 |---|---|---|
 | `test_economy.py` | 5 | BalanceSheet arithmetic, `sum()`, repr |
 | `test_storage_manufacturing.py` | 8 | capacity all-or-nothing/partial, atomic take, holding cost, BOM consumption + space rule |
-| `test_transport_distribution.py` | 6 | valid/wrong orders, payment booking, full delivery cycle, truck FSM states |
-| `test_consumer_seller.py` | 3 | demand curve, sell-out, open-order pruning on reception |
+| `test_transport_distribution.py` | 7 | valid/wrong orders, payment booking, full delivery cycle, truck FSM states, unfitting units lost |
+| `test_consumer_seller.py` | 4 | demand curve, sell-out, open-order pruning, booked-capacity rule counts all stock |
 | `test_world_scenario.py` | 5 | 9 facilities registered, supplier connectivity, act() sheets, balance conservation, seeded layout determinism |
 | `test_policies.py` | 3 | full control coverage, retail revenue within 80 ticks |
 | `test_rl_env.py` | 5 | agent/space coverage, normalized obs bounds, downsampling timing, truncation at horizon, curriculum shaping |
-| `test_heuristics_rendering.py` | 5 | scripted actions in-bounds, scripted episode to horizon, status formatter, crossing sprite, PNG render |
+| `test_heuristics_rendering.py` | 6 | scripted actions in-bounds, scripted episode to horizon, status formatter, legacy truck wording, crossing sprite, PNG render |
 | `test_models.py` | 4 | FacilityNet forward shapes, LSTM state, gradient flow, legacy-width 2-layer trunk (skipped without torch) |
 | `test_training.py` | 4 | role mapping, toy-only freezing, curriculum promotion at thresholds, idempotence |
 
@@ -370,6 +374,12 @@ workers, which rebuild their own env copies.
 - Ray 2.5x compatibility shims (see §3 training flow): runner-group
   accessors, Gymnasium wrapper unwrapping, nested result-schema metric
   fallbacks, and attribute-vs-kwargs algorithm settings.
+- Second (semantic) parity audit fixes: truck leftovers are lost on unload
+  (payload zeroed, matching legacy — an earlier refactor wrongly retained
+  them); scripted-policy booking counts total storage occupancy, not just
+  BOM-related products; fleet status strings restored to legacy
+  LOAD/MOVE/UNLD/BACK format with route progress bars; `lspci` GPU probe
+  returned to `analytics/hardware`.
 
 ### Legacy file → new module map
 

@@ -124,11 +124,7 @@ class ScriptedSupplyChainPolicy:
         open_orders[product_id] = open_orders.get(product_id, 0) + quantity
 
     assert facility.storage is not None
-    if sum(inputs.values()) == 0 and sum(open_orders.values()) > facility.storage.max_capacity:
-      return (None, None)
-    booked_total = sum(open_orders.values()) + sum(
-        facility.storage.stock_levels.get(product_id, 0) for product_id in set(inputs) | set(open_orders)
-    )
+    booked_total = facility.storage.used_capacity() + sum(open_orders.values())
     if booked_total > facility.storage.max_capacity:
       return (None, None)
 
