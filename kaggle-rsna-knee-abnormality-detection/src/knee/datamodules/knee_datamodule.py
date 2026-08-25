@@ -469,20 +469,25 @@ class KneeDataModule(LightningDataModule):
         self.train_ds or self.val_ds, 'series_by_study', {}
       ).values()
     )
+    cap = self.dm_cfg.max_series_per_study
+    warmup_batches = (
+      2 + int(self.dm_cfg.num_workers) * int(self.dm_cfg.prefetch_factor) + 1
+    )
     log.info(
       'fold %d | %s | train studies: %s | val studies: %d | '
       'series mapped: %d (cap %d/study) | workers: %d x LRU(%d vol/'
-      '%d GiB) | first batches are CPU-decode bound -- GPU stays idle '
-      'until the pipeline is warm',
+      '%d GiB) | warm-up: ~%d series decoded before steady GPU use '
+      '(sanity check + prefetch fill; CPU-bound, GPU ~0%% until done)',
       self.fold,
       stage,
       len(self.train_ds) if self.train_ds is not None else 'n/a',
       len(self.val_ds),
       series_total,
-      self.dm_cfg.max_series_per_study,
+      cap,
       int(self.dm_cfg.num_workers),
       int(self.dm_cfg.lru_max_volumes),
       int(self.dm_cfg.lru_max_gb),
+      warmup_batches * int(self.dm_cfg.batch_size) * cap,
     )
 
   def _loader(self, dataset: KneeStudyDataset, shuffle: bool):
