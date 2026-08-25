@@ -67,6 +67,17 @@ for _ in range(100):
 print(world.economy.global_balance())
 ```
 
+## Run on Google Colab
+
+```bash
+# in a Colab cell - clones, installs, tests, demos, and trains in one shot:
+!GIT_URL=https://github.com/<you>/<your-repo>.git bash colab_run.sh
+```
+
+Or upload the project folder to `/content/world_of_supply` and run
+`!bash colab_run.sh`. Set `MOUNT_DRIVE=1` to save artifacts to Google Drive
+and `TRAIN_ITERATIONS` to control training length.
+
 ## Tests
 
 ```bash
