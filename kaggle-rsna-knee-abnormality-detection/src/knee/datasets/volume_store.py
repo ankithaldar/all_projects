@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -330,6 +331,12 @@ class StreamingVolumeStore:
     )
     self._cache = LruVolumeCache(max_items=max_items, max_bytes=max_bytes)
     self._failed: set[str] = set()
+    # Decode telemetry: surfaced as periodic INFO summaries so streamed
+    # kernel logs show the CPU-side pipeline working before any GPU use.
+    self._decode_count = 0
+    self._decode_seconds = 0.0
+    self._log_every = 10
+    self._slow_seconds = 5.0
     self._log = get_logger('volume_store')
 
   def _read_npz(self, series_uid: str) -> np.ndarray | None:
@@ -365,8 +372,10 @@ class StreamingVolumeStore:
     series = str(row.get('SeriesInstanceUID', '') or '')
     if series in self._failed:
       return None
+    started = time.perf_counter()
     try:
       directory = series_dir(self.data_root, series, study, split=self.split)
+      n_files = len(list(directory.glob('*.dcm')))
       volume = decode_series_volume(
         directory,
         image_size=int(self.data_cfg.image_size),
@@ -381,6 +390,26 @@ class StreamingVolumeStore:
         'series %s undecodable (%s); substituting zeros', series, exc
       )
       return None
+    elapsed = time.perf_counter() - started
+    self._decode_count += 1
+    self._decode_seconds += elapsed
+    if elapsed >= self._slow_seconds:
+      self._log.warning(
+        '[pid %d] SLOW decode series %s: %d dcm files in %.1fs',
+        os.getpid(),
+        series,
+        n_files,
+        elapsed,
+      )
+    elif self._decode_count % self._log_every == 0:
+      avg = self._decode_seconds / self._decode_count
+      self._log.info(
+        '[pid %d] decoded %d series so far (%.1fs total, %.2fs avg/series)',
+        os.getpid(),
+        self._decode_count,
+        self._decode_seconds,
+        avg,
+      )
     return volume
 
   def get(self, row: dict) -> np.ndarray | None:
