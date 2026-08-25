@@ -21,6 +21,8 @@ class AttentionMILAggregator(nn.Module):
     self, feat_dim: int = 1280, hidden_dim: int = 512, dropout: float = 0.1
   ) -> None:
     super().__init__()
+    self.feat_dim = int(feat_dim)
+    self.out_dim = hidden_dim
     self.project = nn.Sequential(
       nn.Linear(feat_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU()
     )
@@ -56,6 +58,8 @@ class TransformerAggregator(nn.Module):
     dropout: float = 0.1,
   ) -> None:
     super().__init__()
+    self.feat_dim = int(feat_dim)
+    self.out_dim = hidden_dim
     self.input_proj = nn.Sequential(
       nn.Linear(feat_dim, hidden_dim), nn.LayerNorm(hidden_dim)
     )
