@@ -28,6 +28,7 @@ columns decide provenance).
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +49,7 @@ from knee.config_params.schema import (
   TrainConfig,
 )
 from knee.datasets.volume_store import StreamingVolumeStore
+from knee.helpers.logging_utils import get_logger
 from knee.helpers.seeding import worker_init_fn
 from knee.layers.metadata_encoder import build_meta_vector
 
@@ -184,7 +186,16 @@ class KneeStudyDataset(Dataset):
     row = self.frame.iloc[index]
     uid = str(row['StudyInstanceUID'])
     series_rows = self.series_by_study.get(uid, [])
-    volumes = [self.store.get(source) for source in series_rows]
+    if len(series_rows) > 1:
+      # Series decodes are I/O bound (DICOM reads + resize): run the
+      # study's series concurrently so one item no longer pays
+      # serial multi-second latency before the first GPU step.
+      with ThreadPoolExecutor(max_workers=min(4, len(series_rows))) as pool:
+        volumes = list(pool.map(self.store.get, series_rows))
+    elif series_rows:
+      volumes = [self.store.get(series_rows[0])]
+    else:
+      volumes = []
     usable = [
       (source, volume)
       for source, volume in zip(series_rows, volumes, strict=False)
@@ -451,6 +462,28 @@ class KneeDataModule(LightningDataModule):
         self.data_cfg,
         store,
       )
+    log = get_logger('knee_datamodule')
+    series_total = sum(
+      len(rows)
+      for rows in getattr(
+        self.train_ds or self.val_ds, 'series_by_study', {}
+      ).values()
+    )
+    log.info(
+      'fold %d | %s | train studies: %s | val studies: %d | '
+      'series mapped: %d (cap %d/study) | workers: %d x LRU(%d vol/'
+      '%d GiB) | first batches are CPU-decode bound -- GPU stays idle '
+      'until the pipeline is warm',
+      self.fold,
+      stage,
+      len(self.train_ds) if self.train_ds is not None else 'n/a',
+      len(self.val_ds),
+      series_total,
+      self.dm_cfg.max_series_per_study,
+      int(self.dm_cfg.num_workers),
+      int(self.dm_cfg.lru_max_volumes),
+      int(self.dm_cfg.lru_max_gb),
+    )
 
   def _loader(self, dataset: KneeStudyDataset, shuffle: bool):
     """Shared DataLoader construction.
