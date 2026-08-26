@@ -34,6 +34,9 @@ def build_compose(
   """
   steps = [
     album.Resize(height=img_size, width=img_size, interpolation=1),
+    # CT slices are single-channel grayscale; the efficientnet backbone
+    # stem is a 3-channel conv, so replicate to RGB before normalization.
+    album.ToRGB(),
     *instantiate(specs or []),
     album.ToFloat(max_value=255.0),
     album.Normalize(

@@ -253,7 +253,7 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
     module = KneeModule(
       model=build_model(config),
       criterion=instantiate(config['loss']),
-      optimizer_cfg=config['optimizer']['optimizer'],
+      optimizer_cfg=config['optimizer'],
       scheduler_cfg=config['optimizer'].get('scheduler'),
       warmup_epochs=int(config['optimizer'].get('warmup_epochs', 0)),
       backbone_lr_scale=float(config['optimizer']['backbone_lr_scale']),
