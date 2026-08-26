@@ -1,0 +1,37 @@
+# Experiment: mvp_efnv2s_384_k24_5f
+# First full MVP run. Defaults below are deep-merged from configs/<stem>.yaml
+# in order, then this file's `override` section is applied on top.
+# The engine dumps the resolved config next to artifacts for traceback.
+defaults:
+  - config
+  - data
+  - folds
+  - augmentations
+  - model
+  - loss
+  - optimizer
+  - train
+  - datamodule
+  - infer
+
+override:
+  experiment:
+    name: mvp_efnv2s_384_k24_5f
+
+  # Compute budget (BLUEPRINT Section 8): 423k slice-forwards/epoch,
+  # ~20-25 min on 2xT4 -> 4 epochs x 5 folds ~= 7-12 GPU-h.
+  trainer:
+    init_params:
+      max_epochs: 4
+      accumulate_grad_batches: 2
+
+  scheduler:
+    init_params:
+      T_max: 4
+
+  data:
+    n_slices: 24
+    img_size: 384
+
+  series_selection:
+    max_series_per_study: 4
