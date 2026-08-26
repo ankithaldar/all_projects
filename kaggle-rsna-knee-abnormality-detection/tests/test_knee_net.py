@@ -13,8 +13,8 @@ torch.manual_seed(0)
 
 @pytest.fixture(scope='module')
 def model() -> KneeNet:
-  """Build a tiny KneeNet without downloading pretrained weights."""
-  return KneeNet(
+  """Build a tiny KneeNet without pretrained weights, in eval mode."""
+  net = KneeNet(
       backbone_name='resnet18',
       img_size=64,
       n_slices=4,
@@ -26,6 +26,8 @@ def model() -> KneeNet:
       trunk_hidden=128,
       pretrained=False,
   )
+  net.eval()
+  return net
 
 
 def make_batch(batch: int = 2) -> dict:
@@ -54,12 +56,16 @@ class TestKneeNet:
 
   def test_masked_series_ignored(self, model):
     batch = make_batch()
-    logits_full = model(batch)
-    # Second study has only one real series; zeroing its padded slots is a
-    # no-op, but flipping its real token count must change nothing either.
-    batch['slice_counts'][1] = torch.tensor([4, 0, 0])
-    logits_again = model({**batch, 'slices': batch['slices']})
+    with torch.no_grad():
+      logits_full = model(batch)
+      # Garbage in padded slots of the second study must not leak.
+      polluted = {k: v for k, v in batch.items()}
+      polluted['series_meta'] = batch['series_meta'].clone()
+      polluted['series_meta'][1, 1:, :] = -99.0
+      with torch.no_grad():
+        logits_again = model(polluted)
     assert torch.allclose(logits_full[0], logits_again[0])
+    assert logits_full.shape == logits_again.shape
 
   def test_parameter_groups_split(self, model):
     groups = model.parameter_groups(0.1)

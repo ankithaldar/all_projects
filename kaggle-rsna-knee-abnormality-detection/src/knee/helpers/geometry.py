@@ -103,12 +103,14 @@ def order_slices(slices: list[SliceGeometry]) -> list[str]:
             [np.dot(np.asarray(s.position), normal) for s in slices]  # type: ignore[arg-type]
         )
         instances = np.array([s.instance_number for s in slices], dtype=np.float64)
-        if np.std(instances) > 0:
-            correlation = np.corrcoef(projections, instances)[0, 1]
-            if not np.isnan(correlation) and correlation < 0:
-                projections = -projections
-        indices = np.argsort(projections, kind='stable')
-        return [slices[i].sop_uid for i in indices]
+        if np.std(projections) > 0:
+            if np.std(instances) > 0:
+                correlation = np.corrcoef(projections, instances)[0, 1]
+                if not np.isnan(correlation) and correlation < 0:
+                    projections = -projections
+            indices = np.argsort(projections, kind='stable')
+            return [slices[i].sop_uid for i in indices]
+        # Degenerate projection (constant): fall through to InstanceNumber.
     if len({s.instance_number for s in slices}) > 1:
         return [
             s.sop_uid for s in sorted(slices, key=lambda s: s.instance_number)
