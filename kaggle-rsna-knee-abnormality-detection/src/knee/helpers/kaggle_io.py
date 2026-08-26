@@ -155,6 +155,38 @@ class KaggleDatasetClient:
       f'kaggle CLI failed after {self._retries} attempts: {last_error}'
     )
 
+  def _full_slug(self, slug: str) -> str:
+    """Qualify a bare dataset slug with the authenticated username.
+
+    The kaggle CLI requires ``<owner>/<dataset>`` for create/status/
+    version/download; a bare id crashes ``dataset_create_new`` with
+    IndexError while splitting the reference. Configuration therefore
+    stores short names (``rsna-knee-mvp-ckpt``) and this client expands
+    them using KAGGLE_USERNAME (set by ``apply()`` or the environment).
+
+    Args:
+        slug: Bare name or already qualified ``owner/name`` string.
+
+    Returns:
+        Qualified slug; input passes through untouched when it already
+        contains a slash.
+
+    Raises:
+        RuntimeError: When the slug is bare and no username is resolvable.
+    """
+    if '/' in slug:
+      return slug
+    username = os.environ.get('KAGGLE_USERNAME')
+    if not username:
+      username = self._credentials._lookup(  # pylint: disable=protected-access
+        self._credentials.username_key  # pylint: disable=protected-access
+      )
+    if not username:
+      raise RuntimeError(
+        f'Cannot qualify dataset slug {slug!r}: resolve credentials first'
+      )
+    return f'{username}/{slug}'
+
   def dataset_exists(self, slug: str) -> bool:
     """Check whether a dataset slug is visible to the account.
 
@@ -165,17 +197,18 @@ class KaggleDatasetClient:
         True when the dataset status endpoint succeeds.
     """
     try:
-      self._run(['kaggle', 'datasets', 'status', slug])
+      self._run(['kaggle', 'datasets', 'status', self._full_slug(slug)])
       return True
     except RuntimeError:
       return False
 
-  def create_dataset(self, slug: str, folder: str, title: str) -> None:
-    """Create a brand-new dataset from a local folder.
+  @staticmethod
+  def _write_metadata(staged_folder: str, slug: str, title: str) -> None:
+    """Write kaggle dataset-metadata.json into a staging directory.
 
     Args:
-        slug: Target slug (owner inferred from credentials).
-        folder: Directory whose files become dataset content.
+        staged_folder: Directory that will be handed to the CLI.
+        slug: Qualified ``owner/dataset`` id.
         title: Human-readable dataset title.
     """
     metadata = {
@@ -183,26 +216,64 @@ class KaggleDatasetClient:
       'id': slug,
       'licenses': [{'name': 'CC0-1.0'}],
     }
-    with tempfile.TemporaryDirectory() as staging:
-      staged_folder = os.path.join(staging, 'payload')
-      shutil.copytree(folder, staged_folder)
-      with open(
-        os.path.join(staged_folder, 'dataset-metadata.json'),
-        'w',
-        encoding='utf-8',
-      ) as handle:
-        json.dump(metadata, handle)
+    with open(
+      os.path.join(staged_folder, 'dataset-metadata.json'),
+      'w',
+      encoding='utf-8',
+    ) as handle:
+      json.dump(metadata, handle)
+
+  def _stage_payload(
+    self, slug: str, folder: str, title: str | None = None
+  ) -> str:
+    """Copy payload into a staging dir carrying valid metadata.
+
+    Both ``create`` and ``version`` subcommands read identity from
+    ``dataset-metadata.json`` inside ``-p <dir>``; publishing raw working
+    directories without that file fails at the CLI layer.
+
+    Args:
+        slug: Dataset id (qualified via :meth:`_full_slug`).
+        folder: Local source directory copied verbatim.
+        title: Optional dataset title; defaults to the bare slug name.
+
+    Returns:
+        Path to the staged directory (caller removes when done).
+    """
+    staged_folder = os.path.join(
+      tempfile.gettempdir(), f'kaggle_stage_{int(time.time() * 1000)}'
+    )
+    shutil.copytree(folder, staged_folder)
+    self._write_metadata(
+      staged_folder,
+      self._full_slug(slug),
+      title=title or slug.rsplit('/', 1)[-1],
+    )
+    return staged_folder
+
+  def create_dataset(self, slug: str, folder: str, title: str) -> None:
+    """Create a brand-new dataset from a local folder.
+
+    Args:
+        slug: Target slug (bare names qualified with the account owner).
+        folder: Directory whose files become dataset content.
+        title: Human-readable dataset title.
+    """
+    staged = self._stage_payload(slug, folder, title=title)
+    try:
       self._run(
         [
           'kaggle',
           'datasets',
           'create',
           '-p',
-          staged_folder,
+          staged,
           '--dir-mode',
           'zip',
         ]
       )
+    finally:
+      shutil.rmtree(staged, ignore_errors=True)
 
   def push_version(self, slug: str, folder: str) -> None:
     """Publish folder contents as a new immutable dataset version.
@@ -217,19 +288,23 @@ class KaggleDatasetClient:
       _LOGGER.info('Dataset %s missing; creating instead of versioning', slug)
       self.create_dataset(slug, folder, title=slug.rsplit('/', 1)[-1])
       return
-    self._run(
-      [
-        'kaggle',
-        'datasets',
-        'version',
-        '-p',
-        folder,
-        '--dir-mode',
-        'zip',
-        '-m',
-        f'auto-version {int(time.time())}',
-      ]
-    )
+    staged = self._stage_payload(slug, folder)
+    try:
+      self._run(
+        [
+          'kaggle',
+          'datasets',
+          'version',
+          '-p',
+          staged,
+          '--dir-mode',
+          'zip',
+          '-m',
+          f'auto-version {int(time.time())}',
+        ]
+      )
+    finally:
+      shutil.rmtree(staged, ignore_errors=True)
 
   def pull_latest(self, slug: str, dest: str) -> bool:
     """Download and unpack the newest dataset version into dest.
@@ -245,7 +320,17 @@ class KaggleDatasetClient:
     if not self.dataset_exists(slug):
       _LOGGER.info('No remote dataset %s yet; starting fresh', slug)
       return False
-    self._run(['kaggle', 'datasets', 'download', slug, '--unzip', '-p', dest])
+    self._run(
+      [
+        'kaggle',
+        'datasets',
+        'download',
+        self._full_slug(slug),
+        '--unzip',
+        '-p',
+        dest,
+      ]
+    )
     return True
 
 

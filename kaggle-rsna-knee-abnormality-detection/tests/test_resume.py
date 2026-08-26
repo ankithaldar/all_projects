@@ -3,9 +3,10 @@
 """Tests for the Kaggle checkpoint persistence boundary (CLI mocked)."""
 
 # pytest fixture injection triggers redefinition/unused-argument warnings
-# that do not apply to test code.
-# pylint: disable=redefined-outer-name,unused-argument
+# that do not apply to test code; slug helpers are exercised white-box.
+# pylint: disable=redefined-outer-name,unused-argument,protected-access
 
+import json
 import os
 
 import pytest
@@ -115,9 +116,7 @@ class TestCredentialResolver:
       'KAGGLE_USERNAME': 'secrets-user',
       'KAGGLE_API_TOKEN': 'secrets-token',
     }
-    monkeypatch.setattr(
-      secret_chain, '_from_kaggle_secrets', store.get
-    )
+    monkeypatch.setattr(secret_chain, '_from_kaggle_secrets', store.get)
     resolver = CredentialResolver(
       'KAGGLE_USERNAME',
       'KAGGLE_API_TOKEN',
@@ -202,3 +201,83 @@ class TestKaggleDatasetClient:
       runner=runner,
     )
     assert client.pull_latest('user/nope', str(slug_env / 'out')) is False
+
+
+class TestSlugQualification:
+  """Bare slugs expand to owner/dataset before hitting the CLI.
+
+  Regression: the CLI's dataset_create_new splits the metadata id on '/'
+  and indexes [1], so an unqualified id crashed with IndexError.
+  """
+
+  def test_bare_slug_qualified_with_username(self, monkeypatch, tmp_path):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('KAGGLE_USERNAME', 'kaggler')
+    monkeypatch.setenv('KAGGLE_KEY', 'secret')
+    runner = FakeRunner()  # status succeeds -> version path
+    client = KaggleDatasetClient(
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
+    )
+    folder = tmp_path / 'payload'
+    folder.mkdir(parents=True)
+    (folder / 'last.ckpt').write_text('w')
+    client.push_version('rsna-knee-mvp-ckpt', str(folder))
+    status_calls = [c for c in runner.calls if c[2] == 'status']
+    assert status_calls == [
+      ['kaggle', 'datasets', 'status', 'kaggler/rsna-knee-mvp-ckpt']
+    ]
+
+  def test_qualified_slug_passes_through(self, monkeypatch, tmp_path):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('KAGGLE_USERNAME', 'someuser')
+    monkeypatch.setenv('KAGGLE_KEY', 'secret')
+    runner = FakeRunner()
+    client = KaggleDatasetClient(
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
+    )
+    folder = tmp_path / 'payload'
+    folder.mkdir(parents=True)
+    client.push_version('otherowner/dataset', str(folder))
+    status_calls = [c for c in runner.calls if c[2] == 'status']
+    assert status_calls[-1][-1] == 'otherowner/dataset'
+    # No accidental re-qualification of an already-owned slug.
+    assert not any('someuser/otherowner' in c for c in runner.calls)
+
+  def test_staged_version_payload_carries_metadata(self, monkeypatch, tmp_path):
+    """version runs against a staging dir containing dataset-metadata.json."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('KAGGLE_USERNAME', 'kaggler')
+    monkeypatch.setenv('KAGGLE_KEY', 'secret')
+    seen_dirs = []
+
+    def recording_runner(args, capture_output=True, text=True, check=False):
+      if len(args) > 3 and args[2] == 'version':
+        payload_dir = args[args.index('-p') + 1]
+        marker = os.path.join(payload_dir, 'dataset-metadata.json')
+        with open(marker, encoding='utf-8') as handle:
+          seen_dirs.append(json.load(handle))
+      return type('R', (), {'returncode': 0, 'stderr': '', 'stdout': ''})
+
+    client = KaggleDatasetClient(
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=recording_runner,
+    )
+    folder = tmp_path / 'payload'
+    (folder / 'fold0').mkdir(parents=True)
+    client.push_version('rsna-knee-mvp-ckpt', str(folder))
+    assert seen_dirs and seen_dirs[0]['id'] == 'kaggler/rsna-knee-mvp-ckpt'
+    # The user directory itself must not gain a metadata file.
+    assert not (folder / 'dataset-metadata.json').exists()
+
+  def test_bare_slug_without_username_raises(self, monkeypatch, tmp_path):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.delenv('KAGGLE_USERNAME', raising=False)
+    monkeypatch.delenv('KAGGLE_KEY', raising=False)
+    client = KaggleDatasetClient(
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=FakeRunner(),
+    )
+    with pytest.raises(RuntimeError):
+      client._full_slug('bare-name')
