@@ -46,6 +46,12 @@ PYTHONPATH=src python main.py train \
 
 ### Kaggle notebook session
 
+Paste nothing but one line - the cell bootstraps itself. `kaggle_cell.py`
+carries its repository coordinates in the committed `repo_meta.json`
+(auto-refreshed from `.git` on every local run): outside a checkout it
+shallow-clones the recorded branch into `$KNEE_REPO_DIR`
+(default `/kaggle/working/repo`) and re-executes your command from there.
+
 ```bash
 !bash kaggle_run.sh setup                      # once per kernel image
 %run kaggle_cell.py --stage index              # header scan -> index.parquet
@@ -55,8 +61,10 @@ PYTHONPATH=src python main.py train \
 %run kaggle_cell.py --stage infer              # submission.csv
 ```
 
+Private repos: set `GIT_TOKEN` (env/.env/Secrets) before the first call.
 Stages: `setup | index | labels | folds | train | infer | all`.
-Overrides: `EXPERIMENT=<yaml>` env var, `WHEELS_DIR` for offline pip.
+Overrides: `EXPERIMENT=<yaml>` env var, `WHEELS_DIR` for offline pip,
+`KNEE_REPO_DIR` for the clone location.
 
 ## Configuration
 
