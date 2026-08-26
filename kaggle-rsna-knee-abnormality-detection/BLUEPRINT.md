@@ -191,7 +191,13 @@ src/knee/
 │   ├── time_budget.py               # stop fit before session budget
 │   ├── periodic_push.py             # save ckpt -> kaggle dataset version every N epochs
 │   └── per_class_auc.py
-└── loggers/csv_logger.py
+└── loggers/
+    ├── csv_logger.py                # per-fold Lightning CSVLogger
+    ├── discord_logger.py            # webhook notifier + lifecycle callback
+    └── wandb_logger.py              # W&B logger (offline fallback, key via secrets)
+kaggle_run.sh                        # staged shell driver: setup|index|labels|folds|
+                                     #   train|infer|all; sources .env; offline wheels
+kaggle_cell.py                       # notebook cell entrypoint wrapping the driver
 notebooks/
 ├── 01_EDA.ipynb                     # done
 ├── 02_build_index_labels_folds.ipynb
@@ -211,6 +217,8 @@ Style contract for all Python: shebang + coding header, Google docstrings,
 
 ## 10. Verification Gates
 
+- `pylint --rcfile=../.pylintrc` >= 9.5 (currently 10.00) and `ruff check`
+  clean on every Python file under src/, tests/, main.py, kaggle_cell.py.
 - `pytest tests/` green.
 - Every config file instantiates through `load_config` + `instantiate` without error.
 - KneeNet forward passes shape tests for variable series/slice counts.

@@ -31,6 +31,19 @@ kaggle_secrets:
   username_key: KAGGLE_USERNAME
   token_key: KAGGLE_API_TOKEN
 
+# Experiment-tracking integrations. All credentials resolve through
+# knee.helpers.secrets: os.environ -> .env -> Kaggle User Secrets.
+integrations:
+  discord:
+    enabled: true
+    webhook_secret: DISCORD_WEBHOOK_URL
+  wandb:
+    enabled: true
+    project: rsna-knee-mvp
+    entity: null                   # team name or null for personal account
+    api_key_secret: WANDB_API_KEY
+    mode: null                     # null = online when key exists, else offline
+
 run:
   # Folds processed by `main.py train` in this session, in order.
   folds: [0, 1, 2, 3, 4]
