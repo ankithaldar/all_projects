@@ -1,0 +1,83 @@
+# Experiment: smoke_ci
+# Fast end-to-end smoke run for CI and local dry runs (CPU-friendly).
+# Never used for scoring; exists to prove plumbing: decode -> dataset ->
+# model forward -> loss -> checkpoint save/load roundtrip.
+defaults:
+  - config
+  - data
+  - folds
+  - augmentations
+  - model
+  - loss
+  - optimizer
+  - train
+  - datamodule
+  - infer
+
+override:
+  experiment:
+    name: smoke_ci
+    seed: 7
+
+  paths:
+    artifact_dir: /tmp/knee_smoke/artifacts
+    checkpoint_dir: /tmp/knee_smoke/checkpoints
+    oof_dir: /tmp/knee_smoke/oof
+
+  resume:
+    enabled: false
+
+  run:
+    folds: [0]
+
+  folds:
+    init_params:
+      n_splits: 2
+
+  # resnet18 feature dim = 512; shrink every width-dependent module to match.
+  model:
+    init_params:
+      backbone_name: resnet18
+      img_size: 224
+      n_slices: 8
+      n_series_tokens_max: 3
+      dropout: 0.0
+      trunk_hidden: 256
+      slice_pool:
+        class_path: knee.layers.pooling.AttentionPool2d
+        init_params:
+          embed_dim: 512
+          num_heads: 4
+          dropout: 0.0
+      study_aggregator:
+        class_path: knee.layers.pooling.StudyAggregator
+        init_params:
+          embed_dim: 512
+          num_heads: 4
+          ff_mult: 2
+          dropout: 0.0
+
+  optimizer:
+    init_params:
+      lr: 0.001
+
+  scheduler:
+    init_params:
+      T_max: 1
+
+  trainer:
+    init_params:
+      max_epochs: 1
+      precision: 32-true
+      accumulate_grad_batches: 1
+      deterministic: true
+
+  session_time_budget_h: 0.5
+  time_margin_min: 5
+  checkpoint_every_n_epochs: 1
+
+  datamodule:
+    init_params:
+      batch_size: 2
+      num_workers: 0
+      persistent_workers: false
