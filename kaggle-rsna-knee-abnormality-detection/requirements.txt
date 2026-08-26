@@ -1,0 +1,27 @@
+# Runtime dependencies for the RSNA knee MVP.
+# Kaggle images ship most of these; the setup stage installs the remainder
+# (or everything from a bundled wheel dir when offline).
+numpy==2.5.2
+pandas==3.0.5
+torch==2.13.0
+pytorch-lightning==2.6.5
+timm==1.0.28
+albumentations==2.0.8
+scikit-learn==1.9.0
+pyyaml==6.0.3
+pydicom==3.0.2
+pyarrow==23.0.1
+requests==2.34.2
+python-dotenv==1.2.2
+wandb==0.28.2
+
+# DICOM transfer-syntax codecs: import side-effects register pydicom handlers.
+python-gdcm==3.0.26
+pylibjpeg==2.1.5
+pylibjpeg-libjpeg==2.4.0
+pylibjpeg-openjpeg==2.3.0
+
+# Development / CI only.
+pytest==9.0.3
+ruff==0.15.1
+pylint==4.0.6

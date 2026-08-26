@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 """Shape/contract tests for KneeNet with a small offline backbone."""
 
+# pytest fixtures are injected as same-named parameters by design.
+# pylint: disable=redefined-outer-name
+
 import pytest
 import torch
 
@@ -15,16 +18,16 @@ torch.manual_seed(0)
 def model() -> KneeNet:
   """Build a tiny KneeNet without pretrained weights, in eval mode."""
   net = KneeNet(
-      backbone_name='resnet18',
-      img_size=64,
-      n_slices=4,
-      n_series_tokens_max=3,
-      n_targets=12,
-      metadata_dim=12,
-      slice_pool=AttentionPool2d(embed_dim=512, num_heads=4),
-      study_aggregator=StudyAggregator(embed_dim=512, num_heads=4, ff_mult=2),
-      trunk_hidden=128,
-      pretrained=False,
+    backbone_name='resnet18',
+    img_size=64,
+    n_slices=4,
+    n_series_tokens_max=3,
+    n_targets=12,
+    metadata_dim=12,
+    slice_pool=AttentionPool2d(embed_dim=512, num_heads=4),
+    study_aggregator=StudyAggregator(embed_dim=512, num_heads=4, ff_mult=2),
+    trunk_hidden=128,
+    pretrained=False,
   )
   net.eval()
   return net
@@ -40,10 +43,10 @@ def make_batch(batch: int = 2) -> dict:
       Dictionary of tensors per KneeNet.forward expectations.
   """
   return {
-      'slices': torch.randn(batch * 3 * 4, 3, 64, 64),   # 3 series x 4 slices
-      'slice_counts': torch.tensor([[4, 4, 4], [4, 0, 0]]),
-      'series_meta': torch.randn(batch, 3, 3),
-      'metadata': torch.randn(batch, 12),
+    'slices': torch.randn(batch * 3 * 4, 3, 64, 64),  # 3 series x 4 slices
+    'slice_counts': torch.tensor([[4, 4, 4], [4, 0, 0]]),
+    'series_meta': torch.randn(batch, 3, 3),
+    'metadata': torch.randn(batch, 12),
   }
 
 

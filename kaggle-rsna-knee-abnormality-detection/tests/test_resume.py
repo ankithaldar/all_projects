@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """Tests for the Kaggle checkpoint persistence boundary (CLI mocked)."""
 
+# pytest fixture injection triggers redefinition/unused-argument warnings
+# that do not apply to test code.
+# pylint: disable=redefined-outer-name,unused-argument
+
 import os
 
 import pytest
@@ -12,8 +16,9 @@ from knee.helpers.kaggle_io import CredentialResolver, KaggleDatasetClient
 class FakeRunner:
   """Scriptable subprocess stand-in failing selected CLI verbs."""
 
-  def __init__(self, fail_verbs: set[str] | None = None,
-               max_status_failures: int = 0):
+  def __init__(
+    self, fail_verbs: set[str] | None = None, max_status_failures: int = 0
+  ):
     """Configure scripted behavior.
 
     Args:
@@ -26,13 +31,14 @@ class FakeRunner:
     self.status_calls = 0
     self.calls: list[list[str]] = []
 
-  def __call__(self, args, capture_output=True, text=True):
+  def __call__(self, args, capture_output=True, text=True, check=False):
     """Record the call and fabricate a CompletedProcess-like result.
 
     Args:
         args: Argument vector.
         capture_output: Ignored; signature parity only.
         text: Ignored; signature parity only.
+        check: Ignored; the client inspects returncode itself.
 
     Returns:
         Object mimicking subprocess.CompletedProcess.
@@ -60,8 +66,9 @@ class TestCredentialResolver:
   """Credential resolution paths."""
 
   def test_env_fallback_exports_kaggle_json(self, env_credentials):
-    resolver = CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY',
-                                  use_user_secrets=False)
+    resolver = CredentialResolver(
+      'KAGGLE_USERNAME', 'KAGGLE_KEY', use_user_secrets=False
+    )
     resolver.apply()
     marker = os.path.expanduser('~/.kaggle/kaggle.json')
     assert os.path.exists(marker)
@@ -70,8 +77,9 @@ class TestCredentialResolver:
   def test_missing_credentials_raise(self, monkeypatch):
     monkeypatch.delenv('KAGGLE_USERNAME', raising=False)
     monkeypatch.delenv('KAGGLE_KEY', raising=False)
-    resolver = CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY',
-                                  use_user_secrets=False)
+    resolver = CredentialResolver(
+      'KAGGLE_USERNAME', 'KAGGLE_KEY', use_user_secrets=False
+    )
     with pytest.raises(RuntimeError):
       resolver.apply()
 
@@ -90,8 +98,8 @@ class TestKaggleDatasetClient:
   def test_push_creates_when_absent(self, slug_env):
     runner = FakeRunner(fail_verbs={'status'})  # status fails -> absent
     client = KaggleDatasetClient(
-        CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
-        runner=runner,
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
     )
     folder = slug_env / 'payload'
     (folder / 'fold0').mkdir(parents=True)
@@ -103,8 +111,8 @@ class TestKaggleDatasetClient:
   def test_push_versions_when_present(self, slug_env):
     runner = FakeRunner()  # status succeeds -> dataset exists
     client = KaggleDatasetClient(
-        CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
-        runner=runner,
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
     )
     folder = slug_env / 'payload'
     folder.mkdir(parents=True)
@@ -115,10 +123,10 @@ class TestKaggleDatasetClient:
   def test_retries_then_succeeds(self, slug_env):
     runner = FakeRunner(max_status_failures=2)
     client = KaggleDatasetClient(
-        CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
-        runner=runner,
-        retries=3,
-        backoff_seconds=0.0,
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
+      retries=3,
+      backoff_seconds=0.0,
     )
     assert client.dataset_exists('user/x') is True
     assert len(runner.calls) == 3
@@ -126,7 +134,7 @@ class TestKaggleDatasetClient:
   def test_pull_returns_false_when_missing(self, slug_env):
     runner = FakeRunner(fail_verbs={'status'})
     client = KaggleDatasetClient(
-        CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
-        runner=runner,
+      CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
+      runner=runner,
     )
     assert client.pull_latest('user/nope', str(slug_env / 'out')) is False
