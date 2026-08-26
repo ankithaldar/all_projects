@@ -25,6 +25,8 @@ class TimmBackbone(nn.Module):
     drop_path_rate: float = 0.0,
     pretrained: bool = True,
     pretrained_cfg: dict | None = None,
+    grad_checkpointing: bool = False,
+    chunk_size: int = 0,
   ) -> None:
     """Create and optionally warm-load the backbone.
 
@@ -36,18 +38,34 @@ class TimmBackbone(nn.Module):
             local checkpoint file is supplied).
         pretrained_cfg: Optional mapping with ``file`` pointing at a
             state-dict checkpoint bundled offline.
+        grad_checkpointing: Enable timm activation checkpointing; trades
+            ~25% compute for a large reduction in retained activations
+            (essential when a whole study batch is flattened into one
+            forward on 16 GB GPUs).
+        chunk_size: When > 0, run the backbone in slices-chunks of this
+            size instead of one giant pass, bounding peak transient
+            buffers. Autograd keeps the graph intact across chunks.
 
     Raises:
         RuntimeError: When an explicit checkpoint file fails to load.
     """
     super().__init__()
     checkpoint_file = (pretrained_cfg or {}).get('file')
+    self.chunk_size = max(0, int(chunk_size))
     self.model = self._create_model(
       backbone_name,
       img_size,
       drop_path_rate,
       pretrained=pretrained and not checkpoint_file,
     )
+    if grad_checkpointing:
+      setter = getattr(self.model, 'set_grad_checkpointing', None)
+      if setter is None:
+        raise RuntimeError(
+          f'timm model {backbone_name!r} does not expose '
+          'set_grad_checkpointing; disable grad_checkpointing'
+        )
+      setter(True)
     if checkpoint_file:
       state = torch.load(checkpoint_file, map_location='cpu', weights_only=True)
       state = state.get('state_dict', state)
@@ -107,4 +125,7 @@ class TimmBackbone(nn.Module):
     Returns:
         ``(batch, embed_dim)`` embedding matrix.
     """
-    return self.model(images)
+    if self.chunk_size <= 0 or images.shape[0] <= self.chunk_size:
+      return self.model(images)
+    chunks = [self.model(part) for part in torch.split(images, self.chunk_size)]
+    return torch.cat(chunks, dim=0)

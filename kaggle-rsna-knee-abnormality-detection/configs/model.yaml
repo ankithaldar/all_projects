@@ -27,3 +27,8 @@ model:
         ff_mult: 2
         dropout: 0.1
     trunk_hidden: 512
+    # Memory levers for 16 GB T4s (see backbones.TimmBackbone docstring):
+    # checkpointing recomputes activations in backward; chunking splits
+    # the flattened slice batch into bounded backbone passes.
+    grad_checkpointing: false
+    chunk_size: 0
