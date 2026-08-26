@@ -4,9 +4,9 @@
 
 Implements the checkpoint-resume protocol from BLUEPRINT Section 6:
 
-* Credentials resolve from Kaggle ``UserSecretsClient`` (secret names come
-  from configuration) with a ``KAGGLE_CONFIG_DIR``/``.env`` fallback for
-  local development.
+* Credentials resolve through the shared chain in ``knee.helpers.secrets``:
+  process environment -> project ``.env`` -> Kaggle notebook User Secrets,
+  so a notebook works with registered secrets even without a ``.env``.
 * Artifacts live in versioned Kaggle Datasets; every session ends with an
   immutable new version, doubling as rollback history.
 
@@ -24,6 +24,7 @@ import tempfile
 import time
 from typing import Callable
 
+from knee.helpers import secrets as secret_chain
 from knee.helpers.utils import get_logger
 
 _LOGGER = get_logger(__name__)
@@ -35,63 +36,58 @@ RETRY_BACKOFF_SECONDS = 10.0
 
 
 class CredentialResolver:
-  """Resolve Kaggle API credentials from secrets or the environment."""
+  """Resolve Kaggle API credentials through the unified secret chain.
+
+  Lookup order per key: process environment -> ``.env`` file -> Kaggle
+  notebook User Secrets (when enabled). This means a Kaggle notebook works
+  with credentials registered under Add-ons > Secrets whenever no ``.env``
+  is available, while local shells and CI keep their env-var workflow.
+  """
 
   def __init__(
     self,
     username_key: str,
     token_key: str,
     use_user_secrets: bool = True,
+    env_path: str | None = None,
   ) -> None:
-    """Store secret names used for resolution.
+    """Store resolution parameters.
 
     Args:
         username_key: Secret/environment name holding KAGGLE_USERNAME.
         token_key: Secret/environment name holding the API token.
-        use_user_secrets: Try ``UserSecretsClient`` before os.environ.
+        use_user_secrets: When False, skip the Kaggle User Secrets backend
+            (env/.env only) - used by tests and offline tooling.
+        env_path: Optional explicit ``.env`` path forwarded to
+            ``knee.helpers.secrets.get_secret``.
     """
     self.username_key = username_key
     self.token_key = token_key
     self.use_user_secrets = use_user_secrets
+    self.env_path = env_path
 
-  def _from_user_secrets(self) -> tuple[str, str] | None:
-    """Read credentials from the Kaggle notebook secret store.
+  def _lookup(self, name: str) -> str | None:
+    """Resolve one credential name via the shared secrets helper.
+
+    Args:
+        name: Secret/environment variable name.
 
     Returns:
-        ``(username, token)`` or None when unavailable.
-
-    Raises:
-        RuntimeError: When the secret exists but cannot be retrieved.
+        Value from env/.env/UserSecrets, or None.
     """
     if not self.use_user_secrets:
-      return None
-    try:
-      # Kaggle-notebook-only dependency; absent in local/CI environments.
-      # pylint: disable=import-outside-toplevel
-      from kaggle_secrets import UserSecretsClient
-      # pylint: enable=import-outside-toplevel
-
-      secrets = UserSecretsClient()
-      return (
-        secrets.get_secret(self.username_key),
-        secrets.get_secret(self.token_key),
-      )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-      _LOGGER.info('UserSecrets unavailable (%s); falling back to env', exc)
-      return None
+      secret_chain.load_project_env(self.env_path)
+      return os.environ.get(name)
+    return secret_chain.get_secret(name, env_path=self.env_path)
 
   def apply(self) -> None:
     """Export resolved credentials into process env and kaggle.json.
 
     Raises:
-        RuntimeError: If neither UserSecrets nor environment variables
-            provide a complete credential pair.
+        RuntimeError: If no backend provides a complete credential pair.
     """
-    credentials = self._from_user_secrets()
-    username, token = credentials or (
-      os.environ.get(self.username_key),
-      os.environ.get(self.token_key),
-    )
+    username = self._lookup(self.username_key)
+    token = self._lookup(self.token_key)
     if not username or not token:
       raise RuntimeError(
         f'Missing Kaggle credentials ({self.username_key}/{self.token_key})'
@@ -296,7 +292,8 @@ class ArtifactSync:
         Names of missing files.
     """
     return [
-      name for name in self.file_names
+      name
+      for name in self.file_names
       if not os.path.exists(os.path.join(self.local_dir, name))
     ]
 
@@ -309,9 +306,7 @@ class ArtifactSync:
     """
     if self.client is None or not self._missing():
       return False
-    _LOGGER.info(
-      'Restoring %s from %s', self._missing(), self.slug
-    )
+    _LOGGER.info('Restoring %s from %s', self._missing(), self.slug)
     try:
       pulled = self.client.pull_latest(self.slug, self.local_dir)
     except RuntimeError as exc:
@@ -321,7 +316,8 @@ class ArtifactSync:
     if still_missing:
       _LOGGER.warning(
         'Dataset %s lacks %s; affected stages may need upstream builds',
-        self.slug, still_missing,
+        self.slug,
+        still_missing,
       )
       return False
     return pulled
@@ -332,9 +328,7 @@ class ArtifactSync:
       return
     missing = self._missing()
     if missing:
-      _LOGGER.warning(
-        'Skipping artifact push; incomplete set: %s', missing
-      )
+      _LOGGER.warning('Skipping artifact push; incomplete set: %s', missing)
       return
     try:
       self.client.push_version(self.slug, self.local_dir)
@@ -342,5 +336,6 @@ class ArtifactSync:
     except RuntimeError as exc:
       _LOGGER.error(
         'Artifact push failed (%s); local copy retained in %s',
-        exc, self.local_dir,
+        exc,
+        self.local_dir,
       )

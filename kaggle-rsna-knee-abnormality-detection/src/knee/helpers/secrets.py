@@ -17,10 +17,15 @@ _LOGGER = get_logger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _ENV_LOADED = False
+_LOADED_PATH: Path | None = None
 
 
 def load_project_env(env_path: str | None = None) -> bool:
-  """Load the project ``.env`` file exactly once per process.
+  """Load a project ``.env`` file into ``os.environ``.
+
+  The default repository-root file loads once per process; explicit paths
+  load when they differ from the previously loaded one. Existing process
+  variables are never overridden (``override=False``).
 
   Args:
       env_path: Optional explicit path; defaults to the repository root.
@@ -28,10 +33,10 @@ def load_project_env(env_path: str | None = None) -> bool:
   Returns:
       True when a file was loaded (values are exported to os.environ).
   """
-  global _ENV_LOADED  # pylint: disable=global-statement
-  if _ENV_LOADED:
-    return True
+  global _ENV_LOADED, _LOADED_PATH  # pylint: disable=global-statement
   target = Path(env_path) if env_path else _PROJECT_ROOT / '.env'
+  if _ENV_LOADED and _LOADED_PATH == target:
+    return True
   loaded = False
   if target.exists():
     try:
@@ -43,6 +48,7 @@ def load_project_env(env_path: str | None = None) -> bool:
     except ImportError:
       _LOGGER.warning('python-dotenv missing; skipped %s', target)
   _ENV_LOADED = True
+  _LOADED_PATH = target
   return loaded
 
 
@@ -66,7 +72,11 @@ def _from_kaggle_secrets(name: str) -> str | None:
     return None
 
 
-def get_secret(name: str, default: str | None = None) -> str | None:
+def get_secret(
+  name: str,
+  default: str | None = None,
+  env_path: str | None = None,
+) -> str | None:
   """Resolve a secret by name across all supported backends.
 
   Lookup order:
@@ -78,11 +88,13 @@ def get_secret(name: str, default: str | None = None) -> str | None:
   Args:
       name: Secret variable name, e.g. ``DISCORD_WEBHOOK_URL``.
       default: Value returned when every backend misses.
+      env_path: Optional explicit ``.env`` path forwarded to
+          ``load_project_env`` (tests and non-root checkouts).
 
   Returns:
       The secret value or ``default``.
   """
-  load_project_env()
+  load_project_env(env_path)
   value = os.environ.get(name)
   if value:
     return value

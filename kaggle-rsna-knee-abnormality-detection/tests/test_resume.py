@@ -10,6 +10,7 @@ import os
 
 import pytest
 
+from knee.helpers import secrets as secret_chain
 from knee.helpers.kaggle_io import CredentialResolver, KaggleDatasetClient
 
 
@@ -82,6 +83,69 @@ class TestCredentialResolver:
     )
     with pytest.raises(RuntimeError):
       resolver.apply()
+
+  def test_dotenv_used_when_env_missing(self, monkeypatch, tmp_path):
+    """No env vars + a .env file -> credentials come from the file."""
+    monkeypatch.delenv('KAGGLE_USERNAME', raising=False)
+    monkeypatch.delenv('KAGGLE_KEY', raising=False)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    dotenv = tmp_path / 'project.env'
+    dotenv.write_text(
+      'KAGGLE_USERNAME=dotenv-user\nKAGGLE_API_TOKEN=dotenv-token\n',
+      encoding='utf-8',
+    )
+    resolver = CredentialResolver(
+      'KAGGLE_USERNAME',
+      'KAGGLE_API_TOKEN',
+      use_user_secrets=False,
+      env_path=str(dotenv),
+    )
+    resolver.apply()
+    assert os.environ['KAGGLE_USERNAME'] == 'dotenv-user'
+    assert os.environ['KAGGLE_KEY'] == 'dotenv-token'
+
+  def test_kaggle_secrets_backend_when_no_env_or_file(
+    self, monkeypatch, tmp_path
+  ):
+    """Neither env nor .env -> falls through to Kaggle User Secrets."""
+    monkeypatch.delenv('KAGGLE_USERNAME', raising=False)
+    monkeypatch.delenv('KAGGLE_KEY', raising=False)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    store = {
+      'KAGGLE_USERNAME': 'secrets-user',
+      'KAGGLE_API_TOKEN': 'secrets-token',
+    }
+    monkeypatch.setattr(
+      secret_chain, '_from_kaggle_secrets', store.get
+    )
+    resolver = CredentialResolver(
+      'KAGGLE_USERNAME',
+      'KAGGLE_API_TOKEN',
+      env_path=str(tmp_path / 'absent.env'),
+    )
+    resolver.apply()
+    assert os.environ['KAGGLE_USERNAME'] == 'secrets-user'
+
+  def test_env_beats_dotenv_and_secrets(self, monkeypatch, tmp_path):
+    """Precedence: process environment wins over .env and secrets."""
+    monkeypatch.setenv('KAGGLE_USERNAME', 'env-user')
+    monkeypatch.delenv('KAGGLE_KEY', raising=False)
+    monkeypatch.delenv('KAGGLE_API_TOKEN', raising=False)
+    monkeypatch.setenv('HOME', str(tmp_path))
+    dotenv = tmp_path / 'project.env'
+    dotenv.write_text(
+      'KAGGLE_USERNAME=dotenv-user\nKAGGLE_API_TOKEN=dotenv-token\n',
+      encoding='utf-8',
+    )
+    resolver = CredentialResolver(
+      'KAGGLE_USERNAME',
+      'KAGGLE_API_TOKEN',
+      use_user_secrets=False,
+      env_path=str(dotenv),
+    )
+    resolver.apply()
+    assert os.environ['KAGGLE_USERNAME'] == 'env-user'
+    assert os.environ['KAGGLE_KEY'] == 'dotenv-token'
 
 
 class TestKaggleDatasetClient:
