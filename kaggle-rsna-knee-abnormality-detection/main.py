@@ -44,6 +44,11 @@ from knee.helpers.kaggle_io import CredentialResolver, KaggleDatasetClient
 from knee.helpers.nlp_labeling import RuleBasedLabeler, build_pseudo_labels
 from knee.helpers.utils import get_logger
 from knee.loggers.csv_logger import build_csv_logger
+from knee.loggers.discord_logger import (
+  DiscordCallback,
+  notifier_from_config,
+)
+from knee.loggers.wandb_logger import build_wandb_logger
 
 _LOGGER = get_logger('main')
 
@@ -239,13 +244,28 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
         ),
       ),
     ]
-    trainer = pl.Trainer(
-      callbacks=callbacks,
-      logger=build_csv_logger(
+    discord_notifier = notifier_from_config(config)
+    if discord_notifier.enabled:
+      callbacks.append(
+        DiscordCallback(
+          notifier=discord_notifier,
+          experiment_name=config['experiment']['name'],
+          fold_id=current_fold,
+        )
+      )
+    loggers = [
+      build_csv_logger(
         config['experiment']['output_dir'],
         config['experiment']['name'],
         current_fold,
-      ),
+      )
+    ]
+    wandb_logger = build_wandb_logger(config, current_fold)
+    if wandb_logger is not None:
+      loggers.append(wandb_logger)
+    trainer = pl.Trainer(
+      callbacks=callbacks,
+      logger=loggers,
       **trainer_cfg,
     )
     resume_path = find_resume_checkpoint(checkpoint_dir, current_fold)
