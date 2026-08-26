@@ -7,13 +7,18 @@ import numpy as np
 from knee.helpers.geometry import SliceGeometry, order_slices, slice_normal
 
 
-def make_slice(sop: str, instance: int, z: float,
+def make_slice(sop: str, instance: int, offset: float,
                orientation=(0.0, 1.0, 0.0, 0.0, 0.0, -1.0)) -> SliceGeometry:
-  """Build a geometry record with a position along the given normal axis."""
+  """Build a geometry record positioned along the orientation's normal.
+
+  For the default IOP the normal is the x-axis, so ``offset`` maps to x.
+  """
+  normal = slice_normal(orientation)
+  position = tuple(float(offset) * float(v) for v in normal)
   return SliceGeometry(
       sop_uid=sop,
       instance_number=instance,
-      position=(0.0, 0.0, z),
+      position=position,
       orientation=orientation,
   )
 
@@ -45,15 +50,14 @@ class TestOrdering:
     assert order_slices(slices) == ['a', 'b', 'c']
 
   def test_instance_correlation_flips_direction(self):
-    # InstanceNumber decreases as projection increases -> flip so the
-    # physical order matches acquisition order.
+    # InstanceNumber decreases as projection increases -> after the
+    # direction flip, ordering must equal ascending InstanceNumber.
     slices = [
         make_slice('a', 3, 1.0),
         make_slice('b', 2, 5.0),
         make_slice('c', 1, 9.0),
     ]
-    ordered = order_slices(slices)
-    assert ordered.index('a') < ordered.index('b') < ordered.index('c')
+    assert order_slices(slices) == ['c', 'b', 'a']
 
   def test_fallback_to_instance_number_when_geometry_missing(self):
     slices = [

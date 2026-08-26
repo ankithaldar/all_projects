@@ -10,31 +10,42 @@ from knee.helpers.kaggle_io import CredentialResolver, KaggleDatasetClient
 
 
 class FakeRunner:
-  """Scriptable subprocess stand-in returning queued results."""
+  """Scriptable subprocess stand-in failing selected CLI verbs."""
 
-  def __init__(self, fail_first: int = 0):
-    """Configure scripted failures.
+  def __init__(self, fail_verbs: set[str] | None = None,
+               max_status_failures: int = 0):
+    """Configure scripted behavior.
 
     Args:
-        fail_first: Number of initial calls that exit non-zero.
+        fail_verbs: Verbs (e.g. 'status') that always exit non-zero.
+        max_status_failures: Number of initial 'status' calls that fail
+            before succeeding (retry testing).
     """
-    self.fail_first = fail_first
+    self.fail_verbs = fail_verbs or set()
+    self.max_status_failures = max_status_failures
+    self.status_calls = 0
     self.calls: list[list[str]] = []
 
   def __call__(self, args, capture_output=True, text=True):
-    """Record the call and return a fabricated CompletedProcess.
+    """Record the call and fabricate a CompletedProcess-like result.
 
     Args:
         args: Argument vector.
-        capture_output: Ignored; present for signature parity.
-        text: Ignored; present for signature parity.
+        capture_output: Ignored; signature parity only.
+        text: Ignored; signature parity only.
 
     Returns:
         Object mimicking subprocess.CompletedProcess.
     """
     self.calls.append(list(args))
-    code = 1 if len(self.calls) <= self.fail_first else 0
-    return type('R', (), {'returncode': code, 'stderr': 'boom', 'stdout': ''})
+    verb = args[2] if len(args) > 2 else ''
+    if verb in self.fail_verbs:
+      return type('R', (), {'returncode': 1, 'stderr': 'boom', 'stdout': ''})
+    if verb == 'status' and self.max_status_failures > 0:
+      self.status_calls += 1
+      if self.status_calls <= self.max_status_failures:
+        return type('R', (), {'returncode': 1, 'stderr': 'flaky', 'stdout': ''})
+    return type('R', (), {'returncode': 0, 'stderr': '', 'stdout': ''})
 
 
 @pytest.fixture()
@@ -70,12 +81,14 @@ class TestKaggleDatasetClient:
 
   @pytest.fixture()
   def slug_env(self, monkeypatch, tmp_path):
-    """Point HOME into tmp so apply() never touches the real one."""
+    """Point HOME into tmp and provide env credentials for the client."""
     monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('KAGGLE_USERNAME', 'tester')
+    monkeypatch.setenv('KAGGLE_KEY', 'secret')
     return tmp_path
 
   def test_push_creates_when_absent(self, slug_env):
-    runner = FakeRunner()  # status fails -> treated as absent
+    runner = FakeRunner(fail_verbs={'status'})  # status fails -> absent
     client = KaggleDatasetClient(
         CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
         runner=runner,
@@ -88,24 +101,19 @@ class TestKaggleDatasetClient:
     assert 'status' in verbs and 'create' in verbs and 'version' not in verbs
 
   def test_push_versions_when_present(self, slug_env):
-    # First call = status success -> dataset exists -> version path taken.
-    runner_ok_status = FakeRunner()
-
-    def always_ok(args, capture_output=True, text=True):
-      runner_ok_status.calls.append(list(args))
-      return type('R', (), {'returncode': 0, 'stderr': '', 'stdout': ''})
-
+    runner = FakeRunner()  # status succeeds -> dataset exists
     client = KaggleDatasetClient(
         CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
-        runner=always_ok,
+        runner=runner,
     )
     folder = slug_env / 'payload'
     folder.mkdir(parents=True)
     client.push_version('user/ckpt', str(folder))
-    assert any(c[2] == 'version' for c in runner_ok_status.calls)
+    verbs = [c[2] for c in runner.calls]
+    assert 'version' in verbs and 'create' not in verbs
 
   def test_retries_then_succeeds(self, slug_env):
-    runner = FakeRunner(fail_first=2)
+    runner = FakeRunner(max_status_failures=2)
     client = KaggleDatasetClient(
         CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
         runner=runner,
@@ -116,7 +124,7 @@ class TestKaggleDatasetClient:
     assert len(runner.calls) == 3
 
   def test_pull_returns_false_when_missing(self, slug_env):
-    runner = FakeRunner()
+    runner = FakeRunner(fail_verbs={'status'})
     client = KaggleDatasetClient(
         CredentialResolver('KAGGLE_USERNAME', 'KAGGLE_KEY', False),
         runner=runner,

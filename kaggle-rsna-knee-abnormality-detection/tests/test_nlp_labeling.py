@@ -25,8 +25,8 @@ LABELER = RuleBasedLabeler()
   ('No evidence of fracture.', 'Fracture', NEGATED),
   ('There is no joint effusion.', 'Effusion', NEGATED),
   # Uncertainty sentinels.
-  ('Clinical correlation advised to rule out meniscal tear; medial meniscus '
-   'unremarkable on this study.', 'Medial Meniscus', UNKNOWN),
+  ('Possible tear of the medial meniscus.', 'Medial Meniscus', UNKNOWN),
+  ('Cannot exclude an ACL injury.', 'ACL', UNKNOWN),
 ])
 def test_simple_targets(report: str, target: str, expected: int):
   assert LABELER.label_report(report)[target] == expected
@@ -52,7 +52,7 @@ def test_unmentioned_target_is_unknown():
 
 
 def test_negation_beyond_window_is_ignored():
-  # 'no' sits 8 tokens away -> outside the default 6-token window.
+  # 'no' sits in the previous sentence -> sentence scoping must block it.
   report = ('There was no trauma and the examination was of excellent quality. '
             'ACL appears disrupted.')
   assert LABELER.label_report(report)['ACL'] == POSITIVE

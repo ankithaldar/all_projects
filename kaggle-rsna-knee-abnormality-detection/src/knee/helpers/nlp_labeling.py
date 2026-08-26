@@ -141,21 +141,25 @@ TARGET_SPECS: tuple[TargetSpec, ...] = (
 )
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)*")
+_SENTENCE_RE = re.compile(r'[^.;]+')
 
 
 @dataclass
 class _TokenizedReport:
-    """Whitespace/word tokenization preserving character offsets.
+    """Tokenization preserving character offsets and sentence membership.
 
     Attributes:
         text: Lowercased original report.
         tokens: Word tokens in order.
         spans: Character ``(start, end)`` span per token.
+        sentence_ids: Sentence index per token; triggers never cross
+            sentence boundaries when classifying mentions.
     """
 
     text: str
     tokens: list[str]
     spans: list[tuple[int, int]]
+    sentence_ids: list[int]
 
 
 class RuleBasedLabeler:
@@ -183,61 +187,121 @@ class RuleBasedLabeler:
 
     @staticmethod
     def _tokenize(text: str) -> _TokenizedReport:
-        """Lowercase and tokenize a report keeping offsets.
+        """Lowercase and tokenize a report keeping offsets and sentences.
 
         Args:
             text: Raw report string.
 
         Returns:
-            Tokenization container with tokens and character spans.
+            Tokenization container with tokens, character spans, and the
+            sentence index assigned to every token.
         """
         lowered = str(text).lower()
+        sentence_ranges = [m.span() for m in _SENTENCE_RE.finditer(lowered)]
         tokens: list[str] = []
         spans: list[tuple[int, int]] = []
+        sentence_ids: list[int] = []
+        cursor = 0
         for match in _TOKEN_RE.finditer(lowered):
+            start, end = match.start(), match.end()
+            while cursor < len(sentence_ranges) and start >= sentence_ranges[cursor][1]:
+                cursor += 1
             tokens.append(match.group(0))
-            spans.append((match.start(), match.end()))
-        return _TokenizedReport(text=lowered, tokens=tokens, spans=spans)
+            spans.append((start, end))
+            sentence_ids.append(cursor)
+        return _TokenizedReport(
+            text=lowered,
+            tokens=tokens,
+            spans=spans,
+            sentence_ids=sentence_ids,
+        )
 
-    def _classify_mention(self, report: _TokenizedReport, token_index: int) -> int:
-        """Classify one mention by the nearest trigger in its left window.
+    def _span_token_range(
+        self,
+        report: _TokenizedReport,
+        start_char: int,
+        end_char: int,
+    ) -> tuple[int, int]:
+        """Map a character span onto inclusive token indices.
+
+        Args:
+            report: Tokenized report.
+            start_char: Span start offset in report text.
+            end_char: Span end offset in report text.
+
+        Returns:
+            ``(first_token, last_token)`` indices clamped to the vocabulary.
+        """
+        first = next(
+            (i for i, (s, _) in enumerate(report.spans) if s >= start_char),
+            max(len(report.spans) - 1, 0),
+        )
+        last = next(
+            (i for i, (_, e) in enumerate(report.spans) if e >= end_char),
+            max(len(report.spans) - 1, 0),
+        )
+        return first, max(last, first)
+
+    def _classify_span(
+        self,
+        report: _TokenizedReport,
+        start_char: int,
+        end_char: int,
+    ) -> int:
+        """Classify one mention scanning both sides for the nearest trigger.
+
+        Radiology places negators both before structures ("no ACL tear") and
+        as trailing predicates ("the ACL is intact"), so the window extends
+        symmetrically; the closest trigger decides, and negation outranks
+        uncertainty at equal distance.
 
         Args:
             report: Tokenized report containing the mention.
-            token_index: Index of the last token of the mention head.
+            start_char: Mention start offset.
+            end_char: Mention end offset.
 
         Returns:
-            POSITIVE when no trigger precedes, NEGATED or UNKNOWN per the
-            nearest trigger found within the configured window.
+            POSITIVE / NEGATED / UNKNOWN verdict for the mention.
         """
-        lo = max(0, token_index - self.negation_window)
-        for idx in range(token_index - 1, lo - 1, -1):
-            token = report.tokens[idx]
-            if token in self.negation_triggers:
-                return NEGATED
-            if token in self.uncertain_triggers:
-                return UNKNOWN
-        return POSITIVE
+        first, last = self._span_token_range(report, start_char, end_char)
+        sentence = report.sentence_ids[first] if first < len(report.sentence_ids) else -1
+        candidates: list[tuple[int, int]] = []  # (distance, kind)
+        for distance in range(1, self.negation_window + 1):
+            left = first - distance
+            if left >= 0 and report.sentence_ids[left] == sentence:
+                token = report.tokens[left]
+                if token in self.negation_triggers:
+                    candidates.append((distance, NEGATED))
+                elif token in self.uncertain_triggers:
+                    candidates.append((distance, UNKNOWN))
+            right = last + distance
+            if right < len(report.tokens) and report.sentence_ids[right] == sentence:
+                token = report.tokens[right]
+                if token in self.negation_triggers:
+                    candidates.append((distance, NEGATED))
+                elif token in self.uncertain_triggers:
+                    candidates.append((distance, UNKNOWN))
+            if candidates and all(c[0] <= distance for c in candidates):
+                break
+        if not candidates:
+            return POSITIVE
+        candidates.sort(key=lambda item: (item[0], 0 if item[1] == NEGATED else 1))
+        return candidates[0][1]
 
     def _verdicts_for_pattern(self, report: _TokenizedReport, pattern: str) -> list[int]:
         """Classify every lexical match of a simple-target pattern.
 
         Args:
             report: Tokenized report.
-            pattern: Compiled-ready affirmative regex string.
+            pattern: Affirmative regex string.
 
         Returns:
             Verdict per matched mention.
         """
-        verdicts: list[int] = []
-        for match in re.finditer(pattern, report.text):
-            end = match.end()
-            token_index = next(
-                (i for i, (start, stop) in enumerate(report.spans) if start < end <= stop),
-                len(report.spans) - 1,
-            )
-            verdicts.append(self._classify_mention(report, max(token_index, 0)))
-        return verdicts
+        return [
+            self._classify_span(report, match.start(), match.end())
+            for match in re.finditer(pattern, report.text)
+        ]
 
     def _verdicts_cooccurrence(
         self,
@@ -246,38 +310,36 @@ class RuleBasedLabeler:
         locator: str,
         radius: int,
     ) -> list[int]:
-        """Classify anchor x locator co-occurring pairs for compartment OA.
+        """Classify anchor x locator proximity pairs for compartment OA.
 
-        A pair is valid when an anchor token and locator token sit within
-        ``radius`` tokens; the pair inherits the worse of the two mentions'
-        classifications (negated on either side defeats the pair).
+        Matching runs over raw-text character spans (anchors such as
+        ``cartilage loss`` span multiple tokens), pairing matches whose gap
+        does not exceed ``radius`` average-token-lengths. A pair inherits
+        the worse of its two mentions' classifications.
 
         Args:
             report: Tokenized report.
             anchor: Anchor regex (OA vocabulary).
             locator: Compartment regex (medial / lateral / patellofemoral).
-            radius: Maximum token distance between the two matches.
+            radius: Maximum inter-match distance in average token lengths.
 
         Returns:
             Verdict per qualifying pair.
         """
+        mean_token_len = (
+            sum(e - s for s, e in report.spans) / max(len(report.spans), 1)
+        )
+        max_gap = max(radius * mean_token_len, 3.0 * radius)
+        anchors = [(m.start(), m.end()) for m in re.finditer(anchor, report.text)]
+        locators = [(m.start(), m.end()) for m in re.finditer(locator, report.text)]
         verdicts: list[int] = []
-        anchors = [
-            i
-            for i, token in enumerate(report.tokens)
-            if re.fullmatch(anchor, token) or re.search(anchor, token)
-        ]
-        locators = [i for i, token in enumerate(report.tokens) if re.search(locator, token)]
-        # Fall back to raw-text matching when tokens split multi-word phrases.
-        if not anchors:
-            return verdicts
-        for a_idx in anchors:
-            near = [l_idx for l_idx in locators if abs(l_idx - a_idx) <= radius]
-            if not near:
-                continue
-            for l_idx in near:
-                verdict_a = self._classify_mention(report, a_idx + 1)
-                verdict_l = self._classify_mention(report, l_idx + 1)
+        for a_start, a_end in anchors:
+            for l_start, l_end in locators:
+                gap = max(l_start - a_end, a_start - l_end)
+                if gap > max_gap:
+                    continue
+                verdict_a = self._classify_span(report, a_start, a_end)
+                verdict_l = self._classify_span(report, l_start, l_end)
                 if NEGATED in (verdict_a, verdict_l):
                     verdicts.append(NEGATED)
                 elif UNKNOWN in (verdict_a, verdict_l):
