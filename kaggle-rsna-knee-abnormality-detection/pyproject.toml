@@ -1,0 +1,21 @@
+[project]
+name = 'knee'
+version = '0.1.0'
+requires-python = '>=3.10'
+
+[tool.ruff]
+line-length = 80
+indent-width = 2
+target-version = 'py310'
+src = ['src', '.']
+
+[tool.ruff.format]
+quote-style = 'single'
+indent-style = 'space'
+
+[tool.ruff.lint]
+select = ['E', 'F', 'W', 'I']
+ignore = ['E501']
+
+[tool.pytest.ini_options]
+testpaths = ['tests']

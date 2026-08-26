@@ -3,18 +3,19 @@
 """Tests for YAML loading, overrides, and recursive instantiation."""
 
 import os
+import sys
 
 import pytest
 
 from knee.config_params.loader import (
-    deep_merge,
-    instantiate,
-    load_config,
-    load_experiment,
+  deep_merge,
+  instantiate,
+  load_config,
+  load_experiment,
 )
 
 CONFIG_DIR = os.path.join(
-    os.path.dirname(__file__), '..', 'configs', 'experiments'
+  os.path.dirname(__file__), '..', 'configs', 'experiments'
 )
 
 
@@ -60,23 +61,21 @@ class TestInstantiate:
   def test_instantiates_nested_specs(self, tmp_path):
     module = tmp_path / 'fake_mod.py'
     module.write_text(
-        'class Inner:\n'
-        '    def __init__(self, v):\n'
-        '        self.v = v\n\n\n'
-        'class Outer:\n'
-        "    def __init__(self, inner=None, k=0):\n"
-        '        self.inner = inner\n'
-        '        self.k = k\n'
+      'class Inner:\n'
+      '    def __init__(self, v):\n'
+      '        self.v = v\n\n\n'
+      'class Outer:\n'
+      '    def __init__(self, inner=None, k=0):\n'
+      '        self.inner = inner\n'
+      '        self.k = k\n'
     )
-    import sys
-
     sys.path.insert(0, str(tmp_path))
     spec = {
-        'class_path': 'fake_mod.Outer',
-        'init_params': {
-            'inner': {'class_path': 'fake_mod.Inner', 'init_params': {'v': 3}},
-            'k': 7,
-        },
+      'class_path': 'fake_mod.Outer',
+      'init_params': {
+        'inner': {'class_path': 'fake_mod.Inner', 'init_params': {'v': 3}},
+        'k': 7,
+      },
     }
     obj = instantiate(spec)
     assert obj.inner.v == 3 and obj.k == 7
@@ -92,8 +91,17 @@ class TestExperiment:
     for name in os.listdir(CONFIG_DIR):
       if name.endswith('.yaml'):
         config = load_experiment(os.path.join(CONFIG_DIR, name))
-        for section in ['experiment', 'data', 'folds', 'model', 'loss',
-                        'optimizer', 'train', 'datamodule', 'infer']:
+        for section in [
+          'experiment',
+          'data',
+          'folds',
+          'model',
+          'loss',
+          'optimizer',
+          'train',
+          'datamodule',
+          'infer',
+        ]:
           assert section in config, f'{name} missing section {section}'
 
   def test_override_section_wins(self):
@@ -103,7 +111,7 @@ class TestExperiment:
 
   def test_cli_overrides_apply_after_composition(self):
     config = load_experiment(
-        os.path.join(CONFIG_DIR, 'mvp_efnv2s_384_k24_5f.yaml'),
-        overrides=['data.n_slices=12'],
+      os.path.join(CONFIG_DIR, 'mvp_efnv2s_384_k24_5f.yaml'),
+      overrides=['data.n_slices=12'],
     )
     assert config['data']['n_slices'] == 12
