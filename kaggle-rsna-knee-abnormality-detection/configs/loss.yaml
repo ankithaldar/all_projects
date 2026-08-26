@@ -1,0 +1,7 @@
+# Loss. ignore_index=-1 marks uncertain pseudo-labels (rule-out / cannot exclude).
+loss:
+  class_path: knee.losses.asymmetric_focal.WeightedBCELoss
+  init_params:
+    pos_weight_mode: frequency    # frequency | none | fixed
+    pos_weight_fixed: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    label_smoothing: 0.05

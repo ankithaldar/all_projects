@@ -1,0 +1,8 @@
+# Inference policy. Fold checkpoints resolved from paths.checkpoint_dir / resume pull.
+infer:
+  batch_size: 16
+  num_workers: 4
+  fp16: true
+  folds: all                     # all | explicit list; 'all' = every fold{k}/done marker found
+  tta: []                        # reserved for backlog (e.g. [hflip])
+  submission_path: /kaggle/working/submission.csv

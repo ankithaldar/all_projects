@@ -1,0 +1,19 @@
+# Lightning Trainer + session budget / resume policy.
+trainer:
+  class_path: lightning.pytorch.Trainer
+  init_params:
+    max_epochs: 4
+    precision: bf16-mixed         # T4 falls back to fp16-mixed automatically via amp checks
+    accumulate_grad_batches: 2
+    log_every_n_steps: 25
+    deterministic: true
+    benchmark: false
+
+session_time_budget_h: 11.0      # stop fitting before the 12 h kernel limit
+time_margin_min: 30              # reserve this much for save + push
+checkpoint_every_n_epochs: 1
+
+val_check_interval: 1.0
+
+# Written checkpoints per fold: fold{k}/last.ckpt + fold{k}/done marker.
+checkpoint_filename: fold{fold}/last
