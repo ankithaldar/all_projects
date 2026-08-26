@@ -20,6 +20,9 @@ series_selection:
 # Order in which DecoderRegistry attempts pixel-data backends.
 decode_backend_order: [native, gdcm, pylibjpeg]
 
+# Header-scan parallelism for build-index (30 GB RAM cap -> keep modest).
+scan_workers: 4
+
 # Final standardization applied after ToFloat (pixels already in [0, 1]).
 normalize_output:
   mean: [0.5, 0.5, 0.5]

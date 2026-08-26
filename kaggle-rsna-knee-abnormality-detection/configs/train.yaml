@@ -8,6 +8,9 @@ trainer:
     log_every_n_steps: 25
     deterministic: true
     benchmark: false
+    accelerator: gpu
+    devices: 2                    # Kaggle T4 x2
+    strategy: auto
 
 session_time_budget_h: 11.0      # stop fitting before the 12 h kernel limit
 time_margin_min: 30              # reserve this much for save + push
