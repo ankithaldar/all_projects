@@ -251,3 +251,96 @@ class KaggleDatasetClient:
       return False
     self._run(['kaggle', 'datasets', 'download', slug, '--unzip', '-p', dest])
     return True
+
+
+class ArtifactSync:
+  """Keep small stage artifacts persistent across ephemeral containers.
+
+  Kaggle resets the container whenever the accelerator changes or a session
+  restarts; only Kaggle Datasets survive. This helper mirrors the data-stage
+  outputs (index/labels/folds) into a dedicated dataset so every session
+  rehydrates itself, exactly like the checkpoint protocol does for training.
+
+  Policy:
+
+  * ``pull_if_missing`` downloads the newest version when any tracked file
+    is absent locally (fresh container) — never overwrites a complete set.
+  * ``push`` republishes after a build stage completes; failures are logged,
+    never raised, because local copies remain usable within the session.
+  """
+
+  def __init__(
+    self,
+    client: KaggleDatasetClient | None,
+    slug: str,
+    local_dir: str,
+    file_names: list[str],
+  ) -> None:
+    """Compose the sync helper.
+
+    Args:
+        client: Kaggle client (None disables all remote traffic).
+        slug: Dataset slug backing the artifacts.
+        local_dir: Directory holding the tracked files.
+        file_names: File names whose presence defines completeness.
+    """
+    self.client = client
+    self.slug = slug
+    self.local_dir = local_dir
+    self.file_names = file_names
+
+  def _missing(self) -> list[str]:
+    """List tracked files absent from the local directory.
+
+    Returns:
+        Names of missing files.
+    """
+    return [
+      name for name in self.file_names
+      if not os.path.exists(os.path.join(self.local_dir, name))
+    ]
+
+  def pull_if_missing(self) -> bool:
+    """Restore artifacts from the dataset when locals are incomplete.
+
+    Returns:
+        True when a pull happened, False when files were already complete
+        or syncing is disabled/unavailable.
+    """
+    if self.client is None or not self._missing():
+      return False
+    _LOGGER.info(
+      'Restoring %s from %s', self._missing(), self.slug
+    )
+    try:
+      pulled = self.client.pull_latest(self.slug, self.local_dir)
+    except RuntimeError as exc:
+      _LOGGER.warning('Artifact restore failed (%s); continuing local', exc)
+      return False
+    still_missing = self._missing()
+    if still_missing:
+      _LOGGER.warning(
+        'Dataset %s lacks %s; affected stages may need upstream builds',
+        self.slug, still_missing,
+      )
+      return False
+    return pulled
+
+  def push(self) -> None:
+    """Publish current locals as a new dataset version (best effort)."""
+    if self.client is None:
+      return
+    missing = self._missing()
+    if missing:
+      _LOGGER.warning(
+        'Skipping artifact push; incomplete set: %s', missing
+      )
+      return
+    try:
+      self.client.push_version(self.slug, self.local_dir)
+      _LOGGER.info('Artifacts pushed to %s', self.slug)
+    except RuntimeError as exc:
+      _LOGGER.error(
+        'Artifact push failed (%s); local copy retained in %s',
+        exc, self.local_dir,
+      )

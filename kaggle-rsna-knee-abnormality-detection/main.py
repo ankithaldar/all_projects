@@ -40,7 +40,11 @@ from knee.engines.inferencer import predict_studies, write_submission
 from knee.engines.train_module import KneeModule
 from knee.helpers.folds import make_folds, resolve_group_column
 from knee.helpers.header_scan import build_index, explode_sop_uids
-from knee.helpers.kaggle_io import CredentialResolver, KaggleDatasetClient
+from knee.helpers.kaggle_io import (
+  ArtifactSync,
+  CredentialResolver,
+  KaggleDatasetClient,
+)
 from knee.helpers.nlp_labeling import RuleBasedLabeler, build_pseudo_labels
 from knee.helpers.utils import get_logger
 from knee.loggers.csv_logger import build_csv_logger
@@ -94,6 +98,29 @@ def _client(config: dict) -> KaggleDatasetClient | None:
   )
 
 
+def _artifact_sync(config: dict, client: KaggleDatasetClient | None) -> ArtifactSync:
+  """Build the sync helper for the small data-stage artifacts.
+
+  Args:
+      config: Composed experiment configuration.
+      client: Shared Kaggle client (may be None when resume disabled).
+
+  Returns:
+      ArtifactSync tracking index/labels/folds outputs.
+  """
+  paths = config['paths']
+  return ArtifactSync(
+    client=client,
+    slug=config['resume']['index_dataset_slug'],
+    local_dir=paths['artifact_dir'],
+    file_names=[
+      os.path.basename(paths['index_parquet']),
+      os.path.basename(paths['labels_csv']),
+      os.path.basename(paths['folds_csv']),
+    ],
+  )
+
+
 def cmd_build_index(config: dict) -> None:
   """Scan DICOM headers and persist the merged series index.
 
@@ -124,6 +151,7 @@ def cmd_build_index(config: dict) -> None:
   out_path = config['paths']['index_parquet']
   merged.to_parquet(out_path, index=False)
   _LOGGER.info('Index written: %s (%d series)', out_path, len(merged))
+  _artifact_sync(config, _client(config)).push()
 
 
 def cmd_build_labels(config: dict) -> None:
@@ -132,6 +160,7 @@ def cmd_build_labels(config: dict) -> None:
   Args:
       config: Composed experiment configuration.
   """
+  _artifact_sync(config, _client(config)).pull_if_missing()
   train_df = pd.read_csv(config['paths']['train_csv'])
   labeled = build_pseudo_labels(
     train_df,
@@ -143,6 +172,7 @@ def cmd_build_labels(config: dict) -> None:
   os.makedirs(os.path.dirname(out_path), exist_ok=True)
   labeled.to_csv(out_path, index=False)
   _LOGGER.info('Labels written: %s (%d rows)', out_path, len(labeled))
+  _artifact_sync(config, _client(config)).push()
 
 
 def cmd_build_folds(config: dict) -> None:
@@ -151,6 +181,7 @@ def cmd_build_folds(config: dict) -> None:
   Args:
       config: Composed experiment configuration.
   """
+  _artifact_sync(config, _client(config)).pull_if_missing()
   labels = pd.read_csv(config['paths']['labels_csv'])
   splitter = instantiate(config['folds'])
   stratify = config.get('stratify', {})
@@ -171,6 +202,7 @@ def cmd_build_folds(config: dict) -> None:
   os.makedirs(os.path.dirname(out_path), exist_ok=True)
   out_frame.to_csv(out_path, index=False)
   _LOGGER.info('Folds written: %s (groups=%s)', out_path, group_column)
+  _artifact_sync(config, _client(config)).push()
 
 
 def cmd_train(config: dict, fold_id: int | None) -> None:
@@ -186,6 +218,7 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
     client.pull_latest(
       config['resume']['checkpoint_dataset_slug'], checkpoint_dir
     )
+  _artifact_sync(config, client).pull_if_missing()
   folds = [fold_id] if fold_id is not None else list(config['run']['folds'])
 
   index_df = explode_sop_uids(pd.read_parquet(config['paths']['index_parquet']))
