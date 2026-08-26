@@ -276,6 +276,12 @@ Style contract for all Python: shebang + coding header, Google docstrings,
 
 ### 12.1 Kaggle session flow
 
+`kaggle_cell.py` self-bootstraps: inside a checkout it refreshes the
+committed `repo_meta.json` from `.git` (remote URL + branch, worktree-aware);
+outside one (pasted cell / dataset mount) it shallow-clones that branch into
+`$KNEE_REPO_DIR`, resolves the project directory within the monorepo, and
+re-executes your command there - zero manual code.
+
 ```bash
 # Cell 1 (fresh kernel): install pinned deps; WHEELS_DIR enables offline mode
 !bash kaggle_run.sh setup
@@ -289,7 +295,9 @@ Style contract for all Python: shebang + coding header, Google docstrings,
 ```
 
 Environment overrides: `EXPERIMENT` (YAML under configs/experiments/),
-`WHEELS_DIR` (offline wheel directory), `PIP_EXTRA`.
+`WHEELS_DIR` (offline wheel directory), `PIP_EXTRA`,
+`KNEE_REPO_DIR` (clone location), `GIT_TOKEN`/`GITHUB_TOKEN`/`GH_TOKEN`
+(https credentials for private upstreams).
 
 ### 12.2 Local development
 
