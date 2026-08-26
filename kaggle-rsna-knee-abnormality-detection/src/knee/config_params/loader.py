@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import importlib
 import os
+import re
 from typing import Any
 
 import yaml
@@ -65,6 +66,73 @@ def _set_by_dot_path(container: dict, dot_path: str, value: Any) -> None:
   node[keys[-1]] = value
 
 
+_INTERPOLATION_RE = re.compile(r'\$\{([^}]+)\}')
+_MAX_INTERPOLATION_PASSES = 16
+
+
+def _lookup(root: dict, dot_path: str) -> Any:
+  """Walk a dotted path inside the configuration root.
+
+  Args:
+      root: Root configuration dictionary.
+      dot_path: Dotted key path such as ``paths.competition_dir``.
+
+  Returns:
+      The referenced value.
+
+  Raises:
+      KeyError: If any path segment is missing or the walk leaves mappings.
+  """
+  cursor: Any = root
+  for part in dot_path.split('.'):
+    if not isinstance(cursor, dict) or part not in cursor:
+      raise KeyError(f'Unresolvable interpolation reference: {dot_path!r}')
+    cursor = cursor[part]
+  return cursor
+
+
+def _resolve_string(value: str, root: dict, seen: tuple[str, ...] = ()) -> Any:
+  """Expand every ``${a.b}`` occurrence inside one string.
+
+  A string that is exactly one reference keeps the referenced object's
+  type (int/float/list/...); composite strings stringify each reference.
+  Chains where a replacement itself contains references are supported;
+  ``seen`` tracks pure-reference chains for cycle detection.
+
+  Args:
+      value: String possibly containing interpolations.
+      root: Root configuration dictionary used for lookups.
+      seen: Dotted paths already expanded on this chain.
+
+  Returns:
+      Fully expanded string, or the referenced object for pure references.
+
+  Raises:
+      KeyError: If a referenced path cannot be resolved.
+      ValueError: If a reference cycle is detected.
+  """
+  whole_match = _INTERPOLATION_RE.fullmatch(value)
+  if whole_match:
+    dot_path = whole_match.group(1)
+    if dot_path in seen:
+      raise ValueError(f'Interpolation cycle through: {dot_path!r}')
+    target = _lookup(root, dot_path)
+    if isinstance(target, str) and '${' in target:
+      return _resolve_string(target, root, (*seen, dot_path))
+    return target
+  if '${' not in value:
+    return value
+  current = value
+  for _ in range(_MAX_INTERPOLATION_PASSES):
+    expanded = _INTERPOLATION_RE.sub(
+      lambda match: str(_lookup(root, match.group(1))), current
+    )
+    if expanded == current:
+      return expanded
+    current = expanded
+  raise ValueError(f'Interpolation cycle detected in: {value!r}')
+
+
 def _resolve_interpolations(node: Any, root: dict) -> Any:
   """Recursively resolve ``${a.b.c}`` references against the config root.
 
@@ -77,6 +145,7 @@ def _resolve_interpolations(node: Any, root: dict) -> Any:
 
   Raises:
       KeyError: If an interpolated path cannot be resolved.
+      ValueError: If an interpolation cycle is detected.
   """
   if isinstance(node, dict):
     return {
@@ -84,11 +153,8 @@ def _resolve_interpolations(node: Any, root: dict) -> Any:
     }
   if isinstance(node, list):
     return [_resolve_interpolations(item, root) for item in node]
-  if isinstance(node, str) and node.startswith('${') and node.endswith('}'):
-    cursor = root
-    for part in node[2:-1].split('.'):
-      cursor = cursor[part]
-    return cursor
+  if isinstance(node, str):
+    return _resolve_string(node, root)
   return node
 
 

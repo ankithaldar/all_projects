@@ -28,6 +28,29 @@ class TestLoadConfig:
     config = load_config(str(path))
     assert config['a']['b'] == 5
 
+  def test_resolves_composite_interpolation(self, tmp_path):
+    # Regression: suffix after the reference must expand too
+    # (failed on Kaggle as literal '${paths.competition_dir}/train_series').
+    path = tmp_path / 'c.yaml'
+    path.write_text(
+      'root: /data\ndicom_dir: ${root}/train_series\nnested: ${dicom_dir}/sub\n'
+    )
+    config = load_config(str(path))
+    assert config['dicom_dir'] == '/data/train_series'
+    assert config['nested'] == '/data/train_series/sub'
+
+  def test_missing_interpolation_reference_raises_keyerror(self, tmp_path):
+    path = tmp_path / 'c.yaml'
+    path.write_text('a: ${nope.here}\n')
+    with pytest.raises(KeyError):
+      load_config(str(path))
+
+  def test_interpolation_cycle_raises_valueerror(self, tmp_path):
+    path = tmp_path / 'c.yaml'
+    path.write_text('a: ${b}\nb: ${a}\n')
+    with pytest.raises(ValueError):
+      load_config(str(path))
+
   def test_dot_path_override_with_scalar_parsing(self, tmp_path):
     path = tmp_path / 'c.yaml'
     path.write_text('model:\n  init_params:\n    dropout: 0.1\n')
