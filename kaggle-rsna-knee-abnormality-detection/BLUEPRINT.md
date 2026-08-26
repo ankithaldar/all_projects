@@ -300,6 +300,24 @@ Order within a group is by expected value; run noise-floor study first.
    labels sampled more often; uncertain ones only through soft loss.
 9. Near-duplicate detection via MIP perceptual hashing; drop or
    down-weight duplicates to reduce train/test leakage risk.
+10. Confident-learning denoising (cleanlab, offline wheel) on the merged
+    gold+pseudo matrix; flag likely label errors using out-of-fold
+    predictions from a text-only model; review flagged gold labels too.
+    Signal: kappa uplift after pruning suspected noise.
+11. Report-section auto-segmentation (classify lines into Impression /
+    Findings / Clinical history) applied before all rule matching;
+    boosts precision for targets whose lexicon overfires in history
+    sections.
+12. Laterality normalization: resolve left/right knee wording and
+    anatomical-side mentions before matching compartment terms; guards
+    against Medial/Lateral OA confusion introduced by contralateral
+    phrasing ("left knee: lateral compartment narrowing").
+13. Noise-injection robustness training: flip a controlled fraction of
+    pseudo-labels during training at the measured contradiction rate;
+    keep if OOF AUC becomes less seed-sensitive.
+14. Semi-supervised consistency on unlabeled test volumes (Mean-Teacher
+    style): legality check against competition rules first; accept only
+    if OOF proxy gain > noise floor AND organizers confirm permitted.
 
 ### 11.2 Architecture
 
@@ -327,6 +345,23 @@ Order within a group is by expected value; run noise-floor study first.
    flip-augmentation variant that swaps Medial<->Lateral logits.
 10. Model souping: uniform/linear interpolation of fold checkpoints;
     free ensemble compression (one weight set, near-ensemble AUC).
+11. Deep-MIL gated attention pooling (Ilse et al.) with learnable
+    temperature as an alternative to AttentionPool2d; also yields
+    interpretable slice-importance maps.
+12. Multi-scale fusion: FPN-style laterals over backbone strides for
+    small findings (fracture lines, meniscal roots) before pooling.
+13. Dual-resolution branches: low-res full series (context) + high-res
+    center crops (detail) fused at the study token; targets subtle
+    tears lost at 384 px while keeping slice counts low.
+14. Geometry-aware cross-plane attention: use indexed IPP/IOP to give
+    each series token a spatial prior so the aggregator knows where in
+    knee-space each plane sampled; pure-data grounding, zero labels.
+15. Vision-Mamba (state-space) slice encoder: linear-time long-context
+    alternative to the slice transformer for K>32 long-tail series.
+16. Stochastic slice dropout during training (drop 10-20% of slices per
+    series) -> robustness to short/padded series and a natural TTA axis.
+17. Token merging (ToMe) inside ViT backbones: throughput experiment
+    feeding 11.4 efficiency levers at iso-accuracy.
 
 ### 11.3 Training recipe
 
@@ -339,6 +374,15 @@ Order within a group is by expected value; run noise-floor study first.
 5. Optimizer alternates: LAMB / Lookahead / AdamW+schedule-free.
 6. bf16 vs fp16 vs tf32 throughput/accuracy matrix on T4 (feeds
    efficiency score directly).
+7. Multi-task gradient surgery: PCGrad or GradVac on the 12 heads;
+   adopt when head-gradient cosine conflicts correlate with rare-class
+   plateaus.
+8. Uncertainty-weighted multi-task loss (Kendall et al. learned
+   sigmas) replacing the uniform loss sum across targets.
+9. Optuna ASHA sweep over lr/wd/drop_path/dropout inside a fixed
+   GPU-hour envelope; results land in W&B for the experiment registry.
+10. Per-class checkpoint selection: keep per-target best EMA snapshots
+    instead of one global best (macro-AUC assembly at inference).
 
 ### 11.4 Inference & ensembling
 
@@ -357,6 +401,15 @@ Order within a group is by expected value; run noise-floor study first.
    efficiency score's AUC/runtime trade-off curve.
 6. Snapshot ensembles from one training run (cyclic lr snapshots)
    replacing multi-fold compute.
+7. Fold weight-sharing: store one shared backbone plus per-fold LoRA
+   deltas -> smaller checkpoint dataset, faster session resume, near
+   full-ensemble AUC.
+8. Structured channel pruning of the backbone followed by brief
+   fine-tune (prune-then-distill); measure against 11.4-3 INT8 as the
+   cheaper efficiency lever.
+9. Kornia GPU-side transform pipeline at inference to overlap
+   resize/normalize with compute; drop if kernel launch overhead eats
+   the CPU savings on T4.
 
 ### 11.5 Data engineering
 
@@ -372,6 +425,14 @@ Order within a group is by expected value; run noise-floor study first.
    revisit after 11.2-6 registration decision.
 6. K-slice *placement* ablation: uniform vs center-weighted vs
    learned slice scorer; interacts with 11.4-5 early-exit design.
+7. Histogram matching to a reference scanner (site-shift reduction)
+   as a dataset-level intensity normalizer; compare against per-series
+   percentile normalization on the domain-shift proxy metrics.
+8. Metadata interaction features: sex x plane, FS x plane, log-counts
+   ratios; cheap FiLM-vector extensions with a leakage-safe origin.
+9. Multi-slice RGB channel variant: 3 channels = 3 adjacent slices
+   (classic 2.5D encoding) instead of replicated grayscale; halves
+   backbone passes vs current flat scheme at equal coverage.
 
 ### 11.6 Pretraining & transfer
 
@@ -381,6 +442,46 @@ Order within a group is by expected value; run noise-floor study first.
    weights, RadImageNet (license check), REMEDIS if downloadable.
 3. Self-supervised rotation/slice-order prediction pretraining on the
    unlabeled test-series volumes (test-time adaptation lite).
+
+### 11.7 Robustness & shortcut auditing
+
+1. Metadata-only probe: train a GBM/logistic on [plane, FS, FL, sex,
+   counts, spacing] alone; its OOF AUC per target is a *floor* any
+   image model must clearly beat - guards against learning site/
+   protocol shortcuts instead of pathology.
+2. Saliency QC notebook (Grad-CAM / attention rollout on series
+   tokens): verify activations sit on menisci/cartilage/ligament
+   regions rather than background or coil artifacts.
+3. Error taxonomy: cluster top-loss OOF studies by language, scanner
+   field strength, plane availability, and pseudo-label source;
+   surfaces systematic blind spots (e.g. non-English reports
+   mislabeled by rules).
+4. Cross-site adaptation probes: test-time BN recalibration and TENT
+   on the strongest domain-shift proxy split; adopt only with an
+   offline-legal, deterministic recipe.
+5. Determinism audit: identical seed across two sessions must
+   reproduce OOF to < 1e-4 AUC; catches nondeterministic kernels that
+   silently poison ablation readings.
+6. Slice-position sensitivity: shuffle test at inference (ordered vs
+   random slices) quantifies how much the model truly uses 2.5D order
+   versus treating slices as a bag - validates 11.2-3 investment.
+
+### 11.8 Process & infrastructure
+
+1. Experiment registry: append-only runs.csv (config hash, resolved
+   yaml path, W&B url, OOF macro/per-class) written automatically by
+   `main.py train`; enables instant best-config lookup.
+2. Checkpoint-dataset garbage collection policy: keep last N versions
+   per slug (kaggle CLI delete) to stay under storage quotas during
+   multi-week iteration.
+3. GPU utilization logging callback (nvidia-smi sampler -> CSV):
+   separates decode-bound from compute-bound epochs and justifies
+   worker/prefetch settings with data instead of guesses.
+4. DDP vs single-GPU scaling profile at fixed epoch count; documents
+   whether devices:2 is actually delivering ~2x before relying on it
+   in the budget math.
+5. Smoke-CI gate in git hooks/CI runner: ruff + pylint + pytest +
+   smoke_ci experiment dry-run (CPU, tiny tensors) on every push.
 
 ## 12. Usage
 
