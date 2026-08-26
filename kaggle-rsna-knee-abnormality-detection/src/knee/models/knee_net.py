@@ -35,6 +35,8 @@ class KneeNet(nn.Module):
     trunk_hidden: int = 512,
     pretrained: bool = True,
     pretrained_cfg: dict | None = None,
+    grad_checkpointing: bool = False,
+    chunk_size: int = 0,
   ) -> None:
     """Assemble the network from configuration-driven components.
 
@@ -52,6 +54,8 @@ class KneeNet(nn.Module):
         trunk_hidden: Hidden width before the output head.
         pretrained: Use timm-pretrained weights when no file given.
         pretrained_cfg: Optional offline checkpoint descriptor.
+        grad_checkpointing: Forwarded to TimmBackbone; see its docstring.
+        chunk_size: Forwarded to TimmBackbone; see its docstring.
 
     Raises:
         ValueError: When pooling dims disagree with the backbone output.
@@ -65,6 +69,8 @@ class KneeNet(nn.Module):
       drop_path_rate=drop_path_rate,
       pretrained=pretrained,
       pretrained_cfg=pretrained_cfg,
+      grad_checkpointing=grad_checkpointing,
+      chunk_size=chunk_size,
     )
     embed_dim = backbone.embed_dim
     if study_aggregator.cross_attention.embed_dim != embed_dim:

@@ -23,6 +23,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="${ROOT}/src:${PYTHONPATH:-}"
+# Reduce allocator fragmentation on 16 GB T4s (advice from CUDA OOM dumps).
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # Local credentials/overrides; harmless when the file is absent.
 if [[ -f "${ROOT}/.env" ]]; then
