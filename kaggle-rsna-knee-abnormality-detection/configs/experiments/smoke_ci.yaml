@@ -71,6 +71,8 @@ override:
       precision: 32-true
       accumulate_grad_batches: 1
       deterministic: true
+      accelerator: cpu
+      devices: 1
 
   session_time_budget_h: 0.5
   time_margin_min: 5
