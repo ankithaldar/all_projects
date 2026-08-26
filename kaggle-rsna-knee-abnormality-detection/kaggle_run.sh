@@ -58,7 +58,11 @@ case "${STAGE}" in
   setup)
     install_requirements
     ;;
-  index|labels|folds|train|infer)
+  index|labels|folds)
+    # Short user-facing names map to main.py subcommands.
+    run_stage "build-${STAGE}" "$@"
+    ;;
+  train|infer)
     run_stage "${STAGE}" "$@"
     ;;
   all)
