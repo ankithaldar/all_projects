@@ -1,0 +1,19 @@
+# DataModule / Dataset wiring.
+datamodule:
+  class_path: knee.datamodules.study_datamodule.StudyDataModule
+  init_params:
+    batch_size: 8                 # studies per step (each yields ~96 slice images)
+    num_workers: 4
+    prefetch_factor: 2
+    persistent_workers: true
+    pin_memory: true
+
+train_dataset:
+  class_path: knee.datasets.study_dataset.StudyDataset
+  init_params:
+    augment: true
+
+valid_dataset:
+  class_path: knee.datasets.study_dataset.StudyDataset
+  init_params:
+    augment: false

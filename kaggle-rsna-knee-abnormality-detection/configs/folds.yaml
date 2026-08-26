@@ -1,0 +1,14 @@
+# Cross-validation scheme. Groups default to StudyInstanceUID; helpers.folds
+# switches grouping to PatientID when the index shows multi-study patients.
+folds:
+  class_path: sklearn.model_selection.StratifiedGroupKFold
+  init_params:
+    n_splits: 5
+    shuffle: true
+    random_state: ${experiment.seed}
+
+stratify:
+  # Composite strata key built by helpers.folds.build_strata.
+  # Rare-target buckets keep Fracture/Contusion/Baker's represented per fold.
+  rare_targets: [Fracture, Contusion, "Baker's", Synovitis]
+  anchor_targets: [ACL, "Medial OA"]

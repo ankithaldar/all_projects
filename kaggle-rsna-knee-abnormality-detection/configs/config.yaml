@@ -1,0 +1,36 @@
+# Root configuration for the RSNA knee abnormality detection MVP.
+# All values consumed by main.py and the src/knee packages live here or in sibling files.
+experiment:
+  name: mvp_efnv2s_384_k24_5f
+  seed: 42
+  output_dir: /kaggle/working
+
+paths:
+  # Competition mount verified in notebooks/01_EDA.ipynb.
+  competition_dir: /kaggle/input/competitions/rsna-knee-abnormality-detection
+  train_csv: ${paths.competition_dir}/train.csv
+  train_series_csv: ${paths.competition_dir}/train_series.csv
+  train_dicom_dir: ${paths.competition_dir}/train_series
+  test_csv: ${paths.competition_dir}/test.csv
+  test_series_csv: ${paths.competition_dir}/test_series.csv
+  test_dicom_dir: ${paths.competition_dir}/test_series
+  index_parquet: ${paths.artifact_dir}/index.parquet
+  labels_csv: ${paths.artifact_dir}/labels_pseudo.csv
+  folds_csv: ${paths.artifact_dir}/folds.csv
+  artifact_dir: /kaggle/working/artifacts
+  checkpoint_dir: /kaggle/working/checkpoints
+  oof_dir: /kaggle/working/oof
+
+resume:
+  enabled: true
+  # Kaggle Dataset slugs pushed/pulled by helpers.kaggle_io between sessions.
+  index_dataset_slug: rsna-knee-mvp-index
+  checkpoint_dataset_slug: rsna-knee-mvp-ckpt
+
+kaggle_secrets:
+  username_key: KAGGLE_USERNAME
+  token_key: KAGGLE_API_TOKEN
+
+run:
+  # Folds processed by `main.py train` in this session, in order.
+  folds: [0, 1, 2, 3, 4]

@@ -1,0 +1,29 @@
+# Model tree. embed_dim must match the backbone feature dim (tf_efficientnetv2_s = 1280).
+model:
+  class_path: knee.models.knee_net.KneeNet
+  init_params:
+    backbone_name: tf_efficientnetv2_s
+    pretrained_cfg:
+      # Offline checkpoint support; null falls back to timm's cached weights.
+      file: null
+    img_size: 384
+    n_slices: 24
+    n_series_tokens_max: 6
+    n_targets: 12
+    dropout: 0.1
+    drop_path_rate: 0.1
+    metadata_dim: 12              # produced by datasets.study_dataset.build_metadata
+    slice_pool:
+      class_path: knee.layers.pooling.AttentionPool2d
+      init_params:
+        embed_dim: 1280
+        num_heads: 8
+        dropout: 0.1
+    study_aggregator:
+      class_path: knee.layers.pooling.StudyAggregator
+      init_params:
+        embed_dim: 1280
+        num_heads: 8
+        ff_mult: 2
+        dropout: 0.1
+    trunk_hidden: 512

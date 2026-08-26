@@ -1,0 +1,28 @@
+# Data / preprocessing policy for streaming DICOM reads.
+data:
+  n_slices: 24                  # 2.5D slices sampled evenly per series.
+  img_size: 384                 # square resize target after autocrop.
+  normalize_percentiles: [0.005, 0.995]
+  autocrop_margin: 0.05         # fraction of bbox extent added around foreground.
+
+series_selection:
+  max_series_per_study: 4
+  # Priority list consumed by datasets.study_dataset.select_series.
+  # Sagittal fluid-sensitive sequences carry most of the 12 targets.
+  priority:
+    - {plane: Sagittal, fluid_sensitive: 1, fat_suppression: 1}
+    - {plane: Coronal, fluid_sensitive: 1, fat_suppression: 1}
+    - {plane: Sagittal, fluid_sensitive: 1, fat_suppression: 0}
+    - {plane: Coronal, fluid_sensitive: 1, fat_suppression: 0}
+    - {plane: Sagittal, fluid_sensitive: 0, fat_suppression: 0}
+    - {plane: Coronal, fluid_sensitive: 0, fat_suppression: 0}
+
+# Order in which DecoderRegistry attempts pixel-data backends.
+decode_backend_order: [native, gdcm, pylibjpeg]
+
+metadata_features:
+  plane_onehot: [Sagittal, Coronal, Axial]
+  use_sex: true
+  sex_onehot: [M, F, O]
+  use_log_counts: true          # log1p(#series), log1p(#slices)
+  use_spacing_stats: true       # mean in-plane spacing, slice thickness
