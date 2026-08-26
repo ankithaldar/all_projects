@@ -16,10 +16,11 @@ python-dotenv==1.2.2
 wandb==0.28.2
 
 # DICOM transfer-syntax codecs: import side-effects register pydicom handlers.
+# Versions verified to exist on PyPI (2026-08); do not bump blindly.
 python-gdcm==3.0.26
-pylibjpeg==2.1.5
+pylibjpeg==2.1.0
 pylibjpeg-libjpeg==2.4.0
-pylibjpeg-openjpeg==2.3.0
+pylibjpeg-openjpeg==2.5.0
 
 # Development / CI only.
 pytest==9.0.3
