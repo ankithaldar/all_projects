@@ -86,7 +86,7 @@ init_params:                           # kwargs for __init__, resolved recursive
 ```
 configs/
 ├── config.yaml          # experiment name, seed, paths (mounts, ckpt dataset slug,
-│                        #   kaggle secret names), device, folds to run
+│                        #   kaggle secret names), integrations, folds to run
 ├── data.yaml            # n_slices, img_size, series-selection policy,
 │                        #   normalization percentiles, decode backend order
 ├── folds.yaml           # CV class_path + init_params (StratifiedGroupKFold)
@@ -94,19 +94,33 @@ configs/
 ├── model.yaml           # KneeNet tree: backbone, pools, aggregator, heads
 ├── loss.yaml            # criterion class_path + init_params
 ├── optimizer.yaml       # optimizer/scheduler class_paths, lr groups, warmup_epochs
-├── train.yaml           # Trainer args (epochs, precision, accumulation),
-│                        #   session_time_budget_h, checkpoint_every_n_epochs, resume policy
+├── train.yaml           # Trainer args (epochs, precision, devices),
+│                        #   session_time_budget_h, checkpoint_every_n_epochs
 ├── datamodule.yaml      # DataModule/Dataset class_paths, batch_size, workers
-└── infer.yaml           # ckpt paths, fp16, batch_size, tta: [], submission_path
+├── infer.yaml           # ckpt fold selection, fp16, batch_size, submission_path
+└── experiments/
+    ├── mvp_efnv2s_384_k24_5f.yaml   # main experiment: defaults list + override
+    └── smoke_ci.yaml                # CPU smoke run for CI/dry runs
 ```
+
+Each experiment file deep-merges its `defaults:` stems in order, applies its
+`override:` section last, and the fully resolved dictionary is dumped to
+`artifact_dir/resolved_<name>.yaml` at every run start — one self-contained
+file per experiment guarantees traceback.
 
 ### 5.3 Loader API (`src/knee/config_params/loader.py`)
 
 ```python
-def load_config(path: str, overrides: Sequence[str] | None = None) -> dict:
-    """Load YAML and apply dot-path overrides (e.g. 'model.init_params.dropout=0.2')."""
+def load_config(path, overrides=None) -> dict:
+    """Load YAML + dot-path overrides + ${a.b} interpolation."""
 
-def instantiate(spec: Any) -> Any:
+def load_experiment(path, overrides=None) -> dict:
+    """Compose defaults list -> override -> interpolation (Section 5.2)."""
+
+def dump_config(config, path) -> None:
+    """Persist a resolved configuration for run traceability."""
+
+def instantiate(spec) -> Any:
     """Recursively resolve class_path/init_params specs into live objects."""
 ```
 
@@ -125,14 +139,36 @@ Artifacts (all tiny; total < 2 GB):
 
 Flow (`src/knee/helpers/kaggle_io.py`):
 
-1. Credentials from Kaggle `UserSecretsClient`; secret names read from `config.paths.*`.
+1. Credentials resolve through `knee.helpers.secrets`:
+   process env -> project `.env` -> Kaggle `UserSecretsClient`; secret names
+   are read from `config.kaggle_secrets.*`.
 2. `pull_latest(slug, dest)` downloads newest version if it exists.
-3. Engine start: per fold — `done` marker -> skip; `last.ckpt` -> resume via `Trainer.fit(ckpt_path=...)`.
-4. `TimeBudgetCallback` stops fit when wall clock exceeds `session_time_budget_h - time_margin_min`;
-   checkpoints also written every `checkpoint_every_n_epochs`.
-5. Session end: `push_version(slug, folder)` creates a new immutable dataset version (rollback history).
-6. Push retries x3 with backoff; on failure the ckpt remains in `/kaggle/working` with logged manual recovery path.
-7. Inference consumes whichever folds have `done` markers (partial ensembles degrade gracefully).
+3. Engine start: per fold — `done` marker -> skip; `last.ckpt` -> resume via
+   `Trainer.fit(ckpt_path=...)`.
+4. `TimeBudgetCallback` stops fit when wall clock exceeds
+   `session_time_budget_h - time_margin_min`; checkpoints also written every
+   `checkpoint_every_n_epochs`.
+5. Session end: `push_version(slug, folder)` creates a new immutable dataset
+   version (rollback history).
+6. Push retries x3 with backoff; on failure the ckpt remains in
+   `/kaggle/working` with logged manual recovery path.
+7. Inference consumes whichever folds have `done` markers (partial ensembles
+   degrade gracefully).
+
+## 6b. Experiment Tracking and Notifications
+
+All three channels run simultaneously and independently; none can crash a
+scoring run:
+
+| Channel | Implementation | Content |
+|---|---|---|
+| CSV | `loggers/csv_logger.py` (Lightning `CSVLogger`) | per-fold metrics under `<output_dir>/logs/<exp>/fold{k}/` |
+| W&B | `loggers/wandb_logger.py` | same metrics online when `WANDB_API_KEY` resolves; auto-offline otherwise |
+| Discord | `loggers/discord_logger.py` | fit start, per-epoch macro-AUC, fold completion + duration, crash tracebacks via webhook |
+
+Credentials resolve by *name* from YAML through
+`helpers/secrets.get_secret(name)`: env -> `.env` -> Kaggle secrets
+(see `.env.example`: `DISCORD_WEBHOOK_URL`, `WANDB_API_KEY`, `KAGGLE_*`).
 
 ## 7. NLP Pseudo-Labeling (MVP rules)
 
@@ -160,55 +196,55 @@ backbone name — all in YAML. Notebook 01 records measured decode throughput.
 ## 9. Repository Layout
 
 ```
-main.py                              # CLI: build-index | build-labels | build-folds | train | infer
-configs/                             # Section 5.2
-src/knee/
-├── config_params/loader.py          # load_config, instantiate
-├── helpers/
-│   ├── dicom_io.py                  # DecoderRegistry: native->gdcm->pylibjpeg, zeros fallback
-│   ├── geometry.py                  # normal-projection ordering; InstanceNumber fallback
-│   ├── intensity.py                 # rescale, percentile normalize, autocrop
-│   ├── nlp_labeling.py              # lexicons + negation window + uncertain mask
-│   ├── folds.py                     # StratifiedGroupKFold builder -> folds.csv
-│   ├── kaggle_io.py                 # dataset push/pull via kaggle CLI + UserSecrets
-│   └── utils.py                     # seeding, timer, logger
-├── datasets/
-│   ├── series_dataset.py            # index-driven reader; decodes K slices per __getitem__
-│   └── study_dataset.py             # N series -> tokens + metadata vector + label mask
-├── datamodules/study_datamodule.py
-├── augmentations/factory.py         # build A.Compose from YAML specs
-├── layers/pooling.py                # AttentionPool2d, StudyAggregator, FiLM
-├── models/
-│   ├── backbones.py                 # timm wrapper with offline checkpoint support
-│   ├── series_encoder.py            # backbone + temporal attention pooling
-│   └── knee_net.py                  # full net: forward(series_batch, meta) -> logits[12]
-├── losses/asymmetric_focal.py       # + WeightedBCE default; ignore_index=-1 support
-├── metrics/auc.py                   # per-class + macro ROC-AUC
-├── engines/
-│   ├── train_module.py              # LightningModule; OOF dump per fold
-│   └── inferencer.py                # eager fp16 predictor
-├── callbacks/
-│   ├── time_budget.py               # stop fit before session budget
-│   ├── periodic_push.py             # save ckpt -> kaggle dataset version every N epochs
-│   └── per_class_auc.py
-└── loggers/
-    ├── csv_logger.py                # per-fold Lightning CSVLogger
-    ├── discord_logger.py            # webhook notifier + lifecycle callback
-    └── wandb_logger.py              # W&B logger (offline fallback, key via secrets)
+main.py                              # CLI: build-index | build-labels | build-folds |
+                                     #   train | infer  (+ --experiment/--override)
 kaggle_run.sh                        # staged shell driver: setup|index|labels|folds|
                                      #   train|infer|all; sources .env; offline wheels
 kaggle_cell.py                       # notebook cell entrypoint wrapping the driver
+requirements.txt                     # pinned deps incl. DICOM codec wheels
+configs/                             # Section 5.2 (bases + experiments/)
+src/knee/
+├── config_params/loader.py          # load_config, load_experiment, dump_config,
+│                                    #   deep_merge, recursive instantiate
+├── helpers/
+│   ├── dicom_io.py                  # DecoderRegistry: native->gdcm->pylibjpeg
+│   ├── header_scan.py               # parallel header-only scan -> index.parquet
+│   ├── geometry.py                  # normal-projection ordering; InstanceNumber fallback
+│   ├── intensity.py                 # rescale, percentile normalize, autocrop
+│   ├── nlp_labeling.py              # bidirectional negation window (sentence-scoped),
+│   │                                #   OA anchor x compartment co-occurrence, -1 mask
+│   ├── folds.py                     # strata builder + grouped fold assignment
+│   ├── kaggle_io.py                 # retrying CLI client: create/version/pull
+│   ├── secrets.py                   # env -> .env -> Kaggle UserSecrets resolution
+│   └── utils.py                     # seeding, timer, logger
+├── datasets/
+│   ├── series_dataset.py            # even-index K-slice sampling from ordered SOP lists
+│   └── study_dataset.py             # priority series selection, metadata builder,
+│                                    #   collate matching KneeNet's flat contract
+├── datamodules/study_datamodule.py  # fold-aware LightningDataModule
+├── augmentations/factory.py         # YAML specs -> Compose (resize/totensor bookends)
+├── layers/pooling.py                # AttentionPool2d, StudyAggregator, FiLM
+├── models/
+│   ├── backbones.py                 # timm wrapper with offline checkpoint support
+│   ├── series_encoder.py            # single flattened backbone pass + pooling
+│   └── knee_net.py                  # full net + differential-LR parameter groups
+├── losses/asymmetric_focal.py       # WeightedBCE default; AsymmetricFocal; -1 masking
+├── metrics/auc.py                   # per-class + macro ROC-AUC accumulator
+├── engines/
+│   ├── assembly.py                  # config -> reader/datasets/datamodule/model
+│   ├── train_module.py              # KneeModule: loss, warmup+cosine, OOF dumps
+│   └── inferencer.py                # fold-ensemble fp16 predictor + schema asserts
+├── callbacks/session.py             # TimeBudgetCallback + PeriodicPushCallback
+├── loggers/
+│   ├── csv_logger.py                # per-fold Lightning CSVLogger
+│   ├── discord_logger.py            # webhook notifier + lifecycle callback
+│   └── wandb_logger.py              # W&B logger (offline fallback, key via secrets)
 notebooks/
 ├── 01_EDA.ipynb                     # done
-├── 02_build_index_labels_folds.ipynb
-├── 03_model_training.ipynb          # resume-aware loop; pushes ckpt dataset per session
-└── 04_inference.ipynb               # loads pushed ckpts -> submission.csv
-tests/
-├── test_geometry.py                 # synthetic ordering incl. reversed normals
-├── test_nlp_labeling.py             # negation/scope cases per target
-├── test_loader.py                   # recursive instantiation, dot-path overrides
-├── test_knee_net.py                 # shapes: variable #series/#slices
-└── test_resume.py                   # push/pull roundtrip (mocked CLI), state fidelity
+├── 02_build_index_labels_folds.ipynb  # pending (or use kaggle_run.sh stages)
+├── 03_model_training.ipynb          # pending thin wrapper over kaggle_cell.py --stage train
+└── 04_inference.ipynb               # pending thin wrapper over kaggle_cell.py --stage infer
+tests/                               # 45 tests across geometry/NLP/loader/net/resume
 ```
 
 Style contract for all Python: shebang + coding header, Google docstrings,
@@ -235,3 +271,61 @@ Style contract for all Python: shebang + coding header, Google docstrings,
 6. Efficiency tuning: K ablation, fold pruning, INT8 quantization.
 7. Contrastive image-report pretraining.
 8. Protocol-stratified folds once domain-shift analysis is rerun cleanly.
+
+## 12. Usage
+
+### 12.1 Kaggle session flow
+
+```bash
+# Cell 1 (fresh kernel): install pinned deps; WHEELS_DIR enables offline mode
+!bash kaggle_run.sh setup
+
+# Cell 2..n: any stage; training resumes automatically from pulled last.ckpt
+%run kaggle_cell.py --stage index
+%run kaggle_cell.py --stage labels
+%run kaggle_cell.py --stage folds
+%run kaggle_cell.py --stage train --fold 0     # or omit --fold for run.folds list
+%run kaggle_cell.py --stage infer              # writes submission.csv
+```
+
+Environment overrides: `EXPERIMENT` (YAML under configs/experiments/),
+`WHEELS_DIR` (offline wheel directory), `PIP_EXTRA`.
+
+### 12.2 Local development
+
+```bash
+pip install -r requirements.txt
+PYTHONPATH=src python main.py train \
+  --experiment configs/experiments/smoke_ci.yaml   # CPU smoke run
+pytest tests
+ruff check src tests main.py && ruff format --check .
+pylint --rcfile=../.pylintrc src/knee main.py
+```
+
+### 12.3 Experiment traceback
+
+Every run dumps its fully composed configuration to
+`artifact_dir/resolved_<experiment>.yaml`; new experiments are a single YAML
+under `configs/experiments/` listing `defaults` + an `override` block.
+
+## 13. Implementation Status
+
+| Milestone | State |
+|---|---|
+| EDA + decoder forensics (`01_EDA.ipynb`) | done |
+| Config system (bases, experiments, loader, resolved-dump) | done |
+| Helpers: geometry/intensity/dicom_io/header_scan/nlp/folds/kaggle_io/secrets | done |
+| Model stack: pooling layers, backbone, encoders, KneeNet | done |
+| Engines: assembly, Lightning module, inferencer, submission asserts | done |
+| Callbacks: time budget, periodic push | done |
+| Logging: CSV + W&B + Discord | done |
+| Kaggle drivers (kaggle_run.sh, kaggle_cell.py) | done |
+| Tests: 45 passing; pylint 10.00/10 on all files; ruff clean | done |
+| Notebooks 02-04 as thin wrappers | pending (stages already runnable via drivers) |
+| First real-data end-to-end run (index -> folds -> train fold0) | pending |
+| Backlog items 1-8 | pending |
+
+Commit trail: `21def73` blueprint -> `fd41d80` configs -> `8a04e11`
+loader+helpers -> `e15f02e` model stack -> `9f6facc` engines/CLI ->
+`4fa02c4`+`f09bac0` tests & fixes -> `52659d8` style enforcement ->
+`bed9ceb` logging + drivers.
