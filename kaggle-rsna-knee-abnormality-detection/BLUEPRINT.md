@@ -263,14 +263,124 @@ Style contract for all Python: shebang + coding header, Google docstrings,
 
 ## 11. Iteration Backlog (post-MVP)
 
-1. XLM-R multilingual pseudo-labeler -> soft-target distillation.
-2. ONNX Runtime fp16 export + parity tests (< 0.001 OOF delta).
-3. TTA and snapshot ensembles.
-4. MONAI MRI-specific augmentations (bias field, ghosting).
-5. Per-plane encoder specialization.
-6. Efficiency tuning: K ablation, fold pruning, INT8 quantization.
-7. Contrastive image-report pretraining.
-8. Protocol-stratified folds once domain-shift analysis is rerun cleanly.
+Each entry states the experiment and the signal that decides keep/drop.
+Order within a group is by expected value; run noise-floor study first.
+
+### 11.0 Measurement discipline (run before chasing any gain)
+
+1. **Noise floor**: 3 seeds x best config on fold 0; record macro-AUC
+   std. Any change worth shipping must beat mean + 2 sigma.
+2. **Single-knob sweeps via experiments/*.yaml** (img_size, n_slices,
+   max_series, lr, epochs) logged to W&B for automatic comparison.
+3. **Per-class attribution notebook**: which of the 12 targets move with
+   each knob (macro can hide rare-class regressions).
+
+### 11.1 Supervision & labels
+
+1. XLM-R multilingual pseudo-labeler trained on gold + rule-labeled
+   English; replaces rules for non-English reports. Signal: kappa vs
+   gold per class, then OOF delta.
+2. Soft-target distillation: replace hard pseudo-labels with teacher
+   probabilities (weighted BCE on soft targets). Signal: OOF macro-AUC,
+   especially on rule-uncertain (`-1`) studies now recovered.
+3. Severity auxiliary heads from report modifiers (partial/complete
+   tear, grade I-III meniscal, mild/moderate/severe OA - EDA found all
+   present): multi-task regularization. Signal: main-target AUC delta.
+4. Pseudo-label round 2: retrain labeler with image-model OOF as an
+   additional feature (co-training); iterate once. Signal: kappa gain.
+5. Dependency-parse negation scope (spaCy/stanza bundled offline)
+   replacing the token window; measure precision/recall vs current
+   rules on the gold subset before adopting.
+6. OPUS-MT translation backfill -> apply English rules to every
+   language; compare against XLM-R route (cheaper inference-time
+   nothing, but training-only either way).
+7. Curriculum: epoch 1-2 on gold subset only, then add pseudo data.
+   Signal: stability of rare-class AUC across seeds.
+8. Confidence-weighted sampling: studies with high-agreement pseudo
+   labels sampled more often; uncertain ones only through soft loss.
+9. Near-duplicate detection via MIP perceptual hashing; drop or
+   down-weight duplicates to reduce train/test leakage risk.
+
+### 11.2 Architecture
+
+1. Backbone zoo sweep at fixed budget: ConvNeXt-V2-Tiny/Nano,
+   MaxViT-Tiny (windowed attention fits slice grids), EfficientNetV2-M,
+   Swin-V2-Tiny, DINOv2 ViT-S frozen+linear. Signal: OOF macro per
+   GPU-hour.
+2. Per-plane encoder specialization: plane-specific backbones vs shared
+   trunk with plane tokens vs shared+plane FiLM (current).
+3. Series-token transformer: replace AttentionPool2d with tiny
+   transformer over slice embeddings incl. positional encodings along
+   the through-plane axis (order-aware pooling).
+4. Cross-series attention with plane-specific queries in the aggregator
+   (current query is protocol-agnostic).
+5. Two-stage ROI pipeline: cheap localization (U-Net or threshold/
+   morphology) -> aligned crop -> classifier; motivated by EDA CoM
+   variance being low but nonzero.
+6. Atlas registration normalization instead of autocrop (deterministic
+   anatomy alignment; costs CPU at index time if precomputed).
+7. Class-decoupled experts for the four rare targets sharing the
+   frozen common trunk. Signal: Fracture/Contusion/Baker's/Synovitis
+   AUC without macro regression elsewhere.
+8. Ordinal heads for OA severity where grade text is extractable.
+9. MixUp/CutMix on slices and manifold-mixup on series embeddings;
+   flip-augmentation variant that swaps Medial<->Lateral logits.
+10. Model souping: uniform/linear interpolation of fold checkpoints;
+    free ensemble compression (one weight set, near-ensemble AUC).
+
+### 11.3 Training recipe
+
+1. Loss bake-off at fixed schedule: WeightedBCE (incumbent),
+   AsymmetricFocal, Focal-T, pairwise AUC-style losses
+   (e.g. differentiable rank hinge); pick per-class winners.
+2. LLRD (layer-wise lr decay) for transformer backbones.
+3. EMA vs SWA vs plain weights; soup-of-EMA-snapshots.
+4. Progressive resizing 256->384->448 with cosine restarts.
+5. Optimizer alternates: LAMB / Lookahead / AdamW+schedule-free.
+6. bf16 vs fp16 vs tf32 throughput/accuracy matrix on T4 (feeds
+   efficiency score directly).
+
+### 11.4 Inference & ensembling
+
+1. TTA set definition: hflip-with-logit-swap, +/-5% scale, center
+   slice-subset re-run; accept only if OOF gain > 2x noise floor and
+   runtime stays under efficiency budget.
+2. Stacking meta-model on OOF probabilities (per-class logistic on
+   [image logits, metadata]) - watch overfit via nested CV.
+3. ONNX Runtime fp16 export + parity tests (< 0.001 OOF delta);
+   INT8 static quantization calibrated on 200 studies; TensorRT EP
+   build script for the submission kernel.
+4. Fold pruning: rank folds by OOF, greedily drop while ensemble AUC
+   holds (efficiency prize lever).
+5. Early-exit cascade: lightweight pass (small backbone @224px) gates
+   the full model only when uncertainty is high; tune gate for the
+   efficiency score's AUC/runtime trade-off curve.
+6. Snapshot ensembles from one training run (cyclic lr snapshots)
+   replacing multi-fold compute.
+
+### 11.5 Data engineering
+
+1. MONAI MRI-specific augmentations: bias-field, ghosting, k-space
+   spike artifacts; bundle wheels offline.
+2. Protocol-stratified folds once domain-shift analysis is rerun
+   cleanly (ScanningSequence/MagneticFieldStrength are already indexed).
+3. Sequence clustering from DICOM tags (TR/TE/flip angle) as extra
+   metadata features and stratifiers.
+4. Motion-corruption scoring at index time (inter-slice variance
+   heuristic) -> quality filter or down-weight flag.
+5. Isotropic resampling ablation (index-time, cached in parquet) -
+   revisit after 11.2-6 registration decision.
+6. K-slice *placement* ablation: uniform vs center-weighted vs
+   learned slice scorer; interacts with 11.4-5 early-exit design.
+
+### 11.6 Pretraining & transfer
+
+1. Contrastive image-report pretraining (CLIP-style ConVIRT) on all
+   4.4k studies before supervised fine-tune.
+2. Public-medical checkpoint init: RSNA breast/spine competition
+   weights, RadImageNet (license check), REMEDIS if downloadable.
+3. Self-supervised rotation/slice-order prediction pretraining on the
+   unlabeled test-series volumes (test-time adaptation lite).
 
 ## 12. Usage
 
