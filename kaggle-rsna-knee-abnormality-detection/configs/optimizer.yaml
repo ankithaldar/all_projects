@@ -5,15 +5,11 @@ optimizer:
   init_params:
     lr: 0.0003
     weight_decay: 0.01
-
-backbone_lr_scale: 0.1
-
-scheduler:
-  class_path: torch.optim.lr_scheduler.CosineAnnealingLR
-  init_params:
-    T_max: 4                      # keep equal to train.yaml trainer.max_epochs
-    eta_min: 0.000001
-
-warmup_epochs: 1
-
-gradient_clip_val: 1.0
+  scheduler:
+    class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+    init_params:
+      T_max: 4                      # keep equal to train.yaml trainer.max_epochs
+      eta_min: 0.000001
+  warmup_epochs: 1
+  backbone_lr_scale: 0.1
+  gradient_clip_val: 1.0
