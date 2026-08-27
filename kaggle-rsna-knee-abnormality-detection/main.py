@@ -116,6 +116,71 @@ def _client(config: dict) -> KaggleDatasetClient | None:
   )
 
 
+ARTIFACT_BASENAMES = (
+  'index.parquet',
+  'index_test.parquet',
+  'labels_pseudo.csv',
+  'folds.csv',
+)
+
+# Kaggle exposes attached datasets under /kaggle/input; searching these
+# two-level patterns avoids a recursive walk across huge DICOM mounts.
+_INPUT_ROOT_PATTERNS = (
+  '/kaggle/input/datasets/*/*',  # observed layout: datasets/<owner>/<slug>
+  '/kaggle/input/*',  # legacy flat dataset mounts
+)
+
+
+def _mount_roots() -> list[str]:
+  """Directories that may contain attached-dataset artifact copies.
+
+  KNEE_INPUT_ROOTS (colon-separated) overrides the defaults, which keeps
+  the helper testable and lets unusual mount layouts be expressed.
+
+  Returns:
+      Existing directory paths.
+  """
+  raw = os.environ.get('KNEE_INPUT_ROOTS')
+  roots = (
+    [p for p in raw.split(':') if p]
+    if raw
+    else [p for pattern in _INPUT_ROOT_PATTERNS for p in glob.glob(pattern)]
+  )
+  return [p for p in roots if os.path.isdir(p)]
+
+
+def restore_artifacts_from_mounts(config: dict) -> list[str]:
+  """Copy tracked stage artifacts out of attached datasets when missing.
+
+  Kaggle wipes /kaggle/working between sessions; stages that need
+  index/labels/folds either rehydrate via the kaggle CLI pull or, when
+  the backing datasets are already ATTACHED, simply copy the files -
+  instant and network-free. Files stay on the mount untouched.
+
+  Args:
+      config: Composed experiment configuration.
+
+  Returns:
+      Basenames that were restored by this call.
+  """
+  artifact_dir = config['paths']['artifact_dir']
+  os.makedirs(artifact_dir, exist_ok=True)
+  restored: list[str] = []
+  roots = _mount_roots()
+  for name in ARTIFACT_BASENAMES:
+    target = os.path.join(artifact_dir, name)
+    if os.path.exists(target):
+      continue
+    for root in roots:
+      candidate = os.path.join(root, name)
+      if os.path.exists(candidate):
+        shutil.copy2(candidate, target)
+        restored.append(name)
+        _LOGGER.info('restored %s from attached dataset %s', name, root)
+        break
+  return restored
+
+
 def _artifact_sync(
   config: dict, client: KaggleDatasetClient | None
 ) -> ArtifactSync:
@@ -259,6 +324,13 @@ def cmd_build_cache(config: dict) -> None:
 
   tasks: list[dict] = []
   data_cfg = config['data']
+  # Rehydrate artifacts BEFORE any read: attached datasets copy instantly
+  # (user mandate), kaggle-CLI pull covers unattached fallbacks.
+  restored = restore_artifacts_from_mounts(config)
+  if restored:
+    _LOGGER.info(
+      'restored stage artifacts from attached datasets: %s', restored
+    )
   for root_key, index_key in (
     ('train_dicom_dir', 'index_parquet'),
     ('test_dicom_dir', 'test_index_parquet'),
@@ -276,8 +348,31 @@ def cmd_build_cache(config: dict) -> None:
       row['margin'] = float(data_cfg['autocrop_margin'])
     tasks.extend(rows)
   if not tasks:
-    raise RuntimeError('No index parquet found to build the volume cache')
-
+    # Last-resort rehydration via kaggle CLI (datasets not attached).
+    _artifact_sync(config, _client(config)).pull_if_missing()
+    for root_key, index_key in (
+      ('train_dicom_dir', 'index_parquet'),
+      ('test_dicom_dir', 'test_index_parquet'),
+    ):
+      index_path = config['paths'].get(index_key)
+      if not (index_path and os.path.exists(index_path)):
+        continue
+      frame = explode_sop_uids(pd.read_parquet(index_path))
+      rows = frame.to_dict('records')
+      for row in rows:
+        row['dicom_root'] = config['paths'][root_key]
+        row['img'] = int(data_cfg['img_size'])
+        row['decoder_order'] = list(data_cfg['decode_backend_order'])
+        row['percentiles'] = list(data_cfg['normalize_percentiles'])
+        row['margin'] = float(data_cfg['autocrop_margin'])
+      tasks.extend(rows)
+  if not tasks:
+    artifact_dir = config['paths']['artifact_dir']
+    raise RuntimeError(
+      'No index parquet found to build the volume cache; attach '
+      'rsna-knee-mvp-index (or run --stage index) so '
+      f'{artifact_dir} can be populated'
+    )
   base_slug = str(config['resume'].get('cache_dataset_slug') or '')
   client = _client(config)
   pushed: list[tuple[str, int, float]] = []
@@ -459,8 +554,7 @@ def cmd_build_cache(config: dict) -> None:
   names_line = ', '.join(
     f'`{slug}` ({n} {shard_word}, {gb:.2f} GiB)'
     for slug, n, shard_word, gb in [
-      (slug, n, 'shard' if n == 1 else 'shards', gb)
-      for slug, n, gb in pushed
+      (slug, n, 'shard' if n == 1 else 'shards', gb) for slug, n, gb in pushed
     ]
   )
   mounts = ',\n'.join(f'/kaggle/input/{slug}' for slug, *_ in pushed)

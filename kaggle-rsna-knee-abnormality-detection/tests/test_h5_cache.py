@@ -395,3 +395,34 @@ def test_push_version_inplace_applies_credentials(tmp_path):
   assert calls['applied'] >= 1
   meta = json.loads((folder / 'dataset-metadata.json').read_text())
   assert meta['id'] == 'user/ds'
+
+
+class TestArtifactRestore:
+  """Attached-dataset copy beats the slow kaggle-CLI rehydration path."""
+
+  def test_restores_missing_files_from_mount_roots(self, tmp_path, monkeypatch):
+    from main import restore_artifacts_from_mounts
+
+    mount = (
+      tmp_path / 'input' / 'datasets' / 'haldarankit' / 'rsna-knee-mvp-index'
+    )
+    mount.mkdir(parents=True)
+    (mount / 'index.parquet').write_text('PARQUET_BYTES')
+    (mount / 'folds.csv').write_text('study,fold\n')
+
+    artifact_dir = tmp_path / 'working' / 'artifacts'
+    config = {'paths': {'artifact_dir': str(artifact_dir)}}
+    unrelated = str(tmp_path / 'input' / 'unrelated')
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', f'{mount}:{unrelated}')
+    restored = restore_artifacts_from_mounts(config)
+    assert sorted(restored) == ['folds.csv', 'index.parquet']
+    assert (artifact_dir / 'index.parquet').read_text() == 'PARQUET_BYTES'
+    # Idempotent: second call restores nothing.
+    assert restore_artifacts_from_mounts(config) == []
+
+  def test_no_roots_returns_empty(self, tmp_path, monkeypatch):
+    from main import restore_artifacts_from_mounts
+
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', str(tmp_path / 'absent'))
+    config = {'paths': {'artifact_dir': str(tmp_path / 'a')}}
+    assert restore_artifacts_from_mounts(config) == []
