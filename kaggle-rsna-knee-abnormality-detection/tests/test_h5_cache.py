@@ -505,3 +505,85 @@ class TestCrossSessionResume:
     assert merged is not None and len(merged) == 2
     assert 'generation mismatch' in caplog.text
     assert 'img_size=512' in caplog.text
+
+
+class TestMountDiscovery:
+  """Attached cache datasets are auto-discovered; artifact sets are not."""
+
+  def _make_mount(self, base, slug, uids, ordinal):
+    root = base / slug
+    root.mkdir(parents=True)
+    w = ShardWriter(str(root), img_size=8, gzip_level=0)
+    for uid in uids:
+      w.add_series(uid, 's', _volume(ordinal, img=8))
+    w.close()
+    w.write_manifest()
+    return root
+
+  def test_twelve_mounts_discovered_in_order(self, tmp_path, monkeypatch):
+    import knee.helpers.h5_cache as hc
+
+    base = tmp_path / 'input' / 'datasets' / 'haldarankit'
+    for n in range(12):
+      self._make_mount(
+        base,
+        f'ah2002-rsna-knee-abnormality-detection-cache-{n:03d}',
+        [f'uid-{n}'],
+        n,
+      )
+    # Artifact dataset WITHOUT a manifest fragment must NOT qualify.
+    (base / 'rsna-knee-mvp-index').mkdir()
+    (base / 'rsna-knee-mvp-index' / 'index.parquet').write_text('x')
+
+    config = {'paths': {'volume_cache_dir': str(tmp_path / 'build')}}
+    (tmp_path / 'build').mkdir()  # stages create this before resolving
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', str(base))
+    roots = hc.find_cache_roots(config)
+    # 12 discovered mounts + the local build dir appended last
+    # (tie-break priority for the newest generation of fresh shards).
+    assert len(roots) == 13
+    assert all(
+      'ah2002-rsna-knee-abnormality-detection-cache-' in r for r in roots[:12]
+    )
+    # Local build dir appended last (tie-break priority on fresh shards).
+    assert roots[-1] == str(tmp_path / 'build')
+
+  def test_env_override_disables_discovery(self, tmp_path, monkeypatch):
+    import knee.helpers.h5_cache as hc
+
+    base = tmp_path / 'input'
+    self._make_mount(base, 'cache-000', ['u0'], 0)
+    only = tmp_path / 'explicit'
+    only.mkdir()
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', str(base))
+    monkeypatch.setenv('KNEE_HDF5_CACHE_DIRS', str(only))
+    roots = hc.find_cache_roots(
+      {'paths': {'volume_cache_dir': str(tmp_path / 'b')}}
+    )
+    assert roots == [str(only)]
+
+  def test_copy_mounts_to_working(self, tmp_path, monkeypatch):
+    import knee.helpers.h5_cache as hc
+
+    base = tmp_path / 'input'
+    self._make_mount(base, 'cache-000', ['u0'], 0)
+    artifact_dir = tmp_path / 'working' / 'artifacts'
+    config = {
+      'paths': {
+        'volume_cache_dir': str(tmp_path / 'b'),
+        'artifact_dir': str(artifact_dir),
+      },
+      'volume_cache': {'copy_mounts_to_working': True},
+    }
+    (tmp_path / 'b').mkdir()
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', str(base))
+    roots = hc.find_cache_roots(config)
+    # Mount replaced by its copy; local dir appended last as usual.
+    assert len(roots) == 2
+    copied = artifact_dir / 'cache_roots' / 'cache-000'
+    assert roots[0] == str(copied)
+    assert copied.is_dir() and (copied / 'cache_manifest.parquet').exists()
+    assert roots[-1] == str(tmp_path / 'b')
+    # Idempotent second pass reuses the copy.
+    again = hc.find_cache_roots(config)
+    assert again == roots

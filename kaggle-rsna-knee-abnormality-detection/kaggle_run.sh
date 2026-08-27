@@ -10,6 +10,7 @@
 #   labels  Rule-based pseudo-labels -> labels_pseudo.csv
 #   folds   StratifiedGroupKFold assignment -> folds.csv
 #   cache   Decode every indexed series -> sharded HDF5 volume dataset(s)
+#   selftest Preflight: artifacts/mount/cache/model + 2 real steps.
 #   train   Resume-aware fold training (session-budget + checkpoint push).
 #   infer   Fold-ensemble prediction -> submission.csv
 #   all     index -> labels -> folds (train/infer run per-session instead)
@@ -67,6 +68,9 @@ case "${STAGE}" in
     ;;
   cache)
     run_stage "build-cache" "$@"
+    ;;
+  selftest)
+    run_stage "selftest" "$@"
     ;;
   train|infer)
     run_stage "${STAGE}" "$@"
