@@ -142,21 +142,32 @@ class DiscordCallback(Callback):
   def _current_lr(pl_module: pl.LightningModule) -> float | None:
     """Read the live learning rate from the first optimizer group.
 
+    Tolerates every shape ``pl_module.optimizers()`` takes across
+    Lightning versions: a bare optimizer, a ``LightningOptimizer``
+    wrapper, or lists of either. Any surprise here must degrade to
+    'no lr shown', never break training.
+
     Args:
         pl_module: Active module.
 
     Returns:
         Learning rate, or None when no optimizer/param-group exists yet.
     """
-    optimizers = getattr(pl_module, 'optimizers', None)
-    if not callable(optimizers):
+    try:
+      returned = pl_module.optimizers()
+      items = returned if isinstance(returned, (list, tuple)) else [returned]
+      items = [item for item in items if item is not None]
+      if not items:
+        return None
+      # LightningOptimizer wrappers carry the raw module under .optimizer.
+      raw = getattr(items[0], 'optimizer', items[0])
+      groups = getattr(raw, 'param_groups', [])
+      lr = groups[0].get('lr') if groups else None
+      return float(lr) if lr is not None else None
+    except Exception:  # pylint: disable=broad-except
+      # Metrics are auxiliary: ANY optimizer-shape surprise must degrade
+      # to 'no lr shown' instead of killing the fit.
       return None
-    optimizer_list = optimizers() or []
-    if not optimizer_list:
-      return None
-    groups = getattr(optimizer_list[0], 'param_groups', [])
-    lr = groups[0].get('lr') if groups else None
-    return float(lr) if lr is not None else None
 
   def on_train_batch_end(
     self,
