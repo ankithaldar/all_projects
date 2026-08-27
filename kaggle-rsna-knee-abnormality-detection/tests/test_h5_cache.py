@@ -11,6 +11,10 @@ H5SeriesReader contract only.
 # monkeypatch target; assert-on-empty-list reads clearer for state.
 # pylint: disable=redefined-outer-name,unused-argument,import-outside-toplevel,use-implicit-booleaness-not-comparison,protected-access
 
+import json
+import os
+
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -278,3 +282,116 @@ class TestDiscordProgress:
     assert '20,000 files/800,000' in text
     assert '(2.5%' in text and 'ETA ~' in text
     assert 'skipped' in text and '3.14 GiB' in text
+
+
+class TestShardMarkers:
+  """Completion sentinels drive resume/pipelined-push semantics."""
+
+  def test_completed_shards_legacy_fallback(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    w = hc.ShardWriter(str(tmp_path), img_size=8, gzip_level=0)
+    w.add_series('u1', 's1', _volume(0, img=8))  # no close -> unmarked
+    assert hc.completed_shards(str(tmp_path)) == ['volume_shard_000.h5']
+    w.close()  # graceful close stamps the sentinel
+    listing = sorted(os.listdir(tmp_path))
+    assert 'volume_shard_000.h5.complete' in listing
+
+  def test_drop_unfinished_keeps_marked_only(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    w = hc.ShardWriter(str(tmp_path), img_size=8, gzip_level=0)
+    w.add_series('done', 's', _volume(1, img=8))
+    w.close()
+    # Simulate a crashed partial tail WITHOUT a sentinel.
+    with h5py.File(tmp_path / 'volume_shard_001.h5', 'a') as f:
+      f.create_dataset('ghost', data=_volume(2, img=8))
+    removed = hc.drop_unfinished_shards(str(tmp_path))
+    assert removed == ['volume_shard_001.h5']
+    resumed = hc.ShardWriter(str(tmp_path), img_size=8, gzip_level=0)
+    # 'ghost' is gone; 'done' must still count toward existing state.
+    assert resumed.existing_uids() == {'done'}
+
+  def test_callback_fires_per_roll_with_move_consumer(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    moved: list[str] = []
+    out = tmp_path / 'staging'
+    out.mkdir()
+
+    def consume(path):
+      dest = out / os.path.basename(path)
+      os.rename(path, dest)  # pipelined consumer relocates instantly
+      moved.append(dest.name)
+
+    vol_bytes = 3 * 4 * 3  # one (3,4,3) uint8 volume
+    w = hc.ShardWriter(
+      str(tmp_path / 'build'),
+      img_size=4,
+      shard_bytes_cap=vol_bytes,  # exactly one volume per shard
+      gzip_level=0,
+      on_shard_complete=consume,
+    )
+    for i in range(2):
+      w.add_series(f'u{i}', 's', _volume(i, img=4)[:, :3])
+    w.close()
+    assert len(moved) == 2  # both shards finalized + relocated
+    assert not (tmp_path / 'build' / 'volume_shard_000.h5').exists()
+
+
+def _shard_ordinals_from_slugs(slugs):
+  return [int(s.rsplit('-', 1)[1]) for s in slugs]
+
+
+class TestShardSlugNaming:
+  """<base>-NNN slug derivation matches helpers conventions."""
+
+  def test_base_and_ordinal(self):
+    base = 'ah2002-rsna-knee-abnormality-detection-cache'
+    name = 'volume_shard_007.h5'
+    ordinal = int(name.rsplit('_', maxsplit=1)[-1].split('.')[0])
+    assert f'{base}-{ordinal:03d}' == (base + '-007')
+    assert _shard_ordinals_from_slugs([base + '-004']) == [4]
+
+
+def test_push_version_inplace_applies_credentials(tmp_path):
+  """Regression: qualification used to crash before creds were applied."""
+  from knee.helpers.kaggle_io import KaggleDatasetClient
+
+  calls = {'applied': 0}
+
+  class StubResolver:
+    def __init__(self):
+      self.username_key = self.token_key = ''
+
+    def apply(self):  # simulates env/Kaggle-secrets materialization
+      calls['applied'] += 1
+      os.environ['KAGGLE_USERNAME'] = 'ah2002'
+      os.environ['KAGGLE_API_TOKEN'] = 'tok'
+
+    def _lookup(self, name):
+      return os.environ.get(name)
+
+  client = KaggleDatasetClient(
+    StubResolver(),
+    runner=lambda *a, **k: type(
+      'R', (), {'returncode': 0, 'stderr': '', 'stdout': ''}
+    ),
+  )
+  folder = tmp_path / 'payload'
+  folder.mkdir()
+  monkey_patch_env_clear = {'KAGGLE_USERNAME': None, 'KAGGLE_API_TOKEN': None}
+  saved = {k: os.environ.pop(k, None) for k in monkey_patch_env_clear}
+  try:
+    client.push_version_inplace('user/ds', str(folder))
+  finally:
+    for key, val in saved.items():
+      if val is None:
+        os.environ.pop(key, None)
+      else:
+        os.environ[key] = val
+  # At least the explicit pre-metadata apply ran, and qualification
+  # succeeded where it previously crashed with 'Cannot qualify slug'.
+  assert calls['applied'] >= 1
+  meta = json.loads((folder / 'dataset-metadata.json').read_text())
+  assert meta['id'] == 'user/ds'

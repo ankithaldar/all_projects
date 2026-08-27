@@ -166,12 +166,18 @@ def main() -> None:  # noqa: C901
         notifier = DiscordNotifier(webhook_url=url, enabled=True)
       else:
         _LOGGER.warning(
-          'Discord secret %r empty; progress disabled', secret_name
+          'Discord heartbeats OFF: secret %r resolved empty across '
+          'os.environ / .env / Kaggle User Secrets',
+          secret_name,
         )
     except Exception as exc:  # pylint: disable=broad-except
       _LOGGER.warning(
-        'Notifier unavailable (%s); continuing without discord updates', exc
+        'Discord heartbeats OFF (resolution failed: %s); continuing '
+        'console-only',
+        exc,
       )
+  else:
+    _LOGGER.info('Discord heartbeats OFF: --discord-secret empty')
 
   def say(text: str) -> None:
     """Best-effort console + optional Discord output.

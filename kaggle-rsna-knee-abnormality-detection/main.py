@@ -45,6 +45,8 @@ from knee.helpers.h5_cache import (
   GIB,
   MANIFEST_NAME,
   ShardWriter,
+  collect_shard_map,
+  drop_unfinished_shards,
   format_progress,
   run_pool_tasks,
 )
@@ -226,13 +228,21 @@ def cmd_build_folds(config: dict) -> None:
 def cmd_build_cache(config: dict) -> None:
   """Decode every indexed series into sharded HDF5 volume files.
 
-  Reads train + (when present) test index parquets, decodes each series
-  once through the shared pixel pipeline, writes 10 GiB-capped shards
-  plus a manifest, then republishes the shards as dataset version(s)
-  so later sessions mount them instead of decoding DICOM.
+  Two push layouts selected by ``volume_cache.split_mode``:
 
-  Resume-safe: UIDs already in any shard are skipped, and shard bytes
-  already on disk are only moved (never copied) into push staging.
+  * ``shard`` (pipelined): each finished shard becomes its own Kaggle
+    dataset ``<base>-NNN`` pushed IMMEDIATELY from the completion
+    callback - peak disk stays ~2x one shard, fitting /kaggle/working
+    quotas on the mandated build path. Every pushed dataset carries a
+    manifest fragment; train sessions merge fragments across ALL
+    attached datasets via helpers.h5_cache.load_manifest.
+  * ``group``: shards accumulate locally, are grouped under
+    KNEE_CACHE_SLUG_GIB_CAP GiB per dataset (-a/-b suffixes), and push
+    once after decoding finishes.
+
+  Resume-safe: UIDs present in COMPLETED (markered) shards skip; a
+  killed session's partial tail shard is dropped so its series
+  re-decode fresh. Rejected series (any failed frame) never fossilize.
 
   Args:
       config: Composed experiment configuration.
@@ -243,10 +253,12 @@ def cmd_build_cache(config: dict) -> None:
   )
   shard_cap = int(cache_cfg.get('shard_gib_cap', 10)) * GIB
   gzip_level = int(cache_cfg.get('gzip_level', 4))
+  split_mode = str(cache_cfg.get('split_mode', 'group'))
   cache_dir = config['paths']['volume_cache_dir']
   os.makedirs(cache_dir, exist_ok=True)
 
   tasks: list[dict] = []
+  data_cfg = config['data']
   for root_key, index_key in (
     ('train_dicom_dir', 'index_parquet'),
     ('test_dicom_dir', 'test_index_parquet'),
@@ -254,12 +266,10 @@ def cmd_build_cache(config: dict) -> None:
     index_path = config['paths'].get(index_key)
     if not index_path or not os.path.exists(index_path):
       continue
-    root = config['paths'][root_key]
     frame = explode_sop_uids(pd.read_parquet(index_path))
-    data_cfg = config['data']
     rows = frame.to_dict('records')
     for row in rows:
-      row['dicom_root'] = root
+      row['dicom_root'] = config['paths'][root_key]
       row['img'] = int(data_cfg['img_size'])
       row['decoder_order'] = list(data_cfg['decode_backend_order'])
       row['percentiles'] = list(data_cfg['normalize_percentiles'])
@@ -267,128 +277,202 @@ def cmd_build_cache(config: dict) -> None:
     tasks.extend(rows)
   if not tasks:
     raise RuntimeError('No index parquet found to build the volume cache')
-  _LOGGER.info(
-    'Volume cache target: %d series (%d workers)', len(tasks), workers
-  )
 
-  writer = ShardWriter(
-    cache_dir,
-    img_size=int(config['data']['img_size']),
-    shard_bytes_cap=shard_cap,
-    gzip_level=gzip_level,
-  )
-  existing = writer.existing_uids()
-  todo = [t for t in tasks if str(t['series']) not in existing]
-  _LOGGER.info(
-    'Resume state: %d cached already, %d to decode',
-    len(existing),
-    len(todo),
-  )
-  # Discord lifecycle: started -> heartbeats (every files_every frames)
-  # -> per-push dataset names -> final summary listing every dataset.
+  base_slug = str(config['resume'].get('cache_dataset_slug') or '')
+  client = _client(config)
+  pushed: list[tuple[str, int, float]] = []
+  if split_mode == 'shard':
+    drop_unfinished_shards(cache_dir)
+
+  # Discord lifecycle plumbing; notifier_from_config logs LOUDLY when a
+  # webhook cannot be resolved instead of degrading silently.
   notifier = notifier_from_config(config)
   experiment_name = config['experiment']['name']
   files_every = int(cache_cfg.get('discord_files_every', 10_000))
-  total_files = sum(len(list(t['sop_uids'])) for t in todo) or None
   started_at = time.time()
 
   def say(text: str) -> None:
+    """Console-first heartbeat + optional Discord POST.
+
+    Args:
+        text: Message body without experiment prefix.
+    """
     if notifier.enabled:
       notifier.notify(f'**[{experiment_name}]** cache: {text}')
 
+  def push_shard_now(shard_path: str) -> None:
+    """Pipelined consumer: relocate one finished shard into its dataset.
+
+    Args:
+        shard_path: Just-closed shard file (callback thread == main).
+    """
+    if client is None or not base_slug:
+      return
+    name = os.path.basename(shard_path)
+    ordinal = int(name.split('_')[-1].split('.')[0])
+    slug = f'{base_slug}-{ordinal:03d}'
+    staging = os.path.join(
+      os.path.dirname(cache_dir.rstrip('/')), f'push_{slug}'
+    )
+    os.makedirs(staging, exist_ok=True)
+    shutil.move(shard_path, os.path.join(staging, name))
+    marker_src = f'{shard_path}.complete'
+    if os.path.exists(marker_src):
+      shutil.move(marker_src, os.path.join(staging, name) + '.complete')
+    rows_for_shard = collect_shard_map(staging)
+    fragment = pd.DataFrame(
+      {
+        'SeriesInstanceUID': [u for u, _ in rows_for_shard.items()],
+        'shard_file': [v[0] for v in rows_for_shard.values()],
+        'n_slices': [v[1] for v in rows_for_shard.values()],
+      }
+    ).sort_values('SeriesInstanceUID')
+    fragment.to_parquet(os.path.join(staging, MANIFEST_NAME), index=False)
+    gib = os.path.getsize(os.path.join(staging, name)) / GIB
+    say(f'pushing dataset `{slug}` ({name}, {gib:.2f} GiB)...')
+    client.push_version_inplace(slug, staging)
+    _LOGGER.info('Pushed %s -> dataset %s', name, slug)
+    pushed.append((slug, 1, gib))
+
   def report(state: dict) -> None:
+    """Forward pool progress events to the notifier.
+
+    Args:
+        state: helpers.h5_cache.progress_state mapping.
+    """
     elapsed = time.time() - started_at
     say(format_progress(state, elapsed))
 
-  img_size = int(config['data']['img_size'])
+  writer = ShardWriter(
+    cache_dir,
+    img_size=int(data_cfg['img_size']),
+    shard_bytes_cap=shard_cap,
+    gzip_level=gzip_level,
+    on_shard_complete=(push_shard_now if split_mode == 'shard' else None),
+  )
+  existing = writer.existing_uids()
+  todo = [t for t in tasks if str(t['series']) not in existing]
+  total_files = sum(len(list(t['sop_uids'])) for t in todo) or None
+  _LOGGER.info(
+    'Resume state: %d cached already, %d to decode (%s mode)',
+    len(existing),
+    len(todo),
+    split_mode,
+  )
+  img_edge = int(data_cfg['img_size'])
   say(
-    f'started building HDF5 cache — {len(todo):,} series / '
+    f'started building HDF5 cache - {len(todo):,} series / '
     f'{(total_files or 0):,} DICOM files, workers={workers}, '
-    f'img_size={img_size}'
+    f'img_size={img_edge}, split={split_mode}'
   )
   try:
     cached, skipped = run_pool_tasks(
       todo,
       workers,
       writer,
-      on_progress=report if notifier.enabled else None,
+      on_progress=(report if notifier.enabled else None),
       files_every=files_every,
       total_files=total_files,
     )
   finally:
-    writer.close()
+    writer.close()  # fires callback for any data-bearing tail shard
   _LOGGER.info('Decoded %d series; skipped %d this pass', cached, skipped)
 
-  manifest_path = writer.write_manifest()
-  shards = sorted(n for n in os.listdir(cache_dir) if n.endswith('.h5'))
-  total_gib = (
-    sum(os.path.getsize(os.path.join(cache_dir, n)) for n in shards) / GIB
-  )
-  _LOGGER.info(
-    'Manifest: %s | shards=%d size=%.1f GiB',
-    manifest_path,
-    len(shards),
-    total_gib,
-  )
+  union_map: dict[str, tuple[str, int]] = {}
+  for push_root in sorted(
+    glob.glob(os.path.dirname(cache_dir.rstrip('/')) + '/push_*')
+  ):
+    union_map.update(collect_shard_map(push_root))
+  union_map.update(collect_shard_map(cache_dir))
 
-  client = _client(config)
-  if client is None:
-    _LOGGER.warning(
-      'Resume disabled; volume shards stay local-only at %s', cache_dir
-    )
-    return
-  base_slug = str(config['resume'].get('cache_dataset_slug') or '')
-  if not base_slug:
-    _LOGGER.info('resume.cache_dataset_slug unset; shards not pushed')
-    return
-  # Move (never copy — tens of GiB) shards into per-slug staging dirs so
-  # no single Kaggle dataset blows past its ~107 GiB ceiling. Each slug
-  # carries a manifest subset covering exactly its own shards; readers
-  # merge manifests across mounted roots via helpers.h5_cache.load_manifest.
-  max_slug_gib = float(os.environ.get('KNEE_CACHE_SLUG_GIB_CAP', '95'))
-  groups: list[list[str]] = [[]]
-  running = 0.0
-  for name in shards:
-    size_gib = os.path.getsize(os.path.join(cache_dir, name)) / GIB
-    if running + size_gib > max_slug_gib and groups[-1]:
-      groups.append([])
-      running = 0.0
-    groups[-1].append(name)
-    running += size_gib
-  manifest_df = pd.read_parquet(manifest_path)
-  pushed: list[tuple[str, int, float]] = []
-  for group_no, shard_names in enumerate(groups):
-    suffix = '' if group_no == 0 else f'-{chr(97 + group_no)}'
-    slug = f'{base_slug}{suffix}'
-    staging = os.path.join(
-      os.path.dirname(cache_dir.rstrip('/')), f'push_{slug}'
-    )
-    os.makedirs(staging, exist_ok=True)
-    for name in shard_names:
-      shutil.move(os.path.join(cache_dir, name), os.path.join(staging, name))
-    subset = manifest_df[manifest_df['shard_file'].isin(shard_names)].copy()
-    if subset.empty:
-      raise RuntimeError(f'manifest lost coverage for {shard_names[:3]}')
-    subset.to_parquet(os.path.join(staging, MANIFEST_NAME), index=False)
-    group_gib = (
-      sum(os.path.getsize(os.path.join(staging, n)) for n in shard_names) / GIB
-    )
+  if split_mode == 'group':
+    max_slug_gib = float(os.environ.get('KNEE_CACHE_SLUG_GIB_CAP', '95'))
+    local = [n for n in sorted(os.listdir(cache_dir)) if n.endswith('.h5')]
+    groups: list[list[str]] = [[]]
+    running = 0.0
+    for name in local:
+      size_gib = os.path.getsize(os.path.join(cache_dir, name)) / GIB
+      if running + size_gib > max_slug_gib and groups[-1]:
+        groups.append([])
+        running = 0.0
+      groups[-1].append(name)
+      running += size_gib
+    if local:
+      local_manifest_frame = pd.read_parquet(writer.write_manifest())
+      for group_no, shard_names in enumerate(groups):
+        suffix = '' if group_no == 0 else f'-{chr(97 + group_no)}'
+        slug = f'{base_slug}{suffix}'
+        staging = os.path.join(
+          os.path.dirname(cache_dir.rstrip('/')), f'push_{slug}'
+        )
+        os.makedirs(staging, exist_ok=True)
+        for name in shard_names:
+          shutil.move(
+            os.path.join(cache_dir, name), os.path.join(staging, name)
+          )
+        subset = local_manifest_frame[
+          local_manifest_frame['shard_file'].isin(shard_names)
+        ].copy()
+        if subset.empty:
+          raise RuntimeError(f'manifest lost coverage for {shard_names[:3]}')
+        subset.to_parquet(os.path.join(staging, MANIFEST_NAME), index=False)
+        group_gib = (
+          sum(os.path.getsize(os.path.join(staging, n)) for n in shard_names)
+          / GIB
+        )
+        say(
+          f'pushing dataset `{slug}` ({len(shard_names)} shards, '
+          f'{group_gib:.1f} GiB)... upload may take a while'
+        )
+        if client is None or not base_slug:
+          _LOGGER.warning('no remote client/slugs; shards staged only')
+          continue
+        client.push_version_inplace(slug, staging)
+        _LOGGER.info('Pushed %d shard(s) to %s', len(shard_names), slug)
+        pushed.append((slug, len(shard_names), group_gib))
+
+  # Operator manifest spanning pushed fragments + any local leftovers.
+  union_frame = pd.DataFrame(
+    {
+      'SeriesInstanceUID': list(union_map.keys()),
+      'shard_file': [v[0] for v in union_map.values()],
+      'n_slices': [v[1] for v in union_map.values()],
+    }
+  ).sort_values('SeriesInstanceUID')
+  union_frame.to_parquet(os.path.join(cache_dir, MANIFEST_NAME), index=False)
+
+  if client is None or not base_slug:
     say(
-      f'pushing dataset `{slug}` ({len(shard_names)} shards, '
-      f'{group_gib:.1f} GiB)... this upload may take a while'
+      f'HDF5 cache built LOCAL-only (remote push unavailable) at '
+      f'{cache_dir}; {cached:,} cached / {skipped:,} skipped'
     )
-    client.push_version_inplace(slug, staging)
-    _LOGGER.info('Pushed %d shard(s) to dataset %s', len(shard_names), slug)
-    pushed.append((slug, len(shard_names), group_gib))
-  summary = ', '.join(
-    f'`{slug}` ({n} shards, {gib:.1f} GiB)' for slug, n, gib in pushed
+    return
+
+  local_gb = (
+    sum(
+      os.path.getsize(os.path.join(cache_dir, n))
+      for n in os.listdir(cache_dir)
+      if n.endswith('.h5')
+    )
+    / GIB
   )
+  names_line = ', '.join(
+    f'`{slug}` ({n} {shard_word}, {gb:.2f} GiB)'
+    for slug, n, shard_word, gb in [
+      (slug, n, 'shard' if n == 1 else 'shards', gb)
+      for slug, n, gb in pushed
+    ]
+  )
+  mounts = ',\n'.join(f'/kaggle/input/{slug}' for slug, *_ in pushed)
   elapsed_min = (time.time() - started_at) / 60.0
   say(
-    f'HDF5 cache complete in {elapsed_min:.0f} min — attach these dataset(s) '
-    f'to training sessions:\n{summary}\n'
-    f'coverage: {cached:,} series cached, {skipped:,} skipped, '
-    f'{total_gib:.1f} GiB total'
+    f'HDF5 cache complete in {elapsed_min:.0f} min. Datasets pushed:\n'
+    f'{names_line}\n'
+    f'coverage: {len(union_map):,} series ({cached:,} decoded this pass, '
+    f'{skipped:,} rejected).\n'
+    f'Train-time setup: attach ALL listed datasets AND set\n'
+    f'KNEE_HDF5_CACHE_DIRS={mounts}\n'
+    f'(local leftovers: {local_gb:.2f} GiB under {cache_dir})'
   )
 
 
