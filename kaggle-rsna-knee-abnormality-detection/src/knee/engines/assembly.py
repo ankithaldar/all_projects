@@ -19,6 +19,11 @@ from knee.config_params.loader import instantiate, load_experiment
 from knee.datasets.series_dataset import SeriesReader
 from knee.datasets.study_dataset import StudyDataset
 from knee.helpers.dicom_io import DecoderRegistry
+from knee.helpers.h5_cache import (
+  H5SeriesReader,
+  find_cache_roots,
+  load_manifest,
+)
 from knee.helpers.utils import seed_everything
 
 TARGET_COLUMNS = [
@@ -67,12 +72,27 @@ def build_reader(config: dict, dicom_root: str) -> SeriesReader:
   """
   data = config['data']
   registry = DecoderRegistry(data['decode_backend_order'])
-  return SeriesReader(
+  live_reader = SeriesReader(
     dicom_root=dicom_root,
     registry=registry,
     n_slices=int(data['n_slices']),
     percentiles=tuple(data['normalize_percentiles']),
     autocrop_margin=float(data['autocrop_margin']),
+  )
+  # Volume cache (helpers.h5_cache): when a completed manifest exists on
+  # any mounted root, serve pixels from HDF5 and keep the live reader as
+  # fallback for cache misses. KNEE_HDF5_CACHE_DIRS overrides the roots;
+  # opt out with volume_cache.enabled=false in the composed config.
+  if config.get('volume_cache', {}).get('enabled', True) is False:
+    return live_reader
+  roots = find_cache_roots(config)
+  manifest = load_manifest(roots) if roots else None
+  if manifest is None:
+    return live_reader
+  return H5SeriesReader(
+    base_reader=live_reader,
+    manifest=manifest,
+    n_slices=int(data['n_slices']),
   )
 
 

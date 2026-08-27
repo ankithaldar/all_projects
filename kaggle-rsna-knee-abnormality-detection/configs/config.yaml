@@ -20,12 +20,17 @@ paths:
   artifact_dir: /kaggle/working/artifacts
   checkpoint_dir: /kaggle/working/checkpoints
   oof_dir: /kaggle/working/oof
+  # Sharded HDF5 pixel cache built by `main.py caching`; when a manifest
+  # is found under one of these roots (or KNEE_HDF5_CACHE_DIRS override)
+  # training/infer read volumes from disk instead of decoding DICOM.
+  volume_cache_dir: /kaggle/tmp/volume_cache
 
 resume:
   enabled: true
   # Kaggle Dataset slugs pushed/pulled by helpers.kaggle_io between sessions.
   index_dataset_slug: rsna-knee-mvp-index
   checkpoint_dataset_slug: rsna-knee-mvp-ckpt
+  cache_dataset_slug: rsna-knee-mvp-cache
 
 kaggle_secrets:
   username_key: KAGGLE_USERNAME
@@ -48,3 +53,12 @@ integrations:
 run:
   # Folds processed by `main.py train` in this session, in order.
   folds: [0, 1, 2, 3, 4]
+
+# HDF5 volume cache policy (helpers.h5_cache). Shards cap at 10 GiB of
+# uncompressed pixels each; gzip runs per-chunk inside the container so
+# local shard files already reflect final upload size.
+volume_cache:
+  enabled: true                  # build-cache writer + reader swap gate
+  shard_gib_cap: 10
+  gzip_level: 4
+  scan_workers: 4                # decode pool width (CPU-bound stage)
