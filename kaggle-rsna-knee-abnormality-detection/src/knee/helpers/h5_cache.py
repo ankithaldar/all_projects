@@ -28,6 +28,7 @@ closures or per-worker initializers.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor
@@ -44,6 +45,7 @@ from knee.helpers.utils import get_logger
 _LOGGER = get_logger(__name__)
 
 MANIFEST_NAME = 'cache_manifest.parquet'
+CACHE_META_NAME = 'cache_meta.json'
 SHARD_SUFFIX = '.h5'
 DEFAULT_SHARD_GIB = 10
 DEFAULT_GZIP_LEVEL = 4
@@ -145,6 +147,7 @@ class ShardWriter:
     shard_bytes_cap: int = DEFAULT_SHARD_GIB * GIB,
     gzip_level: int = DEFAULT_GZIP_LEVEL,
     on_shard_complete=None,
+    start_ordinal: int | None = None,
   ) -> None:
     """Prepare the shard directory and resume state.
 
@@ -154,6 +157,10 @@ class ShardWriter:
         shard_bytes_cap: Uncompressed bytes tolerated per shard file
             before rolling to the next one.
         gzip_level: h5py deflate level applied per chunk.
+        start_ordinal: Optional floor for shard numbering, so pipelined
+            pushes CONTINUE remote dataset sequences instead of colliding
+            with already-published ``-NNN`` versions after a session
+            restart (local dir resets, remote datasets persist).
         on_shard_complete: Optional ``callback(path)`` fired exactly once
             when a shard is closed WITH data (roll or close()). Pipelined
             consumers move/push the file inside the callback; the file
@@ -171,7 +178,10 @@ class ShardWriter:
     self.shard_name = ''
     self._bytes_in_shard = 0
     ordinals = sorted((_shard_index(n) or -1 for n in os.listdir(cache_dir)))
-    self._next_index = ordinals[-1] + 1 if ordinals else 0
+    local_next = ordinals[-1] + 1 if ordinals else 0
+    if start_ordinal is not None:
+      local_next = max(local_next, int(start_ordinal))
+    self._next_index = local_next
     self._session_uids: set[str] = set()
     self.series_written = 0
 
@@ -328,7 +338,14 @@ class ShardWriter:
     return path
 
   def _finish_active(self) -> None:
-    """Close current shard, stamp sentinel, notify consumer."""
+    """Close current shard, stamp sentinel, notify consumer, ADVANCE.
+
+    The ordinal advances here - and only here - so pipelined consumers
+    that move the shard away inside the callback leave the writer on a
+    fresh name. Reusing the ordinal would push every subsequent shard
+    into the SAME dataset slug, surfacing as endless Kaggle version
+    bumps that overwrite the previous content.
+    """
     if self._handle is None:
       return
     name = self.shard_name
@@ -344,6 +361,7 @@ class ShardWriter:
         _LOGGER.error('marker write failed for %s (%s)', name, exc)
     self._bytes_in_shard = 0
     self.shard_name = ''
+    self._next_index += 1
     if had_data and self.on_shard_complete is not None:
       self.on_shard_complete(os.path.join(self.cache_dir, name))
 
@@ -652,8 +670,34 @@ def find_cache_roots(config: dict) -> list[str]:
   return [p for p in candidates if p and os.path.isdir(p)]
 
 
+def _generation(root: str) -> dict:
+  """Read optional cache_meta.json generation stamp from a root.
+
+  Args:
+      root: Candidate cache root directory.
+
+  Returns:
+      Mapping of stamped fields; empty when absent/unreadable.
+  """
+  path = os.path.join(root, CACHE_META_NAME)
+  if not os.path.exists(path):
+    return {}
+  try:
+    with open(path, encoding='utf-8') as handle:
+      data = json.load(handle)
+    return data if isinstance(data, dict) else {}
+  except (OSError, ValueError) as exc:
+    _LOGGER.warning('unreadable %s under %s (%s)', CACHE_META_NAME, root, exc)
+    return {}
+
+
 def load_manifest(roots: list[str]) -> pd.DataFrame | None:
   """Merge manifests across roots; later roots win duplicate-UID ties.
+
+  Roots carrying ``cache_meta.json`` generation stamps are validated:
+  mismatched ``img_size`` generations would silently blend pixels of
+  different preprocessing, so conflicts are logged at ERROR (manifests
+  still merge; operators must fix the mount set).
 
   Args:
       roots: Candidate cache directories.
@@ -661,6 +705,21 @@ def load_manifest(roots: list[str]) -> pd.DataFrame | None:
   Returns:
       Merged manifest with a ``_root`` column, or None when absent.
   """
+  generations = [(_generation(root), root) for root in roots]
+  stamped = [(g, r) for g, r in generations if g]
+  if len(stamped) > 1:
+    reference, _ = stamped[0]
+    for other, root in stamped[1:]:
+      for key in ('img_size',):
+        if key in reference and key in other and reference[key] != other[key]:
+          _LOGGER.error(
+            'volume-cache generation mismatch: %s has img_size=%s but '
+            'reference %s has %s; re-push mixed shards or pin mounts',
+            root,
+            other[key],
+            stamped[0][1],
+            reference[key],
+          )
   frames: list[pd.DataFrame] = []
   for order, root in enumerate(roots):
     path = os.path.join(root, MANIFEST_NAME)
@@ -753,6 +812,7 @@ class H5SeriesReader:
 
 __all__ = [
   'H5SeriesReader',
+  'CACHE_META_NAME',
   'MANIFEST_NAME',
   'ShardWriter',
   'collect_shard_map',

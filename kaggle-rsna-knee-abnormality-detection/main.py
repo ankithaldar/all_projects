@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+import re
 import shutil
 import time
 
@@ -147,6 +148,51 @@ def _mount_roots() -> list[str]:
     else [p for pattern in _INPUT_ROOT_PATTERNS for p in glob.glob(pattern)]
   )
   return [p for p in roots if os.path.isdir(p)]
+
+
+def remote_cache_state(config: dict) -> tuple[set[str], int]:
+  """Series already cached in PUSHED cache datasets + highest ordinal.
+
+  Fragment manifests travel inside every pushed per-shard dataset, so
+  attached mounts fully describe remote coverage without any CLI calls.
+  Shard ordinals come from stored shard_file names (volume_shard_NNN),
+  independent of mount naming, letting new sessions continue the
+  sequence instead of colliding into version bumps of old shards.
+
+  Args:
+      config: Composed experiment configuration.
+
+  Returns:
+      Tuple (remote SeriesInstanceUIDs, max remote shard ordinal; -1 if
+      no fragments found).
+  """
+  roots = _mount_roots()
+  local_root = config.get('paths', {}).get('volume_cache_dir', '')
+  if local_root and local_root not in roots:
+    roots.append(local_root)
+  uids: set[str] = set()
+  max_ordinal = -1
+  for root in roots:
+    path = os.path.join(root, MANIFEST_NAME)
+    if not os.path.exists(path):
+      continue
+    try:
+      frame = pd.read_parquet(path)
+    except (OSError, ValueError) as exc:
+      _LOGGER.warning('skipping unreadable fragment %s (%s)', path, exc)
+      continue
+    uids.update(frame['SeriesInstanceUID'].astype(str))
+    for shard_name in frame['shard_file'].astype(str):
+      match = re.search(r'volume_shard_(\d+)\.h5$', shard_name)
+      if match:
+        max_ordinal = max(max_ordinal, int(match.group(1)))
+  if uids:
+    _LOGGER.info(
+      'remote cache coverage: %d series across shards up to ordinal %d',
+      len(uids),
+      max_ordinal,
+    )
+  return uids, max_ordinal
 
 
 def restore_artifacts_from_mounts(config: dict) -> list[str]:
@@ -376,8 +422,13 @@ def cmd_build_cache(config: dict) -> None:
   base_slug = str(config['resume'].get('cache_dataset_slug') or '')
   client = _client(config)
   pushed: list[tuple[str, int, float]] = []
+  staged_slugs: set[str] = set()
   if split_mode == 'shard':
     drop_unfinished_shards(cache_dir)
+  # Cross-session resume: pushed datasets already carry coverage; their
+  # fragment manifests (via attached mounts) prevent re-decoding AND the
+  # ordinal floor prevents -NNN slug collisions/version churn.
+  remote_uids, remote_max_ordinal = remote_cache_state(config)
 
   # Discord lifecycle plumbing; notifier_from_config logs LOUDLY when a
   # webhook cannot be resolved instead of degrading silently.
@@ -404,8 +455,15 @@ def cmd_build_cache(config: dict) -> None:
     if client is None or not base_slug:
       return
     name = os.path.basename(shard_path)
-    ordinal = int(name.split('_')[-1].split('.')[0])
+    ordinal = int(name.rsplit('_', maxsplit=1)[-1].split('.')[0])
     slug = f'{base_slug}-{ordinal:03d}'
+    if slug in staged_slugs:
+      raise RuntimeError(
+        f'shard ordinal regression: {slug} already staged this session '
+        '(writer reused an ordinal; shard data would overwrite a '
+        'previously pushed dataset version)'
+      )
+    staged_slugs.add(slug)
     staging = os.path.join(
       os.path.dirname(cache_dir.rstrip('/')), f'push_{slug}'
     )
@@ -444,8 +502,15 @@ def cmd_build_cache(config: dict) -> None:
     shard_bytes_cap=shard_cap,
     gzip_level=gzip_level,
     on_shard_complete=(push_shard_now if split_mode == 'shard' else None),
+    start_ordinal=(
+      remote_max_ordinal + 1
+      if split_mode == 'shard' and remote_max_ordinal >= 0
+      else None
+    ),
   )
-  existing = writer.existing_uids()
+  # Cross-session resume: remote fragments union local shards, so a
+  # fresh kernel skips everything already pushed instead of re-decoding.
+  existing = writer.existing_uids() | remote_uids
   todo = [t for t in tasks if str(t['series']) not in existing]
   total_files = sum(len(list(t['sop_uids'])) for t in todo) or None
   _LOGGER.info(
