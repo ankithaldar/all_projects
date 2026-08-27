@@ -56,6 +56,50 @@ class FakeModule:
     return [self._optimizer]
 
 
+class UnsubscriptableOptimizer:
+  """Mimics a bare non-list return: indexing it must fail loudly."""
+
+  def __init__(self, lr: float = 3e-4) -> None:
+    self.param_groups = [{'lr': lr}]
+
+  def __getitem__(self, index):  # pragma: no cover - guard assertion aid
+    raise TypeError(f'{type(self).__name__} object is not subscriptable')
+
+
+class BareModule:
+  """optimizers() returning ONE unwrapped optimizer (PL single-device)."""
+
+  def __init__(self, lr: float = 2e-4) -> None:
+    self._optimizer = UnsubscriptableOptimizer(lr)
+
+  def optimizers(self):
+    return self._optimizer
+
+
+class WrapperOnlyOptimizer:
+  """No param_groups; mirrors LightningOptimizer's wrapper surface."""
+
+  def __init__(self, inner) -> None:
+    self.optimizer = inner
+
+
+class WrappedModule:
+  """optimizers() returning one Lightning-wrapped optimizer."""
+
+  def __init__(self, lr: float = 1.5e-4) -> None:
+    self._inner = UnsubscriptableOptimizer(lr)
+
+  def optimizers(self):
+    return WrapperOnlyOptimizer(self._inner)
+
+
+class BrokenModule:
+  """optimizers() raising — LR probe must swallow and degrade."""
+
+  def optimizers(self):
+    raise RuntimeError('not configured')
+
+
 @pytest.fixture()
 def callback() -> tuple[DiscordCallback, FakeNotifier]:
   notifier = FakeNotifier()
@@ -104,6 +148,41 @@ def test_heartbeat_includes_lr_and_skips_step_zero(callback):
   assert notifier.messages == []
   _post_batch(cb, trainer, 50)
   assert 'lr `2.50e-04`' in notifier.messages[0]
+
+
+def test_lr_probe_survives_all_lightning_optimizer_shapes(callback):
+  """Regression: bare/wrapped/raising optimizers must not crash training.
+
+  Lightning returns a single LightningOptimizer (unsubscriptable!) in
+  single-device runs; the probe previously died on ``items[0]`` and
+  took training down with it at every heartbeat step.
+  """
+  cb, notifier = callback
+  for module in (BareModule(), WrappedModule(), BrokenModule()):
+    trainer = FakeTrainer(metrics={'train/loss': 0.5})
+    trainer.global_step = 50  # heartbeat fires on non-zero multiples
+    cb.on_train_batch_end(trainer, module, None, None, 0)
+  assert all('lr `' in m or 'train_loss' in m for m in notifier.messages)
+  # Bare and wrapped shapes still surface a numeric lr; broken degrades.
+  lr_lines = [m for m in notifier.messages if 'lr `' in m]
+  assert len(lr_lines) >= 2
+  assert any('1.50e-04' in line for line in lr_lines)  # wrapped inner
+  assert any('2.00e-04' in line for line in lr_lines)  # bare optimizer
+
+
+def test_lr_probe_tolerates_empty_lists(callback):
+  class EmptyModule:
+    def optimizers(self):
+      return []
+
+  cb, notifier = callback
+  trainer = FakeTrainer(metrics={'train/loss': 0.25})
+  cb.on_train_batch_end(trainer, EmptyModule(), None, None, 49)
+  assert notifier.messages == []  # not an interval multiple yet
+  trainer.global_step = 50
+  cb.on_train_batch_end(trainer, EmptyModule(), None, None, 0)
+  assert 'lr' not in notifier.messages[0]
+  assert 'train_loss `0.2500`' in notifier.messages[0]
 
 
 def test_validation_epoch_reports_macro_auc(callback):
