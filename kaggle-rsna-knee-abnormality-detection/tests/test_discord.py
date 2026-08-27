@@ -6,9 +6,15 @@
 # signatures are exercised directly and fixtures shadow module names.
 # pylint: disable=protected-access,redefined-outer-name
 
+import json
+
 import pytest
 
-from knee.loggers.discord_logger import DiscordCallback, DiscordNotifier
+from knee.loggers.discord_logger import (
+  DiscordCallback,
+  DiscordNotifier,
+  notifier_from_config,
+)
 
 
 class FakeNotifier(DiscordNotifier):
@@ -224,3 +230,59 @@ def test_lifecycle_messages_flow_through_notifier(callback):
   assert 'training started' in notifier.messages[0]
   assert 'CRASH' in notifier.messages[1]
   assert 'ValueError' in notifier.messages[1]
+
+
+class TestRealDispatch:
+  """Loopback HTTP proves transport end-to-end through requests."""
+
+  def test_posts_reach_webhook(self, monkeypatch):
+    import http.server
+    import threading
+
+    delivered: list[str] = []
+
+    class Sink(http.server.BaseHTTPRequestHandler):
+      def do_POST(self):  # noqa: N802 (stdlib naming)
+        body = self.rfile.read(int(self.headers['Content-Length']))
+        delivered.append(json.loads(body)['content'])
+        self.send_response(204)
+        self.end_headers()
+
+      def log_message(self, *args):
+        del args
+
+    try:
+      server = http.server.HTTPServer(('127.0.0.1', 0), Sink)
+    except OSError:
+      pytest.skip('loopback unavailable')
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv('DISCORD_WEBHOOK_URL', f'http://127.0.0.1:{port}/x')
+    try:
+      config = {
+        'integrations': {
+          'discord': {'enabled': True, 'webhook_secret': 'DISCORD_WEBHOOK_URL'}
+        }
+      }
+      live = notifier_from_config(config)
+      assert live.enabled
+      assert live.notify('**[exp]** cache: started building HDF5')
+      assert live.notify('step line')
+      server.shutdown()
+    finally:
+      pass
+    assert any('started building HDF5' in m for m in delivered)
+    assert '**[exp]** cache:' in delivered[0]
+
+  def test_unresolved_secret_is_loud_and_disabled(self, caplog, monkeypatch):
+    from knee.loggers import discord_logger as dl
+
+    monkeypatch.delenv('DISCORD_WEBHOOK_URL', raising=False)
+    monkeypatch.setattr(dl, 'get_secret', lambda *a, **k: None)
+    with caplog.at_level('WARNING'):
+      notifier = dl.notifier_from_config(
+        {'integrations': {'discord': {'enabled': True}}}
+      )
+    assert not notifier.enabled
+    assert 'will NOT be sent' in caplog.text
+    assert 'DISCORD_WEBHOOK_URL' in caplog.text

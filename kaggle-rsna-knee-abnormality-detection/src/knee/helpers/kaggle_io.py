@@ -288,8 +288,16 @@ class KaggleDatasetClient:
         slug: Target slug; created when absent.
         folder: Directory holding ONLY files meant for the dataset.
             Callers must have moved/linked their shards into a
-            dedicated staging directory beforehand.
+            dedicated             staging directory beforehand.
     """
+    # Metadata carries the FULL owner/name id, so credentials must be
+    # resolved before the first _run() would lazily apply them; cache
+    # pushes are otherwise the first client call of a session and
+    # crashed with 'Cannot qualify dataset slug'.
+    try:
+      self._credentials.apply()
+    except RuntimeError as exc:
+      _LOGGER.warning('credential apply during push failed: %s', exc)
     self._write_metadata(
       folder, self._full_slug(slug), title=slug.rsplit('/', 1)[-1]
     )

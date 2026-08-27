@@ -70,6 +70,71 @@ def _shard_index(name: str) -> int | None:
 # --------------------------------------------------------------------------- #
 
 
+def completed_shards(cache_dir: str) -> list[str]:
+  """Basenames of shards safe to trust as fully written.
+
+  A zero-byte ``<name>.complete`` sentinel marks a finished shard. When
+  the directory predates the marker protocol (no sentinels at all),
+  every ``.h5`` is treated complete so older builds stay readable.
+
+  Args:
+      cache_dir: Directory containing volume_shard_*.h5 files.
+
+  Returns:
+      Sorted completed basenames.
+  """
+  entries = sorted(os.listdir(cache_dir))
+  shards = [n for n in entries if n.endswith(SHARD_SUFFIX)]
+  marked = {
+    n[: -len('.complete')]
+    for n in entries
+    if n.endswith(SHARD_SUFFIX + '.complete')
+  }
+  if any(marked):
+    complete = [n for n in shards if n in marked]
+    unfinished = [n for n in shards if n not in marked]
+    if unfinished:
+      _LOGGER.warning(
+        'ignoring %d unfinished shard(s): %s',
+        len(unfinished),
+        unfinished[:5],
+      )
+    return complete
+  # Legacy layout without the marker protocol.
+  return shards
+
+
+def drop_unfinished_shards(cache_dir: str) -> list[str]:
+  """Delete partial tail shards left by a killed run before resuming.
+
+  Only meaningful once at least one markered shard proves the protocol;
+  otherwise legacy layouts return untouched.
+
+  Args:
+      cache_dir: Shard directory.
+
+  Returns:
+      Basenames actually removed.
+  """
+  removed = []
+  entries = os.listdir(cache_dir)
+  protocol = any(n.endswith(SHARD_SUFFIX + '.complete') for n in entries)
+  if not protocol:
+    return []
+  for name in entries:
+    if name.endswith(SHARD_SUFFIX + '.complete'):
+      continue
+    if name.endswith(SHARD_SUFFIX) and (f'{name}.complete' not in entries):
+      try:
+        os.remove(os.path.join(cache_dir, name))
+        removed.append(name)
+      except OSError as exc:
+        _LOGGER.warning('could not remove %s (%s)', name, exc)
+  if removed:
+    _LOGGER.info('dropped unfinished shard(s) %s', removed)
+  return removed
+
+
 class ShardWriter:
   """Rolling HDF5 shard writer capped by uncompressed byte accounting."""
 
@@ -79,6 +144,7 @@ class ShardWriter:
     img_size: int,
     shard_bytes_cap: int = DEFAULT_SHARD_GIB * GIB,
     gzip_level: int = DEFAULT_GZIP_LEVEL,
+    on_shard_complete=None,
   ) -> None:
     """Prepare the shard directory and resume state.
 
@@ -88,12 +154,19 @@ class ShardWriter:
         shard_bytes_cap: Uncompressed bytes tolerated per shard file
             before rolling to the next one.
         gzip_level: h5py deflate level applied per chunk.
+        on_shard_complete: Optional ``callback(path)`` fired exactly once
+            when a shard is closed WITH data (roll or close()). Pipelined
+            consumers move/push the file inside the callback; the file
+            must be relocated synchronously because the writer may reuse
+            its ordinal slot only after a successful marker rename (see
+            :func:`finalize_shard`).
     """
     os.makedirs(cache_dir, exist_ok=True)
     self.cache_dir = cache_dir
     self.img_size = img_size
     self.shard_bytes_cap = int(shard_bytes_cap)
     self.gzip_level = gzip_level
+    self.on_shard_complete = on_shard_complete
     self._handle: h5py.File | None = None
     self.shard_name = ''
     self._bytes_in_shard = 0
@@ -124,9 +197,7 @@ class ShardWriter:
         Set of SeriesInstanceUIDs present in any readable shard.
     """
     found: set[str] = set()
-    for name in sorted(os.listdir(self.cache_dir)):
-      if not name.endswith(SHARD_SUFFIX):
-        continue
+    for name in completed_shards(self.cache_dir):
       try:
         with h5py.File(os.path.join(self.cache_dir, name), 'r') as handle:
           found.update(handle.keys())
@@ -157,26 +228,30 @@ class ShardWriter:
       self._bytes_in_shard + incoming_bytes <= self.shard_bytes_cap
     ):
       return
-    if self._handle is not None:
-      self._handle.close()
+    self._finish_active()
+    while os.path.exists(self._current_path()) and (
+      f'{os.path.basename(self._current_path())}.complete'
+      in os.listdir(self.cache_dir)
+      or self._uncompressed_size(os.path.basename(self._current_path())) == 0
+    ):
       self._next_index += 1
 
-    newest = f'volume_shard_{self._next_index - 1:03d}.h5'
-    newest_path = os.path.join(self.cache_dir, newest)
-    if self.shard_name == '' and os.path.exists(newest_path):
-      used = self._uncompressed_size(newest)
-      if 0 < used + incoming_bytes <= self.shard_bytes_cap:
-        # Resume into the partial newest shard.
-        self.shard_name = newest
-        self._bytes_in_shard = used
-      else:
-        while os.path.exists(self._current_path()):
-          self._next_index += 1
-        self.shard_name = os.path.basename(self._current_path())
-        self._bytes_in_shard = 0
-    elif not self.shard_name:
-      while os.path.exists(self._current_path()):
-        self._next_index += 1
+    if self.shard_name == '':
+      # First open: resume into a non-empty, UNMARKED newest tail shard
+      # when it still has room (a crashed run's partial output).
+      newest = f'volume_shard_{self._next_index - 1:03d}.h5'
+      newest_marker = f'{newest}.complete'
+      newest_path = os.path.join(self.cache_dir, newest)
+      if (
+        self._next_index > 0
+        and os.path.exists(newest_path)
+        and not os.path.exists(newest_marker)
+      ):
+        used = self._uncompressed_size(newest)
+        if 0 < used and used + incoming_bytes <= self.shard_bytes_cap:
+          self.shard_name = newest
+          self._bytes_in_shard = used
+    if not self.shard_name:
       self.shard_name = os.path.basename(self._current_path())
       self._bytes_in_shard = 0
     self._handle = h5py.File(os.path.join(self.cache_dir, self.shard_name), 'a')
@@ -252,11 +327,29 @@ class ShardWriter:
     frame.to_parquet(path, index=False)
     return path
 
+  def _finish_active(self) -> None:
+    """Close current shard, stamp sentinel, notify consumer."""
+    if self._handle is None:
+      return
+    name = self.shard_name
+    had_data = self._bytes_in_shard > 0
+    self._handle.close()
+    self._handle = None
+    if had_data:
+      try:
+        marker = os.path.join(self.cache_dir, f'{name}.complete')
+        with open(marker, 'w', encoding='utf-8') as handle:
+          handle.close()
+      except OSError as exc:
+        _LOGGER.error('marker write failed for %s (%s)', name, exc)
+    self._bytes_in_shard = 0
+    self.shard_name = ''
+    if had_data and self.on_shard_complete is not None:
+      self.on_shard_complete(os.path.join(self.cache_dir, name))
+
   def close(self) -> None:
-    """Flush/close the currently open shard."""
-    if self._handle is not None:
-      self._handle.close()
-      self._handle = None
+    """Finalize the active shard (markers + consumer callback apply)."""
+    self._finish_active()
 
   def __enter__(self) -> 'ShardWriter':
     return self
@@ -275,9 +368,7 @@ def collect_shard_map(cache_dir: str) -> dict[str, tuple[str, int]]:
       Mapping covering every series present in readable shards.
   """
   mapping: dict[str, tuple[str, int]] = {}
-  for name in sorted(os.listdir(cache_dir)):
-    if not name.endswith(SHARD_SUFFIX):
-      continue
+  for name in completed_shards(cache_dir):
     try:
       with h5py.File(os.path.join(cache_dir, name), 'r') as handle:
         for key, dataset in handle.items():
@@ -665,7 +756,9 @@ __all__ = [
   'MANIFEST_NAME',
   'ShardWriter',
   'collect_shard_map',
+  'completed_shards',
   'decode_series_volume',
+  'drop_unfinished_shards',
   'find_cache_roots',
   'load_manifest',
   'run_pool_tasks',

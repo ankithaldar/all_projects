@@ -83,6 +83,11 @@ class DiscordNotifier:
 def notifier_from_config(config: dict) -> DiscordNotifier:
   """Build a notifier from the composed experiment configuration.
 
+  Resolution failures are deliberately LOUD: training has been burned
+  by silent no-op notifiers (symptom: zero Discord messages while runs
+  progress normally). Reasons are logged at WARNING so kernel logs and
+  notebook scrollback surface them even when nothing ever posts.
+
   Args:
       config: Configuration containing ``integrations.discord`` with keys
           ``enabled`` and ``webhook_secret``.
@@ -91,7 +96,18 @@ def notifier_from_config(config: dict) -> DiscordNotifier:
       Configured DiscordNotifier (disabled when secret resolution fails).
   """
   discord_cfg = config.get('integrations', {}).get('discord', {})
-  url = get_secret(discord_cfg.get('webhook_secret', 'DISCORD_WEBHOOK_URL'))
+  secret_name = discord_cfg.get('webhook_secret', 'DISCORD_WEBHOOK_URL')
+  url = get_secret(secret_name)
+  if not discord_cfg.get('enabled'):
+    _LOGGER.info('Discord integration OFF: integrations.discord.enabled=false')
+    return DiscordNotifier(webhook_url=None, enabled=False)
+  if not url:
+    _LOGGER.warning(
+      'Discord notifications will NOT be sent: webhook secret %r '
+      'resolved empty across os.environ / .env / Kaggle User Secrets',
+      secret_name,
+    )
+    return DiscordNotifier(webhook_url=None, enabled=True)
   return DiscordNotifier(
     webhook_url=url, enabled=bool(discord_cfg.get('enabled'))
   )

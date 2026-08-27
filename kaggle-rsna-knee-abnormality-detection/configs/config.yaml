@@ -20,17 +20,20 @@ paths:
   artifact_dir: /kaggle/working/artifacts
   checkpoint_dir: /kaggle/working/checkpoints
   oof_dir: /kaggle/working/oof
-  # Sharded HDF5 pixel cache built by `main.py caching`; when a manifest
-  # is found under one of these roots (or KNEE_HDF5_CACHE_DIRS override)
-  # training/infer read volumes from disk instead of decoding DICOM.
-  volume_cache_dir: /kaggle/tmp/volume_cache
+  # Sharded HDF5 pixel cache built by `main.py build-cache`. Split
+  # 'shard' pushes each finished shard as its own dataset from the
+  # completion callback (peak disk ~2 shards), fitting the mandated
+  # /kaggle/working/build_cache path; 'group' accumulates then splits.
+  volume_cache_dir: /kaggle/working/build_cache
 
 resume:
   enabled: true
   # Kaggle Dataset slugs pushed/pulled by helpers.kaggle_io between sessions.
   index_dataset_slug: rsna-knee-mvp-index
   checkpoint_dataset_slug: rsna-knee-mvp-ckpt
-  cache_dataset_slug: rsna-knee-mvp-cache
+  # Volume cache base name: shard mode appends -000/-001/... per shard;
+  # fully-qualified owner/name values pass through unchanged.
+  cache_dataset_slug: ah2002-rsna-knee-abnormality-detection-cache
 
 kaggle_secrets:
   username_key: KAGGLE_USERNAME
@@ -59,6 +62,8 @@ run:
 # local shard files already reflect final upload size.
 volume_cache:
   enabled: true                  # build-cache writer + reader swap gate
+  split_mode: shard              # shard => per-shard datasets <base>-NNN
   shard_gib_cap: 10
   gzip_level: 4
   scan_workers: 4                # decode pool width (CPU-bound stage)
+  discord_files_every: 10000     # heartbeat cadence in DICOM frames
