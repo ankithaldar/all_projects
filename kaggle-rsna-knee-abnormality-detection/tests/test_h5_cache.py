@@ -332,10 +332,17 @@ class TestShardMarkers:
       gzip_level=0,
       on_shard_complete=consume,
     )
-    for i in range(2):
+    for i in range(3):
       w.add_series(f'u{i}', 's', _volume(i, img=4)[:, :3])
     w.close()
-    assert len(moved) == 2  # both shards finalized + relocated
+    # REGRESSION: ordinals must ADVANCE under a moving consumer; ordinal
+    # reuse made every shard push into the SAME dataset slug, surfacing
+    # as endless Kaggle version bumps that overwrote prior content.
+    assert moved == [
+      'volume_shard_000.h5',
+      'volume_shard_001.h5',
+      'volume_shard_002.h5',
+    ]
     assert not (tmp_path / 'build' / 'volume_shard_000.h5').exists()
 
 
@@ -426,3 +433,75 @@ class TestArtifactRestore:
     monkeypatch.setenv('KNEE_INPUT_ROOTS', str(tmp_path / 'absent'))
     config = {'paths': {'artifact_dir': str(tmp_path / 'a')}}
     assert restore_artifacts_from_mounts(config) == []
+
+
+class TestCrossSessionResume:
+  """Reruns must consult PUSHED datasets, not just the local build dir."""
+
+  def test_start_ordinal_continues_remote_sequence(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    # Emulate session restart: local dir fresh, floor from remote state.
+    w = hc.ShardWriter(
+      str(tmp_path / 'build'),
+      img_size=8,
+      gzip_level=0,
+      start_ordinal=5,
+    )
+    w.add_series('u', 's', _volume(0, img=8))
+    w.close()
+    assert (tmp_path / 'build' / 'volume_shard_005.h5').exists()
+
+  def test_remote_cache_state_parses_fragments(self, tmp_path, monkeypatch):
+    import main as m
+
+    frag = (
+      tmp_path / 'input' / 'ah2002-rsna-knee-abnormality-detection-cache-000'
+    )
+    frag.mkdir(parents=True)
+    pd.DataFrame(
+      {
+        'SeriesInstanceUID': ['a', 'b'],
+        'shard_file': ['volume_shard_000.h5'] * 2,
+        'n_slices': [4, 4],
+      }
+    ).to_parquet(frag / 'cache_manifest.parquet', index=False)
+    frag2 = (
+      tmp_path / 'input' / 'ah2002-rsna-knee-abnormality-detection-cache-003'
+    )
+    frag2.mkdir(parents=True)
+    pd.DataFrame(
+      {
+        'SeriesInstanceUID': ['c'],
+        'shard_file': ['volume_shard_003.h5'],
+        'n_slices': [7],
+      }
+    ).to_parquet(frag2 / 'cache_manifest.parquet', index=False)
+
+    monkeypatch.setenv('KNEE_INPUT_ROOTS', f'{frag}:{frag2}')
+    uids, max_ord = m.remote_cache_state(
+      {'paths': {'artifact_dir': str(tmp_path / 'art')}}
+    )
+    assert uids == {'a', 'b', 'c'}
+    assert max_ord == 3
+
+  def test_generation_mismatch_is_loud(self, tmp_path, caplog):
+    import knee.helpers.h5_cache as hc
+
+    root_a, root_b = tmp_path / 'a', tmp_path / 'b'
+    root_a.mkdir()
+    root_b.mkdir()
+    (root_a / hc.CACHE_META_NAME).write_text(json.dumps({'img_size': 384}))
+    (root_b / hc.CACHE_META_NAME).write_text(json.dumps({'img_size': 512}))
+    for root, uids in ((root_a, {'x'}), (root_b, {'y'})):
+      w = hc.ShardWriter(str(root), img_size=8, gzip_level=0)
+      for uid in uids:
+        w.add_series(uid, 's', _volume(0, img=8))
+      w.close()
+      w.write_manifest()
+
+    with caplog.at_level('ERROR'):
+      merged = hc.load_manifest([str(root_a), str(root_b)])
+    assert merged is not None and len(merged) == 2
+    assert 'generation mismatch' in caplog.text
+    assert 'img_size=512' in caplog.text
