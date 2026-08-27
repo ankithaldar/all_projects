@@ -7,6 +7,7 @@ never blocking or crashing the run), and :class:`DiscordCallback` maps
 Lightning lifecycle events onto concise experiment updates:
 
 * fit start  -> fold/experiment banner
+* every N optimizer steps -> live train-loss / lr heartbeat
 * epoch end  -> macro-AUC progress line
 * train end  -> completion + duration + best metric
 * exception  -> truncated traceback
@@ -104,6 +105,7 @@ class DiscordCallback(Callback):
     notifier: DiscordNotifier,
     experiment_name: str,
     fold_id: int,
+    step_interval: int = 50,
   ) -> None:
     """Bind the callback to one fold's context.
 
@@ -111,11 +113,14 @@ class DiscordCallback(Callback):
         notifier: Shared transport instance.
         experiment_name: Human-readable experiment label.
         fold_id: Fold handled by the active trainer.
+        step_interval: Post a metrics heartbeat every this many optimizer
+            steps (``trainer.global_step``, accumulation-aware).
     """
     super().__init__()
     self.notifier = notifier
     self.experiment_name = experiment_name
     self.fold_id = fold_id
+    self.step_interval = max(1, int(step_interval))
     self._fit_start = 0.0
 
   def on_fit_start(
@@ -133,6 +138,61 @@ class DiscordCallback(Callback):
       f'**[{self.experiment_name}]** fold {self.fold_id}: training started'
     )
 
+  @staticmethod
+  def _current_lr(pl_module: pl.LightningModule) -> float | None:
+    """Read the live learning rate from the first optimizer group.
+
+    Args:
+        pl_module: Active module.
+
+    Returns:
+        Learning rate, or None when no optimizer/param-group exists yet.
+    """
+    optimizers = getattr(pl_module, 'optimizers', None)
+    if not callable(optimizers):
+      return None
+    optimizer_list = optimizers() or []
+    if not optimizer_list:
+      return None
+    groups = getattr(optimizer_list[0], 'param_groups', [])
+    lr = groups[0].get('lr') if groups else None
+    return float(lr) if lr is not None else None
+
+  def on_train_batch_end(
+    self,
+    trainer: pl.Trainer,
+    pl_module: pl.LightningModule,
+    outputs: dict | None,
+    batch: object,
+    batch_idx: int,
+  ) -> None:
+    """Post a heartbeat with train loss/lr every ``step_interval`` steps.
+
+    Uses ``trainer.global_step`` so gradient accumulation is honored:
+    the counter only advances on real optimizer updates.
+
+    Args:
+        trainer: Active trainer.
+        pl_module: Active module.
+        outputs: Step output (unused; loss comes from callback_metrics).
+        batch: Current batch (unused).
+        batch_idx: Index of the batch within the epoch (unused).
+    """
+    del outputs, batch, batch_idx
+    step = int(trainer.global_step)
+    if step == 0 or step % self.step_interval != 0:
+      return
+    loss = trainer.callback_metrics.get('train/loss')
+    parts = [f'step {step} (epoch {trainer.current_epoch})']
+    if loss is not None:
+      parts.append(f'train_loss `{float(loss):.4f}`')
+    lr = self._current_lr(pl_module)
+    if lr is not None:
+      parts.append(f'lr `{lr:.2e}`')
+    self.notifier.notify(
+      f'**[{self.experiment_name}]** fold {self.fold_id}: ' + ', '.join(parts)
+    )
+
   def on_validation_epoch_end(
     self,
     trainer: pl.Trainer,
@@ -145,12 +205,41 @@ class DiscordCallback(Callback):
         pl_module: Active module.
     """
     del pl_module
+    if trainer.sanity_checking:
+      return
     macro = trainer.callback_metrics.get('val/auc_macro')
     if macro is None:
       return
     self.notifier.notify(
       f'**[{self.experiment_name}]** fold {self.fold_id} '
       f'epoch {trainer.current_epoch}: macro-AUC `{macro:.4f}`'
+    )
+
+  def on_train_epoch_end(
+    self,
+    trainer: pl.Trainer,
+    pl_module: pl.LightningModule,
+  ) -> None:
+    """Fallback epoch-end ping when validation did not report this epoch.
+
+    Fires only when no macro-AUC message was just emitted by
+    :meth:`on_validation_epoch_end`, keeping exactly one Discord line per
+    completed epoch.
+
+    Args:
+        trainer: Active trainer.
+        pl_module: Active module.
+    """
+    del pl_module
+    if trainer.sanity_checking:
+      return
+    if 'val/auc_macro' in trainer.callback_metrics:
+      return
+    loss = trainer.callback_metrics.get('train/loss')
+    detail = f', train_loss `{float(loss):.4f}`' if loss is not None else ''
+    self.notifier.notify(
+      f'**[{self.experiment_name}]** fold {self.fold_id} '
+      f'epoch {trainer.current_epoch} complete{detail}'
     )
 
   def on_train_end(

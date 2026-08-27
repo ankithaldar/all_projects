@@ -98,7 +98,9 @@ def _client(config: dict) -> KaggleDatasetClient | None:
   )
 
 
-def _artifact_sync(config: dict, client: KaggleDatasetClient | None) -> ArtifactSync:
+def _artifact_sync(
+  config: dict, client: KaggleDatasetClient | None
+) -> ArtifactSync:
   """Build the sync helper for the small data-stage artifacts.
 
   Args:
@@ -284,6 +286,11 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
           notifier=discord_notifier,
           experiment_name=config['experiment']['name'],
           fold_id=current_fold,
+          step_interval=int(
+            config.get('integrations', {})
+            .get('discord', {})
+            .get('every_n_steps', 50)
+          ),
         )
       )
     loggers = [
