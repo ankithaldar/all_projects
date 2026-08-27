@@ -9,6 +9,7 @@
 #   index   Header-only DICOM scan -> index.parquet
 #   labels  Rule-based pseudo-labels -> labels_pseudo.csv
 #   folds   StratifiedGroupKFold assignment -> folds.csv
+#   cache   Decode every indexed series -> sharded HDF5 volume dataset(s)
 #   train   Resume-aware fold training (session-budget + checkpoint push).
 #   infer   Fold-ensemble prediction -> submission.csv
 #   all     index -> labels -> folds (train/infer run per-session instead)
@@ -63,6 +64,9 @@ case "${STAGE}" in
   index|labels|folds)
     # Short user-facing names map to main.py subcommands.
     run_stage "build-${STAGE}" "$@"
+    ;;
+  cache)
+    run_stage "build-cache" "$@"
     ;;
   train|infer)
     run_stage "${STAGE}" "$@"

@@ -275,6 +275,52 @@ class KaggleDatasetClient:
     finally:
       shutil.rmtree(staged, ignore_errors=True)
 
+  def push_version_inplace(self, slug: str, folder: str) -> None:
+    """Version a directory by writing metadata directly into it.
+
+    :meth:`push_version` stages a full copy of the payload, which is
+    impossible for multi-gigabyte volume caches (disk would double).
+    Here dataset-metadata.json lives inside ``folder`` itself; the CLI
+    then zips the directory in place. The file is left behind, making
+    re-pushes idempotent.
+
+    Args:
+        slug: Target slug; created when absent.
+        folder: Directory holding ONLY files meant for the dataset.
+            Callers must have moved/linked their shards into a
+            dedicated staging directory beforehand.
+    """
+    self._write_metadata(
+      folder, self._full_slug(slug), title=slug.rsplit('/', 1)[-1]
+    )
+    if not self.dataset_exists(slug):
+      _LOGGER.info('Dataset %s missing; creating from %s', slug, folder)
+      self._run(
+        [
+          'kaggle',
+          'datasets',
+          'create',
+          '-p',
+          folder,
+          '--dir-mode',
+          'zip',
+        ]
+      )
+      return
+    self._run(
+      [
+        'kaggle',
+        'datasets',
+        'version',
+        '-p',
+        folder,
+        '--dir-mode',
+        'zip',
+        '-m',
+        f'auto-version {int(time.time())}',
+      ]
+    )
+
   def push_version(self, slug: str, folder: str) -> None:
     """Publish folder contents as a new immutable dataset version.
 
