@@ -37,6 +37,7 @@ integrations:
   discord:
     enabled: true
     webhook_secret: DISCORD_WEBHOOK_URL
+    every_n_steps: 50              # heartbeat cadence (optimizer steps)
   wandb:
     enabled: true
     project: rsna-knee-mvp
