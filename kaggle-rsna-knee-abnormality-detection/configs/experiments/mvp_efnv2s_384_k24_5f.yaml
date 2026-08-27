@@ -36,10 +36,11 @@ override:
   series_selection:
     max_series_per_study: 4
 
-  # 14.5 GB T4 budget: batch_size 2 x 4 series x 24 slices = 192 images
-  # per step, split into chunked backbone passes with activation
+  # 14.5 GB T4 budget: batch_size 3 x 4 series x 24 slices = 288 images
+  # per pass, split into chunked backbone passes with activation
   # checkpointing; accumulate_grad_batches keeps the effective step at
-  # 8 studies (matches BLUEPRINT Section 8 throughput assumptions).
+  # 12 studies. num_workers is per-DDP-process: 2 processes x 2 workers
+  # saturates Kaggle's 4 vCPUs without decoder thrash.
   model:
     init_params:
       grad_checkpointing: true
@@ -51,4 +52,5 @@ override:
 
   datamodule:
     init_params:
-      batch_size: 2
+      batch_size: 3
+      num_workers: 2
