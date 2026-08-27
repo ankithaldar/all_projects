@@ -28,9 +28,11 @@ closures or per-worker initializers.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
+import shutil
 from concurrent.futures import ProcessPoolExecutor
 
 import cv2
@@ -649,6 +651,74 @@ def run_pool_tasks(
 # --------------------------------------------------------------------------- #
 
 
+INPUT_ROOT_PATTERNS = (
+  '/kaggle/input/datasets/*/*',  # observed: datasets/<owner>/<slug>
+  '/kaggle/input/*',  # legacy flat dataset mounts
+)
+
+
+def mount_roots() -> list[str]:
+  """Directories that may contain attached Kaggle dataset artifacts.
+
+  KNEE_INPUT_ROOTS (colon-separated) overrides the default /kaggle/input
+  patterns - the same convention main.py uses for artifact restoration -
+  which also keeps this testable outside Kaggle.
+
+  Returns:
+      Existing directory paths (unordered).
+  """
+  raw = os.environ.get('KNEE_INPUT_ROOTS')
+  tops = (
+    [p for p in raw.split(':') if p]
+    if raw
+    else [p for pattern in INPUT_ROOT_PATTERNS for p in glob.glob(pattern)]
+  )
+  # Descend ONE level: KNEE_INPUT_ROOTS may point at a parent (e.g.
+  # /kaggle/input/datasets/<owner>) while datasets sit directly below.
+  # Non-dataset children are harmless - callers filter by content.
+  roots: list[str] = []
+  for top in tops:
+    if not os.path.isdir(top):
+      continue
+    roots.append(top)
+    try:
+      roots.extend(e.path for e in os.scandir(top) if e.is_dir())
+    except OSError:
+      pass
+  return roots
+
+
+def materialize_root(root: str, working_base: str) -> str:
+  """Copy a mounted cache root under the working dir (opt-in).
+
+  Direct FUSE reads are the default; copying is only worthwhile when a
+  caller observes mount latency and has disk headroom. Existing complete
+  copies (manifest present) are reused, never re-copied.
+
+  Args:
+      root: Source directory containing a manifest + shards.
+      working_base: Destination base directory created when absent.
+
+  Returns:
+      The copy path on success, or the original root when copying is
+      unnecessary or impossible.
+  """
+  os.makedirs(working_base, exist_ok=True)
+  dest = os.path.join(working_base, os.path.basename(root.rstrip('/')))
+  marker = os.path.join(dest, MANIFEST_NAME)
+  if os.path.exists(marker):
+    return dest
+  try:
+    shutil.copytree(root, dest, dirs_exist_ok=True)
+    _LOGGER.info('copied cache mount %s -> %s', root, dest)
+    return dest
+  except (OSError, shutil.Error) as exc:
+    _LOGGER.warning(
+      'copying cache mount %s failed (%s); reading from mount', root, exc
+    )
+    return root
+
+
 def find_cache_roots(config: dict) -> list[str]:
   """Resolve directories that may host shards+manifest.
 
@@ -662,12 +732,49 @@ def find_cache_roots(config: dict) -> list[str]:
       Existing directory paths, possibly empty.
   """
   raw = os.environ.get('KNEE_HDF5_CACHE_DIRS')
-  candidates = (
-    [p for p in raw.split(':') if p]
-    if raw
-    else [config['paths'].get('volume_cache_dir', '')]
-  )
-  return [p for p in candidates if p and os.path.isdir(p)]
+  ordered: list[str] = []
+  if raw:
+    # Explicit override wins and disables discovery entirely.
+    ordered.extend(p for p in raw.split(':') if p)
+  else:
+    # Auto-discover attached cache datasets (e.g. the twelve
+    # ah2002-rsna-knee-abnormality-detection-cache-NNN mounts). A mount
+    # qualifies ONLY when it carries the fragment manifest, so artifact
+    # datasets like rsna-knee-mvp-index never masquerade as cache roots.
+    for mount in sorted(mount_roots()):
+      if os.path.exists(os.path.join(mount, MANIFEST_NAME)):
+        ordered.append(mount)
+    local = config.get('paths', {}).get('volume_cache_dir', '')
+    if local:
+      # Local build dir LAST: load_manifest gives later roots tie-break
+      # priority, and fresh local shards are the newest generation.
+      ordered.append(local)
+  mount_set = set(mount_roots())
+  seen: set[str] = set()
+  roots: list[str] = []
+  cache_cfg = config.get('volume_cache', {})
+  copy_flag = str(os.environ.get('KNEE_CACHE_COPY', '')).lower() in (
+    '1',
+    'true',
+  ) or bool(cache_cfg.get('copy_mounts_to_working'))
+  for path in ordered:
+    if not path or path in seen or not os.path.isdir(path):
+      continue
+    seen.add(path)
+    if copy_flag and path in mount_set:
+      # Only COPIED for discovered/attached mounts; the local build dir
+      # is already writable and stays in place.
+      working_base = os.path.join(
+        config.get('paths', {}).get('artifact_dir', '/kaggle/working'),
+        'cache_roots',
+      )
+      path = materialize_root(path, working_base)
+      if path in seen:
+        continue
+    roots.append(path)
+  if roots:
+    _LOGGER.info('cache roots resolved: %s', roots)
+  return roots
 
 
 def _generation(root: str) -> dict:

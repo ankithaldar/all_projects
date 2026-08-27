@@ -1,0 +1,16 @@
+# Run artifacts written by training/stage runs inside the repo dir.
+checkpoints/
+artifacts/
+oof/
+logs/
+build_cache/
+push_*/
+*.ckpt
+*.pth
+
+# Caches & local env
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env

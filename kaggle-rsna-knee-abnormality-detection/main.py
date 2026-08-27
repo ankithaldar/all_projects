@@ -23,6 +23,7 @@ import glob
 import os
 import re
 import shutil
+import sys
 import time
 
 import pandas as pd
@@ -40,6 +41,7 @@ from knee.engines.assembly import (
   fold_done,
 )
 from knee.engines.inferencer import predict_studies, write_submission
+from knee.engines.selftest import render_summary, run_selftest
 from knee.engines.train_module import KneeModule
 from knee.helpers.folds import make_folds, resolve_group_column
 from knee.helpers.h5_cache import (
@@ -49,6 +51,7 @@ from knee.helpers.h5_cache import (
   collect_shard_map,
   drop_unfinished_shards,
   format_progress,
+  mount_roots,
   run_pool_tasks,
 )
 from knee.helpers.header_scan import build_index, explode_sop_uids
@@ -92,6 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     'build-labels',
     'build-folds',
     'build-cache',
+    'selftest',
     'train',
     'infer',
   ]:
@@ -124,30 +128,16 @@ ARTIFACT_BASENAMES = (
   'folds.csv',
 )
 
-# Kaggle exposes attached datasets under /kaggle/input; searching these
-# two-level patterns avoids a recursive walk across huge DICOM mounts.
-_INPUT_ROOT_PATTERNS = (
-  '/kaggle/input/datasets/*/*',  # observed layout: datasets/<owner>/<slug>
-  '/kaggle/input/*',  # legacy flat dataset mounts
-)
-
-
 def _mount_roots() -> list[str]:
   """Directories that may contain attached-dataset artifact copies.
 
-  KNEE_INPUT_ROOTS (colon-separated) overrides the defaults, which keeps
-  the helper testable and lets unusual mount layouts be expressed.
+  Shared discovery lives in helpers.h5_cache.mount_roots (same
+  KNEE_INPUT_ROOTS override), keeping one mount convention everywhere.
 
   Returns:
       Existing directory paths.
   """
-  raw = os.environ.get('KNEE_INPUT_ROOTS')
-  roots = (
-    [p for p in raw.split(':') if p]
-    if raw
-    else [p for pattern in _INPUT_ROOT_PATTERNS for p in glob.glob(pattern)]
-  )
-  return [p for p in roots if os.path.isdir(p)]
+  return mount_roots()
 
 
 def remote_cache_state(config: dict) -> tuple[set[str], int]:
@@ -635,6 +625,30 @@ def cmd_build_cache(config: dict) -> None:
   )
 
 
+def cmd_selftest(config: dict) -> None:
+  """Preflight the training pipeline; exit 1 on any failed check.
+
+  Checks run in isolation and never abort each other; the summary goes
+  to the kernel log AND Discord (when enabled) so failures surface
+  without scrolling.
+
+  Args:
+      config: Composed experiment configuration.
+
+  Raises:
+      SystemExit: Exit code 1 when at least one check failed.
+  """
+  results = run_selftest(config)
+  summary = render_summary(results)
+  print('\n=== SELFTEST ===\n' + summary + '\n================')
+  notifier = notifier_from_config(config)
+  if notifier.enabled:
+    exp_name = config['experiment']['name']
+    notifier.notify(f'**[{exp_name}]** {summary}')
+  if any(not ok for _, ok, _ in results):
+    sys.exit(1)
+
+
 def cmd_train(config: dict, fold_id: int | None) -> None:
   """Run resume-aware fold training within one kernel session.
 
@@ -823,6 +837,7 @@ def main() -> None:
     'build-labels': lambda: cmd_build_labels(config),
     'build-folds': lambda: cmd_build_folds(config),
     'build-cache': lambda: cmd_build_cache(config),
+    'selftest': lambda: cmd_selftest(config),
     'train': lambda: cmd_train(config, args.fold),
     'infer': lambda: cmd_infer(config),
   }

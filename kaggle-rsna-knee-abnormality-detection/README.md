@@ -57,6 +57,8 @@ shallow-clones the recorded branch into `$KNEE_REPO_DIR`
 %run kaggle_cell.py --stage index              # header scan -> index.parquet
 %run kaggle_cell.py --stage labels             # rule pseudo-labels
 %run kaggle_cell.py --stage folds              # CV assignment
+%run kaggle_cell.py --stage cache              # decode once -> HDF5 datasets
+%run kaggle_cell.py --stage selftest           # preflight: 2 real steps + ckpt
 %run kaggle_cell.py --stage train --fold 0     # resumes if ckpt exists
 %run kaggle_cell.py --stage infer              # submission.csv
 ```

@@ -24,7 +24,7 @@ configuration (remote URL + tracked branch), including worktrees where
 ``.git`` is a pointer file.
 
 Stages mirror kaggle_run.sh: setup | index | labels | folds | cache |
-train | infer | all.
+selftest | train | infer | all.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VALID_STAGES = ('setup', 'index', 'labels', 'folds', 'cache', 'train', 'infer', 'all')
+VALID_STAGES = ('setup', 'index', 'labels', 'folds', 'cache', 'selftest', 'train', 'infer', 'all')
 LOG_TAIL_LINES = 30
 META_FILENAME = 'repo_meta.json'
 DEFAULT_CLONE_DIR = '/kaggle/working/repo'

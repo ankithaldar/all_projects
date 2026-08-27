@@ -155,4 +155,14 @@ def explode_sop_uids(frame: pd.DataFrame) -> pd.DataFrame:
   """
   copied = frame.copy()
   copied['sop_uids'] = copied['sop_uids'].astype(str).str.split('|')
+  # Schema backfill: pre-rename artifacts carry capitalized merge
+  # columns; study_dataset reads lowercase canonically. Adding aliases
+  # here (the universal entry point) covers every consumer.
+  aliases = {
+    'Fluid_Sensitive': 'fluid_sensitive',
+    'Fat_Suppression': 'fat_suppression',
+  }
+  for legacy, canonical in aliases.items():
+    if legacy in copied.columns and canonical not in copied.columns:
+      copied[canonical] = copied[legacy]
   return copied
