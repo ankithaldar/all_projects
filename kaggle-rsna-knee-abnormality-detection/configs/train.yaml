@@ -6,8 +6,8 @@ trainer:
     precision: bf16-mixed         # T4 falls back to fp16-mixed automatically via amp checks
     accumulate_grad_batches: 2
     log_every_n_steps: 25
-    deterministic: true
-    benchmark: false
+    deterministic: false          # nondeterministic kernels are markedly faster on T4
+    benchmark: true               # fixed slice shapes -> cuDNN autotune pays off
     accelerator: gpu
     devices: 2                    # Kaggle T4 x2
     strategy: auto
