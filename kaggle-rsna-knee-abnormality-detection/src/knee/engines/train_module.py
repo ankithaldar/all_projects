@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 
 import numpy as np
@@ -15,6 +16,57 @@ from torch import Tensor, nn
 
 from knee.metrics.auc import MultilabelAUC
 from knee.models.knee_net import KneeNet
+
+
+def build_step_schedules(
+  optimizer,
+  scheduler_cfg: dict | None,
+  warmup_epochs: float,
+  total_epochs: int,
+  steps_per_epoch: int,
+  accumulate_grad_batches: int = 1,
+):
+  """Step-based warmup + cosine schedule from epoch-denominated config.
+
+  Historical bug: LinearLR/SequentialLR ran with ``interval='epoch'``,
+  so ``warmup_epochs: 1`` held LR at 5% of base for the ENTIRE first
+  epoch (~235 steps) - the model silently failed to learn while the
+  progress line displayed ``lr 0.0000``.
+
+  Args:
+      optimizer: Configured optimizer instance.
+      scheduler_cfg: ``optimizer.scheduler`` section (may be None).
+      warmup_epochs: Warmup length in EPOCHS from config.
+      total_epochs: Trainer max epochs.
+      steps_per_epoch: Optimizer steps per epoch (post-accumulation).
+      accumulate_grad_batches: Trainer accumulation (divides batches).
+
+  Returns:
+      Lightning scheduler dict, or None when no scheduler configured.
+  """
+  if scheduler_cfg is None:
+    return None
+  accum = max(1, int(accumulate_grad_batches))
+  opt_steps_per_epoch = max(1, int(steps_per_epoch) // accum)
+  total_steps = max(1, int(total_epochs) * opt_steps_per_epoch)
+  warmup_steps = int(float(warmup_epochs) * opt_steps_per_epoch)
+  sched_init = dict(scheduler_cfg.get('init_params', {}))
+  if 'T_max' in sched_init:
+    # Config denominates T_max in epochs; the step regime needs steps.
+    sched_init['T_max'] = max(1, total_steps - warmup_steps)
+  sched_cls = _resolve_class(scheduler_cfg['class_path'])
+  cosine = sched_cls(optimizer, **sched_init)
+  if warmup_steps <= 0:
+    return {'scheduler': cosine, 'interval': 'step'}
+  linear = torch.optim.lr_scheduler.LinearLR(
+    optimizer, start_factor=0.05, total_iters=max(1, warmup_steps)
+  )
+  return {
+    'scheduler': torch.optim.lr_scheduler.SequentialLR(
+      optimizer, [linear, cosine], milestones=[max(1, warmup_steps)]
+    ),
+    'interval': 'step',
+  }
 
 
 class KneeModule(pl.LightningModule):
@@ -32,6 +84,7 @@ class KneeModule(pl.LightningModule):
     target_columns: list[str],
     oof_dir: str,
     fold_id: int,
+    steps_per_epoch_hint: int = 0,
   ) -> None:
     """Store all training-time collaborators.
 
@@ -57,6 +110,7 @@ class KneeModule(pl.LightningModule):
     self.total_epochs = max(total_epochs, warmup_epochs + 1)
     self.target_columns = target_columns
     self.oof_dir = oof_dir
+    self.steps_per_epoch_hint = int(steps_per_epoch_hint)
     self.fold_id = fold_id
     self.metric = MultilabelAUC(target_columns)
 
@@ -151,27 +205,24 @@ class KneeModule(pl.LightningModule):
       groups.append({'params': remaining, 'lr': base_lr})
     opt_cls = _resolve_class(self.optimizer_cfg['class_path'])
     optimizer = opt_cls(groups, **init_params)
+    trainer = getattr(self, 'trainer', None)
+    batches = getattr(trainer, 'num_training_batches', 0)
+    if not (isinstance(batches, (int, float)) and math.isfinite(batches)):
+      batches = 0
+    steps_per_epoch = int(self.steps_per_epoch_hint) or int(batches or 0)
+    accumulate = int(getattr(trainer, 'accumulate_grad_batches', 1) or 1)
+    total_epochs = int(getattr(trainer, 'max_epochs', 1) or 1)
     schedulers = []
-    if self.scheduler_cfg is not None:
-      sched_init = dict(self.scheduler_cfg.get('init_params', {}))
-      sched_cls = _resolve_class(self.scheduler_cfg['class_path'])
-      cosine = sched_cls(optimizer, **sched_init)
-      if self.warmup_epochs > 0:
-        linear = torch.optim.lr_scheduler.LinearLR(
-          optimizer, start_factor=0.05, total_iters=self.warmup_epochs
-        )
-        schedulers.append(
-          {
-            'scheduler': torch.optim.lr_scheduler.SequentialLR(
-              optimizer,
-              [linear, cosine],
-              milestones=[self.warmup_epochs],
-            ),
-            'interval': 'epoch',
-          }
-        )
-      else:
-        schedulers.append({'scheduler': cosine, 'interval': 'epoch'})
+    schedule = build_step_schedules(
+      optimizer,
+      self.scheduler_cfg,
+      self.warmup_epochs,
+      total_epochs,
+      steps_per_epoch,
+      accumulate,
+    )
+    if schedule is not None:
+      schedulers.append(schedule)
     return (
       {'optimizer': optimizer, 'lr_scheduler': schedulers[0]}
       if schedulers

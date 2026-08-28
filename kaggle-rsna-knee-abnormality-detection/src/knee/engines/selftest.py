@@ -330,6 +330,7 @@ def check_training_step(config: dict) -> tuple[bool, str]:
     target_columns=list(run_cfg['data']['target_columns']),
     oof_dir=run_cfg['paths']['oof_dir'],
     fold_id=SELFTEST_FOLD_ID,
+    steps_per_epoch_hint=scope['train_batches'],
   )
   started = time.time()
   # PL2.x writes nothing with enable_checkpointing=True alone; an

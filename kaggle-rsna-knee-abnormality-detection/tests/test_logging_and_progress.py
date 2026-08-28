@@ -108,10 +108,11 @@ def test_progress_line_every_n_steps(caplog):
   lines = [r.message for r in caplog.records if r.name == 'progress']
   assert len(lines) == 2
   expected = (
-      'epoch 0 | batch 2/441 | step 2 | train_loss 0.3100 | lr 0.0003'
+      'epoch 0 | batch 2/441 | step 2 | train_loss 0.3100 | lr 2.50e-04'
   )
   assert expected in lines[0]
   assert 'gpu off' in lines[0]
+  assert '| ram ' in lines[0]
 
 
 def test_progress_epoch_and_validation_lines(caplog):

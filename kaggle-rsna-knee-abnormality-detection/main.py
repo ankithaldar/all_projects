@@ -746,6 +746,17 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
     train_ds, valid_ds = build_datasets(
       config, index_df, labels, valid_ids, train_ids
     )
+    import math  # pylint: disable=import-outside-toplevel
+
+    batch = int(
+      config['datamodule']['init_params'].get('batch_size', 1)
+    )
+    devices = int(
+      config['trainer']['init_params'].get('devices', 1) or 1
+    )
+    steps_hint = math.ceil(
+      len(train_ds) / max(1, batch * devices)
+    )
     module = KneeModule(
       model=build_model(config),
       criterion=instantiate(config['loss']),
@@ -757,6 +768,7 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
       target_columns=list(config['data']['target_columns']),
       oof_dir=config['paths']['oof_dir'],
       fold_id=current_fold,
+      steps_per_epoch_hint=steps_hint,
     )
     progress_cfg = config.get('logging', {}).get('progress', {})
     train_callbacks = []
@@ -765,6 +777,7 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
         ProgressLogCallback(
           log_every_n_steps=int(trainer_cfg.get('log_every_n_steps', 25)),
           log_gpu_mem=bool(progress_cfg.get('gpu_mem', True)),
+          log_host_ram=bool(progress_cfg.get('log_host_ram', True)),
         )
       )
       from pytorch_lightning.callbacks import (  # pylint: disable=import-outside-toplevel

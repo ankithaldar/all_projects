@@ -30,16 +30,19 @@ class ProgressLogCallback(Callback):
     self,
     log_every_n_steps: int = 25,
     log_gpu_mem: bool = True,
+    log_host_ram: bool = True,
   ) -> None:
     """Configure cadence.
 
     Args:
         log_every_n_steps: Emit a line every this many optimizer steps.
         log_gpu_mem: Include torch CUDA memory snapshot when available.
+        log_host_ram: Include host RAM snapshot (exit-137 attribution).
     """
     super().__init__()
     self.log_every_n_steps = max(1, int(log_every_n_steps))
     self.log_gpu_mem = log_gpu_mem
+    self.log_host_ram = log_host_ram
     self._epoch_start = 0.0
 
   # -- helpers ----------------------------------------------------------
@@ -60,6 +63,21 @@ class ProgressLogCallback(Callback):
       total = torch.cuda.get_device_properties(0).total_memory / 1024**3
       return f'{allocated:.1f}/{total:.1f} GiB'
     except (ImportError, OSError, RuntimeError):
+      return 'n/a'
+
+  @staticmethod
+  def _host_ram_gib() -> str:
+    """Host RAM snapshot for OOM-killer (exit 137) attribution.
+
+    Returns:
+        'used/total GiB' via psutil, or 'n/a' when unavailable.
+    """
+    try:
+      import psutil  # pylint: disable=import-outside-toplevel
+
+      vm = psutil.virtual_memory()
+      return f'{vm.used / 1024**3:.1f}/{vm.total / 1024**3:.1f} GiB'
+    except ImportError:
       return 'n/a'
 
   @staticmethod
@@ -146,15 +164,19 @@ class ProgressLogCallback(Callback):
     except Exception:  # pylint: disable=broad-except
       lr = None
     gpu = self._gpu_mem_gib() if self.log_gpu_mem else 'off'
+    ram = self._host_ram_gib() if self.log_host_ram else 'off'
+    lr_text = f'{float(lr):.2e}' if lr is not None else '-'
     _LOGGER.info(
-      'epoch %d | batch %d/%s | step %d | train_loss %s | lr %s | gpu %s',
+      'epoch %d | batch %d/%s | step %d | train_loss %s | lr %s | '
+      'gpu %s | ram %s',
       trainer.current_epoch,
       batch_idx + 1,
       self._batches_total(trainer),
       step,
       self._fmt(loss),
-      self._fmt(lr),
+      lr_text,
       gpu,
+      ram,
     )
 
   def on_validation_epoch_end(
