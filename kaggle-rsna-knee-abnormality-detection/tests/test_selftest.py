@@ -20,7 +20,6 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 
 from knee.config_params.loader import load_experiment
 from knee.engines import selftest as st
-from knee.engines.assembly import TARGET_COLUMNS
 from knee.helpers.header_scan import build_index, explode_sop_uids
 
 BASE = '1.2.826.0.1.3680043.10.1.1'
@@ -90,21 +89,6 @@ def pipeline(tmp_path):
   artifact_dir.mkdir(parents=True)
   index.to_parquet(artifact_dir / 'index.parquet', index=False)
 
-  studies = index['study'].astype(str).unique().tolist()
-  labels = pd.DataFrame(
-    {
-      'StudyInstanceUID': studies,
-      **{c: [0.0] * len(studies) for c in TARGET_COLUMNS},
-    }
-  )
-  labels.to_csv(artifact_dir / 'labels_pseudo.csv', index=False)
-  pd.DataFrame(
-    {
-      'StudyInstanceUID': studies,
-      'fold': [i % 2 for i in range(len(studies))],
-    }
-  ).to_csv(artifact_dir / 'folds.csv', index=False)
-
   config = load_experiment('configs/experiments/smoke_ci.yaml')
   # load_experiment resolves ${paths.artifact_dir} interpolations at
   # LOAD time; derived keys must be recomputed after redirecting the
@@ -121,6 +105,23 @@ def pipeline(tmp_path):
   config['paths']['oof_dir'] = str(tmp_path / 'oof')
   config['data']['n_slices'] = 8  # matches the synthetic series depth
   config['model']['init_params']['pretrained'] = False
+
+  studies = index['study'].astype(str).unique().tolist()
+  targets = config['data']['target_columns']
+  labels = pd.DataFrame(
+    {
+      'StudyInstanceUID': studies,
+      **{c: [0.0] * len(studies) for c in targets},
+    }
+  )
+  labels.to_csv(artifact_dir / 'labels_pseudo.csv', index=False)
+  pd.DataFrame(
+    {
+      'StudyInstanceUID': studies,
+      'fold': [i % 2 for i in range(len(studies))],
+    }
+  ).to_csv(artifact_dir / 'folds.csv', index=False)
+
   return config
 
 
@@ -141,11 +142,12 @@ def test_check_artifacts_schema_and_targets(pipeline):
 
 def test_check_artifacts_missing_target_column(pipeline):
   labels = pd.read_csv(pipeline['paths']['labels_csv'])
-  labels = labels.drop(columns=[TARGET_COLUMNS[0]])
+  first = pipeline['data']['target_columns'][0]
+  labels = labels.drop(columns=[first])
   labels.to_csv(pipeline['paths']['labels_csv'], index=False)
   ok, detail = st.check_artifacts(pipeline)
   assert not ok
-  assert TARGET_COLUMNS[0] in detail
+  assert first in detail
 
 
 def test_check_artifacts_missing_selection_columns(pipeline):

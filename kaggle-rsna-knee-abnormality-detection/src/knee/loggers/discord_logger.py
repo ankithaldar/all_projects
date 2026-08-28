@@ -37,15 +37,28 @@ TRACEBACK_SNIPPET_CHARS = 1500
 class DiscordNotifier:
   """Rate-limited, failure-tolerant Discord webhook client."""
 
-  def __init__(self, webhook_url: str | None, enabled: bool = True) -> None:
+  def __init__(
+    self,
+    webhook_url: str | None,
+    enabled: bool = True,
+    min_post_interval_s: float = MIN_POST_INTERVAL_S,
+    request_timeout_s: float = REQUEST_TIMEOUT_S,
+    traceback_snippet_chars: int = TRACEBACK_SNIPPET_CHARS,
+  ) -> None:
     """Store transport settings.
 
     Args:
         webhook_url: Full webhook URL; None disables posting.
         enabled: Master switch from configuration.
+        min_post_interval_s: Rate-limit between webhook posts.
+        request_timeout_s: Per-POST HTTP timeout.
+        traceback_snippet_chars: Crash-message truncation length.
     """
     self.webhook_url = webhook_url
     self.enabled = enabled and bool(webhook_url)
+    self.min_post_interval_s = float(min_post_interval_s)
+    self.request_timeout_s = float(request_timeout_s)
+    self.traceback_snippet_chars = int(traceback_snippet_chars)
     self._last_post = 0.0
 
   def notify(self, message: str) -> bool:
@@ -60,13 +73,13 @@ class DiscordNotifier:
     if not self.enabled:
       return False
     elapsed = time.time() - self._last_post
-    if elapsed < MIN_POST_INTERVAL_S:
-      time.sleep(MIN_POST_INTERVAL_S - elapsed)
+    if elapsed < self.min_post_interval_s:
+      time.sleep(self.min_post_interval_s - elapsed)
     try:
       response = requests.post(
         self.webhook_url,
         json={'content': message},
-        timeout=REQUEST_TIMEOUT_S,
+        timeout=self.request_timeout_s,
       )
       self._last_post = time.time()
       ok = response.status_code in (200, 204)
@@ -98,16 +111,25 @@ def notifier_from_config(config: dict) -> DiscordNotifier:
   discord_cfg = config.get('integrations', {}).get('discord', {})
   secret_name = discord_cfg.get('webhook_secret', 'DISCORD_WEBHOOK_URL')
   url = get_secret(secret_name)
+  transport = {
+    key: discord_cfg[key]
+    for key in (
+      'min_post_interval_s',
+      'request_timeout_s',
+      'traceback_snippet_chars',
+    )
+    if key in discord_cfg
+  }
   if not discord_cfg.get('enabled'):
     _LOGGER.info('Discord integration OFF: integrations.discord.enabled=false')
-    return DiscordNotifier(webhook_url=None, enabled=False)
+    return DiscordNotifier(webhook_url=None, enabled=False, **transport)
   if not url:
     _LOGGER.warning(
       'Discord notifications will NOT be sent: webhook secret %r '
       'resolved empty across os.environ / .env / Kaggle User Secrets',
       secret_name,
     )
-    return DiscordNotifier(webhook_url=None, enabled=True)
+    return DiscordNotifier(webhook_url=None, enabled=True, **transport)
   return DiscordNotifier(
     webhook_url=url, enabled=bool(discord_cfg.get('enabled'))
   )
@@ -122,6 +144,7 @@ class DiscordCallback(Callback):
     experiment_name: str,
     fold_id: int,
     step_interval: int = 50,
+    first_step_ping: bool = True,
   ) -> None:
     """Bind the callback to one fold's context.
 
@@ -131,12 +154,15 @@ class DiscordCallback(Callback):
         fold_id: Fold handled by the active trainer.
         step_interval: Post a metrics heartbeat every this many optimizer
             steps (``trainer.global_step``, accumulation-aware).
+        first_step_ping: Also fire at step 1 so pace is observable
+            seconds after fit starts instead of a full interval later.
     """
     super().__init__()
     self.notifier = notifier
     self.experiment_name = experiment_name
     self.fold_id = fold_id
     self.step_interval = max(1, int(step_interval))
+    self.first_step_ping = bool(first_step_ping)
     self._fit_start = 0.0
 
   def on_fit_start(
@@ -207,12 +233,17 @@ class DiscordCallback(Callback):
     """
     del outputs, batch, batch_idx
     step = int(trainer.global_step)
-    if step == 0 or step % self.step_interval != 0:
+    fired = (self.first_step_ping and step == 1) or (
+      step > 0 and step % self.step_interval == 0
+    )
+    if not fired:
       return
     loss = trainer.callback_metrics.get('train/loss')
     parts = [f'step {step} (epoch {trainer.current_epoch})']
     if loss is not None:
       parts.append(f'train_loss `{float(loss):.4f}`')
+    if step == 1 and self.first_step_ping:
+      parts.append('first optimizer step - pacing OK')
     lr = self._current_lr(pl_module)
     if lr is not None:
       parts.append(f'lr `{lr:.2e}`')
@@ -304,5 +335,5 @@ class DiscordCallback(Callback):
     self.notifier.notify(
       f'**[{self.experiment_name}]** fold {self.fold_id}: CRASH '
       f'`{type(exception).__name__}`:\n'
-      f'{str(exception)[:TRACEBACK_SNIPPET_CHARS]}'
+      f'{str(exception)[: self.notifier.traceback_snippet_chars]}'
     )

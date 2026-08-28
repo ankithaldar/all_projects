@@ -4,6 +4,24 @@ data:
   img_size: 384                 # square resize target after autocrop.
   normalize_percentiles: [0.005, 0.995]
   autocrop_margin: 0.05         # fraction of bbox extent added around foreground.
+  autocrop_background_threshold: 0.02   # relative intensity above = foreground
+  resize_interpolation: 1       # cv2/albumentations enum (1 = bilinear)
+  fallback_shape: [512, 512]    # zero-substitute frame size for failed decodes
+  scan_chunksize: 16            # series per worker task in header scan
+  # Competition output schema; single source of truth for labels/loss/head.
+  target_columns:
+    - ACL
+    - MCL
+    - Medial Meniscus
+    - Lateral Meniscus
+    - Medial OA
+    - Lateral OA
+    - PF OA
+    - Effusion
+    - Synovitis
+    - "Baker's"
+    - Contusion
+    - Fracture
   # Order in which DecoderRegistry attempts pixel-data backends.
   decode_backend_order: [native, gdcm, pylibjpeg]
   # Final standardization applied after ToFloat (pixels already in [0, 1]).

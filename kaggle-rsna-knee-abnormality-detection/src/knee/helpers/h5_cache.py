@@ -426,6 +426,9 @@ def _record_with_defaults(record: dict) -> dict:
   payload.setdefault('decoder_order', ['native', 'gdcm', 'pylibjpeg'])
   payload.setdefault('percentiles', [0.005, 0.995])
   payload.setdefault('margin', 0.05)
+  payload.setdefault('bg_threshold', 0.02)
+  payload.setdefault('interpolation', 1)
+  payload.setdefault('fallback_shape', (512, 512))
   payload.setdefault('dicom_root', '')
   return payload
 
@@ -464,7 +467,11 @@ def decode_series_volume(record: dict) -> tuple[str, np.ndarray] | None:
   del frames
   normalized = intensity.normalize_percentile(stack, tuple(task['percentiles']))
   center = normalized[len(normalized) // 2]
-  _, (y0, y1, x0, x1) = intensity.autocrop(center, float(task['margin']))
+  _, (y0, y1, x0, x1) = intensity.autocrop(
+    center,
+    float(task['margin']),
+    background_threshold=float(task['bg_threshold']),
+  )
   cropped = normalized[:, y0:y1, x0:x1]
   del stack, normalized
   out_width = int(task['img'])
@@ -473,7 +480,7 @@ def decode_series_volume(record: dict) -> tuple[str, np.ndarray] | None:
     resized = cv2.resize(
       plane,
       (out_width, out_width),
-      interpolation=cv2.INTER_LINEAR,
+      interpolation=int(task['interpolation']),
     )
     volume[i] = intensity.to_uint8(resized)
   return str(task['series']), volume
@@ -561,6 +568,7 @@ def run_pool_tasks(
   on_progress=None,
   files_every: int = 0,
   total_files: int | None = None,
+  pool_chunksize: int = 2,
 ) -> tuple[int, int]:
   """Fan decode tasks to processes, streaming results into shards.
 
@@ -570,6 +578,7 @@ def run_pool_tasks(
       workers: Process count; <=1 executes inline (tests/CI).
       writer: Destination :class:`ShardWriter`.
       log_every: Progress log cadence in completed series.
+      pool_chunksize: Series per ProcessPoolExecutor.map task.
       on_progress: Optional callable receiving a :func:`progress_state`
           dict every time ``files_every`` more files complete.
       files_every: File-count cadence for on_progress; 0 disables.
@@ -584,7 +593,9 @@ def run_pool_tasks(
   cached = skipped = 0
   if workers > 1:
     executor = ProcessPoolExecutor(max_workers=workers)
-    results = executor.map(decode_series_volume, tasks, chunksize=2)
+    results = executor.map(
+      decode_series_volume, tasks, chunksize=max(1, int(pool_chunksize))
+    )
   else:
     executor = None
     results = map(decode_series_volume, tasks)
@@ -707,10 +718,25 @@ def materialize_root(root: str, working_base: str) -> str:
   dest = os.path.join(working_base, os.path.basename(root.rstrip('/')))
   marker = os.path.join(dest, MANIFEST_NAME)
   if os.path.exists(marker):
+    _LOGGER.info('cache copy already present: %s', dest)
     return dest
   try:
     shutil.copytree(root, dest, dirs_exist_ok=True)
-    _LOGGER.info('copied cache mount %s -> %s', root, dest)
+    copied_gib = (
+      sum(
+        os.path.getsize(os.path.join(dp, f))
+        for dp, _, names in os.walk(dest)
+        for f in names
+      )
+      / GIB
+    )
+    _LOGGER.info(
+      'copied cache mount %s -> %s (%.2f GiB local; FUSE reads off the '
+      'critical path)',
+      root,
+      dest,
+      copied_gib,
+    )
     return dest
   except (OSError, shutil.Error) as exc:
     _LOGGER.warning(
@@ -763,8 +789,9 @@ def find_cache_roots(config: dict) -> list[str]:
     seen.add(path)
     if copy_flag and path in mount_set:
       # Only COPIED for discovered/attached mounts; the local build dir
-      # is already writable and stays in place.
-      working_base = os.path.join(
+      # is already writable and stays in place. Default dest honours
+      # working quota; MVP points copy_dir at the larger /kaggle/tmp.
+      working_base = cache_cfg.get('copy_dir') or os.path.join(
         config.get('paths', {}).get('artifact_dir', '/kaggle/working'),
         'cache_roots',
       )
@@ -938,9 +965,7 @@ class H5SeriesReader:
         # exactly n_slices rows (duplicates included). Reading the
         # unique rows and re-expanding costs less I/O than duplicate
         # coordinate reads.
-        indices = np.linspace(
-          0, dataset.shape[0] - 1, self.n_slices, dtype=int
-        )
+        indices = np.linspace(0, dataset.shape[0] - 1, self.n_slices, dtype=int)
         uniq, inverse = np.unique(indices, return_inverse=True)
         rows = dataset[uniq]
         return np.ascontiguousarray(rows[inverse])
