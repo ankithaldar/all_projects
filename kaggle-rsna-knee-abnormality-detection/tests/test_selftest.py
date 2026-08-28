@@ -39,7 +39,7 @@ def _write_synth_dicoms(root, studies=4, series_per=1, slices=8):
         meta = FileMetaDataset()
         meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian
         ds = FileDataset(
-            '', pydicom.Dataset(), preamble=b'\0' * 128, file_meta=meta
+          '', pydicom.Dataset(), preamble=b'\0' * 128, file_meta=meta
         )
         ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.4'
         ds.SOPInstanceUID = f'{series_uid}.3.{z}'
@@ -50,9 +50,7 @@ def _write_synth_dicoms(root, studies=4, series_per=1, slices=8):
         ds.Modality = 'MR'
         ds.Rows = 16
         ds.Columns = 16
-        px = (rng.integers(0, 4000, size=(16, 16)) + z * 50).astype(
-            np.uint16
-        )
+        px = (rng.integers(0, 4000, size=(16, 16)) + z * 50).astype(np.uint16)
         ds.BitsAllocated = 16
         ds.BitsStored = 16
         ds.PixelRepresentation = 0
@@ -67,9 +65,9 @@ def _write_synth_dicoms(root, studies=4, series_per=1, slices=8):
         ds.SliceThickness = 1.0
         ds.PixelData = px.tobytes()
         pydicom.dcmwrite(
-            str(d / f'{ds.SOPInstanceUID}.dcm'),
-            ds,
-            enforce_file_format=True,
+          str(d / f'{ds.SOPInstanceUID}.dcm'),
+          ds,
+          enforce_file_format=True,
         )
 
 
@@ -83,7 +81,7 @@ def pipeline(tmp_path):
   # Mirror cmd_build_index's train_series.csv merge: the real artifact
   # always carries these (lowercase, post-rename) selection columns.
   index['plane'] = [
-      'Sagittal' if i % 2 == 0 else 'Coronal' for i in range(len(index))
+    'Sagittal' if i % 2 == 0 else 'Coronal' for i in range(len(index))
   ]
   index['fluid_sensitive'] = 1
   index['fat_suppression'] = 1
@@ -94,15 +92,17 @@ def pipeline(tmp_path):
 
   studies = index['study'].astype(str).unique().tolist()
   labels = pd.DataFrame(
-      {'StudyInstanceUID': studies,
-       **{c: [0.0] * len(studies) for c in TARGET_COLUMNS}}
+    {
+      'StudyInstanceUID': studies,
+      **{c: [0.0] * len(studies) for c in TARGET_COLUMNS},
+    }
   )
   labels.to_csv(artifact_dir / 'labels_pseudo.csv', index=False)
   pd.DataFrame(
-      {
-          'StudyInstanceUID': studies,
-          'fold': [i % 2 for i in range(len(studies))],
-      }
+    {
+      'StudyInstanceUID': studies,
+      'fold': [i % 2 for i in range(len(studies))],
+    }
   ).to_csv(artifact_dir / 'folds.csv', index=False)
 
   config = load_experiment('configs/experiments/smoke_ci.yaml')
@@ -110,12 +110,12 @@ def pipeline(tmp_path):
   # LOAD time; derived keys must be recomputed after redirecting the
   # artifact root or they still point at /tmp/knee_smoke.
   config['paths'].update(
-      artifact_dir=str(artifact_dir),
-      index_parquet=str(artifact_dir / 'index.parquet'),
-      labels_csv=str(artifact_dir / 'labels_pseudo.csv'),
-      folds_csv=str(artifact_dir / 'folds.csv'),
-      train_dicom_dir=str(dicom_root),
-      volume_cache_dir=str(tmp_path / 'no_cache'),
+    artifact_dir=str(artifact_dir),
+    index_parquet=str(artifact_dir / 'index.parquet'),
+    labels_csv=str(artifact_dir / 'labels_pseudo.csv'),
+    folds_csv=str(artifact_dir / 'folds.csv'),
+    train_dicom_dir=str(dicom_root),
+    volume_cache_dir=str(tmp_path / 'no_cache'),
   )
   config['paths']['checkpoint_dir'] = str(tmp_path / 'ckpts')
   config['paths']['oof_dir'] = str(tmp_path / 'oof')
@@ -158,18 +158,17 @@ def test_check_artifacts_missing_selection_columns(pipeline):
 
 
 def test_check_dicom_mount_probes_first_and_last(pipeline):
-  index = explode_sop_uids(
-      pd.read_parquet(pipeline['paths']['index_parquet'])
-  )
+  index = explode_sop_uids(pd.read_parquet(pipeline['paths']['index_parquet']))
   ok, detail = st.check_dicom_mount(pipeline, index)
   assert ok, detail
   # Remove one probe file -> failure names the exact path.
   row = index.iloc[0]
+  last_sop = str(row['sop_uids'][-1])
   probe = os.path.join(
-      pipeline['paths']['train_dicom_dir'],
-      str(row['study']),
-      str(row['series']),
-      f"{row['sop_uids'][-1]}.dcm",
+    pipeline['paths']['train_dicom_dir'],
+    str(row['study']),
+    str(row['series']),
+    f'{last_sop}.dcm',
   )
   os.remove(probe)
   ok, detail = st.check_dicom_mount(pipeline, index)
@@ -178,9 +177,7 @@ def test_check_dicom_mount_probes_first_and_last(pipeline):
 
 
 def test_check_cache_reports_live_mode_without_roots(pipeline):
-  index = explode_sop_uids(
-      pd.read_parquet(pipeline['paths']['index_parquet'])
-  )
+  index = explode_sop_uids(pd.read_parquet(pipeline['paths']['index_parquet']))
   ok, detail = st.check_cache(pipeline, index)
   assert ok, detail
   assert 'live DICOM decode' in detail
@@ -190,9 +187,7 @@ def test_check_cache_reads_mounted_manifest(pipeline, tmp_path):
   # Local import keeps the hc namespace adjacent to its usage.
   import knee.helpers.h5_cache as hc  # pylint: disable=import-outside-toplevel
 
-  index = explode_sop_uids(
-      pd.read_parquet(pipeline['paths']['index_parquet'])
-  )
+  index = explode_sop_uids(pd.read_parquet(pipeline['paths']['index_parquet']))
   cache_root = tmp_path / 'mounted_cache'
   writer = hc.ShardWriter(str(cache_root), img_size=8, gzip_level=0)
   uid = str(index.iloc[0]['series'])
@@ -210,9 +205,7 @@ def test_run_selftest_quick_subset_all_pass(pipeline, monkeypatch):
   monkeypatch.setattr(st, 'check_model_build', lambda cfg: (True, 'stub'))
   results = st.run_selftest(pipeline, with_training=False)
   names = [n for n, _, _ in results]
-  assert names == [
-      'artifacts', 'dicom_mount', 'cache_coverage', 'model_build'
-  ]
+  assert names == ['artifacts', 'dicom_mount', 'cache_coverage', 'model_build']
   assert all(ok for _, ok, _ in results), results
 
 
@@ -228,3 +221,13 @@ def test_check_training_step_real_two_steps(pipeline):
 
 if __name__ == '__main__':
   pytest.main([__file__])
+
+
+def test_check_training_step_survives_oversized_batch(pipeline):
+  """Regression: MVP batch_size 8 vs a 2-study split dropped every
+  batch (drop_last=shuffle) -> '0 optimizer steps'. The selftest must
+  clamp the scoped batch size to the split instead."""
+  pipeline['datamodule']['init_params']['batch_size'] = 8
+  ok, detail = st.check_training_step(pipeline)
+  assert ok, detail
+  assert 'checkpoint' in detail

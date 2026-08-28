@@ -290,6 +290,10 @@ def check_training_step(config: dict) -> tuple[bool, str]:
   if len(ids) < 4:
     return False, f'only {len(ids)} labeled studies; need 4'
   train_ids, valid_ids = ids[:2], ids[2:]
+  # drop_last=shuffle on the train loader: batch_size larger than the
+  # tiny split would yield ZERO batches (kernel reproduce: MVP batch 8
+  # vs 2 studies -> '0 optimizer steps'). Clamp to the split.
+  run_cfg['datamodule']['init_params']['batch_size'] = min(2, len(train_ids))
 
   train_ds, valid_ds = build_datasets(
     run_cfg, index, labels, valid_ids, train_ids
@@ -334,9 +338,11 @@ def check_training_step(config: dict) -> tuple[bool, str]:
   elapsed = time.time() - started
   steps = int(trainer.global_step)
   status = str(getattr(trainer.state, 'status', 'unknown'))
+  train_batch = run_cfg['datamodule']['init_params']['batch_size']
   if steps == 0:
     return False, (
-      f'fit completed 0 optimizer steps (status={status}); '
+      f'fit completed 0 optimizer steps (status={status}; '
+      f'train_ds={len(train_ds)} studies, batch={train_batch}); '
       'train loader yielded nothing - check study id selection'
     )
   # Explicit save: the roundtrip under test is write-then-reload, not
