@@ -933,10 +933,17 @@ class H5SeriesReader:
       handle = self._open_dataset(*location)
       if handle is not None and uid in handle:
         dataset = handle[uid]
-        indices = np.unique(
-          np.linspace(0, dataset.shape[0] - 1, self.n_slices, dtype=int)
+        # Match SeriesReader's sampling EXACTLY: linspace over the
+        # stored depth WITH repeats, so short series still yield
+        # exactly n_slices rows (duplicates included). Reading the
+        # unique rows and re-expanding costs less I/O than duplicate
+        # coordinate reads.
+        indices = np.linspace(
+          0, dataset.shape[0] - 1, self.n_slices, dtype=int
         )
-        return np.ascontiguousarray(dataset[indices])
+        uniq, inverse = np.unique(indices, return_inverse=True)
+        rows = dataset[uniq]
+        return np.ascontiguousarray(rows[inverse])
     return self.base.read(record)
 
 

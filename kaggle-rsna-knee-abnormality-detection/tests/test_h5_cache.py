@@ -599,10 +599,6 @@ class TestDicomRootPassthrough:
   def test_get_set_delegates_to_base(self, tmp_path):
     import knee.helpers.h5_cache as hc
 
-    class Live:
-      def __init__(self):
-        self.dicom_root = '/train'
-
     root = tmp_path / 'cache'
     writer = ShardWriter(str(root), img_size=8, gzip_level=0)
     writer.add_series('u', 's', _volume(0, img=8))
@@ -617,3 +613,49 @@ class TestDicomRootPassthrough:
     assert reader.dicom_root == '/train_series'
     reader.dicom_root = '/test_series'  # inference-time swap
     assert reader.base.dicom_root == '/test_series'
+
+
+class TestShortSeriesSampling:
+  """H5 path must match SeriesReader's linspace-WITH-repeats contract.
+
+  Kernel failure: a 22-slice series produced 22 rows (np.unique collapsed
+  duplicates) against the strict n_slices=24 dataset check, while live
+  decoding always returns 24 frames by re-reading duplicated slices.
+  """
+
+  def test_short_series_returns_exact_n_slices_with_repeats(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    stored = _volume(9, img=8)  # 4 stored slices
+    root = tmp_path / 'cache'
+    writer = ShardWriter(str(root), img_size=8, gzip_level=0)
+    writer.add_series('short', 'study', stored)
+    writer.close()
+    writer.write_manifest()
+    manifest = hc.load_manifest([str(root)])
+    reader = H5SeriesReader(
+      base_reader=FakeReader(), manifest=manifest, n_slices=24
+    )
+    got = reader.read({'series': 'short', 'study': 'x'})
+    assert got.shape == (24, 8, 8)
+
+    # Repeat pattern identical to live sampling: value at row t equals
+    # stored[linspace(0, S-1, n_slices)[t]].
+    expected_idx = np.linspace(0, stored.shape[0] - 1, 24, dtype=int)
+    np.testing.assert_array_equal(got, stored[expected_idx])
+
+  def test_full_length_series_rows_unchanged(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    stored = _volume(11, img=8)  # 4 slices, n_slices=4 -> identity
+    root = tmp_path / 'cache'
+    writer = ShardWriter(str(root), img_size=8, gzip_level=0)
+    writer.add_series('full', 'study', stored)
+    writer.close()
+    writer.write_manifest()
+    manifest = hc.load_manifest([str(root)])
+    reader = H5SeriesReader(
+      base_reader=FakeReader(), manifest=manifest, n_slices=4
+    )
+    got = reader.read({'series': 'full', 'study': 'x'})
+    np.testing.assert_array_equal(got, stored)
