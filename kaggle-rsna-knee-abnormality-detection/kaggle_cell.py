@@ -36,7 +36,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-VALID_STAGES = ('setup', 'index', 'labels', 'folds', 'cache', 'selftest', 'train', 'infer', 'all')
+VALID_STAGES = (
+  'setup',
+  'index',
+  'labels',
+  'folds',
+  'cache',
+  'selftest',
+  'train',
+  'infer',
+  'all',
+)
 LOG_TAIL_LINES = 30
 META_FILENAME = 'repo_meta.json'
 DEFAULT_CLONE_DIR = '/kaggle/working/repo'
@@ -275,10 +285,9 @@ def _project_root_within(clone_dir: Path) -> Path:
   """
   candidates = [clone_dir, *clone_dir.glob('*/')]
   for candidate in candidates:
-    if (
-      (candidate / 'kaggle_cell.py').exists()
-      and (candidate / 'kaggle_run.sh').exists()
-    ):
+    if (candidate / 'kaggle_cell.py').exists() and (
+      candidate / 'kaggle_run.sh'
+    ).exists():
       return candidate
   raise RuntimeError(f'Project markers not found under {clone_dir}')
 
@@ -305,7 +314,20 @@ def ensure_clone(meta: dict) -> Path:
     else None
   )
   if marker_branch == meta['branch']:
-    _git(['pull', '--ff-only'], cwd=target)
+    pulled = _git(['pull', '--ff-only'], cwd=target)
+    head = _git(['rev-parse', '--short', 'HEAD'], cwd=target)
+    if pulled is None:
+      # A silent stale checkout caused repeat 'already fixed' bugs: the
+      # old code kept running with zero indication anything was wrong.
+      unknown_head = '?'
+      print(
+        f'WARNING: git pull FAILED for {target}; running STALE code at '
+        f'{head or unknown_head} (remote branch not fetched)',
+        file=sys.stderr,
+        flush=True,
+      )
+    else:
+      print(f'[bootstrap] checkout at HEAD {head}', flush=True)
     return _project_root_within(target)
   if target.exists():
     _git(['fetch', 'origin', meta['branch']], cwd=target)

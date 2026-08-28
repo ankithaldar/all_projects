@@ -52,6 +52,7 @@ from knee.helpers.h5_cache import (
   ShardWriter,
   collect_shard_map,
   drop_unfinished_shards,
+  find_cache_roots,
   format_progress,
   mount_roots,
   run_pool_tasks,
@@ -704,9 +705,6 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
   folds = [fold_id] if fold_id is not None else list(config['run']['folds'])
   # Visibility: which pixel source is live + whether the local mirror
   # is engaged (FUSE random reads were a measured step-time killer).
-  from knee.helpers.h5_cache import (
-    find_cache_roots,  # pylint: disable=import-outside-toplevel
-  )
 
   roots = find_cache_roots(config)
   mirrored = [r for r in roots if '/kaggle/tmp/cache_roots' in r]
@@ -908,6 +906,20 @@ def main() -> None:
     level=str(log_cfg.get('level', 'INFO')),
     capture_streams=bool(log_cfg.get('capture_streams', True)),
   )
+  try:
+    import subprocess  # pylint: disable=import-outside-toplevel
+
+    unknown = 'unknown (not a checkout)'
+    code_hash = subprocess.run(
+      ['git', 'rev-parse', '--short', 'HEAD'],
+      cwd=os.path.dirname(os.path.abspath(__file__)),
+      capture_output=True,
+      text=True,
+      check=False,
+    ).stdout.strip()
+    print(f'code version: {code_hash or unknown}', flush=True)
+  except OSError:
+    print('code version: unknown', flush=True)
   dump_config(
     config,
     os.path.join(
