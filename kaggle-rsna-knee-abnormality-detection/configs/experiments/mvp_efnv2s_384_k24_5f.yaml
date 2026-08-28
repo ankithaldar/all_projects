@@ -46,7 +46,7 @@ override:
   model:
     init_params:
       grad_checkpointing: true
-      chunk_size: 48
+      chunk_size: 96
 
   trainer:
     init_params:

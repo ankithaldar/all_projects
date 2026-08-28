@@ -702,6 +702,22 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
     )
   _artifact_sync(config, client).pull_if_missing()
   folds = [fold_id] if fold_id is not None else list(config['run']['folds'])
+  # Visibility: which pixel source is live + whether the local mirror
+  # is engaged (FUSE random reads were a measured step-time killer).
+  from knee.helpers.h5_cache import (
+    find_cache_roots,  # pylint: disable=import-outside-toplevel
+  )
+
+  roots = find_cache_roots(config)
+  mirrored = [r for r in roots if '/kaggle/tmp/cache_roots' in r]
+  _LOGGER.info(
+    'pixel source: %d cache root(s), %d on local scratch; roots=%s',
+    len(roots),
+    len(mirrored),
+    roots,
+  )
+  if not roots:
+    _LOGGER.warning('training on LIVE DICOM decode - cache not mounted!')
 
   index_df = explode_sop_uids(pd.read_parquet(config['paths']['index_parquet']))
   labels = pd.read_csv(config['paths']['labels_csv'])
