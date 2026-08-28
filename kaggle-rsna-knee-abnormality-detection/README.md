@@ -28,6 +28,9 @@ StudyInstanceUID
   negation-aware rule-derived pseudo-labels elsewhere (`-1` = uncertain is
   masked out of the loss).
 - StratifiedGroupKFold(5) grouped by study/patient; per-class + macro OOF AUC.
+- DICOMs are decoded ONCE into sharded HDF5 volumes (`--stage cache`),
+  pushed as Kaggle datasets, and mounted read-only afterwards: training,
+  selftest and inference stream pixels from local SSD, never re-decoding.
 - Training survives Kaggle's 12 h kernels via versioned Kaggle-Dataset
   checkpoints; inference ensembles every completed fold.
 
@@ -37,7 +40,7 @@ StudyInstanceUID
 
 ```bash
 pip install -r requirements.txt
-pytest tests                                   # 45 tests
+pytest tests                                   # 121 tests
 ruff check src tests main.py kaggle_cell.py    # style gate
 pylint --rcfile=../.pylintrc src/knee main.py  # 10.00/10 required
 PYTHONPATH=src python main.py train \
@@ -64,7 +67,7 @@ shallow-clones the recorded branch into `$KNEE_REPO_DIR`
 ```
 
 Private repos: set `GIT_TOKEN` (env/.env/Secrets) before the first call.
-Stages: `setup | index | labels | folds | train | infer | all`.
+Stages: `setup | index | labels | folds | cache | selftest | train | infer | all`.
 Overrides: `EXPERIMENT=<yaml>` env var, `WHEELS_DIR` for offline pip,
 `KNEE_REPO_DIR` for the clone location.
 
@@ -97,15 +100,65 @@ process env -> `.env` -> Kaggle User Secrets. Copy `.env.example` locally or
 register the same names under Add-ons > Secrets on Kaggle:
 `DISCORD_WEBHOOK_URL`, `WANDB_API_KEY`, `KAGGLE_USERNAME`, `KAGGLE_API_TOKEN`.
 
-## Logging
+## Logging (production-style)
 
-All channels run simultaneously and can never crash a scoring run:
+Every stage writes ONE flat file capturing python logging AND mirrored
+stdout/stderr (tqdm bars, Lightning prints, raw tracebacks):
 
-| Channel | Notes |
+```
+/kaggle/working/logs/knee_<stage>_<experiment>_<UTC>.log
+```
+
+Batch/epoch progress lines land in the same file every
+`trainer.log_every_n_steps` batches:
+
+```
+epoch 0 | batch 25/236 | step 25 | train_loss 0.3123 | lr 0.0003 | gpu 9.8/14.5 GiB
+```
+
+Knobs live under the `logging:` config block (level, capture_streams,
+progress.{enabled, refresh_rate, gpu_mem}).
+
+## Notifications (Discord)
+
+| Event | Message |
 |---|---|
-| CSV | per-fold metrics at `logs/<experiment>/fold{k}/` |
-| Weights & Biases | online when a key resolves, auto-offline otherwise |
-| Discord | fold start/finish, epoch macro-AUC, crash tracebacks |
+| fit start / finish (+duration) | per fold |
+| first optimizer step | `pacing OK` - instant pace signal |
+| every `every_n_steps` (50) | `step N (epoch E), train_loss, lr` |
+| validation epoch end | macro-AUC |
+| crash | truncated traceback |
+
+The cache stage adds: progress every 10k decoded frames (with % + ETA),
+a line per dataset push, and a final summary naming every pushed
+dataset with a ready-to-paste `KNEE_HDF5_CACHE_DIRS` line.
+
+## Volume Cache (HDF5 shards)
+
+`--stage cache` decodes every indexed series once (all slices,
+percentile-normalized, autocropped, resized, uint8) into rolling
+`volume_shard_NNN.h5` files capped at 10 GiB uncompressed, each shard
+pushed as its own Kaggle dataset `<base>-NNN` (base:
+`ah2002-rsna-knee-abnormality-detection-cache`). Resume-safe: UIDs in
+completed shards are skipped; partial tails from killed sessions are
+dropped and re-decoded. Every pushed dataset carries a manifest fragment
++ generation stamp; readers merge fragments across ALL attached datasets
+(auto-discovered - no env vars needed) and fall back to live DICOM
+decoding on any cache miss. Generation mismatches across mounts are
+logged at ERROR. Optional local mirror: `volume_cache.
+copy_mounts_to_working: true` + `copy_dir: /kaggle/tmp/cache_roots`
+copies mounts to local scratch once, removing FUSE read latency.
+
+## Resume Protocol
+
+`fold{k}/last.ckpt` (+ `done` markers) live in a versioned Kaggle Dataset.
+Session start pulls the newest version; finished folds are skipped, partial
+folds resume via `Trainer.fit(ckpt_path=...)`; a time-budget callback stops
+fitting before the kernel limit and pushes a new immutable dataset version.
+Inference ensembles whichever folds carry `done` markers.
+Cache-session resume mirrors this: already-pushed shards (read from the
+attached fragment manifests) are never re-decoded, and new shards
+continue the `-NNN` sequence instead of version-bumping old ones.
 
 ## Resume Protocol
 
