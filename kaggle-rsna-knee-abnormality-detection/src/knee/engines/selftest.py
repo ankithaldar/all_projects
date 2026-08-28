@@ -40,7 +40,6 @@ import pytorch_lightning as pl
 from knee.config_params.loader import instantiate
 from knee.datasets.series_dataset import SeriesReader
 from knee.engines.assembly import (
-  TARGET_COLUMNS,
   build_datamodule,
   build_datasets,
   build_model,
@@ -63,8 +62,25 @@ ARTIFACT_KEYS = (
   ('labels_csv', 'StudyInstanceUID'),
   ('folds_csv', 'StudyInstanceUID'),
 )
-SAMPLE_SERIES = 8
 SELFTEST_FOLD_ID = -1
+
+
+def _scope(config: dict) -> dict:
+  """Selftest knobs with safe defaults when the block is absent.
+
+  Args:
+      config: Composed experiment configuration.
+
+  Returns:
+      Mapping of sample_series/studies/train_batches/val_batches.
+  """
+  raw = config.get('selftest', {})
+  return {
+    'sample_series': int(raw.get('sample_series', 8)),
+    'studies': int(raw.get('studies', 4)),
+    'train_batches': int(raw.get('train_batches', 2)),
+    'val_batches': int(raw.get('val_batches', 1)),
+  }
 
 
 def _cuda_available() -> bool:
@@ -129,7 +145,9 @@ def check_artifacts(config: dict) -> tuple[bool, str]:
       return False, f'{path_key} is empty'
     if key_col not in frame.columns:
       return False, f'{path_key} missing key column {key_col!r}'
-  missing = [c for c in TARGET_COLUMNS if c not in labels.columns]
+  missing = [
+    c for c in config['data']['target_columns'] if c not in labels.columns
+  ]
   if missing:
     return False, f'labels missing target columns: {missing[:3]}'
   # Series-selection schema: priority rules and metadata features read
@@ -187,9 +205,10 @@ def check_dicom_mount(config: dict, index: pd.DataFrame) -> tuple[bool, str]:
   root = config['paths']['train_dicom_dir']
   if not os.path.isdir(root):
     return False, f'DICOM root missing: {root}'
-  stride = max(1, len(index) // SAMPLE_SERIES)
+  sample = _scope(config)['sample_series']
+  stride = max(1, len(index) // sample)
   checked = 0
-  for _, row in index.iloc[::stride].head(SAMPLE_SERIES).iterrows():
+  for _, row in index.iloc[::stride].head(sample).iterrows():
     series_dir = os.path.join(root, str(row['study']), str(row['series']))
     sops = list(row['sop_uids'])
     for sop in (sops[0], sops[-1]):
@@ -197,9 +216,7 @@ def check_dicom_mount(config: dict, index: pd.DataFrame) -> tuple[bool, str]:
       if not os.path.exists(probe):
         return False, f'missing file {probe}'
     checked += 1
-  return True, (
-    f'{checked}/{SAMPLE_SERIES} sampled series resolved under {root}'
-  )
+  return True, (f'{checked}/{sample} sampled series resolved under {root}')
 
 
 def check_cache(config: dict, index: pd.DataFrame) -> tuple[bool, str]:
@@ -286,10 +303,13 @@ def check_training_step(config: dict) -> tuple[bool, str]:
   labels = labels.merge(
     folds[['StudyInstanceUID', 'fold']], on='StudyInstanceUID'
   )
-  ids = labels['StudyInstanceUID'].astype(str).tolist()[:4]
-  if len(ids) < 4:
-    return False, f'only {len(ids)} labeled studies; need 4'
-  train_ids, valid_ids = ids[:2], ids[2:]
+  scope = _scope(config)
+  want = scope['studies']
+  ids = labels['StudyInstanceUID'].astype(str).tolist()[:want]
+  if len(ids) < want:
+    return False, f'only {len(ids)} labeled studies; need {want}'
+  half = max(1, want // 2)
+  train_ids, valid_ids = ids[:half], ids[half:]
   # drop_last=shuffle on the train loader: batch_size larger than the
   # tiny split would yield ZERO batches (kernel reproduce: MVP batch 8
   # vs 2 studies -> '0 optimizer steps'). Clamp to the split.
@@ -307,7 +327,7 @@ def check_training_step(config: dict) -> tuple[bool, str]:
     warmup_epochs=int(run_cfg['optimizer'].get('warmup_epochs', 0)),
     backbone_lr_scale=float(run_cfg['optimizer']['backbone_lr_scale']),
     total_epochs=1,
-    target_columns=TARGET_COLUMNS,
+    target_columns=list(run_cfg['data']['target_columns']),
     oof_dir=run_cfg['paths']['oof_dir'],
     fold_id=SELFTEST_FOLD_ID,
   )
@@ -322,8 +342,8 @@ def check_training_step(config: dict) -> tuple[bool, str]:
   )
   trainer = pl.Trainer(
     max_epochs=1,
-    limit_train_batches=2,
-    limit_val_batches=1,
+    limit_train_batches=scope['train_batches'],
+    limit_val_batches=scope['val_batches'],
     num_sanity_val_steps=0,
     accelerator=device,
     devices=1,
@@ -365,7 +385,7 @@ def check_training_step(config: dict) -> tuple[bool, str]:
     return False, f'checkpoint {manual_ckpt} not loadable: {exc}'
   size_mb = os.path.getsize(manual_ckpt) / (1024 * 1024)
   return True, (
-    f'{steps} steps + 1 val on {device} in {elapsed:.0f}s '
+    f'{steps} steps + {scope["val_batches"]} val on {device} in {elapsed:.0f}s '
     f'(status={status}); checkpoint {os.path.basename(manual_ckpt)} '
     f'({size_mb:.0f} MB) written and reloaded'
   )

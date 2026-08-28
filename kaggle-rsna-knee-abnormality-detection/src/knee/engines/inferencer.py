@@ -11,7 +11,6 @@ import pandas as pd
 import torch
 
 from knee.engines.assembly import (
-  TARGET_COLUMNS,
   build_datamodule,
   build_datasets,
   build_model,
@@ -65,6 +64,7 @@ def predict_studies(
   Returns:
       Frame indexed by StudyInstanceUID with 12 probability columns.
   """
+  targets = list(config['data']['target_columns'])
   _, valid_dataset = build_datasets(
     config,
     index_df,
@@ -93,7 +93,7 @@ def predict_studies(
     uids.extend(batch['study_uid'])
   return pd.DataFrame(
     np.concatenate(outputs, axis=0),
-    columns=[f'{column}_prob' for column in TARGET_COLUMNS],
+    columns=[f'{c}_prob' for c in targets],
     index=pd.Index(uids, name='StudyInstanceUID'),
   )
 
@@ -116,13 +116,14 @@ def write_submission(
   Raises:
       AssertionError: On any schema violation.
   """
+  targets = list(predictions.columns)
   frame = predictions.reindex(sorted(expected_uids))
   assert not frame.isna().any().any(), (
     'Missing predictions for some test studies'
   )
   clipped = frame.clip(lower=CLIP_EPS, upper=1.0 - CLIP_EPS)
-  assert list(clipped.columns) == [f'{c}_prob' for c in TARGET_COLUMNS]
-  clipped.columns = TARGET_COLUMNS
+  assert list(clipped.columns) == [f'{c}_prob' for c in targets]
+  clipped.columns = targets
   clipped.to_csv(submission_path, index_label='StudyInstanceUID')
   _LOGGER.info(
     'Submission written: %s (%d rows)', submission_path, len(clipped)

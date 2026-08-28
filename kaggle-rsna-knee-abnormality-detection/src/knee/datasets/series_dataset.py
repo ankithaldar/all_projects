@@ -20,7 +20,7 @@ from knee.helpers.utils import get_logger
 
 _LOGGER = get_logger(__name__)
 
-DEFAULT_FALLBACK_SHAPE = (512, 512)
+DEFAULT_FALLBACK_SHAPE = (512, 512)  # config default: data.fallback_shape
 
 
 class SeriesReader:
@@ -33,6 +33,8 @@ class SeriesReader:
     n_slices: int,
     percentiles: tuple[float, float],
     autocrop_margin: float,
+    autocrop_background_threshold: float = 0.02,
+    fallback_shape: tuple[int, int] = DEFAULT_FALLBACK_SHAPE,
   ) -> None:
     """Configure the reader.
 
@@ -42,12 +44,17 @@ class SeriesReader:
         n_slices: Number of evenly spaced slices returned per series.
         percentiles: Robust normalization bounds (see helpers.intensity).
         autocrop_margin: Background margin fraction kept around foreground.
+        autocrop_background_threshold: Relative intensity above which
+            pixels count as foreground (see helpers.intensity.autocrop).
+        fallback_shape: Zero-substitute frame size for failed decodes.
     """
     self.dicom_root = dicom_root
     self.registry = registry
     self.n_slices = n_slices
     self.percentiles = percentiles
     self.autocrop_margin = autocrop_margin
+    self.autocrop_background_threshold = float(autocrop_background_threshold)
+    self.fallback_shape = (int(fallback_shape[0]), int(fallback_shape[1]))
 
   def _decode_stack(self, record: dict) -> tuple[np.ndarray, tuple[int, int]]:
     """Read the sampled slices into a raw float stack.
@@ -67,7 +74,7 @@ class SeriesReader:
       int(record.get('cols') or 0),
     )
     if fallback_shape[0] <= 0 or fallback_shape[1] <= 0:
-      fallback_shape = DEFAULT_FALLBACK_SHAPE
+      fallback_shape = self.fallback_shape
     series_dir = os.path.join(
       self.dicom_root, str(record['study']), str(record['series'])
     )
@@ -101,7 +108,11 @@ class SeriesReader:
     stack, fallback_shape = self._decode_stack(record)
     normalized = intensity.normalize_percentile(stack, self.percentiles)
     center = normalized[len(normalized) // 2]
-    _, (y0, y1, x0, x1) = intensity.autocrop(center, self.autocrop_margin)
+    _, (y0, y1, x0, x1) = intensity.autocrop(
+      center,
+      self.autocrop_margin,
+      background_threshold=self.autocrop_background_threshold,
+    )
     cropped = normalized[:, y0:y1, x0:x1]
     del fallback_shape  # shape hint only needed for failed decodes above
     return intensity.to_uint8(cropped)

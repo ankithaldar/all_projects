@@ -285,8 +285,10 @@ class StudyDataset(Dataset):
       selected,
       str(group['sex'].iloc[0]) if 'sex' in group.columns else 'Unknown',
       self.metadata_features,
-      plane_order=['Sagittal', 'Coronal', 'Axial'],
-      sex_order=['M', 'F', 'O'],
+      plane_order=self.metadata_features.get(
+        'plane_onehot', ['Sagittal', 'Coronal', 'Axial']
+      ),
+      sex_order=self.metadata_features.get('sex_onehot', ['M', 'F', 'O']),
     )
     return {
       'slices': slices_tensor,

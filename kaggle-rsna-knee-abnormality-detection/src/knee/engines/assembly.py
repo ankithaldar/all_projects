@@ -26,22 +26,6 @@ from knee.helpers.h5_cache import (
 )
 from knee.helpers.utils import seed_everything
 
-TARGET_COLUMNS = [
-  'ACL',
-  'MCL',
-  'Medial Meniscus',
-  'Lateral Meniscus',
-  'Medial OA',
-  'Lateral OA',
-  'PF OA',
-  'Effusion',
-  'Synovitis',
-  "Baker's",
-  'Contusion',
-  'Fracture',
-]
-
-PLANE_ORDER = ['Sagittal', 'Coronal', 'Axial']
 SEX_ORDER = ['M', 'F', 'O']
 
 
@@ -78,6 +62,10 @@ def build_reader(config: dict, dicom_root: str) -> SeriesReader:
     n_slices=int(data['n_slices']),
     percentiles=tuple(data['normalize_percentiles']),
     autocrop_margin=float(data['autocrop_margin']),
+    autocrop_background_threshold=float(
+      data.get('autocrop_background_threshold', 0.02)
+    ),
+    fallback_shape=tuple(data.get('fallback_shape', (512, 512))),
   )
   # Volume cache (helpers.h5_cache): when a completed manifest exists on
   # any mounted root, serve pixels from HDF5 and keep the live reader as
@@ -107,10 +95,15 @@ def _augmentation_pipelines(config: dict):
   """
   img_size = int(config['data']['img_size'])
   normalize_output = config['data']['normalize_output']
+  interpolation = int(config['data'].get('resize_interpolation', 1))
   specs = config.get('augmentations', {})
   return (
-    build_compose(specs.get('train', []), img_size, normalize_output),
-    build_compose(specs.get('valid', []), img_size, normalize_output),
+    build_compose(
+      specs.get('train', []), img_size, normalize_output, interpolation
+    ),
+    build_compose(
+      specs.get('valid', []), img_size, normalize_output, interpolation
+    ),
   )
 
 
@@ -153,7 +146,7 @@ def build_datasets(
       series_selection=data['series_selection'],
       metadata_features=data['metadata_features'],
       normalize_output=data['normalize_output'],
-      target_columns=TARGET_COLUMNS,
+      target_columns=list(data['target_columns']),
     )
 
   valid_dataset = make(valid_study_ids, augment_valid)

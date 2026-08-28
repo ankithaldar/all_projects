@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
+import logging
 import os
 import re
 import shutil
@@ -32,7 +34,6 @@ import pytorch_lightning as pl
 from knee.callbacks.session import PeriodicPushCallback, TimeBudgetCallback
 from knee.config_params.loader import dump_config, instantiate
 from knee.engines.assembly import (
-  TARGET_COLUMNS,
   build_datamodule,
   build_datasets,
   build_model,
@@ -45,6 +46,7 @@ from knee.engines.selftest import render_summary, run_selftest
 from knee.engines.train_module import KneeModule
 from knee.helpers.folds import make_folds, resolve_group_column
 from knee.helpers.h5_cache import (
+  CACHE_META_NAME,
   GIB,
   MANIFEST_NAME,
   ShardWriter,
@@ -60,6 +62,7 @@ from knee.helpers.kaggle_io import (
   CredentialResolver,
   KaggleDatasetClient,
 )
+from knee.helpers.logging_setup import setup_logging
 from knee.helpers.nlp_labeling import RuleBasedLabeler, build_pseudo_labels
 from knee.helpers.utils import get_logger
 from knee.loggers.csv_logger import build_csv_logger
@@ -67,6 +70,7 @@ from knee.loggers.discord_logger import (
   DiscordCallback,
   notifier_from_config,
 )
+from knee.loggers.progress import ProgressLogCallback
 from knee.loggers.wandb_logger import build_wandb_logger
 
 _LOGGER = get_logger('main')
@@ -116,8 +120,11 @@ def _client(config: dict) -> KaggleDatasetClient | None:
   if not config['resume']['enabled']:
     return None
   secrets = config['kaggle_secrets']
+  resume = config['resume']
   return KaggleDatasetClient(
-    CredentialResolver(secrets['username_key'], secrets['token_key'])
+    CredentialResolver(secrets['username_key'], secrets['token_key']),
+    retries=int(resume.get('cli_retries', 3)),
+    backoff_seconds=float(resume.get('cli_backoff_seconds', 2.0)),
   )
 
 
@@ -127,6 +134,7 @@ ARTIFACT_BASENAMES = (
   'labels_pseudo.csv',
   'folds.csv',
 )
+
 
 def _mount_roots() -> list[str]:
   """Directories that may contain attached-dataset artifact copies.
@@ -251,6 +259,7 @@ def cmd_build_index(config: dict) -> None:
   frame = build_index(
     config['paths']['train_dicom_dir'],
     workers=int(config['data'].get('scan_workers', 4)),
+    pool_chunksize=int(config['data'].get('scan_chunksize', 16)),
   )
   series_meta = pd.read_csv(config['paths']['train_series_csv'])
   merged = frame.merge(
@@ -286,7 +295,7 @@ def cmd_build_labels(config: dict) -> None:
   labeled = build_pseudo_labels(
     train_df,
     study_column='StudyInstanceUID',
-    target_columns=TARGET_COLUMNS,
+    target_columns=list(config['data']['target_columns']),
     labeler=RuleBasedLabeler(),
   )
   out_path = config['paths']['labels_csv']
@@ -353,6 +362,8 @@ def cmd_build_cache(config: dict) -> None:
     cache_cfg.get('scan_workers', config['data'].get('scan_workers', 4))
   )
   shard_cap = int(cache_cfg.get('shard_gib_cap', 10)) * GIB
+  pool_chunksize = int(cache_cfg.get('pool_chunksize', 2))
+  cache_log_every = int(cache_cfg.get('log_every_series', 50))
   gzip_level = int(cache_cfg.get('gzip_level', 4))
   split_mode = str(cache_cfg.get('split_mode', 'group'))
   cache_dir = config['paths']['volume_cache_dir']
@@ -382,6 +393,11 @@ def cmd_build_cache(config: dict) -> None:
       row['decoder_order'] = list(data_cfg['decode_backend_order'])
       row['percentiles'] = list(data_cfg['normalize_percentiles'])
       row['margin'] = float(data_cfg['autocrop_margin'])
+      row['bg_threshold'] = float(
+        data_cfg.get('autocrop_background_threshold', 0.02)
+      )
+      row['interpolation'] = int(data_cfg.get('resize_interpolation', 1))
+      row['fallback_shape'] = tuple(data_cfg.get('fallback_shape', (512, 512)))
     tasks.extend(rows)
   if not tasks:
     # Last-resort rehydration via kaggle CLI (datasets not attached).
@@ -471,6 +487,21 @@ def cmd_build_cache(config: dict) -> None:
       }
     ).sort_values('SeriesInstanceUID')
     fragment.to_parquet(os.path.join(staging, MANIFEST_NAME), index=False)
+    # Generation stamp: reader-side load_manifest() detects mixed
+    # preprocessing generations across mounts via this file.
+    with open(
+      os.path.join(staging, CACHE_META_NAME), 'w', encoding='utf-8'
+    ) as meta_handle:
+      json.dump(
+        {
+          'img_size': int(data_cfg['img_size']),
+          'split_mode': split_mode,
+          'shard_gib_cap_gib': int(cache_cfg.get('shard_gib_cap', 10)),
+          'created_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        },
+        meta_handle,
+        indent=2,
+      )
     gib = os.path.getsize(os.path.join(staging, name)) / GIB
     say(f'pushing dataset `{slug}` ({name}, {gib:.2f} GiB)...')
     client.push_version_inplace(slug, staging)
@@ -523,6 +554,8 @@ def cmd_build_cache(config: dict) -> None:
       on_progress=(report if notifier.enabled else None),
       files_every=files_every,
       total_files=total_files,
+      pool_chunksize=pool_chunksize,
+      log_every=cache_log_every,
     )
   finally:
     writer.close()  # fires callback for any data-bearing tail shard
@@ -536,7 +569,12 @@ def cmd_build_cache(config: dict) -> None:
   union_map.update(collect_shard_map(cache_dir))
 
   if split_mode == 'group':
-    max_slug_gib = float(os.environ.get('KNEE_CACHE_SLUG_GIB_CAP', '95'))
+    max_slug_gib = float(
+      os.environ.get(
+        'KNEE_CACHE_SLUG_GIB_CAP',
+        str(config['resume'].get('push_slug_gib_cap', 95)),
+      )
+    )
     local = [n for n in sorted(os.listdir(cache_dir)) if n.endswith('.h5')]
     groups: list[list[str]] = [[]]
     running = 0.0
@@ -702,11 +740,27 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
       warmup_epochs=int(config['optimizer'].get('warmup_epochs', 0)),
       backbone_lr_scale=float(config['optimizer']['backbone_lr_scale']),
       total_epochs=total_epochs,
-      target_columns=TARGET_COLUMNS,
+      target_columns=list(config['data']['target_columns']),
       oof_dir=config['paths']['oof_dir'],
       fold_id=current_fold,
     )
-    callbacks = [
+    progress_cfg = config.get('logging', {}).get('progress', {})
+    train_callbacks = []
+    if progress_cfg.get('enabled', True):
+      train_callbacks.append(
+        ProgressLogCallback(
+          log_every_n_steps=int(trainer_cfg.get('log_every_n_steps', 25)),
+          log_gpu_mem=bool(progress_cfg.get('gpu_mem', True)),
+        )
+      )
+      from pytorch_lightning.callbacks import (  # pylint: disable=import-outside-toplevel
+        TQDMProgressBar,
+      )
+
+      train_callbacks.append(
+        TQDMProgressBar(refresh_rate=int(progress_cfg.get('refresh_rate', 25)))
+      )
+    callbacks = train_callbacks + [
       TimeBudgetCallback(
         session_time_budget_h=float(config['session_time_budget_h']),
         time_margin_min=float(config.get('time_margin_min', 30.0)),
@@ -732,6 +786,11 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
             config.get('integrations', {})
             .get('discord', {})
             .get('every_n_steps', 50)
+          ),
+          first_step_ping=bool(
+            config.get('integrations', {})
+            .get('discord', {})
+            .get('first_step_ping', True)
           ),
         )
       )
@@ -825,6 +884,14 @@ def main() -> None:
   args = _parser().parse_args()
   config = compose_experiment(args.experiment, args.override or None)
   experiment_name = config['experiment']['name']
+  log_cfg = config.get('logging', {})
+  setup_logging(
+    log_dir=config['paths'].get('log_dir', '/kaggle/working/logs'),
+    stage=args.command,
+    experiment_name=experiment_name,
+    level=str(log_cfg.get('level', 'INFO')),
+    capture_streams=bool(log_cfg.get('capture_streams', True)),
+  )
   dump_config(
     config,
     os.path.join(
@@ -841,7 +908,15 @@ def main() -> None:
     'train': lambda: cmd_train(config, args.fold),
     'infer': lambda: cmd_infer(config),
   }
-  handlers[args.command]()
+  try:
+    handlers[args.command]()
+  except SystemExit:
+    raise
+  except BaseException:  # noqa: BLE001 - log then re-raise for exit code
+    logging.getLogger('main').exception(
+      'stage %s crashed; full traceback above', args.command
+    )
+    raise
 
 
 if __name__ == '__main__':

@@ -56,3 +56,10 @@ override:
     init_params:
       batch_size: 6
       num_workers: 2
+
+  # FUSE round-trips per sampled slice were the step-time bottleneck;
+  # stage start mirrors the 12 shard datasets onto local scratch once
+  # (~5-10 min) and every read afterwards is local-SSD.
+  volume_cache:
+    copy_mounts_to_working: true
+    copy_dir: /kaggle/tmp/cache_roots

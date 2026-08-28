@@ -14,6 +14,7 @@ def build_compose(
   specs: list[dict],
   img_size: int,
   normalize_output: dict,
+  interpolation: int = 1,
 ) -> object:
   """Compose a complete per-slice transform pipeline.
 
@@ -27,13 +28,15 @@ def build_compose(
       img_size: Square resize target applied first.
       normalize_output: Mapping with ``mean`` and ``std`` channel lists
           applied after scaling pixels to [0, 1].
+      interpolation: cv2/album interpolation enum for the leading
+          deterministic Resize (1 = bilinear).
 
   Returns:
       ``albumentations.Compose`` instance ready for ``image=`` calls whose
       output['image'] is a ``(3, H, W)`` torch tensor.
   """
   steps = [
-    album.Resize(height=img_size, width=img_size, interpolation=1),
+    album.Resize(height=img_size, width=img_size, interpolation=interpolation),
     # CT slices are single-channel grayscale; the efficientnet backbone
     # stem is a 3-channel conv, so replicate to RGB before normalization.
     album.ToRGB(),

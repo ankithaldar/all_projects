@@ -109,12 +109,15 @@ def scan_one_series(series_dir: str) -> dict | None:
     return None
 
 
-def build_index(dicom_root: str, workers: int) -> pd.DataFrame:
+def build_index(
+  dicom_root: str, workers: int, pool_chunksize: int = 16
+) -> pd.DataFrame:
   """Scan every series under the root into an index DataFrame.
 
   Args:
       dicom_root: Root directory holding ``<study>/<series>/`` trees.
       workers: Parallel processes used for scanning.
+      pool_chunksize: Series per worker task in the process pool.
 
   Returns:
       Frame with one row per successfully scanned series; ``sop_uids``
@@ -134,7 +137,9 @@ def build_index(dicom_root: str, workers: int) -> pd.DataFrame:
   records: list[dict] = []
   executor_args = {} if workers <= 1 else {'max_workers': workers}
   with ProcessPoolExecutor(**executor_args) as pool:
-    for result in pool.map(scan_one_series, series_dirs, chunksize=16):
+    for result in pool.map(
+      scan_one_series, series_dirs, chunksize=max(1, int(pool_chunksize))
+    ):
       if result is not None:
         records.append(result)
   if not records:

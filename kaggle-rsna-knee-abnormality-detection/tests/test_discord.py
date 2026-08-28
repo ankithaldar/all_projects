@@ -6,7 +6,9 @@
 # signatures are exercised directly and fixtures shadow module names.
 # pylint: disable=protected-access,redefined-outer-name
 
+import http.server
 import json
+import threading
 
 import pytest
 
@@ -114,6 +116,7 @@ def callback() -> tuple[DiscordCallback, FakeNotifier]:
     experiment_name='exp',
     fold_id=2,
     step_interval=50,
+    first_step_ping=False,  # interval semantics under test
   )
   return cb, notifier
 
@@ -236,13 +239,11 @@ class TestRealDispatch:
   """Loopback HTTP proves transport end-to-end through requests."""
 
   def test_posts_reach_webhook(self, monkeypatch):
-    import http.server
-    import threading
-
     delivered: list[str] = []
 
     class Sink(http.server.BaseHTTPRequestHandler):
-      def do_POST(self):  # noqa: N802 (stdlib naming)
+      # pylint: disable=invalid-name  (stdlib HTTP verb contract)
+      def do_POST(self):
         body = self.rfile.read(int(self.headers['Content-Length']))
         delivered.append(json.loads(body)['content'])
         self.send_response(204)
@@ -275,7 +276,9 @@ class TestRealDispatch:
     assert '**[exp]** cache:' in delivered[0]
 
   def test_unresolved_secret_is_loud_and_disabled(self, caplog, monkeypatch):
-    from knee.loggers import discord_logger as dl
+    from knee.loggers import (  # pylint: disable=import-outside-toplevel
+      discord_logger as dl,
+    )
 
     monkeypatch.delenv('DISCORD_WEBHOOK_URL', raising=False)
     monkeypatch.setattr(dl, 'get_secret', lambda *a, **k: None)
@@ -286,3 +289,26 @@ class TestRealDispatch:
     assert not notifier.enabled
     assert 'will NOT be sent' in caplog.text
     assert 'DISCORD_WEBHOOK_URL' in caplog.text
+
+
+def test_first_step_ping_gives_instant_pace():
+  """Pace signal arrives at step 1, not a full 50-step interval later."""
+  notifier = FakeNotifier()
+  cb = DiscordCallback(
+    notifier=notifier,
+    experiment_name='exp',
+    fold_id=2,
+    step_interval=50,
+    first_step_ping=True,
+  )
+  trainer = FakeTrainer(metrics={'train/loss': 0.9})
+  trainer.global_step = 1
+  module = FakeModule()
+  cb.on_train_batch_end(trainer, module, None, None, 0)
+  assert len(notifier.messages) == 1
+  assert 'first optimizer step - pacing OK' in notifier.messages[0]
+  assert 'step 1' in notifier.messages[0]
+  # Step 2 is not a multiple and not step 1: silence.
+  trainer.global_step = 2
+  cb.on_train_batch_end(trainer, module, None, None, 1)
+  assert len(notifier.messages) == 1

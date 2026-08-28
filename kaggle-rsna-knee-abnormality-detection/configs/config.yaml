@@ -21,6 +21,8 @@ paths:
   artifact_dir: /kaggle/working/artifacts
   checkpoint_dir: /kaggle/working/checkpoints
   oof_dir: /kaggle/working/oof
+  log_dir: /kaggle/working/logs
+  copy_dir: /kaggle/tmp/cache_roots  # local-SSD shard mirror (large disk)
   # Sharded HDF5 pixel cache built by `main.py build-cache`. Split
   # 'shard' pushes each finished shard as its own dataset from the
   # completion callback (peak disk ~2 shards), fitting the mandated
@@ -35,6 +37,9 @@ resume:
   # Volume cache base name: shard mode appends -000/-001/... per shard;
   # fully-qualified owner/name values pass through unchanged.
   cache_dataset_slug: ah2002-rsna-knee-abnormality-detection-cache
+  cli_retries: 3                # kaggle CLI attempts per invocation
+  cli_backoff_seconds: 2.0      # linear backoff between attempts
+  push_slug_gib_cap: 95         # group-mode split ceiling per dataset
 
 kaggle_secrets:
   username_key: KAGGLE_USERNAME
@@ -46,7 +51,11 @@ integrations:
   discord:
     enabled: true
     webhook_secret: DISCORD_WEBHOOK_URL
-    every_n_steps: 50              # heartbeat cadence (optimizer steps)
+    every_n_steps: 10              # heartbeat cadence (optimizer steps)
+    min_post_interval_s: 2.5       # rate-limit between webhook posts
+    request_timeout_s: 10.0
+    traceback_snippet_chars: 1500  # crash-message truncation
+    first_step_ping: true          # pace signal at step 1, not step 50
   wandb:
     enabled: true
     project: rsna-knee-mvp
@@ -58,6 +67,25 @@ run:
   # Folds processed by `main.py train` in this session, in order.
   folds: [0, 1, 2, 3, 4]
 
+# Production logging: one flat <stage>_<experiment>_<UTC>.log per run
+# under paths.log_dir capturing python logging + mirrored stdout/stderr
+# (tqdm bars, Lightning prints, raw tracebacks).
+logging:
+  level: INFO
+  capture_streams: true
+  progress:
+    enabled: true
+    refresh_rate: 25               # tqdm bar refresh (batches)
+    gpu_mem: true                  # per-line GPU memory snapshot
+
+# Preflight selftest scope (engines.selftest). Tiny on purpose: the
+# goal is plumbing verification in minutes, not accuracy.
+selftest:
+  sample_series: 8               # dicom_mount probe breadth
+  studies: 4                     # 2 train + 2 valid in the mini fit
+  train_batches: 2
+  val_batches: 1
+
 # HDF5 volume cache policy (helpers.h5_cache). Shards cap at 10 GiB of
 # uncompressed pixels each; gzip runs per-chunk inside the container so
 # local shard files already reflect final upload size.
@@ -67,4 +95,6 @@ volume_cache:
   shard_gib_cap: 10
   gzip_level: 4
   scan_workers: 4                # decode pool width (CPU-bound stage)
-  discord_files_every: 10000     # heartbeat cadence in DICOM frames
+  pool_chunksize: 2              # series per pool.map task
+  log_every_series: 50           # console progress cadence
+  discord_files_every: 100000    # heartbeat cadence in DICOM frames
