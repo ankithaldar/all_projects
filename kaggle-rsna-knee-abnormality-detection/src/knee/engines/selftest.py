@@ -30,7 +30,6 @@ Failures never abort later checks; run_selftest returns a summary of
 from __future__ import annotations
 
 import copy
-import glob
 import os
 import tempfile
 import time
@@ -333,16 +332,36 @@ def check_training_step(config: dict) -> tuple[bool, str]:
   )
   trainer.fit(module, datamodule=build_datamodule(run_cfg, train_ds, valid_ds))
   elapsed = time.time() - started
-  ckpts = glob.glob(
-    os.path.join(run_cfg['paths']['checkpoint_dir'], '**', '*.ckpt'),
-    recursive=True,
+  steps = int(trainer.global_step)
+  status = str(getattr(trainer.state, 'status', 'unknown'))
+  if steps == 0:
+    return False, (
+      f'fit completed 0 optimizer steps (status={status}); '
+      'train loader yielded nothing - check study id selection'
+    )
+  # Explicit save: the roundtrip under test is write-then-reload, not
+  # PL's epoch-end bookkeeping (which proved version-conditional).
+  manual_ckpt = os.path.join(
+    run_cfg['paths']['checkpoint_dir'], 'selftest_manual.ckpt'
   )
-  if not ckpts:
-    return False, 'trainer produced no checkpoint file'
-  size_mb = os.path.getsize(ckpts[0]) / (1024 * 1024)
+  trainer.save_checkpoint(manual_ckpt)
+  ckpt_dir = run_cfg['paths']['checkpoint_dir']
+  if not os.path.exists(manual_ckpt):
+    return False, (
+      f'save_checkpoint wrote nothing after {steps} steps '
+      f'(status={status}); dir={ckpt_dir}'
+    )
+  try:
+    import torch  # pylint: disable=import-outside-toplevel
+
+    torch.load(manual_ckpt, map_location='cpu', weights_only=False)
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    return False, f'checkpoint {manual_ckpt} not loadable: {exc}'
+  size_mb = os.path.getsize(manual_ckpt) / (1024 * 1024)
   return True, (
-    f'2 train + 1 val steps on {device} in {elapsed:.0f}s; '
-    f'checkpoint {os.path.basename(ckpts[0])} ({size_mb:.0f} MB)'
+    f'{steps} steps + 1 val on {device} in {elapsed:.0f}s '
+    f'(status={status}); checkpoint {os.path.basename(manual_ckpt)} '
+    f'({size_mb:.0f} MB) written and reloaded'
   )
 
 
