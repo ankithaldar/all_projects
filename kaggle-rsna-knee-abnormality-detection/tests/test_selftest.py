@@ -233,3 +233,73 @@ def test_check_training_step_survives_oversized_batch(pipeline):
   ok, detail = st.check_training_step(pipeline)
   assert ok, detail
   assert 'checkpoint' in detail
+
+
+class TestStepSchedules:
+  """Warmup+cosine must operate per STEP with config T_max in epochs.
+
+  Regression: interval='epoch' held LR at 5% of base for the entire
+  first epoch - the fit ran silently without learning (lr 0.0000 lines).
+  """
+
+  def _make(
+    self,
+    tmp_path,
+    warmup_epochs=1.0,
+    total_epochs=4,
+    steps_per_epoch=10,
+    accumulate=1,
+  ):
+    import torch
+
+    from knee.engines.train_module import build_step_schedules
+
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.SGD(model.parameters(), lr=3e-4)
+    cfg = {
+      'class_path': 'torch.optim.lr_scheduler.CosineAnnealingLR',
+      'init_params': {'T_max': total_epochs, 'eta_min': 1e-6},
+    }
+    schedule = build_step_schedules(
+      optimizer,
+      cfg,
+      warmup_epochs,
+      total_epochs,
+      steps_per_epoch,
+      accumulate,
+    )
+    return optimizer, schedule
+
+  def test_warmup_epoch_is_step_based(self, tmp_path):
+
+    optimizer, schedule = self._make(tmp_path)
+    assert schedule['interval'] == 'step'
+    lr0 = optimizer.param_groups[0]['lr']
+    assert lr0 == pytest.approx(3e-4 * 0.05)  # warmup start, NOT 5% forever
+    # Ramp through the 10-step warmup: lr rises above start quickly.
+    seen = []
+    for _ in range(9):
+      schedule['scheduler'].step()
+      seen.append(optimizer.param_groups[0]['lr'])
+    assert max(seen) > lr0 * 4
+    assert not any(v == 0.0 for v in seen)
+
+  def test_cosine_ends_near_eta_min(self, tmp_path):
+
+    optimizer, schedule = self._make(
+      tmp_path, warmup_epochs=1.0, total_epochs=4, steps_per_epoch=10
+    )
+    for _ in range(40):  # full run: 40 optimizer steps
+      schedule['scheduler'].step()
+    lr_end = optimizer.param_groups[0]['lr']
+    assert lr_end < 1e-5  # annealed to eta_min (1e-6)
+
+  def test_accumulation_divides_steps(self, tmp_path):
+
+    optimizer, schedule = self._make(tmp_path, accumulate=2)
+    # 10 batches/epoch, accum 2 -> 5 optimizer steps/epoch; warmup 1
+    # epoch = 5 steps; total = 20 steps.
+    assert schedule['interval'] == 'step'
+    for _ in range(20):
+      schedule['scheduler'].step()
+    assert optimizer.param_groups[0]['lr'] < 1e-5

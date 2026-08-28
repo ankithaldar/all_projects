@@ -55,7 +55,9 @@ override:
   datamodule:
     init_params:
       batch_size: 6
-      num_workers: 2
+      num_workers: 1               # host-RAM headroom: 2 ranks x (1 main +
+                                   # N persistent workers) fit 29 GB; with the
+                                   # local shard mirror one worker keeps up
 
   # FUSE round-trips per sampled slice were the step-time bottleneck;
   # stage start mirrors the 12 shard datasets onto local scratch once
