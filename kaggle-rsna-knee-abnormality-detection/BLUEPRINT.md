@@ -85,18 +85,24 @@ init_params:                           # kwargs for __init__, resolved recursive
 
 ```
 configs/
-├── config.yaml          # experiment name, seed, paths (mounts, ckpt dataset slug,
-│                        #   kaggle secret names), integrations, folds to run
+├── config.yaml          # experiment name, seed, paths (mounts, ckpt/cache dataset
+│                        #   slugs, kaggle secret names), integrations (discord
+│                        #   transport + cadence), logging/progress, selftest scope,
+│                        #   folds to run
 ├── data.yaml            # n_slices, img_size, series-selection policy,
-│                        #   normalization percentiles, decode backend order
+│                        #   normalization percentiles, decode backend order,
+│                        #   target_columns (output schema), crop threshold,
+│                        #   resize interpolation, fallback shape, scan chunksize
 ├── folds.yaml           # CV class_path + init_params (StratifiedGroupKFold)
 ├── augmentations.yaml   # albumentations pipelines: train / valid
 ├── model.yaml           # KneeNet tree: backbone, pools, aggregator, heads
 ├── loss.yaml            # criterion class_path + init_params
 ├── optimizer.yaml       # optimizer/scheduler class_paths, lr groups, warmup_epochs
-├── train.yaml           # Trainer args (epochs, precision, devices),
+├── train.yaml           # Trainer args (epochs, precision, devices, benchmark),
 │                        #   session_time_budget_h, checkpoint_every_n_epochs
 ├── datamodule.yaml      # DataModule/Dataset class_paths, batch_size, workers
+├── (volume_cache)       # cache policy in config.yaml: split_mode, shard_gib_cap,
+│                        #   gzip_level, scan_workers, pool_chunksize, copy_dir
 ├── infer.yaml           # ckpt fold selection, fp16, batch_size, submission_path
 └── experiments/
     ├── mvp_efnv2s_384_k24_5f.yaml   # main experiment: defaults list + override
@@ -136,6 +142,7 @@ Artifacts (all tiny; total < 2 GB):
 |---|---|---|
 | `index.parquet`, `labels_pseudo.csv`, `folds.csv` | Kaggle Dataset `<slug>-index` | ordered SOP lists, spacing, plane/FS/FL, sex, protocol tags; supervision; splits |
 | `fold{k}/last.ckpt`, `fold{k}/done`, `run_state.json` | Kaggle Dataset `<slug>-ckpt` (versioned) | model+optimizer+scheduler+epoch+step+best metric; fold completion markers |
+| `volume_shard_NNN.h5`, `cache_manifest.parquet`, `cache_meta.json` | one Kaggle Dataset per shard: `<base>-NNN` | decoded pixel volumes (uint8, all slices) keyed by SeriesInstanceUID; uid->shard manifest fragment; generation stamp |
 
 Flow (`src/knee/helpers/kaggle_io.py`):
 
@@ -154,6 +161,15 @@ Flow (`src/knee/helpers/kaggle_io.py`):
    `/kaggle/working` with logged manual recovery path.
 7. Inference consumes whichever folds have `done` markers (partial ensembles
    degrade gracefully).
+8. Volume-cache resume mirrors the checkpoint protocol: fragment manifests
+   inside every attached `cache-*` dataset describe remote coverage, so
+   reruns skip pushed series entirely; new shards CONTINUE the `-NNN`
+   sequence (ordinal floor from `remote_cache_state`) instead of
+   version-bumping old shards - the overwrite regression is guarded by a
+   session-level duplicate-slug assertion.
+9. Every pushed cache dataset stamps `cache_meta.json` (img_size, split
+   mode, cap, UTC); `load_manifest` logs at ERROR when attached mounts mix
+   preprocessing generations.
 
 ## 6b. Experiment Tracking and Notifications
 
@@ -169,6 +185,55 @@ scoring run:
 Credentials resolve by *name* from YAML through
 `helpers/secrets.get_secret(name)`: env -> `.env` -> Kaggle secrets
 (see `.env.example`: `DISCORD_WEBHOOK_URL`, `WANDB_API_KEY`, `KAGGLE_*`).
+
+## 6c. HDF5 Volume Cache (decode once, read forever)
+
+Decoding 819k DICOM frames per epoch starved both T4s (the CPU was the
+bottleneck even at 4 vCPUs of pure decode). The `cache` stage collapses
+that cost into a one-time pass:
+
+* `ShardWriter` rolls `volume_shard_NNN.h5` under an UNCOMPRESSED byte
+  cap (`volume_cache.shard_gib_cap`, default 10 GiB -> ~2-4 GiB files
+  after per-chunk gzip-4). Datasets are keyed by SeriesInstanceUID with
+  per-slice chunks; completion sentinels (`*.h5.complete`) drive resume
+  and pipelined per-shard pushes.
+* `H5SeriesReader` serves pixels with the EXACT `SeriesReader.read()`
+  contract, including the repeat-sampling rule for series shorter than
+  `n_slices` (regression-tested), and falls back to live decoding on
+  any miss so training can never hard-fail on a partial cache.
+* Root resolution is automatic: attached Kaggle datasets containing a
+  `cache_manifest.parquet` fragment qualify (artifact datasets do not);
+  `KNEE_HDF5_CACHE_DIRS` overrides, `volume_cache.copy_mounts_to_working`
+  + `copy_dir` optionally mirror mounts onto local scratch
+  (`/kaggle/tmp/cache_roots` in the MVP - FUSE chunk round-trips were
+  the dominant step-time cost).
+* Failures never fossilize: a series is cached only when EVERY frame
+  decodes; a single corrupt frame leaves the series on the live path.
+* Offline equivalent: `build_volume_cache.py` runs the identical
+  pipeline without experiment config (CLI flags, optional Discord
+  progress).
+
+## 6d. Observability: Flat Logs, Progress, Discord
+
+* `helpers/logging_setup.setup_logging()` runs in `main()` for every
+  stage: one flat file `paths.log_dir/knee_<stage>_<experiment>_<UTC>.log`
+  receives the ROOT logger AND mirrored stdout/stderr (tqdm, Lightning
+  prints, child-process output, raw tracebacks). Eager flush; full-disk
+  safe; idempotent per process (tee rebinds across stages).
+* `loggers/progress.ProgressLogCallback` mirrors batch/epoch progress
+  into that file every `trainer.log_every_n_steps` batches:
+  `epoch E | batch b/B | step S | train_loss | lr | gpu A/B GiB`,
+  plus validation metrics and epoch durations. Rank-0 only.
+  Native `TQDMProgressBar(refresh_rate)` runs alongside.
+* Discord (`loggers/discord_logger`): fit start/finish, heartbeat every
+  `integrations.discord.every_n_steps` optimizer steps, a step-1
+  `pacing OK` ping (`first_step_ping`), per-push dataset announcements
+  during cache builds, final cache summary naming every pushed dataset
+  with a ready-to-paste `KNEE_HDF5_CACHE_DIRS` line, and truncated
+  tracebacks on crashes. Resolution failures are LOUD (config-off logs
+  INFO; unresolved webhook logs WARNING naming the secret).
+* All knobs live in config: `logging.*`, `integrations.discord.*`,
+  `volume_cache.{log_every_series, pool_chunksize, discord_files_every}`.
 
 ## 7. NLP Pseudo-Labeling (MVP rules)
 
@@ -192,6 +257,22 @@ headroom  : >= 15 GPU-h for iteration/backlog
 
 Levers if measurements disagree: `n_slices`, `img_size`, `max_series_per_study`,
 backbone name — all in YAML. Notebook 01 records measured decode throughput.
+
+As-built updates (kernel-measured, 2026-08):
+
+* Decode moved OFF the training path (section 6c): streaming DICOM
+  decode was starving both T4s at any batch size; shards + local
+  `/kaggle/tmp` mirror removed it entirely.
+* Effective step preserved under tuning: batch_size 6 x 2 GPUs x
+  accumulate 2 = 24 studies, with `grad_checkpointing: true` +
+  `chunk_size: 48` bounding activations (7.6/15 GiB observed at batch 3
+  -> headroom deliberately consumed).
+* `deterministic: false`, `benchmark: true` (fixed slice shapes),
+  `num_workers: 2` per DDP process (2 processes x 2 = Kaggle's 4 vCPUs
+  exactly - 8 decoders thrashed).
+* Pace measurement discipline: Discord heartbeat gaps / 50 optimizer
+  steps, or the flat log's batch lines; no more estimating from kernel
+  wall-clock.
 
 ## 9. Repository Layout
 
@@ -497,13 +578,26 @@ re-executes your command there - zero manual code.
 # Cell 1 (fresh kernel): install pinned deps; WHEELS_DIR enables offline mode
 !bash kaggle_run.sh setup
 
-# Cell 2..n: any stage; training resumes automatically from pulled last.ckpt
+# Cells 2..n: data stages are resume-safe and cache-aware; training
+# resumes automatically from pulled last.ckpt, pixels from shards
 %run kaggle_cell.py --stage index
 %run kaggle_cell.py --stage labels
 %run kaggle_cell.py --stage folds
+%run kaggle_cell.py --stage cache              # one-time: HDF5 shards -> datasets
+%run kaggle_cell.py --stage selftest           # preflight: 2 real steps + ckpt
 %run kaggle_cell.py --stage train --fold 0     # or omit --fold for run.folds list
 %run kaggle_cell.py --stage infer              # writes submission.csv
+
+# Production log (flat, everything incl tracebacks):
+!tail -f /kaggle/working/logs/knee_train_*.log
 ```
+
+Environment overrides: `EXPERIMENT` (YAML under configs/experiments/),
+`WHEELS_DIR` (offline wheel directory), `PIP_EXTRA`,
+`KNEE_REPO_DIR` (clone location), `GIT_TOKEN`/`GITHUB_TOKEN`/`GH_TOKEN`
+(https credentials for private upstreams), `KNEE_HDF5_CACHE_DIRS`
+(colon-separated cache roots; auto-discovery usually makes this
+unnecessary), `KNEE_INPUT_ROOTS`, `KNEE_LOG_DIR`, `KNEE_CACHE_COPY`.
 
 Environment overrides: `EXPERIMENT` (YAML under configs/experiments/),
 `WHEELS_DIR` (offline wheel directory), `PIP_EXTRA`,
@@ -537,14 +631,19 @@ under `configs/experiments/` listing `defaults` + an `override` block.
 | Model stack: pooling layers, backbone, encoders, KneeNet | done |
 | Engines: assembly, Lightning module, inferencer, submission asserts | done |
 | Callbacks: time budget, periodic push | done |
-| Logging: CSV + W&B + Discord | done |
+| Logging: CSV + W&B + Discord + flat production log + progress lines | done |
 | Kaggle drivers (kaggle_run.sh, kaggle_cell.py) | done |
-| Tests: 45 passing; pylint 10.00/10 on all files; ruff clean | done |
+| HDF5 volume cache (shards, manifest, local mirror, resume) | done |
+| Preflight selftest stage (artifacts/mount/cache/model/2 real steps) | done |
+| Perf engineering: batch 6/accum 2, checkpointing+chunking, local reads | done |
+| Tests: 121 passing; pylint 10.00/10 on all files; ruff clean | done |
 | Notebooks 02-04 as thin wrappers | pending (stages already runnable via drivers) |
-| First real-data end-to-end run (index -> folds -> train fold0) | pending |
+| First full 5-fold train on shards (fold0 partially trained) | in progress |
 | Backlog items 1-8 | pending |
 
-Commit trail: `21def73` blueprint -> `fd41d80` configs -> `8a04e11`
-loader+helpers -> `e15f02e` model stack -> `9f6facc` engines/CLI ->
-`4fa02c4`+`f09bac0` tests & fixes -> `52659d8` style enforcement ->
-`bed9ceb` logging + drivers.
+Commit trail (abridged): `21def73` blueprint -> `fd41d80` configs ->
+`8a04e11` loader+helpers -> `e15f02e` model stack -> `9f6facc`
+engines/CLI -> `bed9ceb` logging + drivers -> `b2f9e07`..`f810e02`
+(2026-08 hardening + volume cache + selftest + observability series:
+slug qualification, config-schema fixes, OOM/memory levers, discord
+heartbeats, HDF5 shards, local mirror, production logging).
