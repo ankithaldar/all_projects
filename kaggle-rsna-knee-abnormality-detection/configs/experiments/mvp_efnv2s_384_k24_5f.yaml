@@ -36,11 +36,13 @@ override:
   series_selection:
     max_series_per_study: 4
 
-  # 14.5 GB T4 budget: batch_size 3 x 4 series x 24 slices = 288 images
-  # per pass, split into chunked backbone passes with activation
-  # checkpointing; accumulate_grad_batches keeps the effective step at
-  # 12 studies. num_workers is per-DDP-process: 2 processes x 2 workers
-  # saturates Kaggle's 4 vCPUs without decoder thrash.
+  # 14.5 GB T4 budget, shard-cache mounted (decode off the critical
+  # path): batch_size 6 x 4 series x 24 slices = 576 images per GPU
+  # pass, split into chunked backbone passes with activation
+  # checkpointing (kernel-observed 7.6/15 GiB at batch 3 -> ~2x headroom
+  # used). Effective GLOBAL step is preserved:
+  #   before: 3 studies x 2 GPUs x accum 4 = 24 studies
+  #   after:  6 studies x 2 GPUs x accum 2 = 24 studies
   model:
     init_params:
       grad_checkpointing: true
@@ -48,9 +50,9 @@ override:
 
   trainer:
     init_params:
-      accumulate_grad_batches: 4
+      accumulate_grad_batches: 2
 
   datamodule:
     init_params:
-      batch_size: 3
+      batch_size: 6
       num_workers: 2
