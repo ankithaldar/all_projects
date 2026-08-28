@@ -587,3 +587,33 @@ class TestMountDiscovery:
     # Idempotent second pass reuses the copy.
     again = hc.find_cache_roots(config)
     assert again == roots
+
+
+class TestDicomRootPassthrough:
+  """StudyDataset swaps reader.dicom_root per read (test-mount override);
+
+  the cache wrapper MUST forward that mutation to the live fallback
+  reader or inference crashes / decodes from a stale root.
+  """
+
+  def test_get_set_delegates_to_base(self, tmp_path):
+    import knee.helpers.h5_cache as hc
+
+    class Live:
+      def __init__(self):
+        self.dicom_root = '/train'
+
+    root = tmp_path / 'cache'
+    writer = ShardWriter(str(root), img_size=8, gzip_level=0)
+    writer.add_series('u', 's', _volume(0, img=8))
+    writer.close()
+    writer.write_manifest()
+    manifest = hc.load_manifest([str(root)])
+    reader = H5SeriesReader(
+      base_reader=FakeReader(), manifest=manifest, n_slices=3
+    )
+    # FakeReader has no dicom_root; emulate live SeriesReader surface.
+    reader.base.dicom_root = '/train_series'
+    assert reader.dicom_root == '/train_series'
+    reader.dicom_root = '/test_series'  # inference-time swap
+    assert reader.base.dicom_root == '/test_series'

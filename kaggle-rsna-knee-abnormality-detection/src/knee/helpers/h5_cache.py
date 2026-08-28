@@ -873,6 +873,29 @@ class H5SeriesReader:
     }
     self._handles: dict[str, h5py.File] = {}
 
+  @property
+  def dicom_root(self) -> str:
+    """Live reader's DICOM root, passthrough for mount-swap contract.
+
+    StudyDataset temporarily rewrites ``reader.dicom_root`` around every
+    read to support the test-mount override at inference; the wrapper
+    must forward both reads and writes so cache misses fall back to the
+    CURRENT root instead of a stale training-time path.
+
+    Returns:
+        The underlying live reader's root.
+    """
+    return self.base.dicom_root
+
+  @dicom_root.setter
+  def dicom_root(self, value: str) -> None:
+    """Forward root swaps to the wrapped live reader.
+
+    Args:
+        value: New DICOM root.
+    """
+    self.base.dicom_root = value
+
   def _open_dataset(self, root: str, shard: str):
     """Memoized shard opening rooted per manifest entry.
 
