@@ -1,0 +1,6 @@
+# Runtime data (SQLite DBs, traces, eval reports)
+data/
+
+# Node artifacts for the TypeScript MCP server
+node_modules/
+*.tsbuildinfo
