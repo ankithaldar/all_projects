@@ -13,6 +13,7 @@
 #   selftest Preflight: artifacts/mount/cache/model + 2 real steps.
 #   train   Resume-aware fold training (session-budget + checkpoint push).
 #   infer   Fold-ensemble prediction -> submission.csv
+#   sweep   Noise-floor study (seeds x folds, BLUEPRINT 11.0-1)
 #   all     index -> labels -> folds (train/infer run per-session instead)
 #
 # Environment overrides:
@@ -75,6 +76,9 @@ case "${STAGE}" in
   train|infer)
     run_stage "${STAGE}" "$@"
     ;;
+  sweep)
+    run_stage "sweep" "$@"
+    ;;
   all)
     for step in index labels folds; do
       run_stage "${step}" "$@"
@@ -82,7 +86,7 @@ case "${STAGE}" in
     echo "=== kaggle_run: data stages complete; run 'train'/'infer' per session ==="
     ;;
   *)
-    echo "Unknown stage: ${STAGE} (expected setup|index|labels|folds|train|infer|all)" >&2
+    echo "Unknown stage: ${STAGE} (expected setup|index|labels|folds|train|infer|sweep|all)" >&2
     exit 2
     ;;
 esac

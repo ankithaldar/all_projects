@@ -67,6 +67,17 @@ run:
   # Folds processed by `main.py train` in this session, in order.
   folds: [0, 1, 2, 3, 4]
 
+# Noise-floor study (BLUEPRINT 11.0-1): the SAME config trained at every
+# seed on the listed folds; final-epoch OOF macro-AUC spread defines the
+# keep/drop gate (mean + 2*std) for ALL backlog experiments. Progress is
+# resumable (noise_floor_state.json) and per-seed checkpoints push to
+# their own dataset so the main checkpoint slug stays untouched.
+noise_floor:
+  seeds: [42, 43, 44]            # blueprint: 3 seeds x best config
+  folds: [0]                     # blueprint: fold 0 only
+  dataset_slug: rsna-knee-mvp-nf # per-seed ckpts + state/summary files
+  budget_floor_h: 0.5            # skip the next seed below this remainder
+
 # Production logging: one flat <stage>_<experiment>_<UTC>.log per run
 # under paths.log_dir capturing python logging + mirrored stdout/stderr
 # (tqdm bars, Lightning prints, raw tracebacks).
