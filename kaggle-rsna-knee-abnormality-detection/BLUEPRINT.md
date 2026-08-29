@@ -100,7 +100,9 @@ configs/
 ├── optimizer.yaml       # optimizer/scheduler class_paths, lr groups, warmup_epochs
 ├── train.yaml           # Trainer args (epochs, precision, devices, benchmark),
 │                        #   session_time_budget_h, checkpoint_every_n_epochs
-├── datamodule.yaml      # DataModule/Dataset class_paths, batch_size, workers
+├── datamodule.yaml      # DataModule/Dataset class_paths, batch_size, workers,
+│                        #   train_sampler spec (imbalanced-target sampling;
+│                        #   null = uniform)
 ├── (volume_cache)       # cache policy in config.yaml: split_mode, shard_gib_cap,
 │                        #   gzip_level, scan_workers, pool_chunksize, copy_dir
 ├── infer.yaml           # ckpt fold selection, fp16, batch_size, submission_path
@@ -235,6 +237,37 @@ that cost into a one-time pass:
 * All knobs live in config: `logging.*`, `integrations.discord.*`,
   `volume_cache.{log_every_series, pool_chunksize, discord_files_every}`.
 
+## 6e. Imbalanced-Target Sampling (train only)
+
+The 12 targets are heavily skewed while the metric is MACRO-AUC, so
+uniform study sampling starves rare positives (fracture, contusion,
+Baker's cyst, synovitis) of gradient updates. An optional frequency-
+aware sampler tilts the TRAIN loader only:
+
+* Per-target weight `prevalence**-tempering` normalized to mean 1.0,
+  where prevalence counts only UNMASKED entries (`-1` never votes).
+  `tempering: 0` reproduces uniform sampling exactly; `1.0` is full
+  inverse frequency; the MVP ships `0.5` (sqrt-tempered).
+* Per-study weight = `max` (default) or `mean` over the weights of the
+  study's POSITIVE targets; studies with no positive target get
+  `baseline` (1.0). The `max` default gives rare-positive studies the
+  strongest pull.
+* Draws are WITH replacement and `num_samples` defaults to the dataset
+  size: epoch size, optimizer-step counts, cosine schedule math, and
+  the checkpoint-resume protocol are all unchanged.
+* Under DDP Lightning wraps the sampler in
+  `DistributedSamplerWrapper`, so 2xT4 ranks draw disjoint streams.
+* Validation loaders stay uniform; OOF/macro-AUC remains comparable
+  across experiments.
+
+Wiring honours the zero-hardcode contract: `train_sampler` is a
+SIBLING key of `class_path/init_params` in the datamodule spec (the
+factory needs the fold split, so it builds the sampler at loader
+time), resolved by `samplers/factory.py` exactly like the
+augmentations factory. Enabling it mid-fold changes the train
+distribution: do not resume a partially trained fold across the
+change - restart the fold.
+
 ## 7. NLP Pseudo-Labeling (MVP rules)
 
 - Per-target lexicon regexes on lowercased report text.
@@ -325,7 +358,10 @@ notebooks/
 ├── 02_build_index_labels_folds.ipynb  # pending (or use kaggle_run.sh stages)
 ├── 03_model_training.ipynb          # pending thin wrapper over kaggle_cell.py --stage train
 └── 04_inference.ipynb               # pending thin wrapper over kaggle_cell.py --stage infer
-tests/                               # 45 tests across geometry/NLP/loader/net/resume
+tests/                               # geometry, NLP rules, config loader,
+                                     # net shapes, resume, cache, selftest,
+                                     # noise floor, imbalanced sampler, OOF
+                                     # metric isolation
 ```
 
 Style contract for all Python: shebang + coding header, Google docstrings,
@@ -351,6 +387,11 @@ Order within a group is by expected value; run noise-floor study first.
 
 1. **Noise floor**: 3 seeds x best config on fold 0; record macro-AUC
    std. Any change worth shipping must beat mean + 2 sigma.
+   IMPLEMENTED as the `sweep` stage (engines/noise_floor.py): per-seed
+   isolated checkpoint dirs + dataset slugs, resumable JSON state,
+   final-epoch OOF scoring, gate = mean + 2*std announced on Discord.
+   NOTE: run it with the sampling policy intended for the follow-up
+   experiments (the MVP experiment ships the 6e sampler enabled).
 2. **Single-knob sweeps via experiments/*.yaml** (img_size, n_slices,
    max_series, lr, epochs) logged to W&B for automatic comparison.
 3. **Per-class attribution notebook**: which of the 12 targets move with
@@ -586,6 +627,7 @@ re-executes your command there - zero manual code.
 %run kaggle_cell.py --stage cache              # one-time: HDF5 shards -> datasets
 %run kaggle_cell.py --stage selftest           # preflight: 2 real steps + ckpt
 %run kaggle_cell.py --stage train --fold 0     # or omit --fold for run.folds list
+%run kaggle_cell.py --stage sweep              # noise floor (11.0-1): seeds x folds
 %run kaggle_cell.py --stage infer              # writes submission.csv
 
 # Production log (flat, everything incl tracebacks):
@@ -641,9 +683,20 @@ under `configs/experiments/` listing `defaults` + an `override` block.
 | First full 5-fold train on shards (fold0 partially trained) | in progress |
 | Backlog items 1-8 | pending |
 
+Blueprint-implementation branch (post-MVP, one feature per commit):
+
+| Item | State |
+|---|---|
+| Noise-floor harness (`sweep` stage, 11.0-1): per-seed isolated ckpt dirs/slugs, resumable state, final-epoch OOF scoring, gate mean+2*std via Discord | done |
+| Imbalanced-target study sampler (6e): tempering/aggregation/baseline in YAML, train-only, epoch size preserved | done |
+| Bugfix: per-epoch AUC accumulator reset (OOF/val metrics previously accumulated across sanity check + epochs) | done |
+| Experiment registry (11.8-1), then 11.0-2/3 sweeps + attribution | pending |
+
 Commit trail (abridged): `21def73` blueprint -> `fd41d80` configs ->
 `8a04e11` loader+helpers -> `e15f02e` model stack -> `9f6facc`
 engines/CLI -> `bed9ceb` logging + drivers -> `b2f9e07`..`f810e02`
 (2026-08 hardening + volume cache + selftest + observability series:
 slug qualification, config-schema fixes, OOM/memory levers, discord
-heartbeats, HDF5 shards, local mirror, production logging).
+heartbeats, HDF5 shards, local mirror, production logging) ->
+`a59c93f` noise-floor sweep stage -> `38cc093` imbalanced study
+sampler -> `23a0547` per-epoch AUC reset fix.
