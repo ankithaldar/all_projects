@@ -58,6 +58,16 @@ override:
       num_workers: 1               # host-RAM headroom: 2 ranks x (1 main +
                                    # N persistent workers) fit 29 GB; with the
                                    # local shard mirror one worker keeps up
+    # Rare-target studies (fracture/contusion/Baker's/synovitis) get
+    # proportionally more draws; tempered (sqrt) to avoid over-sampling
+    # extremes. Epoch SIZE is unchanged (replacement, num_samples=N),
+    # so schedules/resume math stay valid. Val loader stays uniform.
+    train_sampler:
+      class_path: knee.samplers.weighted.StudyWeightedRandomSampler
+      init_params:
+        tempering: 0.5
+        aggregation: max
+        baseline: 1.0
 
   # FUSE round-trips per sampled slice were the step-time bottleneck;
   # stage start mirrors the 12 shard datasets onto local scratch once
