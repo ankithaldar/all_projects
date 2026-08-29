@@ -42,6 +42,19 @@ from knee.engines.assembly import (
   fold_done,
 )
 from knee.engines.inferencer import predict_studies, write_submission
+from knee.engines.noise_floor import (
+  STATE_NAME,
+  SUMMARY_NAME,
+  collect_run_result,
+  config_for_run,
+  format_discord,
+  load_state,
+  plan_runs,
+  run_key,
+  save_state,
+  summarize,
+  write_summary_csv,
+)
 from knee.engines.selftest import render_summary, run_selftest
 from knee.engines.train_module import KneeModule
 from knee.helpers.folds import make_folds, resolve_group_column
@@ -103,6 +116,7 @@ def _parser() -> argparse.ArgumentParser:
     'selftest',
     'train',
     'infer',
+    'sweep',
   ]:
     add_common(sub.add_parser(name))
   sub.choices['train'].add_argument('--fold', type=int, default=None)
@@ -845,6 +859,122 @@ def cmd_train(config: dict, fold_id: int | None) -> None:
     )
 
 
+def cmd_sweep(config: dict) -> None:
+  """Run the noise-floor study (BLUEPRINT 11.0-1) seed by seed.
+
+  Each remaining (seed, fold) pair trains through the standard
+  resume-aware ``train`` path in an ISOLATED directory + dataset slug,
+  so a sweep can share a session with nothing else and can be stopped
+  at any epoch without losing work. Finished runs are scored from their
+  final-epoch OOF file; the state + summary persist through the
+  artifact-sync protocol and the aggregate gate (mean + 2*std) is
+  announced on Discord at the end of every session.
+
+  Args:
+      config: Composed experiment configuration.
+  """
+  nf_cfg = config.get('noise_floor', {})
+  seeds = [int(seed) for seed in nf_cfg.get('seeds', [])]
+  folds = [int(fold) for fold in nf_cfg.get('folds', [0])]
+  if not seeds:
+    raise RuntimeError('noise_floor.seeds is empty; nothing to sweep')
+  client = _client(config)
+  artifact_dir = config['paths']['artifact_dir']
+  state_path = os.path.join(artifact_dir, STATE_NAME)
+  summary_path = os.path.join(artifact_dir, SUMMARY_NAME)
+  sync = ArtifactSync(
+    client,
+    str(nf_cfg.get('dataset_slug', '')),
+    artifact_dir,
+    [STATE_NAME, SUMMARY_NAME],
+  )
+  sync.pull_if_missing()
+  state = load_state(state_path)
+  runs = plan_runs(state, seeds, folds)
+  _LOGGER.info(
+    'noise-floor sweep: %d/%d run(s) remaining (%s)',
+    len(runs),
+    len(seeds) * len(folds),
+    ', '.join(run_key(seed, fold) for seed, fold in runs) or 'none',
+  )
+  budget_h = float(config['session_time_budget_h'])
+  floor_h = float(nf_cfg.get('budget_floor_h', 0.5))
+  started = time.time()
+  notifier = notifier_from_config(config)
+  experiment_name = config['experiment']['name']
+  targets = list(config['data']['target_columns'])
+
+  for seed, fold in runs:
+    remaining_h = budget_h - (time.time() - started) / 3600.0
+    if remaining_h <= floor_h:
+      _LOGGER.warning(
+        'session budget below floor (%.2f h left); stopping sweep - '
+        'rerun `sweep` in a fresh session to continue',
+        remaining_h,
+      )
+      break
+    run_config = config_for_run(config, seed, fold, remaining_h)
+    dump_config(
+      run_config,
+      os.path.join(
+        artifact_dir,
+        f"resolved_{run_config['experiment']['name']}.yaml",
+      ),
+    )
+    _LOGGER.info(
+      'sweep run %s start (remaining budget %.2f h)',
+      run_key(seed, fold),
+      remaining_h,
+    )
+    cmd_train(run_config, fold)
+    if not fold_done(run_config['paths']['checkpoint_dir'], fold):
+      _LOGGER.warning(
+        'run %s not finished (budget); it will resume next session',
+        run_key(seed, fold),
+      )
+      break
+    result = collect_run_result(
+      os.path.join(
+        run_config['paths']['oof_dir'], f'oof_fold{int(fold)}.csv'
+      ),
+      targets,
+    )
+    state['completed'][run_key(seed, fold)] = {
+      'seed': seed,
+      'fold': fold,
+      'macro_auc': result['macro_auc'],
+      'per_class': result['per_class'],
+    }
+    completed_entries = list(state['completed'].values())
+    save_state(state, state_path)
+    write_summary_csv(completed_entries, summary_path)
+    sync.push()
+    _LOGGER.info(
+      'sweep run %s done: macro-AUC %.4f',
+      run_key(seed, fold),
+      result['macro_auc'],
+    )
+    if notifier.enabled:
+      macro = result['macro_auc']
+      notifier.notify(
+        f'**[{experiment_name}]** sweep: {run_key(seed, fold)} '
+        f'macro-AUC {macro:.4f}'
+      )
+
+  completed_entries = list(state['completed'].values())
+  if not completed_entries:
+    _LOGGER.info('sweep session ended with no completed runs yet')
+    return
+  stats = summarize(completed_entries)
+  save_state(state, state_path)
+  write_summary_csv(completed_entries, summary_path)
+  sync.push()
+  headline = format_discord(stats, seeds, folds)
+  _LOGGER.info('%s', headline)
+  if notifier.enabled:
+    notifier.notify(f'**[{experiment_name}]** {headline}')
+
+
 def _collect_fold_checkpoints(config: dict) -> list[str]:
   """List completed-fold checkpoints honoring infer.yaml's fold selection.
 
@@ -948,6 +1078,7 @@ def main() -> None:
     'selftest': lambda: cmd_selftest(config),
     'train': lambda: cmd_train(config, args.fold),
     'infer': lambda: cmd_infer(config),
+    'sweep': lambda: cmd_sweep(config),
   }
   try:
     handlers[args.command]()

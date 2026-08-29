@@ -45,6 +45,7 @@ VALID_STAGES = (
   'selftest',
   'train',
   'infer',
+  'sweep',
   'all',
 )
 LOG_TAIL_LINES = 30
