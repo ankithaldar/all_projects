@@ -30,6 +30,7 @@ from knee.engines.noise_floor import (
   plan_runs,
   run_key,
   save_state,
+  state_dir,
   summarize,
   write_summary_csv,
 )
@@ -109,6 +110,16 @@ class TestRunKey:
 
   def test_format(self):
     assert run_key(42, 0) == 'seed42_fold0'
+
+
+class TestStateDir:
+  """Sweep state staging directory."""
+
+  def test_dedicated_dir_under_artifact_root(self, tmp_path):
+    config = {'paths': {'artifact_dir': str(tmp_path)}}
+    directory = state_dir(config)
+    assert directory == os.path.join(str(tmp_path), 'noise_floor')
+    assert directory != str(tmp_path)
 
 
 class TestState:
@@ -261,7 +272,11 @@ class TestConfigForRun:
     assert patched['paths']['checkpoint_dir'].endswith(
       os.path.join('checkpoints', 'seed43')
     )
-    assert patched['paths']['oof_dir'].endswith(os.path.join('oof', 'seed43'))
+    # OOF lives inside the pushed fold dir so it travels with the
+    # checkpoint dataset (session-local oof dirs would be lost).
+    assert patched['paths']['oof_dir'].endswith(
+      os.path.join('checkpoints', 'seed43', 'fold0')
+    )
     assert patched['resume']['checkpoint_dataset_slug'] == (
       'rsna-knee-mvp-nf-s43'
     )

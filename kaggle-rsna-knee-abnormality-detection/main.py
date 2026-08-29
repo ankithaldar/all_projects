@@ -52,6 +52,7 @@ from knee.engines.noise_floor import (
   plan_runs,
   run_key,
   save_state,
+  state_dir,
   summarize,
   write_summary_csv,
 )
@@ -879,13 +880,17 @@ def cmd_sweep(config: dict) -> None:
   if not seeds:
     raise RuntimeError('noise_floor.seeds is empty; nothing to sweep')
   client = _client(config)
-  artifact_dir = config['paths']['artifact_dir']
-  state_path = os.path.join(artifact_dir, STATE_NAME)
-  summary_path = os.path.join(artifact_dir, SUMMARY_NAME)
+  # State files live in a dedicated staging dir: ArtifactSync pushes the
+  # WHOLE local_dir, and artifact_dir also holds index/labels/folds +
+  # resolved yamls that must NOT bloat the noise-floor dataset.
+  staging_dir = state_dir(config)
+  os.makedirs(staging_dir, exist_ok=True)
+  state_path = os.path.join(staging_dir, STATE_NAME)
+  summary_path = os.path.join(staging_dir, SUMMARY_NAME)
   sync = ArtifactSync(
     client,
     str(nf_cfg.get('dataset_slug', '')),
-    artifact_dir,
+    staging_dir,
     [STATE_NAME, SUMMARY_NAME],
   )
   sync.pull_if_missing()
@@ -917,7 +922,7 @@ def cmd_sweep(config: dict) -> None:
     dump_config(
       run_config,
       os.path.join(
-        artifact_dir,
+        staging_dir,
         f"resolved_{run_config['experiment']['name']}.yaml",
       ),
     )

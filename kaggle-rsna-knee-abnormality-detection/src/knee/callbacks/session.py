@@ -158,16 +158,37 @@ class PeriodicPushCallback(Callback):
   def on_train_end(
     self, trainer: pl.Trainer, pl_module: pl.LightningModule
   ) -> None:
-    """Final save, done-marker write, and terminal push.
+    """Final save, done-marker write (completed runs only), and push.
+
+    The ``done`` marker must only exist when the fold trained through
+    its LAST planned epoch. A session-budget stop raises
+    ``trainer.should_stop`` mid-schedule; marking the fold done there
+    would make the next session SKIP the remainder of its training and
+    let a partially trained model slip into the inference ensemble.
 
     Args:
         trainer: Active trainer.
         pl_module: Active module.
     """
     trainer.save_checkpoint(self.last_ckpt_path)
-    if self.mark_done_on_train_end:
+    # PL counts COMPLETED epochs: a finished max_epochs=4 run reports
+    # current_epoch == 4 at on_train_end; a budget stop after epoch 0
+    # of 2 reports 1. "Reached the schedule" therefore means
+    # current_epoch >= max_epochs, NOT >= max_epochs - 1.
+    max_epochs = int(getattr(trainer, 'max_epochs', 0) or 0)
+    reached_last_epoch = (
+      trainer.current_epoch >= max_epochs if max_epochs > 0 else True
+    )
+    if self.mark_done_on_train_end and reached_last_epoch:
       with open(
         os.path.join(self.fold_dir, 'done'), 'w', encoding='utf-8'
       ) as handle:
         handle.write(str(trainer.global_step))
+    else:
+      _LOGGER.info(
+        'fold incomplete (epoch %d/%s); no done marker - the next '
+        'session will resume this fold',
+        trainer.current_epoch,
+        max_epochs,
+      )
     self._push()
