@@ -28,11 +28,17 @@ StudyInstanceUID
   negation-aware rule-derived pseudo-labels elsewhere (`-1` = uncertain is
   masked out of the loss).
 - StratifiedGroupKFold(5) grouped by study/patient; per-class + macro OOF AUC.
+- The train loader optionally uses a frequency-aware study sampler
+  (tempered inverse prevalence) so rare positives still get gradient
+  updates under the macro-AUC metric; validation stays uniform.
 - DICOMs are decoded ONCE into sharded HDF5 volumes (`--stage cache`),
   pushed as Kaggle datasets, and mounted read-only afterwards: training,
   selftest and inference stream pixels from local SSD, never re-decoding.
 - Training survives Kaggle's 12 h kernels via versioned Kaggle-Dataset
   checkpoints; inference ensembles every completed fold.
+- A noise-floor harness (`--stage sweep`) trains the same config at
+  several seeds and reports the keep/drop gate (mean + 2*std of OOF
+  macro-AUC) that every experiment change must beat.
 
 ## Quickstart
 
@@ -40,7 +46,7 @@ StudyInstanceUID
 
 ```bash
 pip install -r requirements.txt
-pytest tests                                   # 121 tests
+pytest tests                                   # 173 tests
 ruff check src tests main.py kaggle_cell.py    # style gate
 pylint --rcfile=../.pylintrc src/knee main.py  # 10.00/10 required
 PYTHONPATH=src python main.py train \
@@ -63,6 +69,7 @@ shallow-clones the recorded branch into `$KNEE_REPO_DIR`
 %run kaggle_cell.py --stage cache              # decode once -> HDF5 datasets
 %run kaggle_cell.py --stage selftest           # preflight: 2 real steps + ckpt
 %run kaggle_cell.py --stage train --fold 0     # resumes if ckpt exists
+%run kaggle_cell.py --stage sweep              # noise floor: seeds x folds
 %run kaggle_cell.py --stage infer              # submission.csv
 ```
 
@@ -133,6 +140,27 @@ The cache stage adds: progress every 10k decoded frames (with % + ETA),
 a line per dataset push, and a final summary naming every pushed
 dataset with a ready-to-paste `KNEE_HDF5_CACHE_DIRS` line.
 
+## Imbalanced Sampling (train loader only)
+
+Targets are skewed but scored by macro-AUC, so the MVP experiment
+enables a weighted study sampler: per-target weight
+`prevalence**-tempering` (normalized), aggregated per study with `max`
+over the study's positive targets. `-1` (uncertain) labels never
+influence prevalence; studies without positives get `baseline`.
+
+```yaml
+datamodule:
+  train_sampler:                    # null = uniform (base default)
+    class_path: knee.samplers.weighted.StudyWeightedRandomSampler
+    init_params: {tempering: 0.5, aggregation: max, baseline: 1.0}
+```
+
+Draws are with replacement and `num_samples = len(dataset)`: epoch
+size, step counts, and the resume protocol are unchanged. Under DDP
+Lightning wraps the sampler so both T4s see disjoint streams. Changing
+the sampling policy mid-fold restarts that fold's distribution - do
+not resume a fold checkpoint across the change.
+
 ## Volume Cache (HDF5 shards)
 
 `--stage cache` decodes every indexed series once (all slices,
@@ -160,14 +188,6 @@ Cache-session resume mirrors this: already-pushed shards (read from the
 attached fragment manifests) are never re-decoded, and new shards
 continue the `-NNN` sequence instead of version-bumping old ones.
 
-## Resume Protocol
-
-`fold{k}/last.ckpt` (+ `done` markers) live in a versioned Kaggle Dataset.
-Session start pulls the newest version; finished folds are skipped, partial
-folds resume via `Trainer.fit(ckpt_path=...)`; a time-budget callback stops
-fitting before the kernel limit and pushes a new immutable dataset version.
-Inference ensembles whichever folds carry `done` markers.
-
 ## Repository Map
 
 ```
@@ -184,6 +204,9 @@ notebooks/         # 01_EDA (done); 02-04 thin wrappers over the stages
 
 ## Status
 
-Implementation complete through logging/drivers; notebooks 02-04 remain as
-thin wrappers and the first real-data end-to-end run is outstanding.
-Detailed status table and iteration backlog: [BLUEPRINT.md](BLUEPRINT.md).
+Implementation complete through logging/drivers, the HDF5 volume cache,
+the noise-floor `sweep` stage, and imbalanced-target sampling; notebooks
+02-04 remain as thin wrappers, the noise-floor gate is unmeasured until
+`sweep` runs on the real data, and the first full 5-fold run is
+outstanding. Detailed status table and iteration backlog:
+[BLUEPRINT.md](BLUEPRINT.md).
