@@ -32,7 +32,25 @@ _LOGGER = get_logger(__name__)
 
 STATE_NAME = 'noise_floor_state.json'
 SUMMARY_NAME = 'noise_floor_summary.csv'
+STATE_DIR_NAME = 'noise_floor'
 PROB_SUFFIX = '_prob'
+
+
+def state_dir(config: dict) -> str:
+  """Dedicated staging directory for sweep state files.
+
+  The state/summary must live in a directory of their own because
+  ``ArtifactSync.push`` publishes the WHOLE ``local_dir``; pointing it
+  at ``paths.artifact_dir`` would re-upload index/labels/folds into
+  the noise-floor dataset on every push.
+
+  Args:
+      config: Composed experiment configuration.
+
+  Returns:
+      Path ``<paths.artifact_dir>/noise_floor`` (created by callers).
+  """
+  return os.path.join(config['paths']['artifact_dir'], STATE_DIR_NAME)
 
 
 def run_key(seed: int, fold: int) -> str:
@@ -251,8 +269,15 @@ def config_for_run(
 
   * ``experiment.seed`` -> the sweep seed; ``experiment.name`` gains a
     ``_seed<k>`` suffix so CSV/W&B/Discord streams never collide.
-  * ``paths.checkpoint_dir`` / ``paths.oof_dir`` gain a ``seed<k>/``
-    segment - seeds must never resume each other's checkpoints.
+  * ``paths.checkpoint_dir`` gains a ``seed<k>/`` segment - seeds must
+    never resume each other's checkpoints.
+  * ``paths.oof_dir`` -> ``<checkpoint_dir>/seed<k>/fold<f>`` so the
+    final-epoch OOF csv lives INSIDE the fold directory that
+    PeriodicPushCallback pushes. OOF directories are otherwise
+    session-local: if the state push ever failed after a run finished,
+    the next session would skip training (done marker) and then crash
+    scoring a file that no longer exists. Inside the fold dir the OOF
+    rides every checkpoint push and is restored with the done marker.
   * ``resume.checkpoint_dataset_slug`` -> the per-seed slug
     ``<noise_floor.dataset_slug>-s<seed>`` so every seed owns an
     isolated Kaggle dataset and the main experiment's checkpoint slug
@@ -277,10 +302,14 @@ def config_for_run(
   base_name = config['experiment']['name']
   patched['experiment']['seed'] = int(seed)
   patched['experiment']['name'] = f'{base_name}_{run_key(seed, fold)}'
-  for path_key in ('checkpoint_dir', 'oof_dir'):
-    patched['paths'][path_key] = os.path.join(
-      config['paths'][path_key], f'seed{int(seed)}'
-    )
+  seed_ckpt_dir = os.path.join(
+    config['paths']['checkpoint_dir'], f'seed{int(seed)}'
+  )
+  patched['paths']['checkpoint_dir'] = seed_ckpt_dir
+  # OOF inside the fold dir that PeriodicPushCallback pushes: the csv
+  # then travels with the done marker through the checkpoint dataset
+  # and survives the session where the run actually finished.
+  patched['paths']['oof_dir'] = os.path.join(seed_ckpt_dir, f'fold{int(fold)}')
   slug = str(nf_cfg.get('dataset_slug', ''))
   if slug:
     patched['resume']['checkpoint_dataset_slug'] = f'{slug}-s{int(seed)}'
