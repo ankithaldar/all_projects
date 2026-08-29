@@ -7,6 +7,13 @@ datamodule:
     prefetch_factor: 2
     persistent_workers: true
     pin_memory: true
+  # Imbalanced-target sampling (BLUEPRINT: macro-AUC needs rare-class
+  # updates). Sibling of class_path on purpose - the sampler needs the
+  # fold split, so the factory builds it at loader time. null = uniform.
+  # Knobs: tempering (0=uniform .. 1=inverse frequency), aggregation
+  # (max|mean over the study's positive targets), baseline weight for
+  # studies with no positive target.
+  train_sampler: null
 
 train_dataset:
   class_path: knee.datasets.study_dataset.StudyDataset

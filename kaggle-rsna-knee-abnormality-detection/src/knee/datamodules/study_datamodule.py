@@ -11,6 +11,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
 from knee.datasets.study_dataset import StudyDataset, collate_studies
+from knee.samplers.factory import build_train_sampler
 
 
 class StudyDataModule(pl.LightningDataModule):
@@ -18,6 +19,9 @@ class StudyDataModule(pl.LightningDataModule):
 
   Assembly happens in ``main.py`` (paths and fold split are runtime state),
   while every tunable knob still originates from YAML configuration.
+  An optional ``train_sampler`` spec (sibling key of the datamodule spec)
+  enables frequency-aware study sampling for the imbalanced targets; the
+  validation loader always stays uniform.
   """
 
   def __init__(
@@ -45,6 +49,7 @@ class StudyDataModule(pl.LightningDataModule):
     self.prefetch_factor = prefetch_factor if num_workers > 0 else 0
     self.persistent_workers = persistent_workers and num_workers > 0
     self.pin_memory = pin_memory
+    self.train_sampler_cfg: dict | None = None
     self.train_dataset: StudyDataset | None = None
     self.valid_dataset: StudyDataset | None = None
 
@@ -62,12 +67,19 @@ class StudyDataModule(pl.LightningDataModule):
     self.train_dataset = train_dataset
     self.valid_dataset = valid_dataset
 
-  def _loader(self, dataset: StudyDataset, shuffle: bool) -> DataLoader:
+  def _loader(
+    self,
+    dataset: StudyDataset,
+    shuffle: bool,
+    sampler=None,
+  ) -> DataLoader:
     """Build a DataLoader with collation bound.
 
     Args:
         dataset: Dataset to wrap.
-        shuffle: Whether to shuffle sampling order.
+        shuffle: Whether to shuffle sampling order (ignored when a
+            sampler is provided - torch forbids combining both).
+        sampler: Optional torch sampler replacing shuffle (train only).
 
     Returns:
         Configured DataLoader instance.
@@ -75,7 +87,8 @@ class StudyDataModule(pl.LightningDataModule):
     return DataLoader(
       dataset,
       batch_size=self.batch_size,
-      shuffle=shuffle,
+      shuffle=shuffle if sampler is None else False,
+      sampler=sampler,
       num_workers=self.num_workers,
       prefetch_factor=self.prefetch_factor or None,
       persistent_workers=self.persistent_workers,
@@ -85,7 +98,12 @@ class StudyDataModule(pl.LightningDataModule):
     )
 
   def train_dataloader(self) -> DataLoader:
-    """Return the shuffled training loader.
+    """Return the training loader (weighted when configured).
+
+    The sampler, when configured, tilts study sampling toward studies
+    carrying rare positive targets; Lightning wraps it in a
+    DistributedSamplerWrapper under DDP so ranks still see disjoint
+    streams.
 
     Returns:
         DataLoader over the attached training dataset.
@@ -95,7 +113,8 @@ class StudyDataModule(pl.LightningDataModule):
     """
     if self.train_dataset is None:
       raise RuntimeError('attach() must be called before requesting loaders')
-    return self._loader(self.train_dataset, shuffle=True)
+    sampler = build_train_sampler(self.train_sampler_cfg, self.train_dataset)
+    return self._loader(self.train_dataset, shuffle=True, sampler=sampler)
 
   def val_dataloader(self) -> DataLoader:
     """Return the deterministic validation loader.

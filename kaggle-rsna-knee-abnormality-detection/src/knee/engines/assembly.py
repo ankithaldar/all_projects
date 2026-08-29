@@ -170,6 +170,10 @@ def build_datamodule(config: dict, train_dataset, valid_dataset):
       Attached StudyDataModule.
   """
   module = instantiate(config['datamodule'])
+  # ``train_sampler`` is a SIBLING of class_path/init_params on purpose:
+  # recursive instantiation would construct it before the fold split
+  # exists; the factory injects runtime state at loader-build time.
+  module.train_sampler_cfg = config['datamodule'].get('train_sampler')
   if train_dataset is not None:
     module.attach(train_dataset, valid_dataset)
   else:
