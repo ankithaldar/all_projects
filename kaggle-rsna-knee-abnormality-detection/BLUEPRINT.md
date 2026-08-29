@@ -155,8 +155,12 @@ Flow (`src/knee/helpers/kaggle_io.py`):
 3. Engine start: per fold — `done` marker -> skip; `last.ckpt` -> resume via
    `Trainer.fit(ckpt_path=...)`.
 4. `TimeBudgetCallback` stops fit when wall clock exceeds
-   `session_time_budget_h - time_margin_min`; checkpoints also written every
-   `checkpoint_every_n_epochs`.
+   `session_time_budget_h - time_margin_min`; checkpoints also written
+   every `checkpoint_every_n_epochs`. The `done` marker is written
+   ONLY when the fold reached its full schedule: a budget-stopped
+   fold stays resumable (PL counts completed epochs, so the check is
+   `current_epoch >= max_epochs`) and its partial `last.ckpt` never
+   enters the inference ensemble.
 5. Session end: `push_version(slug, folder)` creates a new immutable dataset
    version (rollback history).
 6. Push retries x3 with backoff; on failure the ckpt remains in
@@ -388,10 +392,15 @@ Order within a group is by expected value; run noise-floor study first.
 1. **Noise floor**: 3 seeds x best config on fold 0; record macro-AUC
    std. Any change worth shipping must beat mean + 2 sigma.
    IMPLEMENTED as the `sweep` stage (engines/noise_floor.py): per-seed
-   isolated checkpoint dirs + dataset slugs, resumable JSON state,
-   final-epoch OOF scoring, gate = mean + 2*std announced on Discord.
-   NOTE: run it with the sampling policy intended for the follow-up
-   experiments (the MVP experiment ships the 6e sampler enabled).
+   isolated checkpoint dirs + dataset slugs, resumable JSON state
+   (staged under `<artifact_dir>/noise_floor/`, pushed alone so the
+   per-seed datasets never carry index/labels payload), final-epoch
+   OOF scoring, gate = mean + 2*std announced on Discord. The
+   final-epoch OOF csv is written INSIDE the fold checkpoint dir so it
+   travels with the done marker through the per-seed checkpoint
+   dataset. NOTE: run it with the sampling policy intended for the
+   follow-up experiments (the MVP experiment ships the 6e sampler
+   enabled).
 2. **Single-knob sweeps via experiments/*.yaml** (img_size, n_slices,
    max_series, lr, epochs) logged to W&B for automatic comparison.
 3. **Per-class attribution notebook**: which of the 12 targets move with
@@ -690,6 +699,7 @@ Blueprint-implementation branch (post-MVP, one feature per commit):
 | Noise-floor harness (`sweep` stage, 11.0-1): per-seed isolated ckpt dirs/slugs, resumable state, final-epoch OOF scoring, gate mean+2*std via Discord | done |
 | Imbalanced-target study sampler (6e): tempering/aggregation/baseline in YAML, train-only, epoch size preserved | done |
 | Bugfix: per-epoch AUC accumulator reset (OOF/val metrics previously accumulated across sanity check + epochs) | done |
+| Audit hardening: budget-stopped folds no longer marked done; sweep state staging dir; sweep OOF rides the checkpoint dataset | done |
 | Experiment registry (11.8-1), then 11.0-2/3 sweeps + attribution | pending |
 
 Commit trail (abridged): `21def73` blueprint -> `fd41d80` configs ->
