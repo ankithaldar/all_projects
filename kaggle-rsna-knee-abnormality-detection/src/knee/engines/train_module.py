@@ -157,6 +157,17 @@ class KneeModule(pl.LightningModule):
       list(batch['study_uid']),
     )
 
+  def on_validation_epoch_start(self) -> None:
+    """Flush the metric accumulator before a new epoch collects.
+
+    Without the reset, Lightning's sanity check and EVERY previous
+    validation epoch leak into the accumulator, so the logged
+    ``val/auc_macro`` blends epochs and the OOF csv becomes the union
+    of all epochs instead of the current epoch's predictions (which
+    the noise-floor harness and OOF analyses rely on).
+    """
+    self.metric.reset()
+
   def on_validation_epoch_end(self) -> None:
     """Log per-class AUCs and persist the OOF table.
 
