@@ -183,6 +183,12 @@ copies mounts to local scratch once, removing FUSE read latency.
 Session start pulls the newest version; finished folds are skipped, partial
 folds resume via `Trainer.fit(ckpt_path=...)`; a time-budget callback stops
 fitting before the kernel limit and pushes a new immutable dataset version.
+`fold{k}/last.ckpt` (+ `done` markers) live in a versioned Kaggle Dataset.
+Session start pulls the newest version; finished folds are skipped, partial
+folds resume via `Trainer.fit(ckpt_path=...)`; a time-budget callback stops
+fitting before the kernel limit and pushes a new immutable dataset version.
+A budget-stopped fold does NOT get its `done` marker - only folds that
+reached their full schedule do, so partial weights never enter the ensemble.
 Inference ensembles whichever folds carry `done` markers.
 Cache-session resume mirrors this: already-pushed shards (read from the
 attached fragment manifests) are never re-decoded, and new shards
