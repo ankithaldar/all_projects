@@ -55,8 +55,12 @@ class MultilabelAUC:
     """Compute AUC per class ignoring unknown targets.
 
     Returns:
-        Mapping target -> AUC (nan when the class lacks both outcomes).
+        Mapping target -> AUC (nan when the class lacks both outcomes,
+        or when no validation batch has been accumulated yet - e.g.
+        ``limit_val_batches=0`` or an empty val split).
     """
+    if not self._probs:
+      return {name: float('nan') for name in self.target_columns}
     probs = np.concatenate(self._probs, axis=0)
     targets = np.concatenate(self._targets, axis=0)
     scores: dict[str, float] = {}
@@ -101,8 +105,12 @@ class MultilabelAUC:
     """Return concatenated probability and target matrices.
 
     Returns:
-        Tuple ``(probs, targets)`` suitable for OOF persistence.
+        Tuple ``(probs, targets)`` suitable for OOF persistence;
+        zero-row ``(0, n_targets)`` arrays when nothing accumulated.
     """
+    if not self._probs:
+      empty = np.empty((0, len(self.target_columns)), dtype=np.float64)
+      return empty, empty.copy()
     return (
       np.concatenate(self._probs, axis=0),
       np.concatenate(self._targets, axis=0),
