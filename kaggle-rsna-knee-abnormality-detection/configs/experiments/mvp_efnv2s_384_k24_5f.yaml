@@ -48,10 +48,6 @@ override:
       grad_checkpointing: true
       chunk_size: 96
 
-  trainer:
-    init_params:
-      accumulate_grad_batches: 2
-
   datamodule:
     init_params:
       batch_size: 6
