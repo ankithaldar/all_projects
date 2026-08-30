@@ -908,6 +908,7 @@ def cmd_sweep(config: dict) -> None:
   notifier = notifier_from_config(config)
   experiment_name = config['experiment']['name']
   targets = list(config['data']['target_columns'])
+  pending_push = False
 
   for seed, fold in runs:
     remaining_h = budget_h - (time.time() - started) / 3600.0
@@ -953,7 +954,10 @@ def cmd_sweep(config: dict) -> None:
     completed_entries = list(state['completed'].values())
     save_state(state, state_path)
     write_summary_csv(completed_entries, summary_path)
-    sync.push()
+    if not sync.push():
+      # Retry at the end of the session; a transient CLI/network
+      # failure must not silently drop the recorded measurement.
+      pending_push = True
     _LOGGER.info(
       'sweep run %s done: macro-AUC %.4f',
       run_key(seed, fold),
@@ -973,7 +977,8 @@ def cmd_sweep(config: dict) -> None:
   stats = summarize(completed_entries)
   save_state(state, state_path)
   write_summary_csv(completed_entries, summary_path)
-  sync.push()
+  if pending_push:
+    sync.push()
   headline = format_discord(stats, seeds, folds)
   _LOGGER.info('%s', headline)
   if notifier.enabled:

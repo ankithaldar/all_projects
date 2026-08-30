@@ -461,20 +461,28 @@ class ArtifactSync:
       return False
     return pulled
 
-  def push(self) -> None:
-    """Publish current locals as a new dataset version (best effort)."""
+  def push(self) -> bool:
+    """Publish current locals as a new dataset version (best effort).
+
+    Returns:
+        True when a new version was pushed, False when syncing is
+        disabled, the tracked set is incomplete, or the CLI failed
+        (callers may use this to schedule a retry).
+    """
     if self.client is None:
-      return
+      return False
     missing = self._missing()
     if missing:
       _LOGGER.warning('Skipping artifact push; incomplete set: %s', missing)
-      return
+      return False
     try:
       self.client.push_version(self.slug, self.local_dir)
       _LOGGER.info('Artifacts pushed to %s', self.slug)
+      return True
     except RuntimeError as exc:
       _LOGGER.error(
         'Artifact push failed (%s); local copy retained in %s',
         exc,
         self.local_dir,
       )
+      return False
