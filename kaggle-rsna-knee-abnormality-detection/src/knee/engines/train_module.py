@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import glob
 import importlib
 import math
 import os
@@ -12,10 +13,15 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from torch import Tensor, nn
 
+from knee.helpers.utils import get_logger
 from knee.metrics.auc import MultilabelAUC
 from knee.models.knee_net import KneeNet
+
+OOF_SHARD_DIR = '.shards'
+_LOGGER = get_logger(__name__)
 
 
 def build_step_schedules(
@@ -171,26 +177,105 @@ class KneeModule(pl.LightningModule):
   def on_validation_epoch_end(self) -> None:
     """Log per-class AUCs and persist the OOF table.
 
-    The OOF csv is rewritten each epoch (small; thousands of rows) so an
-    interrupted session still leaves usable predictions behind.
+    DDP safety: each rank writes a per-rank shard to
+    ``<oof_dir>/.shards/oof_fold{k}_rank{r}.csv`` and a barrier waits
+    for the other ranks. Rank 0 then concatenates the shards into the
+    canonical ``<oof_dir>/oof_fold{k}.csv`` consumed by downstream
+    analysis (noise floor, OOF inspection). Without this split every
+    rank's ``on_validation_epoch_end`` would overwrite the canonical
+    from its own val-shard alone and the OOF would contain only one
+    rank's studies; under 2xT4 the file would be half the val set.
+
+    The canonical gets deduped by ``StudyInstanceUID`` and sorted so
+    downstream readers see a stable row order across epochs.
+
+    Single-process: ``world_size == 1`` so the barrier is skipped and
+    rank 0 (the only rank) writes the canonical from its own shard -
+    identical to the legacy behavior.
     """
     summary = self.metric.summary()
-    self.log('val/auc_macro', summary['auc/macro'], prog_bar=True)
-    for name, value in summary.items():
-      if name != 'auc/macro' and not np.isnan(value):
-        self.log(f'val/{name}', value)
+    try:
+      # ``self.log`` is informational here; the canonical OOF (assembled
+      # below) is what feeds downstream analysis. No ``sync_dist``:
+      # there is no DDP-aware model selection (no ModelCheckpoint /
+      # EarlyStopping) that would need the globally reduced metric.
+      self.log('val/auc_macro', summary['auc/macro'], prog_bar=True)
+      for name, value in summary.items():
+        if name != 'auc/macro' and not np.isnan(value):
+          self.log(f'val/{name}', value)
+    except (
+      AttributeError,
+      RuntimeError,
+      MisconfigurationException,
+    ) as exc:
+      # Logging must NEVER block the OOF write (same degradation
+      # contract as DiscordCallback._current_lr): trainer-shaped
+      # surprises degrade to 'metric not logged'.
+      _LOGGER.warning('metric logging skipped (%s)', exc)
+    self._write_oof_canonical()
+
+  def _write_oof_canonical(self) -> None:
+    """Per-rank OOF shard + rank-0 canonical assembly (DDP-safe)."""
+    pl_trainer = None
+    try:
+      pl_trainer = self.trainer
+    except RuntimeError:
+      pl_trainer = None  # hook reachable without a Trainer (tests)
+    if getattr(pl_trainer, 'sanity_checking', False):
+      # Sanity predictions are throwaway (2 batches) and would
+      # transiently publish a bogus canonical OOF.
+      return
     probs, targets = self.metric.stacked()
+    uids = list(self.metric.study_uids)
     frame = pd.DataFrame(
       probs, columns=[f'{c}_prob' for c in self.target_columns]
     )
     for col, name in enumerate(self.target_columns):
       frame[name] = targets[:, col]
-    frame.insert(0, 'StudyInstanceUID', self.metric.study_uids)
+    frame.insert(0, 'StudyInstanceUID', uids)
     frame.insert(1, 'fold', self.fold_id)
     os.makedirs(self.oof_dir, exist_ok=True)
-    frame.to_csv(
-      os.path.join(self.oof_dir, f'oof_fold{self.fold_id}.csv'), index=False
+
+    rank = int(getattr(pl_trainer, 'global_rank', 0) or 0)
+    world_size = int(getattr(pl_trainer, 'world_size', 1) or 1)
+    shard_dir = os.path.join(self.oof_dir, OOF_SHARD_DIR)
+    os.makedirs(shard_dir, exist_ok=True)
+    shard_path = os.path.join(
+      shard_dir, f'oof_fold{self.fold_id}_rank{rank}.csv'
     )
+    frame.to_csv(shard_path, index=False)
+
+    # DDP sync: every rank's barrier call is the rendezvous point; PL's
+    # Strategy.barrier is a collective barrier under DDP and a no-op
+    # under single-process strategies.
+    if world_size > 1:
+      strategy = getattr(pl_trainer, 'strategy', None)
+      if strategy is not None and hasattr(strategy, 'barrier'):
+        strategy.barrier()
+
+    if rank == 0:
+      canonical = assemble_oof_canonical(self.oof_dir, self.fold_id)
+      if canonical is None:
+        # No shards found at all: fall back to this rank's frame so the
+        # canonical always reflects the CURRENT epoch (a stale file from
+        # a previous epoch/session must never survive).
+        canonical = frame
+      # Write UNCONDITIONALLY, even for an empty val epoch: skipping
+      # would leave a stale canonical from a previous epoch in place.
+      canonical.to_csv(
+        os.path.join(self.oof_dir, f'oof_fold{self.fold_id}.csv'),
+        index=False,
+      )
+      # Shards served their purpose; remove exactly the files we read
+      # (never the directory - a fast rank could already be writing the
+      # next epoch's shard into it).
+      for shard_file in sorted(
+        glob.glob(os.path.join(shard_dir, f'oof_fold{self.fold_id}_rank*.csv'))
+      ):
+        try:
+          os.remove(shard_file)
+        except OSError:
+          pass
 
   def configure_optimizers(self):
     """Build differential-LR AdamW-style optimizer and warmup+cosine schedule.
@@ -242,7 +327,7 @@ class KneeModule(pl.LightningModule):
 
 
 def _resolve_class(class_path: str) -> type:
-  """Import a class by dotted path.
+  """Import a class from its dotted path.
 
   Args:
       class_path: Dotted path of the optimizer or scheduler class.
@@ -252,3 +337,40 @@ def _resolve_class(class_path: str) -> type:
   """
   module_path, _, attr = class_path.rpartition('.')
   return getattr(importlib.import_module(module_path), attr)
+
+
+def assemble_oof_canonical(oof_dir: str, fold_id: int) -> pd.DataFrame | None:
+  """Concatenate per-rank OOF shards into the canonical table.
+
+  Each rank of a DDP fit writes a shard to
+  ``<oof_dir>/.shards/oof_fold{f}_rank{r}.csv`` during
+  :meth:`KneeModule.on_validation_epoch_end`; rank 0 then calls this
+  function after a collective barrier to build the canonical
+  ``<oof_dir>/oof_fold{k}.csv`` consumed by downstream analysis.
+
+  The concatenation:
+    1. preserves the union of StudyInstanceUIDs across ranks
+       (defensive dedupe: the last duplicate wins);
+    2. sorts by StudyInstanceUID for a stable row order across epochs.
+
+  Args:
+      oof_dir: Directory holding ``.shards/``; the canonical is
+          written next to it.
+      fold_id: Fold identifier to assemble.
+
+  Returns:
+      Assembled DataFrame, or None when no shards exist.
+  """
+  shard_dir = os.path.join(oof_dir, OOF_SHARD_DIR)
+  if not os.path.isdir(shard_dir):
+    return None
+  pattern = os.path.join(shard_dir, f'oof_fold{int(fold_id)}_rank*.csv')
+  shard_files = sorted(glob.glob(pattern))
+  if not shard_files:
+    return None
+  frames = [pd.read_csv(path) for path in shard_files]
+  merged = pd.concat(frames, ignore_index=True)
+  if 'StudyInstanceUID' in merged.columns and not merged.empty:
+    merged = merged.drop_duplicates(subset='StudyInstanceUID', keep='last')
+    merged = merged.sort_values('StudyInstanceUID').reset_index(drop=True)
+  return merged
