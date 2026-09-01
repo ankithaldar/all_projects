@@ -10,7 +10,6 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 import httpx
 import requests
-
 from llm_gateway.config import ProviderConfig
 from llm_gateway.errors import (AuthenticationError, ProviderError,
                                 RateLimitedProviderError,
