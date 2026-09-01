@@ -29,10 +29,13 @@ from llm_gateway.providers.openai_compatible import (BytezProvider,
                                                      CerebrasProvider,
                                                      GithubProvider,
                                                      GroqProvider,
+                                                     MistralProvider,
                                                      NvidiaProvider,
                                                      OllamaProvider,
+                                                     OmniRouteProvider,
                                                      OpenAICompatibleProvider,
-                                                     OpenRouterProvider)
+                                                     OpenRouterProvider,
+                                                     OrcaRouterProvider)
 from llm_gateway.rate_limiter import RPMRateLimiter
 from llm_gateway.schemas import (ChatMessage, GatewayRequest, GatewayResponse,
                                  LogRecord, ProviderChunk, ProviderRequest,
@@ -299,12 +302,15 @@ class LLMGateway:
     '''
     registry = {
       'bytez': BytezProvider,
-      'openrouter': OpenRouterProvider,
-      'groq': GroqProvider,
       'cerebras': CerebrasProvider,
-      'nvidia': NvidiaProvider,
       'github': GithubProvider,
+      'groq': GroqProvider,
+      'mistral': MistralProvider,
+      'nvidia': NvidiaProvider,
       'ollama': OllamaProvider,
+      'omniroute': OmniRouteProvider,
+      'openrouter': OpenRouterProvider,
+      'orcarouter': OrcaRouterProvider
     }
 
     providers: Dict[str, Any] = {}
