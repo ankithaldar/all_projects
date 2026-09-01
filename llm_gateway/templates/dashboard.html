@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <title>LLM Gateway Dashboard</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 24px;
+        background: #f7f7f9;
+        color: #111827;
+      }
+
+      h1, h2 {
+        margin-top: 0;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+
+      .card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      }
+
+      .card .value {
+        font-size: 28px;
+        font-weight: 700;
+        margin-top: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        margin-bottom: 24px;
+      }
+
+      th, td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        font-size: 14px;
+      }
+
+      th {
+        background: #f3f4f6;
+      }
+
+      .section {
+        margin-bottom: 32px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>LLM Gateway Dashboard</h1>
+
+    <section class='section'>
+      <div class='cards' id='summary-cards'></div>
+    </section>
+
+    <section class='section'>
+      <h2>Status Breakdown</h2>
+      <table id='statuses'></table>
+    </section>
+
+    <section class='section'>
+      <h2>Per Provider</h2>
+      <table id='providers'></table>
+    </section>
+
+    <section class='section'>
+      <h2>Per Session</h2>
+      <table id='sessions'></table>
+    </section>
+
+    <section class='section'>
+      <h2>Recent Calls</h2>
+      <table id='recent'></table>
+    </section>
+
+    <script>
+      async function loadStats() {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+        renderSummary(stats);
+        renderStatuses(stats.statuses);
+        renderProviders(stats.per_provider);
+        renderSessions(stats.per_session);
+        renderRecent(stats.recent_calls);
+      }
+
+      function card(label, value) {
+        return `
+          <div class='card'>
+            <div>${label}</div>
+            <div class='value'>${value}</div>
+          </div>
+        `;
+      }
+
+      function renderSummary(stats) {
+        const summary = stats.summary || {};
+        const el = document.getElementById('summary-cards');
+        el.innerHTML = [
+          card('Total Calls', summary.total_calls || 0),
+          card('Avg Latency (ms)', Number(summary.avg_latency_ms || 0).toFixed(2)),
+          card('Input Tokens', summary.input_tokens || 0),
+          card('Output Tokens', summary.output_tokens || 0),
+          card('Total Cost', Number(summary.total_cost || 0).toFixed(6)),
+          card('Error Rate', (Number(stats.error_rate || 0) * 100).toFixed(2) + '%'),
+        ].join('');
+      }
+
+      function renderTable(el, columns, rows) {
+        if (!rows.length) {
+          el.innerHTML = '<tr><td>No data</td></tr>';
+          return;
+        }
+
+        const header = columns.map(column => `<th>${column.label}</th>`).join('');
+        const body = rows.map(row => {
+          return '<tr>' + columns.map(column => {
+            const value = row[column.key];
+            return `<td>${value === null || value === undefined ? '' : value}</td>`;
+          }).join('') + '</tr>';
+        }).join('');
+
+        el.innerHTML = `<thead><tr>${header}</tr></thead><tbody>${body}</tbody>`;
+      }
+
+      function renderStatuses(rows) {
+        renderTable(
+          document.getElementById('statuses'),
+          [
+            {key: 'status', label: 'Status'},
+            {key: 'count', label: 'Count'},
+          ],
+          rows
+        );
+      }
+
+      function renderProviders(rows) {
+        renderTable(
+          document.getElementById('providers'),
+          [
+            {key: 'provider', label: 'Provider'},
+            {key: 'calls', label: 'Calls'},
+            {key: 'avg_latency_ms', label: 'Avg Latency ms'},
+            {key: 'input_tokens', label: 'Input Tokens'},
+            {key: 'output_tokens', label: 'Output Tokens'},
+            {key: 'total_cost', label: 'Cost'},
+          ],
+          rows
+        );
+      }
+
+      function renderSessions(rows) {
+        renderTable(
+          document.getElementById('sessions'),
+          [
+            {key: 'session_id', label: 'Session'},
+            {key: 'calls', label: 'Calls'},
+            {key: 'avg_latency_ms', label: 'Avg Latency ms'},
+            {key: 'input_tokens', label: 'Input Tokens'},
+            {key: 'output_tokens', label: 'Output Tokens'},
+            {key: 'total_cost', label: 'Cost'},
+          ],
+          rows
+        );
+      }
+
+      function renderRecent(rows) {
+        renderTable(
+          document.getElementById('recent'),
+          [
+            {key: 'timestamp', label: 'Timestamp'},
+            {key: 'provider', label: 'Provider'},
+            {key: 'model_used', label: 'Model'},
+            {key: 'status', label: 'Status'},
+            {key: 'latency_ms', label: 'Latency ms'},
+            {key: 'input_tokens', label: 'Input Tokens'},
+            {key: 'output_tokens', label: 'Output Tokens'},
+            {key: 'cost', label: 'Cost'},
+          ],
+          rows
+        );
+      }
+
+      loadStats();
+      setInterval(loadStats, 10000);
+    </script>
+  </body>
+</html>
