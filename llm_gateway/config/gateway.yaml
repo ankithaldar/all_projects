@@ -1,0 +1,186 @@
+default_system_prompt: 'You are a helpful assistant.'
+
+retry:
+  max_attempts: 3
+  base_delay_seconds: 0.5
+  max_delay_seconds: 8.0
+
+cache:
+  enabled: true
+  ttl_seconds: 86400
+  include_temperature: false
+
+providers:
+  openrouter_free:
+    enabled: true
+    base_url: 'https://openrouter.ai/api/v1'
+    api_key_env: 'OPENROUTER_API_KEYS'
+    rpm: 20
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'openrouter/free'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.00
+        cost_per_million_output: 0.00
+        supports_tools: true
+
+  openrouter_nvidia_nemotron_3_ultra:
+    enabled: true
+    base_url: 'https://openrouter.ai/api/v1'
+    api_key_env: 'OPENROUTER_API_KEYS'
+    rpm: 20
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.00
+        cost_per_million_output: 0.00
+        supports_tools: true
+
+  openrouter_minimax_minimax_m3:
+    enabled: true
+    base_url: 'https://openrouter.ai/api/v1'
+    api_key_env: 'OPENROUTER_API_KEYS'
+    rpm: 20
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'minimax/minimax-m3:free'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.00
+        cost_per_million_output: 0.00
+        supports_tools: true
+
+  groq_qwen_qwen3_6_27b:
+    enabled: true
+    base_url: 'https://api.groq.com/openai/v1'
+    api_key_env: 'GROQ_API_KEYS'
+    rpm: 30
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'qwen/qwen3.6-27b'
+        temperature: 1
+        max_tokens: 4096
+        cost_per_million_input: 0.6
+        cost_per_million_output: 3.00
+        supports_tools: true
+
+  groq_qwen_qwen3_8_27b:
+    enabled: true
+    base_url: 'https://api.groq.com/openai/v1'
+    api_key_env: 'GROQ_API_KEYS'
+    rpm: 30
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'qwen/qwen3.8-27b'
+        temperature: 1
+        max_tokens: 4096
+        cost_per_million_input: 0.6
+        cost_per_million_output: 3.00
+        supports_tools: true
+
+  groq_openai_gpt_oss_120b:
+    enabled: true
+    base_url: 'https://api.groq.com/openai/v1'
+    api_key_env: 'GROQ_API_KEYS'
+    rpm: 30
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'openai/gpt-oss-120b'
+        temperature: 1
+        max_tokens: 4096
+        cost_per_million_input: 0.075
+        cost_per_million_output: 0.30
+        supports_tools: true
+
+  cerebras:
+    enabled: true
+    base_url: 'https://api.cerebras.ai/v1'
+    api_key_env: 'CEREBRAS_API_KEYS'
+    rpm: 30
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'gpt-oss-120b'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.35
+        cost_per_million_output: 0.75
+        supports_tools: true
+
+  nvidia_moonshotai_kimi_k3:
+    enabled: true
+    base_url: 'https://integrate.api.nvidia.com/v1'
+    api_key_env: 'NVIDIA_NIM_API_KEYS'
+    rpm: 10
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'moonshotai/kimi-k3'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.0
+        cost_per_million_output: 0.0
+        supports_tools: true
+
+  nvidia_deepseek_ai_deepseek_v4_flash_0731:
+    enabled: true
+    base_url: 'https://integrate.api.nvidia.com/v1'
+    api_key_env: 'NVIDIA_NIM_API_KEYS'
+    rpm: 10
+    timeout_seconds: 60.0
+    models:
+      fast:
+        model: 'deepseek-ai/deepseek-v4-flash-0731'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.0
+        cost_per_million_output: 0.0
+        supports_tools: true
+
+  ollama:
+    enabled: true
+    base_url: 'http://127.0.0.1:11434/v1'
+    api_key_env: ''
+    rpm: 1000
+    timeout_seconds: 120.0
+    models:
+      local:
+        model: 'llama3.2'
+        temperature: 0.2
+        max_tokens: 4096
+        cost_per_million_input: 0.0
+        cost_per_million_output: 0.0
+        supports_tools: false
+
+execution_order:
+  - provider: 'openrouter_free'
+    alias: fast
+  - provider: 'openrouter_nvidia_nemotron_3_ultra'
+    alias: 'fast'
+  - provider: 'openrouter_minimax_minimax_m3'
+    alias: fast
+  - provider: 'nvidia_moonshotai_kimi_k3'
+    alias: fast
+  - provider: 'nvidia_deepseek_ai_deepseek_v4_flash_0731'
+    alias: fast
+  - provider: 'groq_qwen_qwen3_6_27b'
+    alias: fast
+  - provider: 'groq_qwen_qwen3_8_27b'
+    alias: fast
+  - provider: 'groq_openai_gpt_oss_120b'
+    alias: fast
+  - provider: 'cerebras'
+    alias: fast
+
+fallback:
+  provider: 'ollama'
+  alias: 'local'
