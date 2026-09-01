@@ -11,7 +11,7 @@ cache:
   include_temperature: false
 
 providers:
-  openrouter_free:
+  openrouter:
     enabled: true
     base_url: 'https://openrouter.ai/api/v1'
     api_key_env: 'OPENROUTER_API_KEYS'
@@ -26,7 +26,7 @@ providers:
         cost_per_million_output: 0.00
         supports_tools: true
 
-  openrouter_nvidia_nemotron_3_ultra:
+  openrouter_ox_alpha:
     enabled: true
     base_url: 'https://openrouter.ai/api/v1'
     api_key_env: 'OPENROUTER_API_KEYS'
@@ -34,22 +34,7 @@ providers:
     timeout_seconds: 60.0
     models:
       fast:
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free'
-        temperature: 0.2
-        max_tokens: 4096
-        cost_per_million_input: 0.00
-        cost_per_million_output: 0.00
-        supports_tools: true
-
-  openrouter_minimax_minimax_m3:
-    enabled: true
-    base_url: 'https://openrouter.ai/api/v1'
-    api_key_env: 'OPENROUTER_API_KEYS'
-    rpm: 20
-    timeout_seconds: 60.0
-    models:
-      fast:
-        model: 'minimax/minimax-m3:free'
+        model: 'stealth/ox-alpha'
         temperature: 0.2
         max_tokens: 4096
         cost_per_million_input: 0.00
@@ -146,21 +131,6 @@ providers:
         cost_per_million_output: 0.0
         supports_tools: true
 
-  omniroute_deepseek_v4_flash:
-    enabled: true
-    base_url: 'https://api.cheaperinference.com/v1'
-    api_key_env: 'OMNIROUTE_API_KEYS'
-    rpm: 10
-    timeout_seconds: 60.0
-    models:
-      fast:
-        model: 'deepseek-v4-flash-0731'
-        temperature: 0.2
-        max_tokens: 4096
-        cost_per_million_input: 0.0456
-        cost_per_million_output: 0.0918
-        supports_tools: true
-
   ollama:
     enabled: true
     base_url: 'http://127.0.0.1:11434/v1'
@@ -192,6 +162,8 @@ execution_order:
   - provider: 'groq_qwen_qwen3_6_27b'
     alias: fast
   - provider: 'groq_openai_gpt_oss_120b'
+    alias: fast
+  - provider: 'openrouter'
     alias: fast
   - provider: 'cerebras'
     alias: fast
