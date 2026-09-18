@@ -149,8 +149,6 @@ class AdaptiveLoop:
       switched = tool != step.tool
       for attempt_index in range(1, max_attempts + 1):
         attempt = attempt_fn(step, tool, args, attempt_index)
-        if switched:
-          attempt.switched_from = step.tool
         attempts.append(attempt)
 
         if attempt.ok and attempt.observation_preview:

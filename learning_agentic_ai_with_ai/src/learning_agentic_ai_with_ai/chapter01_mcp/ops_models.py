@@ -10,7 +10,7 @@ sees, validation at the server boundary, and typed handlers in Python.
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -63,30 +63,6 @@ class RetailSalesTrendOutput(BaseModel):
   avg_daily_units: float = 0.0
 
 
-class RetailReorderSuggestion(BaseModel):
-  '''One suggested reorder decision.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  store_id: str
-  sku: str
-  product: str = ''
-  on_hand: int = 0
-  reorder_point: int = 0
-  avg_daily_units: float = 0.0
-  lead_time_days: int = 0
-  suggested_quantity: int = 0
-
-
-class RetailReorderReport(BaseModel):
-  '''Structured reorder suggestion report.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  items: List[RetailReorderSuggestion] = Field(default_factory=list)
-  note: str = ''
-
-
 class RetailRestockInput(BaseModel):
   '''Input for retail_restock_order (write tool).'''
 
@@ -95,19 +71,6 @@ class RetailRestockInput(BaseModel):
   store_id: str = Field(description='Store id, e.g. S01')
   sku: str = Field(description='Product SKU, e.g. R-101')
   quantity: int = Field(ge=1, le=1000, description='Units to order')
-
-
-class RetailRestockOutput(BaseModel):
-  '''Output of retail_restock_order.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  order_id: int
-  store_id: str
-  sku: str
-  quantity: int
-  status: str
-  created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -120,19 +83,6 @@ class TelecomSiteStatusInput(BaseModel):
   model_config = ConfigDict(extra='ignore')
 
   site_id: str = Field(description='Cell site id, e.g. CS-77')
-
-
-class TelecomSiteStatus(BaseModel):
-  '''Output of telecom_site_status.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  site_id: str
-  name: str
-  region: str
-  status: str
-  battery_backup_hours: float
-  last_hour: Dict[str, float] = Field(default_factory=dict)
 
 
 class TelecomDegradedInput(BaseModel):

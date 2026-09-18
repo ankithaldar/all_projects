@@ -394,7 +394,6 @@ class MemoryStore:
           avg_duration_ms=(
             row['total_duration_ms'] / runs if runs else 0.0
           ),
-          avg_tokens=(row['total_tokens'] / runs if runs else 0.0),
           updated_at=row['updated_at'],
         )
       )

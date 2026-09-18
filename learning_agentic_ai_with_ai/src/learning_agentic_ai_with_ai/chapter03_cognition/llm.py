@@ -38,23 +38,6 @@ logger = get_logger(__name__)
 ModelT = TypeVar('ModelT', bound=BaseModel)
 
 
-def usage_delta(before: TokenUsage, after: TokenUsage) -> Dict[str, int]:
-  '''Compute the usage difference between two snapshots.
-
-  Args:
-    before: Usage snapshot before a stage.
-    after: Usage snapshot after a stage.
-
-  Returns:
-    Dict with input/output/total token deltas.
-  '''
-  return {
-    'input_tokens': after.input_tokens - before.input_tokens,
-    'output_tokens': after.output_tokens - before.output_tokens,
-    'total_tokens': after.total_tokens - before.total_tokens,
-  }
-
-
 class LLMResult(BaseModel):
   '''Normalized result of one successful LLM call.'''
 

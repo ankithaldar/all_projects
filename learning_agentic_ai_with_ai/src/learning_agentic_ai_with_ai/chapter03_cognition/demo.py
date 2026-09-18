@@ -603,7 +603,6 @@ def build_toolbox(
   inject_faults: bool,
   audit_sink: Any,
   tracer: Tracer,
-  trace_id: str,
 ) -> Any:
   '''Build the (optionally fault-injected) toolbox.
 
@@ -616,7 +615,6 @@ def build_toolbox(
     inject_faults: Whether to wrap with a fault injector.
     audit_sink: Callback receiving audit records.
     tracer: Tracer instance.
-    trace_id: Trace id for spans.
 
   Returns:
     ToolBox or FaultInjector.
@@ -631,7 +629,6 @@ def build_toolbox(
     sanitize=config.sanitize_observations,
     audit_sink=audit_sink,
     tracer=tracer,
-    trace_id=trace_id,
   )
   if inject_faults:
     toolbox = FaultInjector(
@@ -791,7 +788,6 @@ def run_scenario(
       inject_faults=scenario in FAULT_SCENARIOS,
       audit_sink=agent.audit_sink,
       tracer=tracer,
-      trace_id='',
     )
     agent.attach_toolbox(toolbox)
   output = agent.run_task(

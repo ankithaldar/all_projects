@@ -133,12 +133,10 @@ class MockGateway:
     '''
     self._planner = planner
     self.calls: List[List[Dict[str, Any]]] = []
-    self._counter = 0
 
   def complete(self, request: GatewayRequest) -> GatewayResponse:  # noqa: D102
     messages = request.build_messages()
     self.calls.append([m.model_dump(mode='json') for m in messages])
-    self._counter += 1
     response = self._planner([m.model_dump(mode='json') for m in messages])
     # Simulate token usage proportional to prompt/response size so the
     # observability paths are exercised in mock mode too.
@@ -157,12 +155,3 @@ class MockGateway:
 
   def close(self) -> None:  # noqa: D102
     return None
-
-  @property
-  def call_count(self) -> int:
-    '''Number of complete() calls made so far.
-
-    Returns:
-      Call count.
-    '''
-    return self._counter

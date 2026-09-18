@@ -9,7 +9,6 @@ from __future__ import annotations
 from chapter02_planning.tools.factory import (
   BACKENDS,
   build_tool_provider,
-  tool_names,
 )
 from chapter02_planning.tools.in_process import InProcessToolProvider
 from chapter02_planning.tools.mcp_provider import MCPToolProvider
@@ -26,6 +25,5 @@ __all__ = [
   'MCPToolProvider',
   'ToolProvider',
   'build_tool_provider',
-  'tool_names',
   'wrap_untrusted',
 ]

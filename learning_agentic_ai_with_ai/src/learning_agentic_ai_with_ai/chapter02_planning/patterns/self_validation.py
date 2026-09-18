@@ -27,7 +27,6 @@ instead of pretending the answer was verified.
 
 from __future__ import annotations
 
-import re
 from typing import List, Optional
 
 from agentic_common.logging import get_logger, log_event
@@ -40,7 +39,7 @@ from chapter02_planning.prompting import (
   CRITIC_SYSTEM,
   REVISION_PROMPT,
   REVISION_SYSTEM,
-  contract_for,
+  output_contract,
 )
 from chapter02_planning.schemas import (
   Critique,
@@ -455,7 +454,7 @@ class SelfValidator:
       task=task,
       evidence=evidence[:6000] or '(none)',
       answer=answer,
-      contract=contract_for(
+      contract=output_contract(
         Critique, 'Return your validation verdict as JSON.',
       ),
     )
@@ -555,15 +554,3 @@ class SelfValidator:
       logger, 20, 'revision_applied',
       issues_before=len(issues_text.splitlines()),
     )
-
-
-def normalize_whitespace(text: str) -> str:
-  '''Collapse whitespace in text (helper for deterministic comparisons).
-
-  Args:
-    text: Input text.
-
-  Returns:
-    Single-space-separated text.
-  '''
-  return re.sub(r'\s+', ' ', text or '').strip()

@@ -149,15 +149,6 @@ class ToolCallResult(BaseModel):
     return '\n'.join(block.text for block in self.content)
 
 
-class CallToolParams(BaseModel):
-  '''Parameters of the tools/call request.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  name: str
-  arguments: Dict[str, Any] = Field(default_factory=dict)
-
-
 # ---------------------------------------------------------------------------
 # Server descriptor (how the client knows how to reach a server)
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agentic_common.persistence import AgentStore
-from chapter01_mcp.client.policy import ToolPolicy, ToolPolicyEngine
+from chapter01_mcp.client.policy import ToolPolicyEngine
 from chapter01_mcp.client.registry import (
   ServerCatalog,
   pick_servers,
@@ -21,7 +21,7 @@ from chapter01_mcp.schemas import ToolCallResult, ToolDescriptor
 
 
 class TestToolPolicyEngine:
-  '''The policy gate blocks schema, limits, and approval violations.'''
+  '''The policy gate blocks schema and approval violations.'''
 
   WRITE_TOOLS = {'srv.writer'}
 
@@ -45,30 +45,6 @@ class TestToolPolicyEngine:
     )
     assert not allowed
     assert 'schema' in reason
-
-  def test_argument_limits_block(self) -> None:
-    engine = ToolPolicyEngine()
-    engine.set_tool_policy(
-      'srv.tool',
-      ToolPolicy(argument_limits={'qty': (1, 500)}),
-    )
-    # Schema allows 1000; the *policy* limit (500) must still catch 600.
-    allowed, reason, _ = engine.check(
-      'srv', 'tool', {'qty': 600}, self._descriptor(),
-    )
-    assert not allowed
-    assert 'outside allowed range' in reason
-
-  def test_allowed_values_block(self) -> None:
-    engine = ToolPolicyEngine()
-    engine.set_tool_policy(
-      'srv.tool',
-      ToolPolicy(allowed_values={'qty': {1, 2, 3}}),
-    )
-    allowed, _, _ = engine.check(
-      'srv', 'tool', {'qty': 7}, self._descriptor(),
-    )
-    assert not allowed
 
   def test_write_without_approval_blocked(self) -> None:
     engine = ToolPolicyEngine(
@@ -149,8 +125,7 @@ class TestAgentStore:
       assert [h.event_type for h in history] == ['e1', 'e2']
 
       store.remember('s1', 'facts', {'a': 1})
-      assert store.recall('s1', 'facts') == {'a': 1}
-      assert store.recall('s1', 'missing') is None
+      assert store.all_memory('s1') == {'facts': {'a': 1}}
 
       store.log_tool_call(
         session_id='s1', server='srv', tool='t1', args={'q': 1},

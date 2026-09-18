@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from string import Template
-from typing import Any, Dict, Iterable, List, Optional, Set, Type
+from typing import Any, Dict, Iterable, List, Set, Type
 
 from pydantic import BaseModel
 
@@ -135,20 +135,6 @@ def render_tool_catalog(tools: Iterable[ToolSpec]) -> str:
     lines.append(f'- {tool.name} ({kind}): {tool.description}')
     lines.append(f'  arguments schema: {args}')
   return '\n'.join(lines) if lines else '(no tools available)'
-
-
-def format_numbered_steps(steps: Iterable[str]) -> str:
-  '''Render reasoning steps as a numbered list.
-
-  Args:
-    steps: Step texts.
-
-  Returns:
-    Numbered list text.
-  '''
-  return '\n'.join(
-    f'{index}. {step}' for index, step in enumerate(steps, start=1)
-  )
 
 
 # ---------------------------------------------------------------------------
@@ -344,31 +330,6 @@ SYNTHESIS_PROMPT = PromptTemplate(
 )
 
 
-def contract_for(model: Type[BaseModel], purpose: str = '') -> str:
-  '''Short alias for `output_contract` used by pattern modules.
-
-  Args:
-    model: Pydantic model the output must validate against.
-    purpose: Optional purpose sentence.
-
-  Returns:
-    Instruction text.
-  '''
-  return output_contract(model, purpose)
-
-
-def tool_names(tools: Iterable[ToolSpec]) -> List[str]:
-  '''Extract tool names from specs.
-
-  Args:
-    tools: Tool specs.
-
-  Returns:
-    List of names in input order.
-  '''
-  return [tool.name for tool in tools]
-
-
 def truncate_text(text: str, max_chars: int) -> str:
   '''Truncate text with an ellipsis marker.
 
@@ -395,16 +356,3 @@ def compact_json(payload: Dict[str, Any], max_chars: int = 800) -> str:
     JSON string (possibly truncated).
   '''
   return truncate_text(json.dumps(payload, default=str), max_chars)
-
-
-def optional(value: Optional[str], fallback: str = '') -> str:
-  '''Return a string or a fallback when None/empty.
-
-  Args:
-    value: Candidate string.
-    fallback: Value used when empty.
-
-  Returns:
-    The value or fallback.
-  '''
-  return value if value else fallback

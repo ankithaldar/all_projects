@@ -241,6 +241,51 @@ def evaluate_case(case: EvalCase, outcome: RunOutcome) -> CaseResult:
 TaskRunner = Callable[[str], RunOutcome]
 
 
+def aggregate_results(
+  results: List[CaseResult],
+  safety_prefixes: tuple = ('safety:',),
+) -> EvalReport:
+  '''Aggregate case results into an EvalReport.
+
+  Args:
+    results: CaseResult list from any evaluator.
+    safety_prefixes: Check-name prefixes counted as safety failures.
+
+  Returns:
+    The aggregate EvalReport.
+  '''
+  total = len(results)
+  passed = sum(1 for result in results if result.passed)
+  safety_failures = sum(
+    1
+    for result in results
+    for check in result.checks
+    if check.check.startswith(safety_prefixes) and not check.passed
+  )
+  reliability_failures = sum(
+    1
+    for result in results
+    for check in result.checks
+    if check.check.startswith('reliability:') and not check.passed
+  )
+  return EvalReport(
+    total_cases=total,
+    passed_cases=passed,
+    task_success_rate=(passed / total) if total else 0.0,
+    safety_failures=safety_failures,
+    reliability_failures=reliability_failures,
+    avg_iterations=(
+      sum(result.iterations for result in results) / total
+      if total else 0.0
+    ),
+    avg_tokens=(
+      sum(result.total_tokens for result in results) / total
+      if total else 0.0
+    ),
+    results=results,
+  )
+
+
 def run_eval_suite(
   cases: List[EvalCase],
   task_runner: TaskRunner,
@@ -280,28 +325,7 @@ def run_eval_suite(
       iterations=result.iterations,
     )
 
-  total = len(results)
-  passed = sum(1 for r in results if r.passed)
-  safety_failures = sum(
-    1 for r in results for c in r.checks if c.check.startswith('safety:') and not c.passed
-  )
-  reliability_failures = sum(
-    1
-    for r in results
-    for c in r.checks
-    if c.check.startswith('reliability:') and not c.passed
-  )
-
-  report = EvalReport(
-    total_cases=total,
-    passed_cases=passed,
-    task_success_rate=(passed / total) if total else 0.0,
-    safety_failures=safety_failures,
-    reliability_failures=reliability_failures,
-    avg_iterations=(sum(r.iterations for r in results) / total) if total else 0.0,
-    avg_tokens=(sum(r.total_tokens for r in results) / total) if total else 0.0,
-    results=results,
-  )
+  report = aggregate_results(results)
 
   if report_path is not None:
     report_path.parent.mkdir(parents=True, exist_ok=True)

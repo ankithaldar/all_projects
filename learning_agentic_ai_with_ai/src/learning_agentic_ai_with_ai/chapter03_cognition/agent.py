@@ -54,7 +54,7 @@ from agentic_common.settings import Settings, default_settings
 from agentic_common.tracing import Tracer
 from chapter03_cognition.action import ActionLayer
 from chapter03_cognition.config import CognitionConfig, load_cognition_config
-from chapter03_cognition.llm import ReasoningLLM, usage_delta
+from chapter03_cognition.llm import ReasoningLLM
 from chapter03_cognition.memory import MemoryLayer, MemoryStore
 from chapter03_cognition.perception import PerceptionLayer
 from chapter03_cognition.planner import DecisionLayer
@@ -639,31 +639,3 @@ class CognitiveAgent:
         'audit persist failed',
         extra={'extra_fields': {'error': str(exc)}},
       )
-
-
-def usage_snapshot_of(llm: ReasoningLLM) -> Dict[str, Any]:
-  '''Return a usage snapshot (helper for callers/tests).
-
-  Args:
-    llm: Reasoning LLM.
-
-  Returns:
-    Usage snapshot dict.
-  '''
-  return llm.usage_snapshot()
-
-
-def usage_of_llm(
-  before: Any,
-  after: Any,
-) -> Dict[str, int]:
-  '''Compute usage delta between two TokenUsage snapshots.
-
-  Args:
-    before: Usage before.
-    after: Usage after.
-
-  Returns:
-    Delta dict.
-  '''
-  return usage_delta(before, after)

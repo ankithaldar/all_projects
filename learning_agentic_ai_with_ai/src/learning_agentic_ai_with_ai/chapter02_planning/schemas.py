@@ -444,17 +444,6 @@ class Plan(BaseModel):
     return {node.id: node for node in self.nodes}
 
 
-class PlanRevision(BaseModel):
-  '''A planner's adjustment after a failed or invalidated node.'''
-
-  model_config = ConfigDict(extra='ignore')
-
-  reason: str = ''
-  dropped: List[str] = Field(default_factory=list)
-  added: List[PlanNode] = Field(default_factory=list)
-  notes: str = ''
-
-
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------

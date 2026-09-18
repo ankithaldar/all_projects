@@ -139,13 +139,12 @@ chapter01_mcp/
 │   ├── retail_server.py    3 tools (2 read + 1 write)
 │   ├── telecom_server.py   3 tools (2 read + 1 write)
 │   ├── retail_main.py      stdio entrypoint   (python -m ...retail_main)
-│   ├── telecom_main.py     stdio entrypoint
-│   └── retail_sdk_server.py SAME tools via official mcp SDK (FastMCP)
+│   └── telecom_main.py     stdio entrypoint
 ├── client/
 │   ├── transports.py       StdioClientTransport + SseClientTransport
 │   ├── mcp_client.py       session lifecycle, tools/list, tools/call, retries
 │   ├── registry.py         server catalog + dynamic discovery (summary+hints)
-│   └── policy.py           ToolPolicyEngine (schema, limits, approval)
+│   └── policy.py           ToolPolicyEngine (schema validation + approval)
 ├── agent/
 │   ├── orchestrator.py     session manager + policy wiring
 │   ├── tools_bridge.py     gateway tool format ⇄ MCP, execution + audit

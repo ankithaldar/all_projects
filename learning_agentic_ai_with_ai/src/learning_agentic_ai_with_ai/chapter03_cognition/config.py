@@ -21,61 +21,12 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from agentic_common import paths
-from agentic_common.settings import Settings
-
-
-def _env_int(name: str, default: int) -> int:
-  '''Read an integer environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset or unparsable.
-
-  Returns:
-    Parsed integer value.
-  '''
-  raw = os.getenv(name)
-  if not raw:
-    return default
-  try:
-    return int(raw)
-  except ValueError:
-    return default
-
-
-def _env_float(name: str, default: float) -> float:
-  '''Read a float environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset or unparsable.
-
-  Returns:
-    Parsed float value.
-  '''
-  raw = os.getenv(name)
-  if not raw:
-    return default
-  try:
-    return float(raw)
-  except ValueError:
-    return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-  '''Read a boolean environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset.
-
-  Returns:
-    Parsed boolean value.
-  '''
-  raw = os.getenv(name)
-  if raw is None or raw == '':
-    return default
-  return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+from agentic_common.settings import (
+  Settings,
+  env_bool,
+  env_float,
+  env_int,
+)
 
 
 class CognitionConfig(BaseModel):
@@ -155,35 +106,35 @@ def load_cognition_config(
   default_approval = settings.require_write_approval if settings else True
 
   return CognitionConfig(
-    planner_temperature=_env_float('AGENTIC_COG_PLANNER_TEMPERATURE', 0.0),
-    code_temperature=_env_float('AGENTIC_COG_CODE_TEMPERATURE', 0.0),
-    reason_temperature=_env_float(
+    planner_temperature=env_float('AGENTIC_COG_PLANNER_TEMPERATURE', 0.0),
+    code_temperature=env_float('AGENTIC_COG_CODE_TEMPERATURE', 0.0),
+    reason_temperature=env_float(
       'AGENTIC_COG_REASON_TEMPERATURE', 0.2,
     ),
-    max_tokens=_env_int('AGENTIC_COG_MAX_TOKENS', default_max_tokens),
-    token_budget=_env_int('AGENTIC_COG_TOKEN_BUDGET', default_budget),
-    max_steps=_env_int('AGENTIC_COG_MAX_STEPS', default_steps),
-    max_attempts_per_step=_env_int('AGENTIC_COG_MAX_ATTEMPTS', 2),
-    max_replans=_env_int('AGENTIC_COG_MAX_REPLANS', 1),
-    code_execution_enabled=_env_bool('AGENTIC_COG_CODE_ENABLED', True),
+    max_tokens=env_int('AGENTIC_COG_MAX_TOKENS', default_max_tokens),
+    token_budget=env_int('AGENTIC_COG_TOKEN_BUDGET', default_budget),
+    max_steps=env_int('AGENTIC_COG_MAX_STEPS', default_steps),
+    max_attempts_per_step=env_int('AGENTIC_COG_MAX_ATTEMPTS', 2),
+    max_replans=env_int('AGENTIC_COG_MAX_REPLANS', 1),
+    code_execution_enabled=env_bool('AGENTIC_COG_CODE_ENABLED', True),
     default_code_runner=os.getenv(
       'AGENTIC_COG_CODE_RUNNER', 'restricted',
     ),
-    code_timeout_seconds=_env_float('AGENTIC_COG_CODE_TIMEOUT_S', 5.0),
-    code_call_budget=_env_int('AGENTIC_COG_CODE_CALL_BUDGET', 8),
-    code_max_chars=_env_int('AGENTIC_COG_CODE_MAX_CHARS', 12000),
-    require_write_approval=_env_bool(
+    code_timeout_seconds=env_float('AGENTIC_COG_CODE_TIMEOUT_S', 5.0),
+    code_call_budget=env_int('AGENTIC_COG_CODE_CALL_BUDGET', 8),
+    code_max_chars=env_int('AGENTIC_COG_CODE_MAX_CHARS', 12000),
+    require_write_approval=env_bool(
       'AGENTIC_COG_REQUIRE_WRITE_APPROVAL', default_approval,
     ),
-    max_result_chars=_env_int(
+    max_result_chars=env_int(
       'AGENTIC_COG_MAX_RESULT_CHARS', default_result,
     ),
     memory_db_path=os.getenv(
       'AGENTIC_COG_MEMORY_DB',
       str(paths.DATA_DIR / 'chapter03_memory.db'),
     ),
-    memory_recall_limit=_env_int('AGENTIC_COG_MEMORY_RECALL', 5),
-    llm_max_attempts=_env_int('AGENTIC_COG_LLM_ATTEMPTS', 3),
-    retry_base_seconds=_env_float('AGENTIC_COG_RETRY_BASE_S', 0.5),
-    sanitize_observations=_env_bool('AGENTIC_COG_SANITIZE', True),
+    memory_recall_limit=env_int('AGENTIC_COG_MEMORY_RECALL', 5),
+    llm_max_attempts=env_int('AGENTIC_COG_LLM_ATTEMPTS', 3),
+    retry_base_seconds=env_float('AGENTIC_COG_RETRY_BASE_S', 0.5),
+    sanitize_observations=env_bool('AGENTIC_COG_SANITIZE', True),
   )
