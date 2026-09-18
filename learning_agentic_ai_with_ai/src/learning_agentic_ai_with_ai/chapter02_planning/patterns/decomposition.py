@@ -51,7 +51,7 @@ from chapter02_planning.llm import ReasoningLLM
 from chapter02_planning.prompting import (
   PLAN_PROMPT,
   PLAN_SYSTEM_TEMPLATE,
-  contract_for,
+  output_contract,
   render_tool_catalog,
 )
 from chapter02_planning.schemas import (
@@ -194,7 +194,7 @@ class TaskPlanner:
     prompt = PLAN_PROMPT.render(
       goal=goal,
       tools=render_tool_catalog(tool_specs),
-      contract=contract_for(
+      contract=output_contract(
         Plan,
         'Return the plan as JSON. Each node needs id, objective, and '
         'depends_on (use [] for the first nodes).',

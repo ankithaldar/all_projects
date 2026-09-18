@@ -427,7 +427,6 @@ class PlannerIntrospector:
     percept: Percept,
     tools: List[ToolSpec],
     profile: StrategyProfile,
-    plan_notes: Optional[List[str]] = None,
   ) -> PlanInsight:
     '''Analyze a plan for risk, coverage, and likely failure modes.
 
@@ -436,7 +435,6 @@ class PlannerIntrospector:
       percept: Perception-layer output.
       tools: Available tools.
       profile: Active strategy profile.
-      plan_notes: Planner notes to fold into introspection.
 
     Returns:
       PlanInsight.
@@ -445,7 +443,6 @@ class PlannerIntrospector:
     write_names = {
       tool.name for tool in tools if not tool.read_only
     }
-    notes = list(plan_notes or [])
     warnings: List[str] = []
 
     if plan.source == 'code':
@@ -466,7 +463,6 @@ class PlannerIntrospector:
 
     insight.missing_capabilities = missing
     insight.warnings = sorted(set(warnings))
-    insight.notes = notes + insight.notes
     insight.risk_level = self._risk_level(insight)
     insight.confidence = self._confidence(insight, plan)
     log_event(
@@ -502,14 +498,11 @@ class PlannerIntrospector:
     Returns:
       Partial PlanInsight (capabilities filled by the caller).
     '''
-    tool_calls = 0
     has_writes = False
     first_write_index: Optional[int] = None
     first_read_index: Optional[int] = None
 
     for index, step in enumerate(plan.steps):
-      if step.kind in ('tool', 'write'):
-        tool_calls += 1
       if step.tool and step.tool not in known:
         warnings.append(f'unknown tool in plan: {step.tool}')
       for value in step.arguments.values():
@@ -537,16 +530,9 @@ class PlannerIntrospector:
         'refused at execution'
       )
 
-    try:
-      waves = len(topological_waves(plan))
-    except ValueError:
-      waves = 0
-
     return PlanInsight(
       step_count=len(plan.steps),
-      estimated_tool_calls=tool_calls,
       has_writes=has_writes,
-      notes=[f'{len(plan.steps)} step(s) across {waves} wave(s)'],
     )
 
   @staticmethod
@@ -569,9 +555,7 @@ class PlannerIntrospector:
       )
     return PlanInsight(
       step_count=1,
-      estimated_tool_calls=0,
       has_writes=False,
-      notes=['agent-written solve() plan executed in a sandbox'],
     )
 
   @staticmethod
@@ -732,15 +716,13 @@ class DecisionLayer:
       notes.append('code plan replaced: execution disabled')
 
     insight = self._introspector.introspect(
-      plan, percept, tools, profile, notes,
+      plan, percept, tools, profile,
     )
-    planner_notes = list(memory.recall_notes) if memory is not None else []
     return Decision(
       strategy=profile.name,
       strategy_reason=profile.description,
       plan=plan,
       insight=insight,
-      planner_notes=planner_notes,
     )
 
   @staticmethod

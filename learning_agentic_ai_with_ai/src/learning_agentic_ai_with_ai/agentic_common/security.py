@@ -33,7 +33,6 @@ _SECRET_ENV_NAMES = (
 )
 
 _REDACTED = '***REDACTED***'
-_TOKEN_PATTERN = re.compile(r'[A-Za-z0-9_\-]{12,}')
 
 
 def _collect_secrets(extra: Optional[List[str]] = None) -> Set[str]:
@@ -81,32 +80,6 @@ def redact_secrets(
     if secret in text:
       text = text.replace(secret, _REDACTED)
   return text
-
-
-def redact_generic_tokens(text: str, min_length: int = 20) -> str:
-  '''Redact long high-entropy-looking tokens that are not common words.
-
-  Conservative heuristic: strings of [A-Za-z0-9_-] with no spaces and length
-  >= min_length are treated as potential credentials.
-
-  Args:
-    text: Input text.
-    min_length: Minimum token length to redact.
-
-  Returns:
-    Text with generic long tokens redacted.
-  '''
-  def _should(match: re.Match[str]) -> str:
-    token = match.group(0)
-    looks_hexy = bool(re.fullmatch(r'[0-9a-fA-F]+', token))
-    has_digits_and_letters = any(c.isdigit() for c in token) and any(
-      c.isalpha() for c in token
-    )
-    if len(token) >= min_length and (looks_hexy or has_digits_and_letters):
-      return _REDACTED
-    return token
-
-  return _TOKEN_PATTERN.sub(_should, text)
 
 
 _CONTROL_CHARS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')

@@ -11,14 +11,13 @@ tool-execution policy limits, mock mode, and observability switches.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
 from agentic_common import paths
 
 
-def _env_int(name: str, default: int) -> int:
+def env_int(name: str, default: int) -> int:
   '''Read an integer environment variable.
 
   Args:
@@ -37,7 +36,7 @@ def _env_int(name: str, default: int) -> int:
     return default
 
 
-def _env_float(name: str, default: float) -> float:
+def env_float(name: str, default: float) -> float:
   '''Read a float environment variable.
 
   Args:
@@ -56,7 +55,7 @@ def _env_float(name: str, default: float) -> float:
     return default
 
 
-def _env_bool(name: str, default: bool) -> bool:
+def env_bool(name: str, default: bool) -> bool:
   '''Read a boolean environment variable.
 
   Args:
@@ -86,8 +85,6 @@ class Settings(BaseModel):
     require_write_approval: Whether write tools need approval callback.
     max_restock_quantity: Safety cap used by the retail write tool policy.
     allowed_dispatch_priorities: Priorities the field-tech write tool accepts.
-    log_level: Structured log verbosity.
-    trace_enabled: Whether JSONL traces are written.
   '''
 
   model_config = ConfigDict(extra='ignore')
@@ -102,10 +99,6 @@ class Settings(BaseModel):
   require_write_approval: bool = True
   max_restock_quantity: int = 500
   allowed_dispatch_priorities: tuple[str, ...] = ('low', 'medium', 'high')
-  log_level: str = 'INFO'
-  trace_enabled: bool = True
-  gateway_config_path: Optional[str] = None
-  gateway_env_path: Optional[str] = None
 
 
 def load_settings() -> Settings:
@@ -115,19 +108,15 @@ def load_settings() -> Settings:
     A validated Settings instance.
   '''
   return Settings(
-    mock_llm=_env_bool('AGENTIC_MOCK_LLM', False),
-    llm_temperature=_env_float('AGENTIC_LLM_TEMPERATURE', 0.2),
-    llm_max_tokens=_env_int('AGENTIC_LLM_MAX_TOKENS', 1024),
-    agent_max_iterations=_env_int('AGENTIC_MAX_ITERATIONS', 8),
-    agent_token_budget=_env_int('AGENTIC_TOKEN_BUDGET', 60000),
-    tool_timeout_seconds=_env_float('AGENTIC_TOOL_TIMEOUT_S', 15.0),
-    tool_max_result_chars=_env_int('AGENTIC_TOOL_MAX_RESULT_CHARS', 6000),
-    require_write_approval=_env_bool('AGENTIC_REQUIRE_WRITE_APPROVAL', True),
-    max_restock_quantity=_env_int('AGENTIC_MAX_RESTOCK_QTY', 500),
-    log_level=os.getenv('AGENTIC_LOG_LEVEL', 'INFO'),
-    trace_enabled=_env_bool('AGENTIC_TRACE_ENABLED', True),
-    gateway_config_path=os.getenv('GATEWAY_CONFIG_PATH'),
-    gateway_env_path=os.getenv('GATEWAY_ENV_PATH'),
+    mock_llm=env_bool('AGENTIC_MOCK_LLM', False),
+    llm_temperature=env_float('AGENTIC_LLM_TEMPERATURE', 0.2),
+    llm_max_tokens=env_int('AGENTIC_LLM_MAX_TOKENS', 1024),
+    agent_max_iterations=env_int('AGENTIC_MAX_ITERATIONS', 8),
+    agent_token_budget=env_int('AGENTIC_TOKEN_BUDGET', 60000),
+    tool_timeout_seconds=env_float('AGENTIC_TOOL_TIMEOUT_S', 15.0),
+    tool_max_result_chars=env_int('AGENTIC_TOOL_MAX_RESULT_CHARS', 6000),
+    require_write_approval=env_bool('AGENTIC_REQUIRE_WRITE_APPROVAL', True),
+    max_restock_quantity=env_int('AGENTIC_MAX_RESTOCK_QTY', 500),
   )
 
 

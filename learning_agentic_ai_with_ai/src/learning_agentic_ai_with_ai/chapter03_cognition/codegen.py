@@ -96,9 +96,6 @@ SAFE_BUILTINS: Dict[str, Any] = {
   'sum': sum,
   'tuple': tuple,
   'zip': zip,
-  'True': True,
-  'False': False,
-  'None': None,
 }
 
 _RESULT_SENTINEL = '__COGNITION_RESULT__'
@@ -135,15 +132,6 @@ class Deadline:
       True when expired.
     '''
     return time.monotonic() >= self._end
-
-  @property
-  def remaining(self) -> float:
-    '''Seconds left.
-
-    Returns:
-      Non-negative remaining seconds.
-    '''
-    return max(0.0, self._end - time.monotonic())
 
 
 class ToolCaller:
@@ -189,14 +177,6 @@ class ToolCaller:
       Deadline instance.
     '''
     return self._deadline
-
-  def catalog(self) -> List[str]:
-    '''List tools the code is allowed to call.
-
-    Returns:
-      Sorted tool names.
-    '''
-    return sorted(self._allowed)
 
   def call(
     self,
@@ -477,9 +457,6 @@ class Tools:
       "tools are unavailable in the subprocess runner; "
       "use the restricted runner for tool-using code plans"
     )
-
-  def catalog(self):
-    return []
 
 
 def main():

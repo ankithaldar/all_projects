@@ -246,7 +246,7 @@ class MCPServerCore:
     to INVALID_PARAMS) or generic exceptions (INTERNAL_ERROR).
 
     Args:
-      params: CallToolParams.
+      params: tools/call parameters (name, arguments).
 
     Returns:
       ToolCallResult payload.

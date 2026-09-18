@@ -237,18 +237,3 @@ def extract_code_block(text: str) -> str:
     return raw[def_index:].strip()
 
   raise JsonParseError(f'no Python code found (preview: {_preview(raw)})')
-
-
-def truncate(text: str, max_chars: int) -> str:
-  '''Truncate text with an ellipsis marker.
-
-  Args:
-    text: Input text.
-    max_chars: Maximum retained characters.
-
-  Returns:
-    Truncated text.
-  '''
-  if len(text) <= max_chars:
-    return text
-  return text[: max(0, max_chars - 3)] + '...'

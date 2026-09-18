@@ -255,26 +255,6 @@ class AgentStore:
       )
       self._conn.commit()
 
-  def recall(self, session_id: str, key: str) -> Optional[Dict[str, Any]]:
-    '''Fetch one memory entry.
-
-    Args:
-      session_id: Owning session.
-      key: Memory key.
-
-    Returns:
-      Stored payload or None.
-    '''
-    with self._lock:
-      row = self._conn.execute(
-        'SELECT value_json FROM memory WHERE session_id = ? AND key = ?',
-        (session_id, key),
-      ).fetchone()
-
-    if row is None:
-      return None
-    return json.loads(row['value_json'])
-
   def all_memory(self, session_id: str) -> Dict[str, Dict[str, Any]]:
     '''List all memory entries for a session.
 

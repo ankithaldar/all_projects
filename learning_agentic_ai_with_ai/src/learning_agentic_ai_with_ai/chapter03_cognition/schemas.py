@@ -86,7 +86,6 @@ class ToolResult(BaseModel):
   text: str = ''
   error: Optional[str] = None
   latency_ms: float = 0.0
-  truncated: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +193,6 @@ class StrategyStats(BaseModel):
   successes: int = 0
   failures: int = 0
   avg_duration_ms: float = 0.0
-  avg_tokens: float = 0.0
   updated_at: str = ''
 
   @property
@@ -421,25 +419,21 @@ class PlanInsight(BaseModel):
 
   Attributes:
     step_count: Number of steps (1 for code plans).
-    estimated_tool_calls: Upper-bound tool calls the plan will make.
     risk_level: low/medium/high based on writes and failure surfaces.
     has_writes: Whether any step mutates state.
     missing_capabilities: Required capabilities the plan does not cover.
     warnings: Actionable planner-introspection warnings.
     confidence: 0..1 heuristic confidence that the plan can succeed.
-    notes: Explanatory text handed to the executor/logs.
   '''
 
   model_config = ConfigDict(extra='ignore')
 
   step_count: int = 0
-  estimated_tool_calls: int = 0
   risk_level: RiskLevel = 'low'
   has_writes: bool = False
   missing_capabilities: List[str] = Field(default_factory=list)
   warnings: List[str] = Field(default_factory=list)
   confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-  notes: List[str] = Field(default_factory=list)
 
 
 class Decision(BaseModel):
@@ -450,7 +444,6 @@ class Decision(BaseModel):
     strategy_reason: Why the selector chose it.
     plan: The plan to execute.
     insight: Static introspection of the plan.
-    planner_notes: Notes from planner prompts/memory.
   '''
 
   model_config = ConfigDict(extra='ignore')
@@ -459,7 +452,6 @@ class Decision(BaseModel):
   strategy_reason: str = ''
   plan: CognitivePlan = Field(default_factory=CognitivePlan)
   insight: PlanInsight = Field(default_factory=PlanInsight)
-  planner_notes: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +485,6 @@ class StepAttempt(BaseModel):
   error: Optional[str] = None
   observation_preview: str = ''
   latency_ms: float = 0.0
-  switched_from: str = ''
 
 
 class StepResult(BaseModel):

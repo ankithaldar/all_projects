@@ -117,14 +117,6 @@ class TestGatedProvider:
     assert result.text.startswith(UNTRUSTED_OPEN)
     assert result.text.rstrip().endswith(UNTRUSTED_CLOSE)
 
-  def test_gateway_tools_shape(self) -> None:
-    gate = GatedToolProvider(InProcessToolProvider())
-    definitions = gate.gateway_tools()
-    assert definitions
-    first = definitions[0]
-    assert first['type'] == 'function'
-    assert first['function']['name']
-
 
 class TestFactory:
   '''Backend factory behavior.'''

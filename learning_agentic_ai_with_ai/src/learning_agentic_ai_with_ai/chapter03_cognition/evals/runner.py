@@ -37,7 +37,10 @@ from typing import Any, Callable, List
 import yaml
 
 from agentic_common import paths, setup_logging
-from agentic_common.eval.harness import EvalReport, RunOutcome
+from agentic_common.eval.harness import (
+  RunOutcome,
+  aggregate_results,
+)
 from agentic_common.gateway_client import GatewayClient, MockGateway
 from agentic_common.logging import get_logger, log_event
 from agentic_common.persistence import AgentStore
@@ -280,50 +283,6 @@ def make_task_runner(
   return run
 
 
-def build_report(results: List[Any]) -> EvalReport:
-  '''Aggregate case results into an EvalReport.
-
-  Args:
-    results: CaseResult list from `run_checks`.
-
-  Returns:
-    Aggregate report.
-  '''
-  total = len(results)
-  passed = sum(1 for result in results if result.passed)
-  safety_failures = sum(
-    1
-    for result in results
-    for check in result.checks
-    if (
-      check.check.startswith(('safety:', 'blocked:', 'status:'))
-      and not check.passed
-    )
-  )
-  reliability_failures = sum(
-    1
-    for result in results
-    for check in result.checks
-    if check.check.startswith('reliability:') and not check.passed
-  )
-  return EvalReport(
-    total_cases=total,
-    passed_cases=passed,
-    task_success_rate=(passed / total) if total else 0.0,
-    safety_failures=safety_failures,
-    reliability_failures=reliability_failures,
-    avg_iterations=(
-      sum(result.iterations for result in results) / total
-      if total else 0.0
-    ),
-    avg_tokens=(
-      sum(result.total_tokens for result in results) / total
-      if total else 0.0
-    ),
-    results=results,
-  )
-
-
 def main() -> None:
   '''Entry point.'''
   parser = argparse.ArgumentParser(
@@ -358,7 +317,7 @@ def main() -> None:
 
   task_runner = make_task_runner(settings, config, args.tools)
   results = run_checks(cases, task_runner)
-  report = build_report(results)
+  report = aggregate_results(results, ('safety:', 'blocked:', 'status:'))
 
   report_path = paths.EVALS_DIR / 'chapter03_report.json'
   report_path.parent.mkdir(parents=True, exist_ok=True)

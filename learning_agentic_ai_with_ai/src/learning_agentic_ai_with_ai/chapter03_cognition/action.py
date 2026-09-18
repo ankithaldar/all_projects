@@ -52,7 +52,6 @@ from chapter03_cognition.prompts import (
   REASON_SYSTEM,
   SYNTHESIS_PROMPT,
   SYNTHESIS_SYSTEM,
-  compact_json,
 )
 from chapter03_cognition.schemas import (
   ActionResult,
@@ -132,7 +131,7 @@ class ActionLayer:
         )
       else:
         action = self._execute_dag(
-          plan, decision, allow_writes, adaptations,
+          plan, decision, adaptations,
         )
     except Exception as exc:  # pylint: disable=broad-exception-caught
       log_event(
@@ -268,7 +267,6 @@ class ActionLayer:
     self,
     plan: CognitivePlan,
     decision: Decision,
-    allow_writes: bool,
     adaptations: List[AdaptationRecord],
   ) -> ActionResult:
     '''Execute a DAG (or fallback) plan wave by wave.
@@ -276,7 +274,6 @@ class ActionLayer:
     Args:
       plan: DAG/fallback plan.
       decision: Decision (strategy profile carries the retry policy).
-      allow_writes: Whether writes are permitted.
       adaptations: Mutable adaptation log.
 
     Returns:
@@ -315,7 +312,7 @@ class ActionLayer:
           context = self._dependency_context(step, results)
           result = loop.run_step(
             step,
-            attempt_fn=self._make_attempt_fn(context, allow_writes),
+            attempt_fn=self._make_attempt_fn(context),
             adaptations=adaptations,
           )
         results[step_id] = result
@@ -342,13 +339,11 @@ class ActionLayer:
   def _make_attempt_fn(
     self,
     context: str,
-    allow_writes: bool,
   ) -> Any:
     '''Build the per-attempt callable for one step.
 
     Args:
       context: Dependency context text.
-      allow_writes: Whether writes are permitted.
 
     Returns:
       Callable `(step, tool, args, attempt) -> StepAttempt`.
@@ -372,9 +367,7 @@ class ActionLayer:
       '''
       if active_step.kind == 'reason' or not tool:
         return self._attempt_reason(active_step, context, attempt)
-      return self._attempt_tool(
-        tool, dict(args), attempt, allow_writes,
-      )
+      return self._attempt_tool(tool, dict(args), attempt)
 
     return attempt_fn
 
@@ -383,7 +376,6 @@ class ActionLayer:
     tool: str,
     args: Dict[str, Any],
     attempt: int,
-    allow_writes: bool,
   ) -> StepAttempt:
     '''Call one tool through the gate.
 
@@ -391,12 +383,10 @@ class ActionLayer:
       tool: Qualified tool name.
       args: Tool arguments.
       attempt: Attempt number.
-      allow_writes: Whether writes are permitted.
 
     Returns:
       StepAttempt with classified error.
     '''
-    del allow_writes
     started = time.perf_counter()
     result = self._toolbox.call(tool, args)
     error_class = classify_tool_error(result)
@@ -572,16 +562,3 @@ class ActionLayer:
       for result in results
     )
     return 'blocked' if blocked else 'error'
-
-
-def compact_context(payload: Dict[str, Any], max_chars: int = 800) -> str:
-  '''Serialize context compactly (helper for logs/tests).
-
-  Args:
-    payload: JSON-serializable mapping.
-    max_chars: Maximum length.
-
-  Returns:
-    JSON string.
-  '''
-  return compact_json(payload, max_chars)

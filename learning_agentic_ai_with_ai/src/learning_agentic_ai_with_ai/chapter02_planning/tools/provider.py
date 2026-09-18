@@ -115,25 +115,6 @@ class ToolProvider(ABC):
   def close(self) -> None:
     '''Release any resources held by the provider.'''
 
-  def gateway_tools(self) -> List[Dict[str, Any]]:
-    '''Render OpenAI-style tool definitions for the LLM gateway.
-
-    Returns:
-      List of tool definition dicts.
-    '''
-    definitions: List[Dict[str, Any]] = []
-    for tool in self.list_tools():
-      definitions.append({
-        'type': 'function',
-        'function': {
-          'name': tool.name,
-          'description': tool.description,
-          'parameters': tool.parameters
-          or {'type': 'object', 'properties': {}},
-        },
-      })
-    return definitions
-
   def get(self, tool_name: str) -> Optional[ToolSpec]:
     '''Look up one tool spec by name.
 

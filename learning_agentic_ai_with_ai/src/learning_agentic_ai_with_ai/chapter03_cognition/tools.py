@@ -213,11 +213,9 @@ class ToolBox:
     )
     if self._sanitize and result.text:
       sanitized = sanitize_untrusted(result.text, self._max_result_chars)
-      result.truncated = len(result.text) > self._max_result_chars
       result.text = wrap_untrusted(sanitized)
     elif len(result.text) > self._max_result_chars:
       result.text = result.text[: self._max_result_chars - 3] + '...'
-      result.truncated = True
 
     self._record(result, spec)
     return result

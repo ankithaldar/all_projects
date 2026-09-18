@@ -224,19 +224,6 @@ def _balanced_spans(text: str, max_spans: int = 12) -> List[str]:
   return spans
 
 
-def _balanced_slice(text: str) -> Optional[str]:
-  '''Extract the first balanced `{...}` or `[...]` span from text.
-
-  Args:
-    text: Source text.
-
-  Returns:
-    Balanced substring, or None when no balanced span exists.
-  '''
-  spans = _balanced_spans(text, max_spans=1)
-  return spans[0] if spans else None
-
-
 def extract_json_block(text: str) -> Any:
   '''Extract the first JSON value from free-form model output.
 

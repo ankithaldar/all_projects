@@ -14,66 +14,16 @@ instance can be supplied to inherit the shared LLM/observability knobs.
 
 from __future__ import annotations
 
-import os
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from agentic_common.settings import Settings
-
-
-def _env_int(name: str, default: int) -> int:
-  '''Read an integer environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset or unparsable.
-
-  Returns:
-    Parsed integer value.
-  '''
-  raw = os.getenv(name)
-  if not raw:
-    return default
-  try:
-    return int(raw)
-  except ValueError:
-    return default
-
-
-def _env_float(name: str, default: float) -> float:
-  '''Read a float environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset or unparsable.
-
-  Returns:
-    Parsed float value.
-  '''
-  raw = os.getenv(name)
-  if not raw:
-    return default
-  try:
-    return float(raw)
-  except ValueError:
-    return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-  '''Read a boolean environment variable.
-
-  Args:
-    name: Environment variable name.
-    default: Value used when unset.
-
-  Returns:
-    Parsed boolean value.
-  '''
-  raw = os.getenv(name)
-  if raw is None or raw == '':
-    return default
-  return raw.strip().lower() in ('1', 'true', 'yes', 'on')
+from agentic_common.settings import (
+  Settings,
+  env_bool,
+  env_float,
+  env_int,
+)
 
 
 class PlanningConfig(BaseModel):
@@ -149,32 +99,32 @@ def load_planning_config(settings: Optional[Settings] = None) -> PlanningConfig:
   )
 
   return PlanningConfig(
-    base_temperature=_env_float(
+    base_temperature=env_float(
       'AGENTIC_PLAN_TEMPERATURE', default_temperature,
     ),
-    cot_temperature=_env_float('AGENTIC_PLAN_COT_TEMPERATURE', 0.3),
-    react_temperature=_env_float('AGENTIC_PLAN_REACT_TEMPERATURE', 0.0),
-    planner_temperature=_env_float('AGENTIC_PLAN_PLANNER_TEMPERATURE', 0.0),
-    critic_temperature=_env_float('AGENTIC_PLAN_CRITIC_TEMPERATURE', 0.0),
-    max_tokens=_env_int('AGENTIC_PLAN_MAX_TOKENS', default_max_tokens),
-    max_steps=_env_int('AGENTIC_PLAN_MAX_STEPS', default_max_steps),
-    max_plan_nodes=_env_int('AGENTIC_PLAN_MAX_NODES', 8),
-    max_plan_waves=_env_int('AGENTIC_PLAN_MAX_WAVES', 6),
-    token_budget=_env_int('AGENTIC_PLAN_TOKEN_BUDGET', default_budget),
-    cot_samples=_env_int('AGENTIC_PLAN_COT_SAMPLES', 2),
-    max_validation_rounds=_env_int('AGENTIC_PLAN_VALIDATION_ROUNDS', 1),
-    critic_enabled=_env_bool('AGENTIC_PLAN_CRITIC', True),
-    critic_always=_env_bool('AGENTIC_PLAN_CRITIC_ALWAYS', False),
-    grounding_min_coverage=_env_float(
+    cot_temperature=env_float('AGENTIC_PLAN_COT_TEMPERATURE', 0.3),
+    react_temperature=env_float('AGENTIC_PLAN_REACT_TEMPERATURE', 0.0),
+    planner_temperature=env_float('AGENTIC_PLAN_PLANNER_TEMPERATURE', 0.0),
+    critic_temperature=env_float('AGENTIC_PLAN_CRITIC_TEMPERATURE', 0.0),
+    max_tokens=env_int('AGENTIC_PLAN_MAX_TOKENS', default_max_tokens),
+    max_steps=env_int('AGENTIC_PLAN_MAX_STEPS', default_max_steps),
+    max_plan_nodes=env_int('AGENTIC_PLAN_MAX_NODES', 8),
+    max_plan_waves=env_int('AGENTIC_PLAN_MAX_WAVES', 6),
+    token_budget=env_int('AGENTIC_PLAN_TOKEN_BUDGET', default_budget),
+    cot_samples=env_int('AGENTIC_PLAN_COT_SAMPLES', 2),
+    max_validation_rounds=env_int('AGENTIC_PLAN_VALIDATION_ROUNDS', 1),
+    critic_enabled=env_bool('AGENTIC_PLAN_CRITIC', True),
+    critic_always=env_bool('AGENTIC_PLAN_CRITIC_ALWAYS', False),
+    grounding_min_coverage=env_float(
       'AGENTIC_PLAN_GROUNDING_COVERAGE', 0.6,
     ),
-    max_result_chars=_env_int(
+    max_result_chars=env_int(
       'AGENTIC_PLAN_MAX_RESULT_CHARS', default_max_result,
     ),
-    require_write_approval=_env_bool(
+    require_write_approval=env_bool(
       'AGENTIC_PLAN_REQUIRE_WRITE_APPROVAL', default_approval,
     ),
-    llm_max_attempts=_env_int('AGENTIC_PLAN_LLM_ATTEMPTS', 3),
-    retry_base_seconds=_env_float('AGENTIC_PLAN_RETRY_BASE_S', 0.5),
-    sanitize_observations=_env_bool('AGENTIC_PLAN_SANITIZE', True),
+    llm_max_attempts=env_int('AGENTIC_PLAN_LLM_ATTEMPTS', 3),
+    retry_base_seconds=env_float('AGENTIC_PLAN_RETRY_BASE_S', 0.5),
+    sanitize_observations=env_bool('AGENTIC_PLAN_SANITIZE', True),
   )
