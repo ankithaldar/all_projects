@@ -50,6 +50,7 @@ known-first-party = [
   "agentic_common",
   "chapter01_mcp",
   "chapter02_planning",
+  "chapter03_cognition",
   "llm_gateway",
 ]
 
