@@ -30,7 +30,7 @@ def main() -> int:
   parser = argparse.ArgumentParser(prog='job_hunter')
   parser.add_argument('command', choices=[
     'seed-db', 'api', 'worker', 'run-discovery',
-    'discover-companies', 'verify-ats', 'mcp',
+    'discover-companies', 'verify-ats', 'scout-companies', 'fetch-jobs', 'mcp',
   ])
   parser.add_argument('server', nargs='?', default='sources')
   parser.add_argument('--seeds', default=str(APP_ROOT / 'seeds'))
@@ -42,6 +42,22 @@ def main() -> int:
   parser.add_argument(
     '--rounds', type=int, default=4,
     help='Max verify-ats passes before stopping.',
+  )
+  parser.add_argument(
+    '--queries', type=int, default=0,
+    help='Search queries for scout-companies (0 = config scout.search_queries).',
+  )
+  parser.add_argument(
+    '--max', type=int, default=0,
+    help='Cap on companies written by scout-companies (0 = no extra cap).',
+  )
+  parser.add_argument(
+    '--sources', default='',
+    help='Comma-separated source keys for fetch-jobs (default: all aggregators).',
+  )
+  parser.add_argument(
+    '--limit', type=int, default=2000,
+    help='Max records to fetch per source for fetch-jobs.',
   )
   args = parser.parse_args()
 
@@ -121,6 +137,75 @@ def main() -> int:
       print(f'pass {index + 1}: {result}')
     print(f'ats verified: {totals["verified"]} | failed: {totals["failed"]}')
     return 0
+
+  if args.command == 'fetch-jobs':
+    import asyncio
+    from job_hunter.core.bootstrap import bootstrap
+    from job_hunter.services.bulk_fetch import bulk_fetch
+    settings = bootstrap(args.config, seeds_dir=args.seeds)
+    sources = [key for key in (args.sources or '').split(',') if key.strip()]
+    report = asyncio.run(bulk_fetch(
+      settings,
+      source_keys=sources,
+      limit_per_source=max(1, args.limit),
+    ))
+    print(report.summary())
+    for source_key, count in sorted(report.per_source.items()):
+      print(f'  {source_key:18s} {count}')
+    return 0
+
+  if args.command == 'scout-companies':
+    import asyncio
+    from job_hunter.core.bootstrap import bootstrap
+    from job_hunter.services.linkedin_scout import (
+      build_queries,
+      make_scout,
+      write_seed_file,
+    )
+    settings = bootstrap(args.config, seeds_dir=args.seeds)
+    scout_cfg = settings.scout
+    scout, search, http = make_scout(settings, Path(args.seeds))
+
+    async def _run():
+      '''Execute the scout and optionally write the seed file.
+
+      Returns:
+        Exit code for the process.
+      '''
+      try:
+        limit = int(scout_cfg.get('search_queries', 12))
+        if args.queries > 0:
+          limit = args.queries
+        queries = build_queries(limit=limit)
+        report = await scout.scout(
+          queries,
+          result_limit=int(scout_cfg.get('results_per_query', 25)),
+          verify_ats=bool(scout_cfg.get('verify_ats', True)),
+          ingest=bool(scout_cfg.get('ingest', True)),
+        )
+      finally:
+        await search.close()
+        await http.close()
+      if args.max > 0:
+        report.companies = report.companies[: args.max]
+      print(report.summary())
+      for company in report.companies:
+        ats = f'{company.ats_provider}:{company.board_ref}' if company.ats_provider else '-'
+        print(
+          f'  {company.name[:38]:40s} {company.domain[:34]:36s} '
+          f'{(company.vertical or "?"):20s} {ats[:30]:32s} seen={company.sightings}'
+        )
+      if report.companies:
+        seed_path = settings.seeds_dir / str(scout_cfg.get('seed_file', 'companies_scouted.yaml'))
+        added = write_seed_file(
+          seed_path,
+          report.companies,
+          header='Companies discovered from LinkedIn job pages via the search index.',
+        )
+        print(f'seed file updated: {seed_path} (+{added})')
+      return 0
+
+    return asyncio.run(_run())
 
   if args.command == 'mcp':
     servers = {

@@ -74,11 +74,12 @@ class CompaniesRepository:
       Company id.
     '''
     normalized = normalize_name(name)
+    clean_domain = (domain or '').strip() or None
     with session(self._db_path) as conn:
       row = conn.execute(
         'SELECT id FROM companies WHERE normalized_name = ? '
-        'OR (? != "" AND domain = ?)',
-        (normalized, domain, domain),
+        'OR (? IS NOT NULL AND domain = ?)',
+        (normalized, clean_domain, clean_domain),
       ).fetchone()
       if row is None:
         cur = conn.execute(
@@ -87,7 +88,7 @@ class CompaniesRepository:
           "priority, status, discovered_via, last_checked_at) "
           'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))',
           (
-            name, normalized, domain, vertical, confidence, ats_provider,
+            name, normalized, clean_domain, vertical, confidence, ats_provider,
             board_ref, careers_url, priority, status, discovered_via,
           ),
         )
@@ -95,8 +96,8 @@ class CompaniesRepository:
       company_id = int(row['id'])
       conn.execute(
         'UPDATE companies SET '
-        "name = CASE WHEN ? != '' THEN ? ELSE name END, "
-        "domain = CASE WHEN ? != '' THEN ? ELSE domain END, "
+        'name = CASE WHEN ? != \'\' THEN ? ELSE name END, '
+        'domain = CASE WHEN ? IS NOT NULL THEN ? ELSE domain END, '
         'vertical = COALESCE(?, vertical), '
         'vertical_confidence = COALESCE(?, vertical_confidence), '
         'ats_provider = COALESCE(?, ats_provider), '
@@ -106,8 +107,9 @@ class CompaniesRepository:
         "last_checked_at = datetime('now') "
         'WHERE id = ?',
         (
-          domain, domain, domain, domain, vertical, confidence, ats_provider,
-          board_ref, careers_url, careers_url, status, status, company_id,
+          domain, domain, clean_domain, clean_domain, vertical, confidence,
+          ats_provider, board_ref, careers_url, careers_url, status, status,
+          company_id,
         ),
       )
       return company_id

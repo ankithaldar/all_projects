@@ -142,6 +142,10 @@ class AppSettings:
   def mcp(self) -> Dict[str, Any]:
     '''Return MCP server configuration mapping.'''
     return dict(self.raw.get('mcp', {}))
+  @property
+  def scout(self) -> Dict[str, Any]:
+    '''Return company-discovery (scout) configuration mapping.'''
+    return dict(self.raw.get('scout', {}))
 
   def section(self, key: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     '''Return a top-level section as a dict.

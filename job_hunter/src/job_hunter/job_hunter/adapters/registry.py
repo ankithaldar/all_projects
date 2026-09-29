@@ -34,6 +34,9 @@ REGISTRY: Dict[str, Type[SourceAdapter]] = {
   'remotive': AggregatorAdapter,
   'remoteok': AggregatorAdapter,
   'weworkremotely': AggregatorAdapter,
+  'himalayas': AggregatorAdapter,
+  'arbeitnow': AggregatorAdapter,
+  'jobicy': AggregatorAdapter,
 }
 
 

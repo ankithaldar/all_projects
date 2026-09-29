@@ -35,7 +35,8 @@ def bootstrap(config_path: str | Path, seeds_dir: Path | None = None) -> AppSett
   with session(settings.db_path) as conn:
     conn.execute(
       "INSERT OR IGNORE INTO sources (key, kind) VALUES "
-      "('workday', 'ats'), ('himalayas', 'aggregator')",
+      "('workday', 'ats'), ('himalayas', 'aggregator'), "
+      "('arbeitnow', 'aggregator'), ('jobicy', 'aggregator')",
     )
 
   import yaml

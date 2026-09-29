@@ -26,7 +26,24 @@ sources:
   remotive: {enabled: true, rate_limit_rpm: 10}
   remoteok: {enabled: true, rate_limit_rpm: 10}
   weworkremotely: {enabled: true, rate_limit_rpm: 10}
+  himalayas: {enabled: true, rate_limit_rpm: 10}
+  arbeitnow: {enabled: true, rate_limit_rpm: 10}
+  jobicy: {enabled: true, rate_limit_rpm: 10}
   manual: {enabled: true, rate_limit_rpm: 600}
+
+scout:
+  # Company discovery: LinkedIn job pages are located through the
+  # DuckDuckGo HTML search index (robots: Allow: /) rather than by crawling
+  # LinkedIn itself, whose robots.txt disallows /jobs-guest/.
+  search_queries: 12
+  results_per_query: 25
+  search_min_interval_seconds: 3.0
+  domain_tlds: [com, in, io, ai, co, net, tech]
+  probe_budget: 6
+  min_domain_confidence: 0.6
+  verify_ats: true
+  ingest: true
+  seed_file: companies_scouted.yaml
 
 discovery:
   max_llm_calls_per_run: 300

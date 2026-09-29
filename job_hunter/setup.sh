@@ -35,6 +35,17 @@ echo "    discovery needs these; without them a fresh install fetches zero jobs"
 python main.py verify-ats --chunk "${ATS_CHUNK:-30}" --rounds "${ATS_ROUNDS:-4}" || \
   echo "    warning: ATS verification incomplete; rerun 'python main.py verify-ats' later" >&2
 
+if [ "${SKIP_NETWORK_SETUP:-0}" != "1" ]; then
+  echo "==> bulk fetching job openings from public aggregators"
+  python main.py fetch-jobs --limit "${FETCH_LIMIT:-2000}" || \
+    echo "    warning: bulk fetch incomplete; rerun 'python main.py fetch-jobs' later" >&2
+
+  echo "==> scouting new companies from LinkedIn job pages (via search index)"
+  echo "    verifies each company website; appends to seeds/companies_scouted.yaml"
+  python main.py scout-companies --queries "${SCOUT_QUERIES:-12}" || \
+    echo "    warning: scouting incomplete; rerun 'python main.py scout-companies' later" >&2
+fi
+
 echo "==> running unit tests"
 PYTHONPATH="src/job_hunter" python -m pytest tests/unit -q
 

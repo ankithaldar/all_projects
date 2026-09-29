@@ -6,7 +6,12 @@
 
 from __future__ import annotations
 
-from job_hunter.adapters.aggregators import parse_remotive
+from job_hunter.adapters.aggregators import (
+  parse_arbeitnow,
+  parse_himalayas,
+  parse_jobicy,
+  parse_remotive,
+)
 from job_hunter.adapters.greenhouse import parse_payload as parse_greenhouse
 from job_hunter.adapters.lever import parse_payload as parse_lever
 from job_hunter.adapters.ashby import parse_payload as parse_ashby
@@ -115,6 +120,75 @@ def test_personio_parse() -> None:
   </positions>'''
   records = parse_xml(xml)
   assert records[0].external_id == '7'
+
+
+def test_himalayas_camelcase_parse() -> None:
+  '''The live Himalayas camelCase payload maps to records.'''
+  payload = {
+    'jobs': [{
+      'title': 'Data Scientist',
+      'companyName': 'Teya',
+      'companySlug': 'teya',
+      'applicationLink': 'https://himalayas.app/companies/teya/jobs/ds',
+      'description': '<p>Model things</p>',
+      'employmentType': 'Full Time',
+      'locationRestrictions': ['United Kingdom'],
+      'minSalary': '50000',
+      'maxSalary': '60000',
+      'salaryPeriod': 'annual',
+      'currency': 'GBP',
+      'pubDate': '1790655361',
+    }],
+  }
+  records = parse_himalayas(payload)
+  assert len(records) == 1
+  assert records[0].company_name == 'Teya'
+  assert records[0].location_text == 'United Kingdom'
+  assert records[0].salary_raw == 'GBP 50000-60000 annual'
+  assert records[0].posted_at == '2026-09-29'
+
+
+def test_arbeitnow_and_jobicy_parse() -> None:
+  '''Arbeitnow and Jobicy payloads map to records with company names.'''
+  arbeitnow = {
+    'data': [{
+      'slug': 'ds-at-acme-1',
+      'company_name': 'Acme',
+      'title': 'Data Scientist',
+      'description': '<p>Build models</p>',
+      'remote': True,
+      'url': 'https://acme.com/careers/ds',
+      'tags': ['Data Science'],
+      'job_types': ['Full-time'],
+      'location': 'Berlin',
+      'created_at': 1786516800,
+    }],
+  }
+  records = parse_arbeitnow(arbeitnow)
+  assert records[0].company_name == 'Acme'
+  assert records[0].work_mode_hint == 'remote'
+  assert records[0].posted_at == '2026-08-12'
+
+  jobicy = {
+    'jobs': [{
+      'id': 143120,
+      'url': 'https://jobicy.com/jobs/143120-ds',
+      'jobTitle': 'Senior Data Scientist',
+      'companyName': 'RevenueCat',
+      'jobGeo': 'LATAM, USA',
+      'jobType': ['Full-Time'],
+      'jobDescription': '<p>Analyze</p>',
+      'pubDate': '2026-09-29T03:35:14+00:00',
+      'salaryMin': 208000,
+      'salaryMax': 240000,
+      'salaryCurrency': 'USD',
+      'salaryPeriod': 'yearly',
+    }],
+  }
+  jobicy_records = parse_jobicy(jobicy)
+  assert jobicy_records[0].company_name == 'RevenueCat'
+  assert '208000-240000' in jobicy_records[0].salary_raw
+  assert 'USD' in jobicy_records[0].salary_raw
 
 
 def test_remotive_parse() -> None:

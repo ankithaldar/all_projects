@@ -19,6 +19,28 @@ python main.py verify-ats    # fill in ATS board refs for new companies
 python main.py mcp sources    # inspect an MCP server standalone
 ```
 
+## Widening the net
+
+```bash
+python main.py fetch-jobs                    # bulk pull all aggregators
+python main.py fetch-jobs --sources arbeitnow,jobicy --limit 500
+
+python main.py scout-companies                # find + verify new companies
+python main.py scout-companies --queries 20 --max 15
+```
+
+`fetch-jobs` pulls whole feeds from the public aggregator APIs
+(Arbeitnow, Jobicy, Himalayas, Remotive, RemoteOK, WeWorkRemotely) and
+stores unseen postings, creating company rows for names not yet tracked.
+
+`scout-companies` looks for hiring companies on LinkedIn job pages, proves
+each company's website, detects its ATS board, and appends the result to
+`seeds/companies_scouted.yaml`. LinkedIn is never crawled directly: its
+`robots.txt` disallows `/jobs-guest/`, so job pages are located through the
+DuckDuckGo HTML search index, which its `robots.txt` allows. A domain is
+only accepted when a distinctive company-name token appears on the live
+page, so guesses like `exl.ai` are rejected in favour of `exlservice.com`.
+
 ## Layout
 
 - `src/job_hunter/llm_gateway/` existing LLM gateway (untouched).
