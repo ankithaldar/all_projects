@@ -143,6 +143,9 @@ async def fetch_pair(target_data: Dict[str, Any], config: RunnableConfig) -> Dic
     adapter = build_adapter(target_data['source_key'], http)
     target = CompanyTarget(**target_data)
     records = await adapter.fetch(target)
+    for record in records:
+      if not record.company_name:
+        record.company_name = target.name
     since = crawl.get_cursor(f'{scope}:posted')
     if since:
       records = [

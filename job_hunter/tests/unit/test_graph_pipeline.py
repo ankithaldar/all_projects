@@ -291,3 +291,75 @@ def test_fetch_pair_stores_watermark(tmp_path: Path, monkeypatch) -> None:
   assert not update['errors']
   crawl = CrawlStateRepository(tmp_path / 'app.db')
   assert crawl.get_cursor('company:3:posted') == '2026-08-20T00:00:00+00:00'
+
+
+def test_fetch_pair_stamps_target_company_name(tmp_path: Path, monkeypatch) -> None:
+  '''fetch_pair fills company_name on records the adapter leaves blank.
+
+  Args:
+    tmp_path: Pytest temporary directory.
+    monkeypatch: Pytest fixture.
+  '''
+  import asyncio as aio
+  from job_hunter.core.config import AppSettings
+  from job_hunter.core.db import run_migrations as rm
+  from job_hunter.graph.nodes import fetch_pair
+
+  rm(tmp_path / 'app.db')
+  config_path = tmp_path / 'app.yaml'
+  config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
+  monkeypatch.setenv('APP_DATA_DIR', str(tmp_path))
+  settings = AppSettings(config_path)
+  _ = settings.app_root
+
+  class StubAdapter:
+    '''Returns records with and without a company name.'''
+
+    def __init__(self, http) -> None:
+      '''Accept client.
+
+      Args:
+        http: Unused.
+      '''
+      _ = http
+
+    async def fetch(self, target, limit=200):
+      '''Return a blank-named and a pre-named record.
+
+      Args:
+        target: Target.
+        limit: Cap.
+
+      Returns:
+        Two raw records.
+      '''
+      from job_hunter.core.models import RawJobRecord
+      return [
+        RawJobRecord(source_key='lever', url='https://j.example/1', title='DS'),
+        RawJobRecord(
+          source_key='lever', url='https://j.example/2', title='MLE',
+          company_name='Explicit Co',
+        ),
+      ]
+
+    async def health(self, target):
+      '''Healthy.
+
+      Args:
+        target: Target.
+
+      Returns:
+        True.
+      '''
+      return True
+
+  import job_hunter.graph.nodes as nodes_mod
+  monkeypatch.setattr(nodes_mod, 'build_adapter', lambda key, http: StubAdapter(http))
+
+  update = aio.run(fetch_pair({
+    'company_id': 7, 'name': 'Target Co', 'source_key': 'lever', 'board_ref': 'x',
+  }, {'configurable': {'settings': settings}}))
+  assert not update['errors']
+  records = update['raw_jobs']
+  assert records[0].company_name == 'Target Co'
+  assert records[1].company_name == 'Explicit Co'
