@@ -82,9 +82,10 @@ def main() -> int:
     finally:
       from job_hunter.db.repositories.runs import RunsRepository
       from job_hunter.workers.jobs import _settings
-      row = RunsRepository(_settings(config_path)).get(run_id) or {}
+      settings = _settings(config_path)
+      row = RunsRepository(settings.db_path).get(run_id) or {}
       if row.get('status') == 'running':
-        RunsRepository(_settings(config_path)).finish(
+        RunsRepository(settings.db_path).finish(
           run_id, 'failed', {}, error_text='runner terminated',
         )
         print(f'run {run_id} finalized as failed')
