@@ -15,6 +15,7 @@ python main.py api            # terminal 1 -> http://127.0.0.1:8088
 python main.py worker         # terminal 2 -> schedules + discovery runs
 
 python main.py run-discovery  # one-off discovery run now
+python main.py verify-ats    # fill in ATS board refs for new companies
 python main.py mcp sources    # inspect an MCP server standalone
 ```
 

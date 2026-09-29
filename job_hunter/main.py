@@ -4,7 +4,7 @@
 '''Thin launcher for the Job Hunter app.
 
 Commands: seed-db | api | worker | run-discovery | discover-companies |
-mcp <sources|resume|store>.
+verify-ats | mcp <sources|resume|store>.
 '''
 
 
@@ -30,11 +30,19 @@ def main() -> int:
   parser = argparse.ArgumentParser(prog='job_hunter')
   parser.add_argument('command', choices=[
     'seed-db', 'api', 'worker', 'run-discovery',
-    'discover-companies', 'mcp',
+    'discover-companies', 'verify-ats', 'mcp',
   ])
   parser.add_argument('server', nargs='?', default='sources')
   parser.add_argument('--seeds', default=str(APP_ROOT / 'seeds'))
   parser.add_argument('--config', default=str(APP_ROOT / 'config' / 'app.yaml'))
+  parser.add_argument(
+    '--chunk', type=int, default=30,
+    help='Companies to ATS-verify per pass for verify-ats.',
+  )
+  parser.add_argument(
+    '--rounds', type=int, default=4,
+    help='Max verify-ats passes before stopping.',
+  )
   args = parser.parse_args()
 
   if args.command == 'api':
@@ -96,6 +104,22 @@ def main() -> int:
     from job_hunter.services.company_discovery import run_seed_ingestion
     count = asyncio.run(run_seed_ingestion(args.config, Path(args.seeds)))
     print(f'companies ingested/updated: {count}')
+    return 0
+
+  if args.command == 'verify-ats':
+    import asyncio
+    from job_hunter.core.bootstrap import bootstrap
+    from job_hunter.services.company_discovery import verify_pending
+    settings = bootstrap(args.config, seeds_dir=args.seeds)
+    totals = {'verified': 0, 'failed': 0}
+    for index in range(max(1, args.rounds)):
+      result = asyncio.run(verify_pending(settings, chunk=max(1, args.chunk)))
+      for key, value in result.items():
+        totals[key] = totals.get(key, 0) + value
+      if not result.get('verified'):
+        break
+      print(f'pass {index + 1}: {result}')
+    print(f'ats verified: {totals["verified"]} | failed: {totals["failed"]}')
     return 0
 
   if args.command == 'mcp':
