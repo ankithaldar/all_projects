@@ -27,6 +27,14 @@ fi
 echo "==> bootstrapping database (migrations + taxonomy + defaults)"
 python main.py seed-db
 
+echo "==> ingesting company seeds"
+python main.py discover-companies
+
+echo "==> verifying ATS boards (populates ats_provider/board_ref)"
+echo "    discovery needs these; without them a fresh install fetches zero jobs"
+python main.py verify-ats --chunk "${ATS_CHUNK:-30}" --rounds "${ATS_ROUNDS:-4}" || \
+  echo "    warning: ATS verification incomplete; rerun 'python main.py verify-ats' later" >&2
+
 echo "==> running unit tests"
 PYTHONPATH="src/job_hunter" python -m pytest tests/unit -q
 
