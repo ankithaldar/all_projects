@@ -1,0 +1,34 @@
+# Spark tuning.
+#
+# Six properties, each mapping to a real framework need. This document is applied
+# by the custom run command and by the Spark-aware Kedro context -- and by nothing
+# else. Every other component delegates session construction to the platform
+# builder, which returns the already-configured session, so the tuning must be
+# applied at the earliest possible moment. There is exactly one session builder, so
+# which properties take effect never depends on which component created the
+# session first.
+
+# `spark_to_pandas` collects the whole training frame, three routines use
+# `pandas_udf`, and the sequence dataset reads parquet with the Arrow engine.
+# Without Arrow these are unusable.
+spark.sql.execution.arrow.pyspark.enabled: true
+
+# Arrow has strict type-compatibility rules. Fallback makes the conversion
+# *succeed*, slowly, on a type Arrow cannot represent, rather than fail. The
+# framework relies on the source SQL for its types and casts only the indicators,
+# so this is a necessary safety net rather than a convenience.
+spark.sql.execution.arrow.pyspark.fallback.enabled: true
+
+# Every groupBy in the routine library is a shuffle: class distributions, mode
+# computation, bound calculation, and the registry's per-routine row count.
+spark.shuffle.service.enabled: true
+spark.reducer.fetchMigratedShuffle.enabled: true
+
+# The frames are highly skewed -- a telecom base is a few very large accounts and
+# a long tail. AQE coalesces post-shuffle partitions and handles skew, which
+# matters for exactly the groupBy-heavy routines above.
+spark.sql.adaptive.enabled: true
+
+# The 128 MB default produces too many small partitions for the many-small-groupBy
+# operations; 64 MB improves task granularity at the cost of more scheduling.
+spark.sql.adaptive.advisoryPartitionSizeInBytes: 64MB

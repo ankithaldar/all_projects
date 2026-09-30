@@ -1,0 +1,525 @@
+# The data catalog: every persisted dataset.
+#
+# Five YAML anchors carry the reusable templates, and 20-odd entries are
+# three-to-five-line merges rather than full definitions. That is what makes the
+# catalog maintainable at 30-odd entries.
+#
+# The `suffix` namespace is the framework's central isolation mechanism. Every
+# dataset name in the pipeline graph is suffixed with the model's namespace token,
+# so many model instances share one codebase, one container image and one output
+# prefix without collision. The bootstrap rewriter repoints `_params:` in this
+# document at the *actual* suffix for the current run, while repointing the same
+# token in the parameters document at the *default* token -- deliberately
+# asymmetric, so the node layer can address configuration blocks by a stable name
+# while the graph and the catalog agree on the datasets.
+
+# ---------------------------------------------------------------------------
+# Anchors
+# ---------------------------------------------------------------------------
+_spark_bq_data: &spark_bq_data
+  type: forecasting_ml_framework.persistence.bigquery_spark.CustomSparkBQDataSet
+  model_key: ${globals:model_key}
+  parentProject: ${external_project}
+  materializationProject: ${data_project}
+  materializationDataset: ${db_staging_data}
+  # The hosted flag under its current name. It governs credential acquisition only
+  # and does NOT select a back end: the back end follows is_local.
+  is_hosted_env: ${is_hosted_env}
+  database: ${data_project}.${db_staging_data}
+  tmp_bucket: ${tmp_bucket}
+  write_mode: overwrite
+
+_save_parquet: &save_parquet
+  type: kedro_datasets.spark.SparkDataset
+  file_format: parquet
+  save_args: {mode: "overwrite"}
+
+_save_pickle: &save_pickle
+  type: kedro_datasets.pickle.PickleDataset
+  backend: pickle
+
+_metric_table: &metric_table
+  type: forecasting_ml_framework.persistence.bigquery_api.BQTableDataSet
+  dataset: ${db_staging_data}
+  project_id: ${data_project}
+  credentials: ${gcp_credentials:default}
+  write_disposition: WRITE_TRUNCATE
+  partition_field: run_date
+  partition_value: ${run_date}
+  partition_type: DAY
+  clustering_fields: ['model_key']
+
+_metric_table_append: &metric_table_append
+  <<: *metric_table
+  write_disposition: WRITE_APPEND
+
+_regression_metric_table: &regression_metric_table
+  <<: *metric_table
+  clustering_fields: ['model_key', 'data_type']
+  write_disposition: WRITE_APPEND
+
+# ---------------------------------------------------------------------------
+# Inputs: three inline queries, because the label is derived in SQL
+# ---------------------------------------------------------------------------
+# The label is NOT present in the upstream feature feed. It is constructed here by
+# joining the feature frame against a deactivations snapshot and a customer-info
+# view, which encodes three business rules:
+#
+#   1. Outcome window: 58 days from the training date before a subscriber counts
+#      as retained. A model that predicted a 7-day outcome and was scored on a
+#      58-day label would look far worse than it is.
+#   2. Positive class narrowed to deliberate attrition only, excluding
+#      administrative and involuntary deactivations.
+#   3. Label maturity: 88 days of observation, and a customer snapshot at that
+#      horizon. 58 plus a 30-day settlement lag.
+#
+# Those two constants govern the statistical validity of every model the framework
+# produces. Changing either silently changes what the label means.
+train_input_${suffix}:
+  <<: *spark_bq_data
+  sql: >
+    WITH deactivations AS (
+      SELECT esn, cell_number, deactivation_reason, deactivation_date
+      FROM `${data_project}.${db_source_data}.<attrition_events_table>`
+      WHERE DATE(deactivation_date) > DATE('${train_run_dt}')
+        AND DATE(deactivation_date) <= DATE_ADD(DATE('${train_run_dt}'), INTERVAL 88 DAY)
+    ),
+    dedup_deactivations AS (
+      SELECT esn, cell_number, deactivation_reason, deactivation_date
+      FROM (
+        SELECT esn, cell_number, deactivation_reason, deactivation_date,
+               ROW_NUMBER() OVER (PARTITION BY esn, cell_number ORDER BY deactivation_date DESC) AS rn
+        FROM deactivations
+      ) WHERE rn = 1
+    ),
+    customer_info AS (
+      SELECT service_id, cust_id, line_seq_id, account_ref, mobile_ref
+      FROM (
+        SELECT service_id, cust_id, line_seq_id, account_ref, mobile_ref,
+               ROW_NUMBER() OVER (PARTITION BY service_id) AS rn
+        FROM `${data_project}.${db_source_data}.<customer_snapshot_table>`
+        WHERE prcs_date = DATE_ADD(DATE('${train_run_dt}'), INTERVAL 88 DAY)
+      ) WHERE rn = 1
+    ),
+    features AS (
+      SELECT * FROM `${data_project}.${db_staging_data}.<src_training_features>`
+      WHERE run_date = DATE('${train_run_dt}')
+    )
+    SELECT
+      f.*,
+      c.cust_id, c.line_seq_id, c.account_ref, c.mobile_ref,
+      CASE WHEN d.deactivation_date IS NULL THEN '<retained_state>'
+           WHEN d.deactivation_date < DATE_ADD(DATE('${train_run_dt}'), INTERVAL 58 DAY) THEN '<retained_state>'
+           ELSE '<attrition_state>' END AS raw_state,
+      CASE WHEN d.deactivation_date IS NULL THEN 0
+           WHEN d.deactivation_date < DATE_ADD(DATE('${train_run_dt}'), INTERVAL 58 DAY) THEN 0
+           WHEN d.deactivation_reason = '<delinquency_reason>' THEN 1
+           ELSE 0 END AS label,
+      '${globals:model_key}' AS model_key
+    FROM features f
+    LEFT JOIN dedup_deactivations d ON f.service_id = d.esn
+    LEFT JOIN customer_info c ON f.service_id = c.service_id
+
+# The test frame uses score_run_dt for the feature side but retains train_run_dt
+# in two of the three deactivation filters. That asymmetry is deliberate and
+# documented: the label definition must stay anchored to the same observation
+# window as training, or the test frame would measure a different quantity.
+test_input_${suffix}:
+  <<: *spark_bq_data
+  sql: >
+    SELECT
+      f.*,
+      c.cust_id, c.line_seq_id, c.account_ref, c.mobile_ref,
+      CASE WHEN d.deactivation_date IS NULL THEN 0
+           WHEN d.deactivation_reason = '<delinquency_reason>' THEN 1
+           ELSE 0 END AS label,
+      '${globals:model_key}' AS model_key
+    FROM `${data_project}.${db_staging_data}.<src_training_features>` f
+    LEFT JOIN `${data_project}.${db_source_data}.<attrition_events_table>` d
+      ON f.service_id = d.esn
+     AND DATE(d.deactivation_date) > DATE('${train_run_dt}')
+     AND DATE(d.deactivation_date) <= DATE_ADD(DATE('${train_run_dt}'), INTERVAL 88 DAY)
+    LEFT JOIN `${data_project}.${db_source_data}.<customer_snapshot_table>` c
+      ON f.service_id = c.service_id
+    WHERE f.run_date = DATE('${score_run_dt}')
+
+# The score input is materially simpler: features, identifiers and the model key,
+# with NO label derivation at all. That is a data-governance control -- a
+# production scoring frame never carries an outcome.
+score_input_${suffix}:
+  <<: *spark_bq_data
+  sql: >
+    SELECT f.*, c.cust_id, c.line_seq_id, c.account_ref, c.mobile_ref,
+           '${globals:model_key}' AS model_key
+    FROM `${data_project}.${db_staging_data}.<src_scoring_features>` f
+    LEFT JOIN `${data_project}.${db_source_data}.<customer_snapshot_table>` c
+      ON f.service_id = c.service_id
+    WHERE f.run_date = DATE('${score_run_dt}')
+
+# ---------------------------------------------------------------------------
+# fe_training outputs
+# ---------------------------------------------------------------------------
+# The inline-query loader emits a (frame, contract) pair. The contract is
+# `df_metadata_${suffix}` below; the frame is this entry. A query-backed dataset
+# is read-only, so this entry describes the load node's *input* query and the
+# materialised output downstream is `sampled_df_${suffix}`.
+df_${suffix}:
+  <<: *spark_bq_data
+  sql: >
+    SELECT * FROM `${data_project}.${db_staging_data}.<training_feature_table>`
+
+sampled_df_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_data_${suffix}"
+
+# The Spark-level split, present only when the holdout policy is enabled. It
+# partitions the loaded frame into the training half and the score half; the score
+# half is the frame the scoring pipeline reuses rather than re-reading, so the two
+# are guaranteed identical. The two contracts are declared alongside because each
+# half carries its own column-role contract, and the sampling node consumes the
+# training one alone.
+train_df_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_df_${suffix}"
+
+train_df_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_df_metadata_${suffix}"
+
+score_df_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_df_${suffix}"
+
+score_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_metadata_${suffix}"
+
+df_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_df_metadata_${suffix}"
+
+train_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_metadata_${suffix}"
+
+registry_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_registry_${suffix}"
+
+fitted_registry_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_fitted_registry_${suffix}"
+
+train_pp_data_df_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_pp_data_${suffix}"
+
+train_pp_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_pp_metadata_${suffix}"
+
+# ---------------------------------------------------------------------------
+# model_training outputs
+# ---------------------------------------------------------------------------
+# The pandas mirror of the Spark preprocessed frame. It shares the Spark dataset's
+# path deliberately: the Arrow conversion preserves the on-disk format, so reading
+# the same prefix avoids a redundant copy. The two definitions are therefore not
+# independent -- changing one path without the other breaks the pipeline silently.
+train_pp_data_pdf_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_pp_data_${suffix}"
+
+train_pp_metadata_pdf_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_pp_metadata_${suffix}"
+
+# The two partitions the trainer returns. They are the preprocessed frame re-sliced
+# by the internal holdout split, and they are materialised because the scoring,
+# evaluation and lift nodes each consume them as an independent dataset input.
+# Declaring them is what makes the narrowing boundary a real data dependency rather
+# than a shared in-memory object reference, and it is what allows a training run to
+# be replayed for one slice alone.
+training_data_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_training_data_${suffix}"
+
+validation_data_${suffix}:
+  <<: *save_parquet
+  filepath: "${output_gcs_location}/${model_id_prefix}_validation_data_${suffix}"
+
+# THE MODEL ARTEFACT. A live trainer instance carrying the ordered feature
+# vector, the resolved target, the label set, both operating-point thresholds and
+# both class rates -- so loading it is sufficient to score, with no external
+# feature list, no separate scaler and no separate threshold.
+model_handle_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_model_handle_${suffix}"
+
+# The freshly trained candidate, before any promotion decision. It is written
+# under a name distinct from the production trio, because Kedro rejects a node
+# that lists the same dataset as both an input and an output -- which is exactly
+# which a node may not do, so the promotion is modelled as its own node.
+model_handle_candidate_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_model_handle_candidate_${suffix}"
+
+fitted_model_candidate_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_fitted_model_candidate_${suffix}"
+
+calibrated_model_candidate_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_calibrated_model_candidate_${suffix}"
+
+# The incumbent's handle. The two generations MUST be separate datasets. If
+# they resolved to the same path, the runner would save the challenger before the
+# validation node read the incumbent, the comparison would resolve to the
+# challenger against itself, the deviation would be approximately zero, the gate
+# would always pass, and the champion/challenger protocol would be a no-op that
+# appears to work. The scheduler points *_previous_* at the last production
+# generation; the framework writes the winner to the production names.
+model_handle_previous_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_model_handle_previous_${suffix}"
+
+fitted_model_previous_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_fitted_model_previous_${suffix}"
+
+calibrated_model_previous_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_calibrated_model_previous_${suffix}"
+
+# The promoted trio: whichever model won the gate. Every downstream node scores
+# this, so the scoring path is identical whether or not a comparison ran.
+#
+# Suffix-free fitted-estimator paths are a latent collision: two model instances
+# sharing an output prefix would clobber each other's estimator, even though their
+# handles and registries are correctly namespaced. The self-describing handle is
+# the artefact the scoring path actually needs, so the practical risk is low, but
+# the estimator paths are namespaced here anyway.
+
+fitted_model_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_fitted_model_${suffix}"
+
+calibrated_model_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_calibrated_model_${suffix}"
+
+train_prediction_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_prediction_${suffix}"
+
+train_calib_prediction_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_calib_prediction_${suffix}"
+
+valid_prediction_df_${suffix}:
+  # The pandas flavour, matching the train_* pair above. `kedro_datasets.ParquetDataset`
+  # is not an importable name on kedro-datasets >= 7 -- the module exposes
+  # `kedro_datasets.pandas.ParquetDataset` and `kedro_datasets.spark.ParquetDataset` --
+  # so the holdout slice raised ImportError at catalog load. The consumers here
+  # (`model_evaluation`, `lift_calculation`) are pandas-only, so the Spark flavour
+  # would be wrong even where the name does resolve.
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_valid_prediction_${suffix}"
+
+valid_calib_prediction_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_valid_calib_prediction_${suffix}"
+
+# The metric tables. A train-slice metric row is a full snapshot for
+# (model_key, run_date), so truncate-and-write is correct: re-running must replace
+# the snapshot, not duplicate it. The score-slice tables are a periodic time series
+# partitioned by run_date, so each run appends a period.
+train_model_evaluation_${suffix}:
+  <<: *metric_table
+  table_name: <train_metrics_table>
+
+train_calib_model_evaluation_${suffix}:
+  <<: *metric_table
+  table_name: <train_metrics_table>
+
+valid_model_evaluation_${suffix}:
+  <<: *metric_table
+  table_name: <train_metrics_table>
+
+valid_calib_model_evaluation_${suffix}:
+  <<: *metric_table
+  table_name: <train_metrics_table>
+
+train_lift_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_lift_${suffix}"
+
+train_calib_lift_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_train_calib_lift_${suffix}"
+
+valid_lift_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_valid_lift_${suffix}"
+
+valid_calib_lift_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_valid_calib_lift_${suffix}"
+
+train_reg_model_evaluation_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_overall_metrics_table>
+
+valid_reg_model_evaluation_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_overall_metrics_table>
+
+train_reg_lift_df_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_decile_metrics_table>
+
+valid_reg_lift_df_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_decile_metrics_table>
+
+# ---------------------------------------------------------------------------
+# fe_scoring outputs
+# ---------------------------------------------------------------------------
+# The transformed scoring frame goes to BigQuery rather than to object storage.
+# That is deliberate: it gives the pre-model data a queryable, partitionable,
+# inspectable presence in the warehouse, so a scoring run can be audited, diffed
+# against a previous run, or joined downstream without re-running the model. It is
+# also the natural hand-off point for a separate explainability job. create_replace
+# is what makes re-running a day idempotent.
+scoreset_data_${suffix}:
+  <<: *spark_bq_data
+  table_name: "scoreset_${model_id_prefix}_${suffix}"
+  write_mode: create_replace
+
+score_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_metadata_${suffix}"
+
+score_pp_metadata_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_pp_metadata_${suffix}"
+
+# ---------------------------------------------------------------------------
+# model_scoring outputs
+# ---------------------------------------------------------------------------
+score_pp_data_pdf_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_pp_data_${suffix}"
+
+# The pandas-side mirror of the scoring contract, matching `train_pp_metadata_pdf`.
+# The scoring node consumes *this* rather than the Spark-side contract, so the
+# scoring stage works against the same contract object the boundary produced
+# instead of a second copy of it.
+score_pp_metadata_pdf_${suffix}:
+  <<: *save_pickle
+  filepath: "${output_gcs_location}/${model_id_prefix}_score_pp_metadata_${suffix}"
+
+# THE PRODUCTION SCORE TABLE. `if_exists: replace` is the single most important
+# write disposition in the framework: because scoring is a pure function of the
+# input, the entire scoring half of the pipeline can be re-run safely at any time.
+prediction_df_${suffix}:
+  type: forecasting_ml_framework.persistence.gbq_pandas.GBQTableDataSet
+  table_name: "score_${model_id_prefix}_${suffix}"
+  dataset: ${db_staging_data}
+  project_id: ${data_project}
+  save_args:
+    if_exists: replace
+
+calib_prediction_df_${suffix}:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: "${output_gcs_location}/${model_id_prefix}_calib_prediction_${suffix}"
+
+test_model_evaluation_${suffix}:
+  <<: *metric_table_append
+  table_name: <score_metrics_table>
+
+test_calib_model_evaluation_${suffix}:
+  <<: *metric_table_append
+  table_name: <score_metrics_table>
+
+test_lift_df_${suffix}:
+  <<: *metric_table_append
+  table_name: <score_lift_table>
+
+test_calib_lift_df_${suffix}:
+  <<: *metric_table_append
+  table_name: <score_lift_table>
+
+test_reg_model_evaluation_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_overall_metrics_table>
+
+test_reg_lift_df_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_decile_metrics_table>
+
+# The regression scoring graph evaluates both score families: the raw prediction
+# frame and the calibrated one. It emits a metric row and a band error profile for
+# each, so the two scales are comparable per run exactly as they are for
+# classification. Named with the qualifier after the base slice, matching every
+# other calibrated entry.
+test_calib_reg_model_evaluation_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_score_metrics_table>
+
+test_calib_reg_lift_df_${suffix}:
+  <<: *regression_metric_table
+  table_name: <regression_decile_metrics_table>
+
+# ---------------------------------------------------------------------------
+# Sequencing tokens
+# ---------------------------------------------------------------------------
+#
+# Dependency-token idiom. Two evaluation nodes consume the same prediction frame,
+# so the derived order leaves them unordered and eligible for parallel execution;
+# a synthetic edge is inserted purely to force a deterministic sequence. Each node
+# receives the token and returns it unchanged, so the value itself is never read
+# -- only the *edge* matters.
+#
+# They are declared here because the graph references them by name and Kedro
+# resolves every declared dataset through the catalog. Without these entries the
+# classification training and evaluation-scoring pipelines cannot be constructed
+# at all: the runner reports "dataset not found" before the first node runs.
+#
+# `MemoryDataset` is the correct type and not a placeholder. A token is a
+# scheduling artefact with no content, no size and no durability requirement, so
+# persisting it would cost a write per node purely to pass an opaque value
+# through. The memory lifetime is the runner's, which is exactly the lifetime a
+# token needs.
+_sequence_token: &sequence_token
+  type: kedro.io.MemoryDataset
+
+sequence_ind1:
+  <<: *sequence_token
+sequence_ind2:
+  <<: *sequence_token
+sequence_ind3:
+  <<: *sequence_token
+sequence_ind4:
+  <<: *sequence_token
+sequence_ind5:
+  <<: *sequence_token
+sequence_ind6:
+  <<: *sequence_token
+sequence_ind7:
+  <<: *sequence_token
+sequence_ind8:
+  <<: *sequence_token
+sequence_ind9:
+  <<: *sequence_token
+sequence_ind10:
+  <<: *sequence_token
+sequence_ind11:
+  <<: *sequence_token
+sequence_ind12:
+  <<: *sequence_token
+sequence_ind13:
+  <<: *sequence_token
+sequence_ind14:
+  <<: *sequence_token
+sequence_ind15:
+  <<: *sequence_token
