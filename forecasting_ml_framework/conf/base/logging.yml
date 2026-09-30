@@ -1,0 +1,48 @@
+# Logging.
+#
+# Enable with:  export KEDRO_LOGGING_CONFIG=conf/base/logging.yml
+#
+# Note that the framework does NOT require this file. Its own logging facade
+# configures itself on first use and reads its verbosity from
+# FORECASTING_ML_LOG_LEVEL, so the distributable reports --
+# per-column five-number summaries bracketing each stateful transform, class
+# distributions before and after sampling, row counts, the operating point, the
+# resolved artefact paths -- are emitted by default. This file is here for teams
+# that want Kedro's own handlers shaped differently.
+#
+# One difference from a: the rotating file handler writes to the
+# DRIVER'S LOCAL DISK. In a containerised cluster job that filesystem is
+# ephemeral, so a 10 MB x 20 rotation policy writes up to 200 MB that is
+# discarded when the job ends. If you enable this, prefer the console handlers and
+# let the platform's log collector do the retention.
+version: 1
+disable_existing_loggers: False
+
+formatters:
+  simple:
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: simple
+    stream: ext://sys.stdout
+  info_file_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    formatter: simple
+    filename: info.log
+    maxBytes: 10485760
+    backupCount: 20
+    encoding: utf8
+    delay: True
+
+loggers:
+  kedro:
+    level: INFO
+  forecasting_ml_framework:
+    level: INFO
+
+root:
+  handlers: [console, info_file_handler]

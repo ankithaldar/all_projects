@@ -1,0 +1,540 @@
+# Parameters: the model program.
+#
+# A model is defined entirely in this document plus the globals document. The
+# framework contains no model-specific Python; class names appear as strings and
+# are resolved at runtime by the reflective resolver. This file also doubles as a
+# cookbook: commented blocks show realistic alternatives for the estimator, the
+# search, the calibration and each transform.
+
+# ===========================================================================
+# 1. Column roles and target
+# ===========================================================================
+TARGET_COL: ${globals:target_col}
+CAT_COL: ${globals:CAT_COL}
+IND_COL: ${globals:IND_COL}
+NUM_COL: ${globals:NUM_COL}
+SEQ_COL: ${globals:SEQ_COL}
+ID_COL: ${globals:ID_COL}
+fill_missing_dict: ${globals:fill_missing_dict}
+
+# ===========================================================================
+# 2. Run identity and dates
+# ===========================================================================
+# Three dates with distinct roles. run_date is the report date and stamps every
+# metric and score row; train_run_dt is the feature-side as-of date of the
+# training frame; score_run_dt is the same for the scoring frame. The scheduler
+# derives the latter two from run_date and the configured training window, so the
+# two frames are the same as-of date shifted in time, which is what makes them
+# comparable.
+model_key: ${globals:model_key}
+run_date: ${run_date}
+train_run_dt: ${train_run_dt}
+score_run_dt: ${score_run_dt}
+
+# ===========================================================================
+# 3. Project and dataset coordinates
+# ===========================================================================
+# A two-project split is the platform's tenancy boundary: external_project owns
+# the Spark application and holds credentials, data_project owns the tables.
+# --- The two environment flags ---------------------------------------------
+# These say *where* the run executes; the four mode flags (is_regression,
+# run_mode, train_mode, split) say *what* it computes. Keeping them apart is what
+# makes a local run a valid correctness test of a production one: both perform the
+# same work and differ only in where the work lands.
+#
+# is_hosted_env  -- the run executes inside a managed workspace rather than on the
+#                   managed cluster. Governs HOW CREDENTIALS ARE OBTAINED, and
+#                   nothing else. It does not select a persistence back end: a
+#                   workspace run may legitimately use hosted storage.
+#
+# is_local       -- the run executes on a developer's own machine against no cloud
+#                   resources. Governs WHICH BACK END every data transaction uses.
+#                   When set, extraction, feature materialisation, score
+#                   publication, the metric and lift tables and the model-registry
+#                   ledger ALL go to the embedded single-file store. There is no
+#                   partial mode: a run that split its tables across two engines
+#                   would be testing nothing.
+#
+# The default is the managed path. An environment that sets neither behaves
+# exactly as it did before the embedded back end existed, which is what makes it
+# impossible for absence of configuration to send a production run to a local file.
+#
+# `is_hosted_platform` is still accepted as the legacy spelling of
+# `is_hosted_env` and is honoured while the rename completes. Supply both and the
+# current name wins, with a warning.
+is_hosted_env: ${is_hosted_env}
+is_local: ${is_local}
+
+# Only set this where a deployment genuinely needs a back end other than the one
+# `is_local` implies -- for example a run that must read from the warehouse while
+# writing elsewhere. The implicit rule remains the default, so ordinary
+# configuration needs only the flag. Valid values: distributed | embedded.
+# db_backend: distributed
+
+external_project: ${external_project}
+data_project: ${data_project}
+db_staging_data: ${db_staging_data}
+db_score_data: ${db_score_data}
+db_metrics_data: ${db_metrics_data}
+db_internal_data: ${db_internal_data}
+output_gcs_location: ${output_gcs_location}
+tmp_bucket: ${tmp_bucket}
+
+# The one path that is not a BigQuery coordinate: an object-storage prefix for
+# metric reports, namespaced by model_key so per-model metric history is retained
+# across runs.
+metrics_path: "${output_gcs_location}/model_metrics/${globals:model_key}/"
+
+# Optional: the scheduler supplies these for the temporal promotion gate. They are
+# mandatory when train_mode is a comparison mode, because a model may only
+# supersede an incumbent if it was evaluated against a strictly later window.
+# meta_base_date: ${meta_base_date}
+# perf_base_date: ${perf_base_date}
+
+# ===========================================================================
+# 4. The shared parameter bag
+# ===========================================================================
+# This block has four consumers and the name is misleading: it is not global in
+# any framework-wide sense, it is a shared bag. It is passed to every routine
+# (applied only where the routine's own args did not set the key), to the Spark
+# session accessor, to the trainer-tier selector, and to the load node.
+global_params:
+  is_hosted_env: ${is_hosted_env}
+  is_local: ${is_local}
+  is_regression: ${is_regression}
+  model_key: ${globals:model_key}
+  parent_project: ${external_project}
+  materialization_project: ${data_project}
+  materialization_dataset: ${db_staging_data}
+  target_col: ${globals:target_col}
+  # Never-transform identifier columns, subtracted from every routine's resolved
+  # target. This is a *different* notion from ID_COL above, which is the output
+  # projection and join key set; the distinction is documented because both are
+  # "id"-ish and having two is a genuine source of confusion.
+  key_cols_list: ['service_id']
+  # Selects the modelling tier: "sklearn" (or anything else) routes to the pandas
+  # trainer, "pyspark" to the Spark ML trainer, "transformer" to the sequence tier.
+  model_type: "sklearn"
+  train_test_split_flag: False
+  # Root of all externally-persisted transform state. Namespaced by model_key so
+  # two models do not collide; routines that use a fixed sub-path name mean two
+  # feature pipelines for the same model_key would still collide, so a second
+  # pipeline should set a distinct root.
+  intermediate_file_path: "${output_gcs_location}/routine_state/${globals:model_key}"
+
+# ===========================================================================
+# 5. Sampling
+# ===========================================================================
+# fractions is a per-label map. {0: 1.0, 1: 1.0} means no resampling, with the
+# class-imbalance correction deferred entirely to the injected scale_pos_weight —
+# which is preferable to resampling here, because resampling discards data while
+# a loss weight does not.
+#
+# sampling_type 'Equal' performs an inverse-frequency resampling (the dominant
+# stratum gets the smallest fraction, so stratum sizes converge toward equality);
+# 'Uniform' is proportional. Any other value uses the configured fractions.
+sampling_params:
+  stratum_col: ${globals:target_col}
+  fractions: {0: 1.0, 1: 1.0}
+  sampling_type: 'stratified'
+  seed: 42
+
+sampling_reg_params:
+  stratum_col: ${globals:target_col}
+  fractions: 1.0
+  sampling_type: 'stratified'
+  seed: 42
+
+# ===========================================================================
+# 6. Spark/pandas boundary
+# ===========================================================================
+# convert_to_pandas: false returns the Spark frame untouched, for a Spark-native
+# model tier. category_cols is the CatBoost bridge: those columns are cast to int
+# in Spark and then to pandas `category`, which is how a string categorical
+# reaches CatBoost's native categorical support without one-hot expansion.
+pandas_conversion_params:
+  convert_to_pandas: True
+  category_cols: []
+
+# ===========================================================================
+# 7. Spark-level split
+# ===========================================================================
+# Supply both and they must sum to 1, or supply one and the other is derived.
+# Classification targets (ten or fewer distinct values) are split per class and
+# the test frame is the exact left_anti complement of the train frame on ID_COL,
+# so no row can be in both. Note that this is only exact when ID_COL is a primary
+# key; the scheduler's post-scoring duplicate check is the upstream guard.
+train_test_split_params:
+  training_split_ratio: 0.8
+  test_split_ratio: 0.2
+
+# ===========================================================================
+# 8. Evaluation
+# ===========================================================================
+# multiclass_flag selects the multiclass metric path. Note that for K > 2 the
+# framework does not re-threshold: the hard prediction is the estimator's own
+# argmax and the learned thresholds are not applied, because there is no single
+# positive class to gate on. That is a real gap and is logged at scoring time
+# rather than left silent.
+evaluation_params:
+  multiclass_flag: False
+  prediction_col: "xgboost_pred"
+  prediction_probability_col: "xgboost_pred_proba"
+
+# ===========================================================================
+# 9. The ordered transform chain
+# ===========================================================================
+# A LIST OF SINGLE-KEY DICTIONARIES, and that shape is the enabling decision. A
+# mapping could express neither ordering nor repetition; a list can express both.
+# It is why two Imputations blocks can appear here with different scopes and
+# different fill dictionaries, and it is why list position IS execution order.
+#
+# `skip: false` activates a block. A block that omits `skip` entirely is
+# excluded, so the key is load-bearing. `modules` optionally extends where a
+# routine is searched for, so a routine outside this framework's module is
+# reachable without a code change.
+#
+# Run `forecasting-ml routines` for the full catalogue of available transforms.
+data_prep_params:
+  - Imputations:
+      skip: False
+      args:
+        # 'none' is a genuine no-op: only custom_bounds is applied. An earlier
+        # version fell through to a branch that computed a 0.0 bound for every
+        # column, so 'none' silently zero-filled anything the dictionary did not
+        # name -- including a string column, which then entered the indexer as the
+        # literal category '0.0'.
+        strategy: "none"
+        custom_bounds: ${globals:fill_missing_dict}
+        cols: {exclude_cols: [], include_cols: "${globals:CAT_COL}"}
+
+  - Imputations:
+      skip: False
+      args:
+        strategy: "none"
+        custom_bounds: {plan_tier: UNKNOWN}
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - CapOutliers:
+      skip: True
+      args:
+        # std | iqr | bound. 'bound' is a quantile fence and is the only robust
+        # choice; 'std' is sensitive to the very outliers it is meant to cap.
+        method: "bound"
+        custom_bounds: {}
+        bound: {lower: 0.01, upper: 0.99}
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - QuantileDiscretizer:
+      skip: True
+      args:
+        handle: "pyspark.ml.feature.QuantileDiscretizer"
+        params: {numBuckets: 10}
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - Normalizations:
+      skip: True
+      args:
+        handle: "pyspark.ml.feature.MinMaxScaler"
+        params: {}
+        round_off: 6
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - KNNImputation:
+      skip: True
+      args:
+        handle: "sklearn.impute.KNNImputer"
+        params: {n_neighbors: 5}
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - TreeImputation:
+      skip: True
+      args:
+        params:
+          regressor: "sklearn.ensemble.RandomForestRegressor"
+          classifier: "sklearn.ensemble.RandomForestClassifier"
+          initial_guess: "mean"
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  - DomainNormalizations:
+      skip: True
+      args:
+        # Measures a rate rather than a level, removing a strong proxy for
+        # customer age. Not idempotent and not null-safe; both are acceptable for
+        # a domain transform and are documented on the routine.
+        normalize_by_col: "tenure_days"
+        round_off: 4
+        cols: {exclude_cols: [], include_cols: ["arupe_30d"]}
+
+  - HighLabelBinning:
+      skip: True
+      args:
+        val_count: 300
+        bin_count_by_col: {device_brand: 1000}
+        bin_value: "OTHER"
+        cols: {exclude_cols: [], include_cols: ["device_brand", "region_code"]}
+
+  - CategoricalEncoding:
+      skip: False
+      args:
+        label_encode_handle: "pyspark.ml.feature.StringIndexer"
+        label_encode_params: {handleInvalid: "keep"}
+        ohe_flag: True
+        ohe_handle: "pyspark.ml.feature.OneHotEncoder"
+        ohe_params: {handleInvalid: "keep"}
+        cols: {exclude_cols: [], include_cols: "${globals:CAT_COL}"}
+
+  - TargetEncoding:
+      skip: True
+      args:
+        # Fitted with cross-fitting and then FROZEN as a lookup table, so
+        # applying it needs no labels. An unseen category falls back to the global
+        # target mean, never to zero: a zero fallback would assert that the
+        # category never churns, which is catastrophic and invisible.
+        handle: "sklearn.preprocessing.TargetEncoder"
+        params: {cv: 5}
+        cols: {exclude_cols: [], include_cols: ["last_contact_type"]}
+
+  - OptimalBinning:
+      skip: True
+      args:
+        # numerical | categorical. The only target-supervised transform, fitted on
+        # the training frame only, so train/serve parity holds by construction.
+        handle: "optbinning.OptimalBinning"
+        dtype: "numerical"
+        params: {max_n_bins: 8}
+        cols: {exclude_cols: [], include_cols: "${globals:NUM_COL}"}
+
+  # --- Sequence family -----------------------------------------------------
+  # These scope themselves to feature_cols and name their array columns in
+  # include_cols. Populating globals.SEQ_COL is the first step; the summarisers
+  # then register their outputs as features.
+  - SequenceFillNa:
+      skip: True
+      args: {fixed_length: 6, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - FixedLength:
+      skip: True
+      args: {fixed_length: 6, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - SequenceAverage:
+      skip: True
+      args: {last_n_val: 3, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - SequenceMax:
+      skip: True
+      args: {last_n_val: 3, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - SequenceLast:
+      skip: True
+      args: {last_n_val: 3, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - SequenceDelta:
+      skip: True
+      args: {last_n_val: 2, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - SequenceRecency:
+      skip: True
+      args:
+        run_date_col: "run_date"
+        fill_na_val: 9999999
+        cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}
+  - SequenceNormalize:
+      skip: True
+      args: {round_off: 4, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - Slope:
+      skip: True
+      # The configurable suffix is what lets an order-1 and an order-2 slope of
+      # the same column coexist; both are registered and both reach the model.
+      args: {order: 1, suffix: "slope", last_n_val: 3, cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}}
+  - Similarity:
+      skip: True
+      args:
+        # A reference-pattern feature: "how much does this customer's usage shape
+        # resemble the archetype of a high-value user?" The archetypes are domain
+        # knowledge injected through configuration rather than code.
+        rational_vector_map: {}
+        last_n_val: 2
+        cols: {exclude_cols: [], include_cols: "${globals:SEQ_COL}"}
+
+# ===========================================================================
+# 10. The estimator block
+# ===========================================================================
+# The block name is `modeling_{suffix}`, so a run with suffix 'tf' expects
+# 'modeling_tf'. The lookup is by prefix and is strict: zero matches and multiple
+# matches are both errors, because silently picking the first of two would train
+# the wrong model.
+modeling_params:
+  # An explicit threshold. Ignored when threshold_selection_method is set, because
+  # the method wins -- which is a confusing pair of controls, so set one or the
+  # other rather than both.
+  threshold: 0.5
+
+  # The holdout fraction. Unset defaults to 0.15, which means a holdout exists
+  # even when the operator did not ask for one. Set 0.0 to train on everything --
+  # and note that every threshold is then selected in-sample, so the reported
+  # operating point is optimistic.
+  eval_size: 0.20
+
+  # pr_curve (max F1) | roc_curve (max G-mean) | mcc_curve (max Matthews) |
+  # ks_statistics (max KS separation). mcc_curve is the right default under
+  # extreme imbalance: it is the only criterion that stays informative when the
+  # positive rate is a fraction of a percent, and it zooms its search grid when
+  # the coarse grid's resolution cannot express the answer.
+  threshold_selection_method: "mcc_curve"
+
+  model_handle: "xgboost.XGBClassifier"
+  model_params:
+    n_estimators: 300
+    max_depth: 5
+    learning_rate: 0.05
+    min_child_weight: 1
+    gamma: 1
+    reg_alpha: 0.0
+    reg_lambda: 0.8
+    subsample: 0.8
+    colsample_bytree: 0.8
+    eval_metric: 'aucpr'
+    objective: 'binary:logistic'
+    tree_method: 'hist'
+    enable_categorical: False
+    random_state: 42
+    n_jobs: -1
+
+  # Injects the estimator's imbalance parameter: a per-class weight vector for the
+  # libraries that take one, a scalar positive-class weight for the rest. The
+  # value comes from the sampling node's statistics, or is recomputed from the
+  # training labels if that node did not run.
+  balance_class_weight: True
+
+  # Probability calibration. Four strategies are supported, distinguished by what
+  # they consume: CalibratedClassifierCV takes the feature matrix, LogisticRegression
+  # (Platt), BetaCalibration and IsotonicRegression take the scalar score. An
+  # unrecognised handle falls back to the framework's own exact prior-shift
+  # correction.
+  #
+  # Leaving this unset means the published score_value is the prior-shift
+  # correction, which is exact under a loss weight and requires no refitting. That
+  # is a good default, not a fallback.
+  # calibration_handle: "betacal.BetaCalibration"
+  # calibration_params: {parameters: "abm"}
+
+  # Cross-validation through the estimator's own evaluation slot. Gives early
+  # stopping and per-iteration logging without the framework knowing anything
+  # about the estimator: the same three lines serve LightGBM, XGBoost and
+  # CatBoost. Requires a non-zero eval_size.
+  # validation_flag: True
+  # val_set_col: "eval_set"
+
+  # --- Hyperparameter search ------------------------------------------------
+  # model_initial_params builds the base estimator the search explores around;
+  # model_params is ignored when a search is configured. That distinction is not
+  # obvious and is a recurring source of confusion when adding a search to an
+  # existing model, so it is worth stating once more: set the base in
+  # model_initial_params when tuning.
+  #
+  # Any searcher honouring the `estimator=` + `fit` + `best_estimator_` contract
+  # works. `refit: True` is required for best_estimator_ to be fitted rather than
+  # an unfitted prototype.
+  #
+  # Prefer HalvingGridSearchCV to GridSearchCV for anything large: a plain grid
+  # over the seven parameters below expands to 43 200 combinations, which is not
+  # tractable, while the halving variant needs roughly a thousand evaluations.
+  # tuning_handle: "sklearn.model_selection.HalvingGridSearchCV"
+  # model_initial_params:
+  #   n_estimators: 100
+  #   learning_rate: 0.1
+  #   max_depth: 5
+  #   objective: 'binary:logistic'
+  #   tree_method: 'hist'
+  #   eval_metric: 'aucpr'
+  # tuning_params:
+  #   param_grid:
+  #     n_estimators:     [50, 100, 200, 400, 800]
+  #     learning_rate:    [0.1, 0.05, 0.01, 0.005]
+  #     max_depth:        [4, 6, 8, 10]
+  #     min_child_weight: [1, 3, 5, 7]
+  #     gamma:            [0.0, 0.5, 1.0, 5.0]
+  #     reg_lambda:       [0.01, 0.1, 1.0, 10.0]
+  #   scoring: 'roc_auc'
+  #   n_jobs: -1
+  #   refit: True
+  #   factor: 3
+  #   verbose: 10
+  #
+  # --- Optuna --------------------------------------------------------------
+  # `tuning_handle: "optuna.study"` makes the resolved object a MODULE whose
+  # create_study is called, so the framework never imports optuna itself.
+  # Requires a non-zero eval_size, because the objective predicts on a fixed
+  # holdout. Note that this holdout is also used to fit the decision threshold and
+  # to score the challenger in the promotion gate, so the headline metric is
+  # selected on the data it is reported on; the conventional remedy is a three-way
+  # split.
+  # tuning_handle: "optuna.study"
+  # tuning_params:
+  #   param_grid:
+  #     n_estimators:     "numpy.random.randint(50, 800)"
+  #     learning_rate:    "scipy.stats.loguniform(0.005, 0.2)"
+  #     max_depth:        "numpy.random.randint(3, 12)"
+  #     gamma:            "scipy.stats.uniform(0.0, 5.0)"
+  #   direction: 'maximize'
+  #   scoring: 'roc_auc'
+  #   n_trials: 200
+  #   n_jobs: 1
+  #   sampler_handle: "optuna.samplers.TPESampler"
+  #   sampler_params: {seed: 42}
+  #   pruner_handle: "optuna.pruners.MedianPruner"
+  #   pruner_params: {n_startup_trials: 20, n_warmup_steps: 30}
+
+  # --- Promotion gate -------------------------------------------------------
+  # The metric the challenger is compared on, and the band it is compared within.
+  # LIFT_DECILE_10 is the metric retention campaigns are actually managed on: how
+  # much lift did I get in the customers I was going to target?
+  #
+  # Stating this explicitly matters. With it absent, the default is always in
+  # force, and a production promotion is decided on a metric that appears nowhere
+  # in the configuration. An unrecognised name now FAILS the promotion rather than
+  # silently substituting the default.
+  # eval_metric: "LIFT_DECILE_10"
+
+  # The strictness knobs for the gate. allow_band_fallback: false is correct for a
+  # governed decision -- reporting one band's value under another band's metric
+  # name changes a reported number, not merely whether a task runs. Set it true
+  # only for exploration; the substitution is recorded in the audit log either way.
+  # strict_metric: True
+  # allow_band_fallback: False
+
+  # Where the fitted artefacts are written. The catalog's dataset paths govern,
+  # so these are documentation unless the catalog is changed to match.
+  # save_model_path: "${output_gcs_location}/model_artifacts/${globals:model_key}/fitted.pkl"
+  # save_calib_model_path: "${output_gcs_location}/model_artifacts/${globals:model_key}/calibrated.pkl"
+
+  prediction_col: "xgboost_pred"
+  prediction_probability_col: "xgboost_pred_proba"
+
+# ===========================================================================
+# 11. The regression block
+# ===========================================================================
+# A deliberately stripped mirror: no stratification on the split, no class
+# weighting, no calibration, no threshold selection. eval_size is set explicitly
+# here, unlike the classification block, because a regression holdout governs the
+# promotion gate directly.
+modeling_reg_params:
+  eval_size: 0.10
+  model_handle: "xgboost.XGBRegressor"
+  model_params:
+    n_estimators: 400
+    max_depth: 6
+    learning_rate: 0.05
+    min_child_weight: 1
+    gamma: 0
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    subsample: 0.8
+    colsample_bytree: 0.8
+    eval_metric: 'rmse'
+    objective: 'reg:squarederror'
+    tree_method: 'hist'
+    random_state: 42
+    n_jobs: -1
+  balance_class_weight: False
+  prediction_col: "xgboost_pred"
+  prediction_probability_col: "xgboost_pred_proba"
+  # RMSE is the default. Note that the acceptance rule inverts its sign for a
+  # loss metric, so a lower value is better. The acceptance rule derives its sign
+  # from the metric's declared direction, so losses are handled correctly.
+  # eval_metric: "RMSE"
