@@ -238,7 +238,11 @@ generated-members=
 [FORMAT]
 
 # Maximum number of characters on a single line.
-max-line-length=80
+# Raised from this template's default of 80 to match the project's ruff
+# `line-length = 120`, so the two linters agree on where a line ends. Leaving
+# the pair disagreeing produces one long-line report from the tool that owns
+# formatting and nothing useful from the tool that does not.
+max-line-length=120
 
 # TODO(https://github.com/pylint-dev/pylint/issues/3352): Direct pylint to exempt
 # lines made too long by directives to pytype.

@@ -1,0 +1,180 @@
+[project]
+name = 'forecasting-ml-framework'
+version = '1.0.0'
+description = 'Configuration-driven forecasting ML framework for propensity, retention modelling'
+readme = 'README.md'
+requires-python = '>=3.11,<3.12'
+license = { text = 'Proprietary' }
+authors = [{ name = 'Forecasting ML Platform Team' }]
+
+# Every library the model program can reference by name must be declared here.
+# The framework resolves estimators, searchers, calibrators, samplers, Spark ML
+# stages, dataset types and binner handles reflectively from a dotted string, and
+# it imports them on demand -- so an undeclared library is not detected at install
+# time but only when the feature naming it is first enabled, which in practice
+# means inside a production job. The three lower constraints match the runtime
+# manifest: the model handle is a pickle of a live trainer, so it pins the
+# estimator's class definition and the numerical library versions, and loading it
+# under different versions can fail deep inside unpickling.
+dependencies = [
+  # --- Orchestration -------------------------------------------------------
+  'kedro[all]==1.0.0',
+  'kedro-datasets>=7.0.0,<8.0.0',
+  'click>=8.1.7,<9.0.0',
+  'pyyaml>=6.0.1,<7.0.0',
+  'omegaconf>=2.3.0,<3.0.0',
+  # --- Compute -------------------------------------------------------------
+  'pyspark>=3.5.1,<3.6.0',
+  # --- Data ----------------------------------------------------------------
+  'pandas>=2.1.4,<2.2.0',
+  'numpy>=1.26.4,<2.0.0',
+  'pyarrow>=15.0.2,<16.0.0',
+  'fsspec>=2024.2.0',
+  'gcsfs>=2024.2.0',
+  # --- Cloud ---------------------------------------------------------------
+  'google-cloud-bigquery>=3.17.0',
+  'google-cloud-storage>=2.14.0',
+  'google-auth>=2.29.0',
+  'pandas-gbq>=0.22.0',
+  # --- Machine learning ----------------------------------------------------
+  'scikit-learn>=1.4.0,<1.6.0',
+  'scipy>=1.12.0,<1.14.0',
+  'xgboost>=2.0.3,<2.1.0',
+  'catboost>=1.2.2,<1.3.0',
+  'lightgbm>=4.3.0,<4.6.0',
+  'optuna>=3.6.0,<4.0.0',
+  'optbinning>=0.25.0',
+  'betacal>=0.2.1',
+  'shap>=0.44.0',
+  'lime>=0.2.0.1',
+  # --- Observability -------------------------------------------------------
+  'mlflow>=2.12.0,<3.0.0',
+  'PyJWT>=2.8.0',
+  'rich>=13.7.0',
+  'matplotlib>=3.8.3,<3.9.0',
+]
+
+[project.optional-dependencies]
+# Sequence / transformer tier. Kept optional because the deep-learning stack is
+# imported lazily: the framework runs without it until the tier is enabled.
+transformer = [
+  'torch>=2.2.0,<2.4.0',
+  'pytorch-lightning>=2.2.0,<2.3.0',
+  'torchmetrics>=1.3.0',
+]
+dev = [
+  'pytest>=8.0.0',
+  'pytest-cov>=4.1.0',
+  'ruff>=0.4.0',
+]
+
+[project.scripts]
+forecasting-ml = 'forecasting_ml_framework.cli:main'
+
+[project.entry-points.'kedro.project_commands']
+run = 'forecasting_ml_framework.cli:commands'
+# The attribute is `project_commands`, not `project`. A mismatched entry-point
+# target resolves to a symbol that does not exist, so `kedro project pipeline` and
+# `kedro project routines` could not be reached -- the failure appearing only when
+# someone tried to use them.
+# Resolved by Kedro from the installed distribution, so the attribute must exist
+# under exactly this name. It previously pointed at `cli:project`, a symbol that
+# did not exist, which made `kedro project pipeline` and `kedro project routines`
+# unreachable. The module now binds `project` as an alias for `project_commands`.
+project = 'forecasting_ml_framework.cli:project'
+
+[build-system]
+requires = ['hatchling']
+build-backend = 'hatchling.build'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/forecasting_ml_framework']
+
+[tool.hatch.build.targets.sdist]
+include = ['src', 'conf', 'tests', 'README.md', 'pyproject.toml']
+
+# ---------------------------------------------------------------------------
+# ruff
+#
+# The project's single linter and formatter. One tool, not a trio: a linter set
+# that is configured but never invoked still has to be kept current, and it will
+# disagree with the formatter the code is actually written against.
+#
+# The formatter is configured to enforce the house style directly -- two-space
+# indentation and single-quoted strings -- so the style is a build-time
+# guarantee rather than a review convention.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = 'py311'
+src = ['src', 'tests']
+# Indentation width is a top-level setting, not a formatter setting: the
+# formatter reads it, and placing it under [tool.ruff.format] makes the whole
+# configuration unparseable, which turns every later lint run into a no-op.
+indent-width = 2
+
+[tool.ruff.format]
+indent-style = 'space'
+quote-style = 'single'
+
+[tool.ruff.lint]
+select = ['E', 'F', 'W', 'I', 'N', 'D', 'UP', 'B', 'C4', 'SIM', 'RET', 'PTH']
+ignore = [
+  'D203',  # incompatible with D211
+  'D213',  # incompatible with D212
+  'E501',  # long lines are checked by the formatter
+  # The project's house style mandates the encoding declaration on every module
+  # and triple-single-quoted docstrings, so both are enforced by review rather
+  # than contradicted by the linter. Silencing them here is what keeps a lint run
+  # from proposing a change the style guide forbids -- a linter that fights the
+  # style is a linter people stop reading.
+  'UP009',  # the encoding declaration is required, not redundant
+  'D300',   # docstrings use ''' per the house style
+]
+
+[tool.ruff.lint.per-file-ignores]
+'tests/*' = ['D100', 'D101', 'D102', 'D103', 'D104']
+
+[tool.ruff.lint.isort]
+known-first-party = ['forecasting_ml_framework']
+
+[tool.ruff.lint.pydocstyle]
+convention = 'google'
+
+# ---------------------------------------------------------------------------
+# pytest / coverage
+#
+# The suite is a smoke test first: it imports every module, constructs every
+# routine and every dataset adapter, and asserts that no module can be added
+# without a test covering it. That layer alone catches a routine whose
+# constructor references a name it never bound, an adapter that dereferences an
+# attribute __init__ never assigned, and a helper that raises on a realistic
+# input -- the class of fault that otherwise survives review and fails on first
+# production use.
+#
+# The integration layer then trains and scores for real, because a framework whose
+# central claim is train/serve parity is not verified by imports.
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = '8.0'
+testpaths = ['tests']
+pythonpath = ['src']
+addopts = '--strict-markers -q'
+markers = [
+  'spark: tests that require a live Spark session',
+  'bigquery: tests that require Google BigQuery credentials',
+]
+
+[tool.coverage.run]
+branch = true
+source = ['src/forecasting_ml_framework']
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  'pragma: no cover',
+  'if TYPE_CHECKING:',
+  'raise NotImplementedError',
+  'except ImportError:',
+]
