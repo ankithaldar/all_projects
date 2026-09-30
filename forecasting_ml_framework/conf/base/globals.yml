@@ -1,0 +1,81 @@
+# Globals: the per-model column contract.
+#
+# This document is the *middle* precedence tier. For each key below, the bootstrap
+# rewriter routes `${KEY` in the parameters and catalog documents to either
+# `${globals:KEY` (this document) or `${runtime_params:KEY` (the scheduler's
+# per-run channel), and the two branches are mutually exclusive. So a value can
+# never resolve from both channels, and precedence is total and unambiguous:
+#
+#     globals document    (per-model,  version-controlled)     lowest
+#     parameters document (per-project defaults)
+#     runtime parameters  (per-run,     from the scheduler)    highest
+
+# --- Model identity --------------------------------------------------------
+# The single identifier spanning four systems: the metadata registry, the
+# experiment-tracking experiment and registered model, the metrics path, and the
+# transform-state root.
+model_key: forecast_demo_retention
+
+# The label. Derived by the input SQL, not present in the upstream feature feed.
+target_col: label
+
+# --- Column roles ---------------------------------------------------------
+# The concatenation order of NUM_COL + CAT_COL + IND_COL becomes
+# metadata.feature_cols, which is the order every later feature-resolution call
+# preserves, which is therefore the model's feature-vector order for the life of
+# the persisted artefact. Reordering these lists silently changes the meaning of
+# every existing model.
+NUM_COL:
+  - usage_feature_01
+  - usage_feature_02
+  - usage_feature_03
+  - tenure_days
+  - arpu_30d
+  - data_volume_mb_30d
+  - voice_minutes_30d
+  - recharge_count_30d
+  - recharge_amount_30d
+  - dropped_call_count_30d
+  - support_ticket_count_30d
+
+CAT_COL:
+  - plan_tier
+  - region_code
+  - device_brand
+  - last_contact_type
+  - autopay_status
+
+IND_COL:
+  - is_new_line
+  - has_data_addon
+  - is_ported_in
+
+# Sequence columns must NOT also appear in NUM_COL, CAT_COL or IND_COL: the model
+# receives a dense tensor for these, not a raw array, and the trainer cannot fit
+# an array column. The load node now asserts this, so the precondition is
+# enforced rather than merely documented.
+SEQ_COL: []
+
+ID_COL:
+  - cust_id
+  - line_seq_id
+  - account_ref
+  - mobile_ref
+
+# --- Missing-value fill dictionary ----------------------------------------
+# The categorical block is filled with sentinel strings rather than zeros, because
+# zero-filling a string column would insert the literal '0.0' as a new category
+# downstream. The numerical block is filled with zeros.
+#
+# NOTE: this dictionary is only meaningful when the matching Imputations
+# registration uses `strategy: none`, which is a genuine no-op: a column named in
+# include_cols but absent from this dictionary is left alone rather than silently
+# zero-filled. (Zero-filling a string column would insert the literal '0.0' as a
+# new category downstream, which is why 'none' must not fall through to a default
+# bound.)
+fill_missing_dict:
+  plan_tier: UNKNOWN
+  region_code: UNKNOWN
+  device_brand: UNKNOWN
+  last_contact_type: OTHER
+  autopay_status: N
