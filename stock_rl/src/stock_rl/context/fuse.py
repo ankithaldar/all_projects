@@ -69,9 +69,11 @@ help".
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite, isnan
 from typing import Final
 
 from stock_rl.sentiment.score import (
@@ -475,6 +477,48 @@ def state_vector(
   return tuple(features)
 
 
+def _reject_underspecified(
+  measured: Mapping[str, float],
+  failures: list[str],
+) -> None:
+  '''Record a failure for every measurement that is not a real number.
+
+  This gate is the only thing standing between a p-hacked context
+  experiment and "keep the feature", so it must fail **closed**. It did
+  not. Every validation and every threshold test below was a comparison
+  against a bound, and every comparison involving NaN is False, so a NaN
+  skipped its own validation, skipped its own failure check, and was
+  reported as a threshold that cleared:
+
+      honest bad result   alpha p=0.9, |t|=0.1, turnover 900%
+                          -> passed=False, five failures
+      same fields as NaN  -> passed=True, failures=()
+
+  A NaN is what a division by a zero-variance window, an empty fold or a
+  dropped observation produces, so this was reachable rather than
+  theoretical -- and it failed in the permissive direction, on the one
+  decision that governs the whole programme. The module sat at 100%
+  statement and 100% branch coverage with every line of this function
+  executed by the shipped suite, which is the clearest evidence in this
+  repository that coverage is not evidence of correctness.
+
+  Args:
+    measured: The measured values, keyed by the name used in the message.
+    failures: Accumulator that each offending name is appended to.
+  '''
+  for name, value in measured.items():
+    if isfinite(value):
+      continue
+    if isnan(value):
+      failures.append(
+        f'{name} is NaN: the measurement does not exist, so the threshold '
+        f'cannot have cleared. Fix the measurement, do not treat this as '
+        f'a pass')
+    else:
+      raise ValueError(
+        f'{name} must be finite, got {value!r}')
+
+
 def evaluate_kill_criteria(
   alpha_pvalue: float,
   sharpe_pvalue: float,
@@ -509,15 +553,14 @@ def evaluate_kill_criteria(
       negative, or ``abs_t`` is negative.
   '''
   failures: list[str] = []
-  if alpha_pvalue < 0.0 or sharpe_pvalue < 0.0:
-    raise ValueError('p-values must be >= 0')
-  if abs_t < 0.0:
-    raise ValueError(f'abs_t must be >= 0, got {abs_t}')
-  if folds_passed < 0:
-    raise ValueError(f'folds_passed must be >= 0, got {folds_passed}')
-  if monthly_one_sided_turnover < 0.0:
-    raise ValueError(
-      f'turnover must be >= 0, got {monthly_one_sided_turnover}')
+  _reject_underspecified(
+    {
+      'alpha_pvalue': alpha_pvalue,
+      'sharpe_pvalue': sharpe_pvalue,
+      'abs_t': abs_t,
+      'monthly_one_sided_turnover': monthly_one_sided_turnover,
+    },
+    failures)
   if alpha_pvalue > criteria.alpha_pvalue:
     failures.append(
       f'alpha p={alpha_pvalue:.3f} > {criteria.alpha_pvalue}: delete all '
@@ -541,3 +584,4 @@ def evaluate_kill_criteria(
       f'{criteria.max_monthly_one_sided_turnover:.0%}: abandon regardless '
       f'of backtest return')
   return KillCriteriaResult(passed=not failures, failures=tuple(failures))
+

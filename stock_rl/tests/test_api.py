@@ -1631,9 +1631,8 @@ class TestTheDocumentReferencesResolve:
       f'path, so the browser gets a 404 and the page renders as bare text')
 
   def test_every_referenced_subresource_is_served_with_real_bytes(self):
-    service = api.ApiService()
     for name in self._referenced(index_html()):
-      response = api.dispatch(service, 'GET', f'/{name}')
+      response = api.dispatch(api.ApiService(), 'GET', f'/{name}')
       assert response.status == HTTPStatus.OK, f'/{name} -> {response.status}'
       assert response.body, f'/{name} served an empty body'
       assert response.content_type.split(';')[0] in (
@@ -1646,6 +1645,7 @@ class TestTheDocumentReferencesResolve:
       response = api.dispatch(api.ApiService(), 'GET', f'/{name}')
       assert response.body == accessor().encode('utf-8'), (
         f'/{name} does not serve the packaged asset')
+
 
 
 
