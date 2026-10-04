@@ -1,0 +1,148 @@
+# CI for stock_rl only. This repository holds several unrelated projects, so
+# the path filter keeps this workflow from trying to build the others.
+#
+# The lint job runs pylint from inside stock_rl/ against ../.pylintrc on
+# purpose: pylint does not search parent directories for a configuration file,
+# and with its own defaults it assumes 4-space indentation and reports every
+# correctly indented line in this 2-space codebase as wrong. `--rcfile` is not
+# an optimisation here, it is the difference between passing and failing.
+
+name: stock-rl
+
+on:
+  push:
+    branches: ['stock-rl/main']
+    paths:
+      - 'stock_rl/**'
+      - '.pylintrc'
+      - '.github/workflows/stock-rl.yml'
+  pull_request:
+    paths:
+      - 'stock_rl/**'
+      - '.pylintrc'
+      - '.github/workflows/stock-rl.yml'
+
+# A new push to the same branch supersedes the previous run. Waiting for the
+# whole matrix on a superseded commit only delays the answer nobody wants.
+concurrency:
+  group: stock-rl-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint + test (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stock_rl
+    strategy:
+      # One failure is enough to fail the check; there is no value in paying
+      # for the second interpreter after the first one has already gone red.
+      fail-fast: true
+      matrix:
+        python: ['3.14']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Pin the interpreter
+        run: uv python install ${{ matrix.python }}
+
+      - name: Sync dependencies
+        # `--frozen` fails rather than silently resolving a new lockfile, so
+        # CI cannot quietly pass against different dev dependencies than the
+        # ones that were tested locally.
+        run: uv sync --frozen --group dev
+
+      - name: Show the resolved environment
+        run: uv run python --version && uv pip list
+
+      - name: Assert zero runtime dependencies
+        # The design constraint is that stock_rl imports only the standard
+        # library. An earlier version of this job compared `uv pip list`
+        # against a hand-written allowlist of dev packages, which broke the
+        # moment pylint gained a transitive dependency and never actually
+        # tested the claim in any case. tests/test_packaging.py reads the
+        # imports statically with ast and classifies them against
+        # sys.stdlib_module_names, so it catches an undeclared import that
+        # was never installed through any channel.
+        run: uv run pytest tests/test_packaging.py -q
+
+      - name: Lint
+        run: uv run pylint --rcfile=../.pylintrc src/stock_rl tests
+
+      - name: Test (excluding network)
+        run: uv run pytest --cov -m 'not network'
+
+      - name: Test (full, including network)
+        # Network tests are deselected above so a vendor outage reports as a
+        # skip rather than masking a real failure. This second run confirms
+        # the deselection did not skip anything that actually needed to run.
+        continue-on-error: true
+        run: uv run pytest --cov -m 'network'
+
+      - name: Coverage gate
+        # fail_under lives in pyproject.toml; this asserts it is still set,
+        # because a coverage run with the gate removed looks identical to one
+        # that passed. tomllib is stdlib, so this step needs no extra package.
+        run: |
+          uv run python - <<'PY'
+          import pathlib
+          import tomllib
+
+          config = tomllib.loads(
+            pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+          floor = config['tool']['coverage']['report']['fail_under']
+          print('coverage floor:', floor)
+          assert floor >= 90, f'coverage floor was lowered to {floor}'
+          PY
+
+  review-findings:
+    name: no unverified performance claims
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stock_rl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --frozen --group dev
+
+      - name: No skill file may claim a result it cannot support
+        # skills/ are markdown, so pylint cannot check them and the failure
+        # mode is a shipped .md asserting a Sharpe nobody measured. The
+        # scanner lives in tests/test_skills.py because it needs the same
+        # notion of a citation and a prohibition as the skill loader does;
+        # a regex in YAML would drift from it immediately.
+        run: |
+          uv run python - <<'PY'
+          import pathlib
+          import sys
+
+          sys.path.insert(0, 'tests')
+          from test_skills import unsupported_claims
+
+          offenders = {}
+          for path in sorted(
+                  pathlib.Path('src/stock_rl/skills/skills').rglob('*.md')):
+            found = unsupported_claims(path.read_text(encoding='utf-8'))
+            if found:
+              offenders[str(path)] = found
+
+          for path, items in offenders.items():
+            for item in items:
+              print(f'{path}: {item}')
+          print(f'{len(offenders)} skill file(s) carry unsupported claims')
+          sys.exit(1 if offenders else 0)
+          PY
