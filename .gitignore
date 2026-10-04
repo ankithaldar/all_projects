@@ -135,12 +135,18 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+#
+# The venv patterns are anchored with a leading slash on purpose. An
+# unanchored "env/" matches a directory named env at ANY depth, which
+# silently excluded stock_rl/src/stock_rl/env/ -- a real source package --
+# from version control. Anchoring keeps the intent (a virtualenv at the
+# repository root) without swallowing source directories.
 .env
 .envrc
 .venv
-env/
+/env/
 venv/
-ENV/
+/ENV/
 env.bak/
 venv.bak/
 
