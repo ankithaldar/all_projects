@@ -22,6 +22,29 @@ that a real order placed at the close might fill near the close, and it
 never lets a favourable overnight gap work in our favour. Optimistic
 fills are the most common way a backtest invents performance that does
 not exist.
+
+**The performance ceiling, and why it is the right trade.** This loop is
+interpreted Python over one bar at a time, because ``dependencies`` in
+``pyproject.toml`` is empty and that is deliberate. Measured on the
+development machine at roughly 7,200 bars per second, single-threaded,
+with a 20-bar moving-average signal: one symbol over twenty years of daily
+bars takes about 0.7 seconds, and a full three-arm experiment -- five
+walk-forward folds, three arms, fifty symbols, roughly 245,000 bars per
+fold -- takes about nine minutes.
+
+That is comfortably fast enough for the work this repository actually
+does, which is why the constraint has never been relaxed. It would not be
+fast enough for intraday bars on a wide universe: tick data across Nifty
+runs to tens of millions of bars, which is hours rather than minutes. Nor
+is it fast enough for a parameter sweep of the size that model selection
+invites, which is a real limit on this project's own A/B harness.
+
+The upgrade path is to vectorise with NumPy, at the cost of the empty
+dependency list and of an engine whose arithmetic no longer fits on one
+screen. Worth doing only when a measured run actually needs it, and so far
+none does. Vectorising the *portfolio* engine is a far smaller job than
+this one, because :mod:`stock_rl.portfolio` works cross-sectionally and can
+use arrays over symbols without giving up the next-open fill discipline.
 '''
 
 from __future__ import annotations
@@ -210,3 +233,4 @@ def run_backtest(
     total_cost=total_cost,
     bars_processed=len(equity),
   )
+
