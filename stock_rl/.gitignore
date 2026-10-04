@@ -1,7 +1,10 @@
 # Market data. Licensed NSE/TrueData/GFDL vendor payloads must never be
 # committed: see docs/NIFTY-RL-Technical-Doc.md section 9.2 (redistribution
 # rights are not ours to grant). Only code goes in this repository.
-data/
+# Anchored with a leading slash for the same reason as /env/ below: an
+# unanchored data/ matches src/stock_rl/data/ at any depth, which would
+# silently exclude that source package from version control.
+/data/
 *.parquet
 *.feather
 

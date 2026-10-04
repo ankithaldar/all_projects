@@ -1,0 +1,295 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Cross-sectional portfolio backtest over aligned price panels.
+
+This is the measuring instrument every strategy is judged with, including
+the RL environment. It exists because a single-symbol backtest cannot
+answer the only question that matters here: does this beat equal weight?
+
+Look-ahead is closed the same way ``engine.py`` closes it. A weight
+decision taken at the close of bar ``t`` is filled at the **open** of bar
+``t+1``, and the provider is only ever shown bars strictly before the
+fill bar, so it structurally cannot price its own fill.
+
+PONYTAIL: rebalancing is a fixed calendar interval rather than a
+threshold on weight drift. Ceiling: a drift-triggered rebalance trades
+less, but needs the provider to expose its target weights, which couples
+the backtester to strategy internals. Upgrade path: accept an optional
+``should_rebalance`` callable alongside the provider; nothing else in
+this module changes.
+'''
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from stock_rl.bars import Bar
+from stock_rl.costs import DELIVERY, CostModel, Side
+from stock_rl.metrics import (
+  TRADING_DAYS_PER_YEAR,
+  max_drawdown,
+  sharpe_ratio,
+  total_return,
+)
+
+__all__ = ['PortfolioResult', 'WeightProvider', 'run_portfolio']
+
+#: A weight provider maps visible price history to target weights. Only
+#: bars strictly before the fill bar are passed in, so a provider cannot
+#: see the price it will be filled at.
+WeightProvider = Callable[[dict[str, list[Bar]]], dict[str, float]]
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioResult:
+  '''Outcome of a cross-sectional backtest.
+
+  Attributes:
+    equity: Equity curve normalised to 1.0, one entry per bar.
+    returns: Per-bar portfolio returns aligned with ``equity``.
+    weights: Target weight snapshot per rebalance, in order.
+    sharpe: Annualised Sharpe of the return series.
+    max_drawdown: Deepest peak-to-trough decline as a positive fraction.
+    total_return_multiple: Growth factor, so 1.21 is a 21 percent gain.
+    turnover: Total absolute weight traded across all rebalances.
+    total_cost: Transaction cost charged, in rupees.
+    rebalances: Number of rebalances performed.
+  '''
+
+  equity: list[float] = field(default_factory=list)
+  returns: list[float] = field(default_factory=list)
+  weights: list[dict[str, float]] = field(default_factory=list)
+  sharpe: float = 0.0
+  max_drawdown: float = 0.0
+  total_return_multiple: float = 1.0
+  turnover: float = 0.0
+  total_cost: float = 0.0
+  rebalances: int = 0
+
+
+class _Book:
+  '''Mutable portfolio state carried across bars.
+
+  Attributes:
+    cash: Uninvested cash in rupees.
+    quantity: Share holdings per symbol.
+    cost: Cumulative transaction cost charged in rupees.
+    traded: Cumulative absolute weight traded.
+  '''
+
+  __slots__ = ('cash', 'cost', 'quantity', 'traded')
+
+  def __init__(self, capital: float, symbols: tuple[str, ...]) -> None:
+    '''Start a book with all cash and no positions.
+
+    Args:
+      capital: Starting cash in rupees.
+      symbols: Symbols in the portfolio.
+    '''
+    self.cash = capital
+    self.quantity = dict.fromkeys(symbols, 0)
+    self.cost = 0.0
+    self.traded = 0.0
+
+
+def _validate(
+  panels: dict[str, list[Bar]],
+  capital: float,
+  rebalance_days: int,
+  history: int,
+) -> int:
+  '''Validate inputs and return the number of bars per panel.
+
+  Args:
+    panels: Mapping of symbol to bars.
+    capital: Starting cash.
+    rebalance_days: Bars between rebalances.
+    history: Minimum bars before the first rebalance.
+
+  Returns:
+    Number of bars per panel.
+
+  Raises:
+    ValueError: If any argument is invalid or leaves no room to trade.
+  '''
+  if not panels:
+    raise ValueError('panels must not be empty')
+  lengths = {len(bars) for bars in panels.values()}
+  if len(lengths) != 1:
+    raise ValueError(f'panels must be aligned, got {sorted(lengths)}')
+  length = lengths.pop()
+  if length < 2:
+    raise ValueError(f'need at least 2 bars per panel, got {length}')
+  if capital <= 0.0:
+    raise ValueError(f'capital must be positive, got {capital}')
+  if rebalance_days < 1:
+    raise ValueError(f'rebalance_days must be >= 1, got {rebalance_days}')
+  if history < 1:
+    raise ValueError(f'history must be >= 1, got {history}')
+  if history + rebalance_days >= length:
+    raise ValueError(
+      f'history={history} plus rebalance_days={rebalance_days} leaves no '
+      f'room in a {length} bar series')
+  return length
+
+
+def _normalise(
+  raw: dict[str, float],
+  symbols: tuple[str, ...],
+  max_weight: float,
+) -> dict[str, float]:
+  '''Clamp and renormalise weights into a feasible long-only portfolio.
+
+  Feasibility is enforced here rather than inside the provider, so a
+  strategy author cannot breach a cap by forgetting it, and every
+  strategy is compared on identical rules.
+
+  Args:
+    raw: Desired weight per symbol.
+    symbols: Symbols in the portfolio, in fixed order.
+    max_weight: Cap on any single symbol.
+
+  Returns:
+    Weights summing to at most 1.0. The remainder is cash.
+  '''
+  wanted = {
+    symbol: max(0.0, min(max_weight, raw.get(symbol, 0.0)))
+    for symbol in symbols
+  }
+  total = sum(wanted.values())
+  if total > 1.0:
+    scale = 1.0 / total
+    return {symbol: weight * scale for symbol, weight in wanted.items()}
+  return wanted
+
+
+def _mark(
+  book: _Book,
+  panels: dict[str, list[Bar]],
+  symbols: tuple[str, ...],
+  index: int,
+) -> float:
+  '''Return portfolio value marked at a bar's close.
+
+  Args:
+    book: Current book.
+    panels: Price panels.
+    symbols: Symbols in the portfolio.
+    index: Bar index at which to mark holdings.
+
+  Returns:
+    Portfolio value in rupees.
+  '''
+  held = sum(
+    book.quantity[symbol] * panels[symbol][index].close
+    for symbol in symbols
+  )
+  return book.cash + held
+
+
+def _rebalance(
+  book: _Book,
+  panels: dict[str, list[Bar]],
+  symbols: tuple[str, ...],
+  index: int,
+  mark: float,
+  target: dict[str, float],
+  costs: CostModel,
+) -> None:
+  '''Trade toward the target weights at the bar's open.
+
+  Both ``cash`` and ``quantity`` are updated, so the book stays
+  self-consistent: shares are never held without the cash having been
+  deducted. Getting that wrong silently inflates every equity curve.
+
+  Args:
+    book: Book to mutate in place.
+    panels: Price panels.
+    symbols: Symbols in the portfolio.
+    index: Bar index whose open is the fill price.
+    mark: Portfolio value used to size the orders.
+    target: Target weights after clamping.
+    costs: Transaction cost model.
+  '''
+  if mark <= 0.0:
+    return
+  for symbol in symbols:
+    price = panels[symbol][index].open
+    if price <= 0.0:
+      continue
+    want = int(target[symbol] * mark / price)
+    delta = want - book.quantity[symbol]
+    if delta == 0:
+      continue
+    notional = abs(delta) * price
+    charge = costs.one_way(
+      Side.BUY if delta > 0 else Side.SELL, notional)
+    book.cash -= delta * price + charge
+    book.quantity[symbol] += delta
+    book.cost += charge
+    book.traded += notional / mark
+
+
+def run_portfolio(
+  panels: dict[str, list[Bar]],
+  provider: WeightProvider,
+  capital: float = 10_000_000.0,
+  costs: CostModel = DELIVERY,
+  rebalance_days: int = 21,
+  max_weight: float = 0.10,
+  history: int = 60,
+) -> PortfolioResult:
+  '''Backtest a weight provider over aligned daily panels.
+
+  Args:
+    panels: Mapping of symbol to bars, all sharing one timeline.
+    provider: Maps visible history to target weights.
+    capital: Starting cash in rupees.
+    costs: Transaction cost model.
+    rebalance_days: Bars between rebalances. The default is roughly
+      monthly, which keeps turnover near the level where Indian delivery
+      costs stop dominating the result.
+    max_weight: Cap on any single symbol's weight.
+    history: Minimum bars required before the first rebalance.
+
+  Returns:
+    A ``PortfolioResult``.
+
+  Raises:
+    ValueError: If panels are unusable or the arguments leave no room to
+      trade.
+  '''
+  length = _validate(panels, capital, rebalance_days, history)
+  symbols = tuple(sorted(panels))
+  book = _Book(capital, symbols)
+  equity: list[float] = []
+  returns: list[float] = []
+  snapshots: list[dict[str, float]] = []
+
+  for index in range(length):
+    if index > 0 and index % rebalance_days == 0 and index >= history:
+      visible = {
+        symbol: panel[:index] for symbol, panel in panels.items()
+      }
+      target = _normalise(provider(visible), symbols, max_weight)
+      _rebalance(
+        book, panels, symbols, index,
+        _mark(book, panels, symbols, index - 1), target, costs)
+      snapshots.append(dict(target))
+    equity.append(_mark(book, panels, symbols, index) / capital)
+    returns.append(
+      0.0 if index == 0 else equity[index] / equity[index - 1] - 1.0)
+
+  return PortfolioResult(
+    equity=equity,
+    returns=returns,
+    weights=snapshots,
+    sharpe=sharpe_ratio(returns, periods=TRADING_DAYS_PER_YEAR),
+    max_drawdown=max_drawdown(equity).depth,
+    total_return_multiple=total_return(returns),
+    turnover=book.traded,
+    total_cost=book.cost,
+    rebalances=len(snapshots),
+  )
