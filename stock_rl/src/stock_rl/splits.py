@@ -157,8 +157,15 @@ def purged_folds(
   # The walk-forward must start far enough in that there is room to purge.
   # Starting at plain min_train and flooring train_end at min_train would
   # silently cancel the purge on the first fold, leaving the last
-  # `horizon` training labels reaching into the test window.
-  origin = min_train + horizon
+  # `horizon` training labels reaching into the test window, plus the
+  # `embargo` gap that keeps autocorrelated returns from straddling the
+  # boundary. Both are subtracted from the training end.
+  #
+  # The embargo was previously validated and then never applied, which
+  # made every value of the parameter produce identical folds and let
+  # serial correlation leak across every boundary -- the one thing the
+  # parameter exists to prevent.
+  origin = min_train + horizon + embargo
   # Ceiling, not floor: the remainder must land inside the final fold
   # rather than as an unused tail of up to n_folds-1 bars.
   fold_length = max(1, math.ceil((length - origin) / n_folds))
@@ -168,7 +175,8 @@ def purged_folds(
     test_end = min(length, test_start + fold_length)
     if test_start >= length:
       break
-    folds.append(Fold(index, 0, test_start - horizon, test_start, test_end))
+    train_end = max(min_train, test_start - horizon - embargo)
+    folds.append(Fold(index, 0, train_end, test_start, test_end))
   return [fold for fold in folds if not fold.is_empty()]
 
 

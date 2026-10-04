@@ -44,6 +44,7 @@ from statistics import fmean, stdev
 
 from stock_rl.bars import Bar
 from stock_rl.costs import DELIVERY, CostModel, Side
+from stock_rl.weights import affordable_scale, clamp_weight
 from stock_rl.env.gym import Info, Obs
 from stock_rl.metrics import TRADING_DAYS_PER_YEAR, max_drawdown
 from stock_rl.rl.policy import Action
@@ -302,7 +303,7 @@ class WeightAllocationEnv:
     wanted = {}
     for symbol in self.action_symbols:
       raw = _as_float(action.get(symbol, self._weights[symbol]))
-      wanted[symbol] = max(0.0, min(self.max_weight, raw))
+      wanted[symbol] = clamp_weight(float(raw), self.max_weight)
     total = sum(wanted.values())
     if total > 1.0:
       wanted = {symbol: weight / total for symbol, weight in wanted.items()}
@@ -363,21 +364,34 @@ class WeightAllocationEnv:
     '''
     if self._step_index % self.rebalance_days != self.rebalance_offset:
       return 0.0, 0.0
-    traded = _absolute_change(target, self._weights)
-    cost = 0.0
+    deltas: dict[str, int] = {}
+    prices: dict[str, float] = {}
     for symbol, wanted in target.items():
       price = self.panels[symbol][fill].open
       if price <= 0.0:
         continue
-      held = self._quantity[symbol]
-      delta = int(wanted * value / price) - held
+      prices[symbol] = price
+      deltas[symbol] = (int(wanted * value / price)
+                        - self._quantity[symbol])
+    # Same affordability constraint as portfolio.run_portfolio. Sizing
+    # int(wanted * value / price) bounds the notional by the portfolio
+    # value but ignores charges, so a fully invested book necessarily
+    # overspends and borrows without paying for it. The two engines must
+    # agree, so both scale the deltas to the cash actually available.
+    scale = affordable_scale(self._cash, prices, deltas, self.costs)
+    traded = _absolute_change(target, self._weights)
+    cost = 0.0
+    for symbol, delta in deltas.items():
       if delta == 0:
         continue
-      notional = abs(delta) * price
+      scaled = int(delta * scale)
+      if scaled == 0:
+        continue
+      notional = abs(scaled) * prices[symbol]
       charge = self.costs.one_way(
-        Side.BUY if delta > 0 else Side.SELL, notional)
-      self._cash -= delta * price + charge
-      self._quantity[symbol] = held + delta
+        Side.BUY if scaled > 0 else Side.SELL, notional)
+      self._cash -= scaled * prices[symbol] + charge
+      self._quantity[symbol] += scaled
       cost += charge
     self._total_cost += cost
     return cost, traded

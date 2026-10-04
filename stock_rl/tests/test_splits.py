@@ -46,11 +46,22 @@ class TestPurgedFolds:
     assert ends == sorted(ends)
     assert all(fold.train_start == 0 for fold in folds)
 
-  def test_purge_removes_horizon_bars_before_test(self):
+  def test_purge_and_embargo_both_shorten_training(self):
+    # The gap between train and test must be the horizon PLUS the
+    # embargo. The embargo used to be validated and then never applied,
+    # so every value of it produced identical folds.
     horizon = 10
-    folds = purged_folds(1000, n_folds=5, horizon=horizon, embargo=1)
+    embargo = 7
+    folds = purged_folds(1000, n_folds=5, horizon=horizon, embargo=embargo)
     for fold in folds:
-      assert fold.train_end == fold.test_start - horizon
+      assert fold.train_end == fold.test_start - horizon - embargo
+
+  def test_embargo_actually_changes_the_folds(self):
+    # The vacuous version of this test passed on the broken code.
+    few = purged_folds(2000, n_folds=6, horizon=5, embargo=1)
+    many = purged_folds(2000, n_folds=6, horizon=5, embargo=40)
+    assert [fold.train_end for fold in many] \
+      != [fold.train_end for fold in few]
 
   def test_no_train_index_reaches_into_test_window(self):
     # This is the property that matters. Asserting the gap explicitly is
@@ -98,8 +109,8 @@ class TestPurgedFolds:
     # Ceiling division can overshoot the remainder, pushing the final
     # requested fold past the end of the series. That fold must be
     # dropped rather than emitted with inverted bounds.
-    folds = purged_folds(13, n_folds=5, horizon=1, min_train=1)
-    assert len(folds) < 5
+    folds = purged_folds(13, n_folds=7, horizon=1, min_train=1)
+    assert len(folds) < 7
     for fold in folds:
       assert fold.test_start < 13
       assert fold.train_end < fold.test_start

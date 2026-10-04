@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 
 from stock_rl.bars import Bar
 from stock_rl.costs import DELIVERY, CostModel, Side
+from stock_rl.weights import affordable_scale, clamp_weight
 from stock_rl.metrics import (
   TRADING_DAYS_PER_YEAR,
   max_drawdown,
@@ -155,7 +156,7 @@ def _normalise(
     Weights summing to at most 1.0. The remainder is cash.
   '''
   wanted = {
-    symbol: max(0.0, min(max_weight, raw.get(symbol, 0.0)))
+    symbol: clamp_weight(float(raw.get(symbol, 0.0)), max_weight)
     for symbol in symbols
   }
   total = sum(wanted.values())
@@ -215,19 +216,32 @@ def _rebalance(
   '''
   if mark <= 0.0:
     return
+  prices = {}
+  deltas = {}
   for symbol in symbols:
     price = panels[symbol][index].open
     if price <= 0.0:
       continue
-    want = int(target[symbol] * mark / price)
-    delta = want - book.quantity[symbol]
+    prices[symbol] = price
+    deltas[symbol] = int(target[symbol] * mark / price) - book.quantity[symbol]
+  # Affordability. Sizing int(target * mark / price) already bounds the
+  # notional by the portfolio value, but it ignores the charges, so a
+  # fully-invested book necessarily overspends. Left alone that is
+  # unpriced borrowing: correct on a flat series, and free leverage on a
+  # rising one. Deltas are therefore scaled to fit the cash actually
+  # available after costs.
+  scale = affordable_scale(book.cash, prices, deltas, costs)
+  for symbol, delta in deltas.items():
     if delta == 0:
       continue
-    notional = abs(delta) * price
+    scaled = int(delta * scale)
+    if scaled == 0:
+      continue
+    notional = abs(scaled) * prices[symbol]
     charge = costs.one_way(
-      Side.BUY if delta > 0 else Side.SELL, notional)
-    book.cash -= delta * price + charge
-    book.quantity[symbol] += delta
+      Side.BUY if scaled > 0 else Side.SELL, notional)
+    book.cash -= scaled * prices[symbol] + charge
+    book.quantity[symbol] += scaled
     book.cost += charge
     book.traded += notional / mark
 

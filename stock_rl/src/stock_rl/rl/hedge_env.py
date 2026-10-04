@@ -916,8 +916,18 @@ class HedgeEnv:
       value += self._positions[name] * premium
     liability = self.exposure_units * spot
     if not self._started:
+      # The hedging error and the equity line must share one inception.
+      # Leaving _liability at 0.0 here makes the error telescope to
+      # (L_T - V_T) rather than ((L_T - L_0) - (V_T - V_0)), which is
+      # larger than the truth by exactly L_0 / L_0 == 1.0 for EVERY
+      # policy. That constant offset does not merely shift the scale --
+      # it makes the path start at 1.0, which collapses semi_rmse to
+      # zero and hands the never-hedged book a better terminal reward
+      # than a perfect hedge.
       self._initial_liability = liability
       self._initial_hedge = value
+      self._liability = liability
+      self._hedge_value = value
       self._started = True
     self._error += (
       (liability - self._liability) - (value - self._hedge_value)

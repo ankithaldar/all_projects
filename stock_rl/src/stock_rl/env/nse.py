@@ -44,6 +44,7 @@ from dataclasses import dataclass
 
 from stock_rl.bars import Bar
 from stock_rl.costs import DELIVERY, CostModel, Side
+from stock_rl.weights import affordable_scale, clamp_weight
 from stock_rl.env.gym import Info, Obs
 from stock_rl.metrics import TRADING_DAYS_PER_YEAR
 
@@ -246,20 +247,32 @@ class PortfolioEnv:
     '''
     value = self._portfolio_value(fill_index)
     targets = self._target_weights(action, value)
-    cost = 0.0
+    deltas: dict[str, int] = {}
+    prices: dict[str, float] = {}
     for symbol, target in targets.items():
       price = self.panels[symbol][fill_index].open
       if price <= 0.0:
         continue
-      held = self._quantity[symbol]
-      delta = int(target * value / price) - held
+      prices[symbol] = price
+      deltas[symbol] = int(target * value / price) - self._quantity[symbol]
+    # Affordability. Sizing int(target * value / price) bounds the
+    # notional by the portfolio value but ignores charges, so a fully
+    # invested book necessarily overspends and borrows without paying
+    # for it. Identical constraint to portfolio.run_portfolio and
+    # rl.portfolio_env, so all three engines stay comparable.
+    scale = affordable_scale(self._cash, prices, deltas, self.costs)
+    cost = 0.0
+    for symbol, delta in deltas.items():
       if delta == 0:
         continue
-      notional = abs(delta) * price
+      scaled = int(delta * scale)
+      if scaled == 0:
+        continue
+      notional = abs(scaled) * prices[symbol]
       charge = self.costs.one_way(
-        Side.BUY if delta > 0 else Side.SELL, notional)
-      self._cash -= delta * price + charge
-      self._quantity[symbol] = held + delta
+        Side.BUY if scaled > 0 else Side.SELL, notional)
+      self._cash -= scaled * prices[symbol] + charge
+      self._quantity[symbol] += scaled
       cost += charge
     self._total_cost += cost
     self._recount_weights(value)
@@ -298,7 +311,7 @@ class PortfolioEnv:
         target = held - self.max_weight
       else:
         target = held
-      desired[symbol] = max(0.0, min(self.max_weight, target))
+      desired[symbol] = clamp_weight(float(target), self.max_weight)
     return self._apply_sector_cap(desired)
 
   def _apply_sector_cap(

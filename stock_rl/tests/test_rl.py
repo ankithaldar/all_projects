@@ -1138,6 +1138,11 @@ class TestHedgeReward:
     assert len(env.hedging_error) == 20
 
   def test_error_path_is_scale_free(self):
+    # Scale invariance now holds to within whole-share rounding rather
+    # than exactly, because the liability is quantised into shares: a
+    # 90x larger book cannot hold a proportionally fractional position.
+    # This test previously passed only because every path started at the
+    # +1.0 offset, which made both values identical by construction.
     small = HedgeEnv(smooth_bars(), capital=1_000_000.0, history=40,
                      iv_window=20)
     large = HedgeEnv(smooth_bars(), capital=90_000_000.0, history=40,
@@ -1146,7 +1151,20 @@ class TestHedgeReward:
       env.reset()
       for _ in range(20):
         env.step({'nifty_future': 0.5})
-    assert small.hedging_error[-1] == pytest.approx(large.hedging_error[-1])
+    assert small.hedging_error[-1] == pytest.approx(
+      large.hedging_error[-1], rel=1e-3)
+
+  def test_error_path_starts_at_zero(self):
+    # Regression guard for the +1.0 offset: the self-financing error
+    # must begin at zero for every policy, or the measure is really
+    # liability level rather than hedging error.
+    for coverage in (0.0, 0.5, 1.0):
+      env = HedgeEnv(smooth_bars(), capital=1_000_000.0, history=40,
+                     iv_window=20)
+      env.reset()
+      env.step({'nifty_future': coverage})
+      assert abs(env.hedging_error[0]) < 1e-9, (
+          f'coverage {coverage} started at {env.hedging_error[0]}')
 
   def test_a_better_hedge_has_smaller_error_dispersion(self):
     hedged = hedge_env()

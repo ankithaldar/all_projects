@@ -148,13 +148,20 @@ def momentum_ranked(
   '''
   symbols = sorted(panels)
   scored: list[tuple[str, float]] = []
+  needed = lookback + skip + 1
   for symbol in symbols:
     closes = _closes(panels[symbol])
-    window = lookback + skip
-    if len(closes) <= window:
+    if len(closes) < needed:
       continue
-    start = closes[-(skip + 1)]
-    end = closes[-(window - skip + 1)]
+    # 12-1 construction: return from `lookback + skip` bars ago forward
+    # to `skip` bars ago, skipping the most recent month.
+    #
+    # The index arithmetic here is easy to invert and was inverted once:
+    # reading `end` from further back than `start` yields old/recent
+    # rather than recent/old, which is mean reversion wearing the label
+    # of momentum and silently buys the worst performer.
+    start = closes[-(lookback + skip + 1)]
+    end = closes[-(skip + 1)]
     if start <= 0.0 or end <= 0.0:
       continue
     scored.append((symbol, end / start - 1.0))
