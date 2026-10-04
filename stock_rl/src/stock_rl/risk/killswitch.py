@@ -37,9 +37,26 @@ switch is tripped, a non-blank reason, and the caller's current metrics,
 which it checks against the same pre-defined conditions. A job that calls
 ``reset('ack')`` on a schedule therefore cannot clear a live drawdown,
 and a job that calls it with a blank reason gets
-:class:`KillSwitchLatched` rather than a cleared switch. Passing no
-metrics is not a loophole: it reads as ``0.0``, which is clear, and that
-is the documented contract rather than a hidden one.
+:class:`KillSwitchLatched` rather than a cleared switch.
+
+**The metrics are required arguments, not defaults.** Every metric
+parameter of :meth:`reset` is keyword-only with a sentinel default that
+is *not a reading*: it means "the caller has not measured this". A
+sentinel that read as ``0.0`` -- clear, no fall, no ban, no latency --
+would make the scheduled ``reset('ack')`` above clear a 25 percent
+drawdown, a 9 percent index fall, a 60-second acknowledgement latency and
+an F&O ban alike, which is precisely the hole the previous paragraph
+claims does not exist. This module's header is what an operator reads
+before deciding whether to clear, so a claim the code contradicts is
+worse than no claim at all. Unmeasured is refused; measured is checked.
+
+PONYTAIL: the set of metrics a clear must supply is derived from the
+recorded trip codes rather than demanded unconditionally, so a caller
+clearing a manual stop passes only a reason. Ceiling: a trip recorded by
+a version of this class before the codes were introduced would carry no
+metric to re-measure, and the clear would then rely on the reason alone.
+Upgrade path: require all four unconditionally and take the refusal cost
+on callers that have nothing to measure, which is honest but noisy.
 
 The thresholds are risk appetite, not law. No Indian instrument
 prescribes a 5 percent index trip or a 15 percent drawdown trip; SEBI
@@ -63,6 +80,7 @@ __all__ = [
   'KillSwitchLatched',
   'KillThresholds',
   'Trip',
+  'Unmeasured',
   'default_state_file',
   'kill_switch_schema',
   'manual_code',
@@ -88,6 +106,58 @@ fno_ban_code = 'fno_ban'
 
 #: Order acknowledgement took longer than the limit allows.
 ack_latency_code = 'ack_latency'
+
+#: The metric each automatic trip code is measured by. A clear must
+#: re-supply a current reading for every code the switch recorded a trip
+#: on, and this table is how the code names the reading.
+metric_for_code: Mapping[str, str] = {
+  index_fall_code: 'index_change',
+  drawdown_code: 'drawdown',
+  fno_ban_code: 'fno_banned',
+  ack_latency_code: 'ack_latency',
+}
+
+
+class Unmeasured:
+  '''Sentinel type for a metric the caller has not supplied.
+
+  Deliberately not a number. A default of ``0.0`` would read as clear on
+  the index, the drawdown *and* the latency, and ``False`` would read as
+  clear on the ban, so every metric's natural default is also the answer
+  for a recovered condition -- and a scheduled ``reset('ack')`` would
+  clear a 25 percent drawdown in one call. A distinct type cannot be
+  mistaken for a reading by any arithmetic downstream, and it is not
+  equal to any number a caller could plausibly pass by accident.
+
+  Attributes:
+    name: The metric this sentinel stands in for, for the refusal
+      message. An instance per metric, so the message can say which
+      reading is missing rather than that something is.
+  '''
+
+  __slots__ = ('name',)
+
+  def __init__(self, name: str) -> None:
+    '''Build the sentinel for one metric.
+
+    Args:
+      name: Name of the metric, as it appears in the signature.
+    '''
+    self.name = name
+
+  def __repr__(self) -> str:
+    '''Return a form that names the missing metric.
+
+    Returns:
+      A repr carrying the metric's name.
+    '''
+    return f'unmeasured({self.name})'
+
+
+#: Default for every metric parameter of :meth:`KillSwitch.reset`. One
+#: instance is shared because it carries no state; the display name in a
+#: refusal comes from the call site, not from the object.
+unmeasured = Unmeasured('metric')
 
 #: Every trip code this module can record. Kept as a tuple so a test can
 #: assert the automatic codes and the manual code all exist, rather than
@@ -578,23 +648,53 @@ class KillSwitch:
   def reset(
     self,
     reason: str,
-    index_change: float = 0.0,
-    drawdown: float = 0.0,
-    fno_banned: bool = False,
-    ack_latency: float | None = None,
+    *,
+    index_change: float = unmeasured,
+    drawdown: float = unmeasured,
+    fno_banned: bool = unmeasured,
+    ack_latency: float | None = unmeasured,
   ) -> None:
     '''Clear the switch, explicitly, with a stated reason.
 
-    Three refusals, in the order a caller meets them, and all of them
+    Four refusals, in the order a caller meets them, and all of them
     loud. This is the only method that can untrip the switch, and it
     demands three things: that the switch is currently tripped, a
     non-blank reason, and the caller's *current* metrics, which it checks
     against the same pre-defined conditions :meth:`evaluate` uses.
 
-    Passing no metrics reads as ``0.0``, which is clear. That is the
-    documented contract, not a loophole: it means the caller is asserting
-    the conditions are resolved, and a caller asserting that falsely is
-    the one thing this cannot detect.
+    **A metric you were not asked for is not an assertion that its
+    condition is clear; it is an absence of the evidence this method
+    exists to demand.** Every metric parameter defaults to the
+    :class:`Unmeasured` sentinel rather than to a clear reading, and the
+    caller must supply a current reading for every condition this switch
+    has actually recorded a trip on -- see
+    :data:`metric_for_code` for how a trip code names its metric.
+
+    The reason the default is a sentinel rather than ``0.0`` is that a
+    clear reading is what every one of these defaults would give for a
+    *recovered* condition: ``0.0`` is clear on the index, ``0.0`` is
+    clear on the drawdown, ``False`` is clear on the ban, and ``None`` is
+    clear on the latency. A default therefore cannot distinguish "I
+    measured it and it is fine" from "I never looked", and a job calling
+    ``reset('ack')`` on a schedule would clear a 25 percent drawdown, a
+    9 percent index fall, a 60-second acknowledgement latency and an F&O
+    ban in one call. That is the exact hole the module header claims is
+    closed, so it is closed here rather than described as closed.
+
+    **Why the trip history, and not all four unconditionally.** The
+    history is the authoritative list of what has to be re-measured,
+    because :meth:`evaluate` records *every* breached condition rather
+    than short-circuiting on the first. A manual trip has no metric, so a
+    human clearing an operator stop needs only the reason; a drawdown
+    trip needs the drawdown and nothing else. A condition that has never
+    tripped is not re-checked from a default, so it is passed to
+    :meth:`breached` as its clear reading -- and if it *has* since
+    tripped, the automatic path has already put its code in the history
+    and the clear now demands its metric.
+
+    ``ack_latency`` is ``None`` when no order is outstanding, which *is*
+    a measurement: the caller has observed there is nothing to wait for.
+    Omitting the argument is what means "did not look".
 
     Args:
       reason: Why a human is clearing it. Persisted with the trip
@@ -607,9 +707,10 @@ class KillSwitch:
 
     Raises:
       KillSwitchLatched: If the switch is not tripped, if the reason is
-        blank, or if any pre-defined condition is still breached. The
-        message names the breached conditions, because the operator's
-        next action depends on which one is the problem.
+        blank, if a metric for a recorded trip was not supplied, or if
+        any pre-defined condition is still breached. The message names
+        which, because the operator's next action depends on which one
+        is the problem.
     '''
     if not self._tripped:
       raise KillSwitchLatched(
@@ -621,8 +722,34 @@ class KillSwitch:
         'clearing the kill switch requires a stated reason; an '
         'unattributed clear is how an automated restart silently re-arms '
         'a halted strategy')
-    breached = self.breached(index_change, drawdown, fno_banned,
-                             ack_latency)
+    given = {
+      'index_change': index_change,
+      'drawdown': drawdown,
+      'fno_banned': fno_banned,
+      'ack_latency': ack_latency,
+    }
+    required = self._required_metrics()
+    missing = tuple(
+      name for name in required
+      if isinstance(given[name], Unmeasured))
+    if missing:
+      raise KillSwitchLatched(
+        'clearing the kill switch requires the current reading of every '
+        'condition this switch tripped on, and these were not measured: '
+        + ', '.join(missing) + '. A default that reads as clear would '
+        'let a scheduled reset(\'ack\') clear a live trip, so an '
+        'unmeasured metric is refused rather than assumed to be zero')
+    # A metric nobody was asked about is checked at its clear reading.
+    # Every condition that has ever tripped is in ``required`` above, so
+    # nothing that could still be live reaches this call unreported.
+    readings = {
+      name: (0.0 if name != 'fno_banned' else False)
+      if isinstance(value, Unmeasured) else value
+      for name, value in given.items()
+    }
+    breached = self.breached(
+      readings['index_change'], readings['drawdown'],
+      readings['fno_banned'], readings['ack_latency'])
     if breached:
       raise KillSwitchLatched(
         'kill switch cannot be cleared while a pre-defined condition is '
@@ -630,6 +757,23 @@ class KillSwitch:
     self._tripped = False
     self._clears.append(reason)
     self._persist()
+
+  def _required_metrics(self) -> tuple[str, ...]:
+    '''Return the metrics a clear must re-supply, from the trip history.
+
+    The history is the authority because :meth:`evaluate` records every
+    breached condition rather than stopping at the first. A manual trip
+    has no metric, so an operator stop needs only the reason.
+
+    Returns:
+      One metric name per distinct automatic trip code on record, in
+      :data:`metric_for_code` order. Empty when only manual trips are on
+      record.
+    '''
+    tripped = {trip.code for trip in self._trips}
+    return tuple(
+      metric for code, metric in metric_for_code.items()
+      if code in tripped)
 
   def guard(self, index_change: float = 0.0, drawdown: float = 0.0,
             fno_banned: bool = False,

@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- No Content-Security-Policy meta tag and no external origins: the page
-     loads only the two sibling files below, which is what lets it run
-     from file:// with no build step and no network at all. -->
+     loads only the two sibling files below and reaches nothing else. The
+     API answers a file:// document's Origin: null header, which is what
+     lets this page run from disk with no build step and no network at
+     all; every other origin is refused, because the API has no
+     authentication. -->
 <title>stock_rl - backtest dashboard</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -78,9 +81,25 @@
         <tr>
           <th scope="col">Symbol</th>
           <th scope="col">Action</th>
-          <th scope="col">Confidence</th>
+          <th scope="col">Rank pctile</th>
           <th scope="col">Weight</th>
           <th scope="col">Reason</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card wide">
+    <h2>Book</h2>
+    <p class="muted" id="positions-note"></p>
+    <table id="positions">
+      <thead>
+        <tr>
+          <th scope="col">Symbol</th>
+          <th scope="col">Held</th>
+          <th scope="col">Target</th>
+          <th scope="col">Value</th>
         </tr>
       </thead>
       <tbody></tbody>

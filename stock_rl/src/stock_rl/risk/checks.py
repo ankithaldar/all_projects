@@ -3,7 +3,7 @@
 
 '''NSE pre-trade RMS checks, operational modalities para 11.1.
 
-Fourteen of the sixteen checks in NSE Detailed Operational Modalities
+Fifteen of the sixteen checks in NSE Detailed Operational Modalities
 para 11.1 are implemented here. Two are deliberately absent, and naming
 them is more useful than pretending the list is covered:
 
@@ -15,6 +15,16 @@ them is more useful than pretending the list is covered:
     meaning in the equity segment this project trades, and an
     implementation that accepted a commodity flag would be inventing a
     control.
+
+**The fifteenth check is affordability, and it is ours rather than the
+exchange's.** Nothing in para 11.1 asks an RMS whether the client can pay
+for the order; every other check asks whether the exchange will let it
+through. That gap is why a sizer can size four names to the whole of
+capital and watch the cash balance go negative: every check passes,
+because "the order is legal" and "the order is payable" are different
+questions. :attr:`AccountState.cash` exists so the second question can be
+asked here as well, and :func:`stock_rl.weights.affordable_scale` is what
+the sizer uses to answer it before an order is ever built.
 
 SEBI 2012 circular para 6(i)-(v) is the shorter, harder list underneath
 NSE's sixteen, and it is the list that matters: price band, quantity,
@@ -35,6 +45,17 @@ and an absence. Concretely:
     for algo clients is not even representable;
   * there is no third status. A check returns ``'pass'`` or
     ``'reject'``, and the reason string says which and why.
+
+**One check cannot be made, and says so instead of guessing.** The
+affordability check needs a cash balance. :attr:`AccountState.cash` is
+``None`` on a ledger that does not carry one, and the check then reports
+that it could not be made rather than inventing a denominator. That is
+the only departure from fail-closed in this module, and the reason is
+that the two available guesses are both worse than no answer: reading a
+missing balance as zero rejects every order, and reading it as unlimited
+reinstates exactly the bug the check exists to catch. The sizer's own
+affordability guard is what bounds the size in that case, and it does not
+consult this ledger.
 
 **Market orders are prohibited outright for algo orders** in the equity
 segment (NSE/MSD/67753 8.1.1.12, restated in the corrections doc). This
@@ -58,6 +79,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+
+from stock_rl.costs import DELIVERY, CostModel, Side
 
 __all__ = [
   'AccountState',
@@ -118,6 +141,7 @@ check_ids: tuple[str, ...] = (
   'price_band',
   'order_quantity',
   'order_value',
+  'affordability',
   'trade_price_protection',
   'algo_market_order',
   'cumulative_open_order_value',
@@ -499,7 +523,7 @@ class RmsLimits:
         f'bad_ticket_pct must be in (0, 1), got {self.bad_ticket_pct}')
 
 
-# The state an RMS reads is genuinely eight numbers, and every one of
+# The state an RMS reads is genuinely nine numbers, and every one of
 # them is an independent figure reported by a different upstream system.
 # Splitting it into nested dataclasses would add indirection without
 # making any of the numbers harder to get wrong, so the count is
@@ -515,6 +539,19 @@ class AccountState:
   computed from a self-reported ledger would be a check of nothing.
 
   Attributes:
+    cash: Cash available to fund purchases, in rupees, or None for a
+      ledger that carries no cash balance. **This field is what makes an
+      order's affordability checkable at all.** Without it every check in
+      this module asks only whether the exchange will permit an order,
+      never whether the account can pay for it, so a book sized to a
+      hundred percent of capital passes every check and borrows at zero
+      interest to settle.
+
+      None is a real value and is not read as zero. A ledger with no
+      cash figure is not a ledger with no cash, and treating it as the
+      latter rejects every order in the system; treating it as infinite
+      reinstates the bug. The affordability check reports that it could
+      not be made, and the sizer's own guard is what bounds the size.
     open_order_value: Value of live unexecuted orders, in rupees.
     executed_value: Value executed in the session and confirmed, rupees.
     unconfirmed_value: Value executed but not yet confirmed, rupees.
@@ -527,6 +564,7 @@ class AccountState:
       spent rather than unlimited headroom.
   '''
 
+  cash: float | None = None
   open_order_value: float = 0.0
   executed_value: float = 0.0
   unconfirmed_value: float = 0.0
@@ -563,12 +601,14 @@ class RmsChecker:
 
   limits: RmsLimits
   securities: Mapping[str, SecurityLimits]
+  costs: CostModel
 
   def __init__(
     self,
     limits: RmsLimits,
     securities: Mapping[str, SecurityLimits],
     banned: frozenset[str] = frozenset(),
+    costs: CostModel = DELIVERY,
   ) -> None:
     '''Build a checker from limits and venue data.
 
@@ -580,6 +620,10 @@ class RmsChecker:
       banned: Symbols under an F&O ban. Exchange-published and
         refreshed by the caller; this module does not fetch it, because
         a ban list that is stale rather than absent is the failure mode.
+      costs: Rate card for the affordability check, so the amount an
+        order costs to settle is priced rather than assumed away.
+        Defaults to :data:`stock_rl.costs.DELIVERY`, the same model the
+        allocator uses.
 
     Raises:
       ValueError: If the venue map is empty or a key disagrees with its
@@ -601,10 +645,12 @@ class RmsChecker:
     self.limits = limits
     self.securities = dict(securities)
     self.banned = frozenset(banned)
+    self.costs = costs
     self._checks: tuple[tuple[str, Check], ...] = (
       ('price_band', self._price_band),
       ('order_quantity', self._order_quantity),
       ('order_value', self._order_value),
+      ('affordability', self._affordability),
       ('trade_price_protection', self._trade_price_protection),
       ('algo_market_order', self._algo_market_order),
       ('cumulative_open_order_value', self._cumulative_open_order_value),
@@ -793,6 +839,74 @@ class RmsChecker:
       'order_value', passed_status,
       f'order value {value} within per-order limit of {limit}',
       value, limit, 'SEBI 2012 para 6(iii); NSE 11.1')
+
+  def _affordability(self, order: OrderRequest, account: AccountState,
+                     security: SecurityLimits) -> CheckResult:
+    '''Check the order against the cash balance on the ledger.
+
+    **This is the check the other thirteen cannot make.** Every other one
+    asks whether the exchange will permit the order; this one asks
+    whether the account can pay for it. They are different questions and
+    only one of them is about solvency, so a book sized to a hundred
+    percent of capital clears every exchange limit and still ends the day
+    with a negative cash balance and an unpriced borrowing.
+
+    The charges are included because the cost of *not* charging them is
+    exactly this bug: four names at a quarter of capital each spend the
+    whole mark, and the delivery charges then come out of nothing. An
+    order is payable when its value plus its charges fits inside the
+    ledger's cash.
+
+    A ledger carrying no cash figure gets a pass that says so, rather
+    than a pass that implies the question was answered. The two
+    available guesses are both worse than no answer: reading a missing
+    balance as zero rejects every order in the system, and reading it as
+    unlimited reinstates the bug this check exists to catch.
+
+    A sell releases cash rather than consuming it, so it cannot be
+    unaffordable. A short is a margin question, and the margin item of
+    para 11.1 is deliberately not implemented here; the reason string
+    names that rather than pretending the position was checked.
+
+    Args:
+      order: Order under test.
+      account: The account's current ledger.
+      security: Unused; present for the uniform check signature.
+
+    Returns:
+      The check result.
+    '''
+    del security
+    source = 'SEBI 2012 para 6(i) funding; affordability'
+    cash = account.cash
+    if cash is None:
+      return CheckResult(
+        'affordability', passed_status,
+        'this ledger carries no cash balance, so affordability could not be '
+        'computed; it is not assumed in either direction and the sizer '
+        'bounds the size against the cost model instead',
+        0.0, 0.0, source)
+    if order.side != buy:
+      return CheckResult(
+        'affordability', passed_status,
+        f'a {order.side} order releases cash rather than consuming it, so '
+        'there is no affordability question; funding a short is a margin '
+        'question, which this ledger does not carry',
+        order.value, cash, source)
+    charges = self.costs.one_way(Side.BUY, order.value)
+    total = order.value + charges
+    if total > cash:
+      return CheckResult(
+        'affordability', rejected_status,
+        f'order value {order.value:.2f} plus {charges:.2f} of charges is '
+        f'{total:.2f}, beyond the cash balance of {cash:.2f}; this order '
+        'cannot be paid for',
+        total, cash, source)
+    return CheckResult(
+      'affordability', passed_status,
+      f'order value {order.value:.2f} plus {charges:.2f} of charges is '
+      f'{total:.2f}, within the cash balance of {cash:.2f}',
+      total, cash, source)
 
   def _trade_price_protection(self, order: OrderRequest,
                               account: AccountState,

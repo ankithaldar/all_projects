@@ -488,10 +488,11 @@ _sector_inputs: dict[str, tuple[str, ...]] = {
 #: direct inputs, 2 macro chains and 5 event edges. The review sizes a
 #: Nifty-50 dependency graph at ~300-2000 static edges, so the seed sits
 #: at about a **quarter of the stated low end**, not near it. That is a
-#: known and deliberate gap, stated here rather than implied: 29 of the
-#: 50 starter symbols carry no direct input at all beyond their sector,
-#: and a reviewer who wants a denser graph should add rows here and say
-#: why. :attr:`DependencyGraph.edge_budget_exceeded` still trips at 2000.
+#: known and deliberate gap, stated here rather than implied: the table
+#: covers 14 of the 29 starter symbols, so 15 carry no direct input at
+#: all beyond their sector, and a reviewer who wants a denser graph
+#: should add rows here and say why.
+#: :attr:`DependencyGraph.edge_budget_exceeded` still trips at 2000.
 _stock_inputs: dict[str, tuple[str, ...]] = {
   'ASIANPAINT': ('crude',),
   'BHARTIARTL': ('usdinr',),

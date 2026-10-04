@@ -155,12 +155,28 @@ class CircuitBand:
   def __post_init__(self) -> None:
     '''Validate the band shape at construction.
 
+    The no-trade window is measured inward from **both** edges, so it is
+    validated against ``min(lower_pct, upper_pct)`` rather than against
+    one side. A one-sided band is legal -- ``lower_pct`` of 0.0 is how a
+    scrip with only an upper circuit is expressed -- and checking the
+    window against ``upper_pct`` alone accepted ``CircuitBand(0.0, 0.20,
+    no_trade_pct=0.15)``, whose window runs from 115 down to 105. A
+    shortened chain still verifies clean, and so does a chain that is
+    internally consistent but shorter than it was; a window that crosses
+    over itself is the same class of error, and it makes
+    :func:`classify` report the wrong side of the market.
+
+    A **zero** window is exempt from that comparison. ``lower_pct`` of
+    ``0.0`` is how a one-sided band is expressed, and a band with no
+    window at all has nothing to cross over, so refusing it would make
+    the one-sided band unrepresentable for no gain.
+
     Raises:
       ValueError: If any percentage is negative, the band is not
-        positive on the upper side, the no-trade window is wider than
-        the band, or the tick is not positive. A no-trade window wider
-        than its own band would swallow normal trading, which is a
-        configuration error rather than a conservative setting.
+        positive on the upper side, a non-zero no-trade window is at
+        least as wide as the narrower of the two bands, or the tick is
+        not positive. A window that swallows normal trading on one side
+        is a configuration error rather than a conservative setting.
     '''
     for name in ('lower_pct', 'upper_pct', 'no_trade_pct'):
       value = getattr(self, name)
@@ -169,10 +185,25 @@ class CircuitBand:
     if self.upper_pct <= 0.0:
       raise ValueError(
         f'upper_pct must be positive, got {self.upper_pct}')
-    if self.no_trade_pct >= self.upper_pct:
+    # The window is measured inward from BOTH edges, so it has to fit
+    # inside the NARROWER of the two bands. Comparing it to upper_pct
+    # alone is what let an asymmetric band carry an inverted window:
+    # lower_pct of 0.0 is a legal one-sided band, and against an
+    # upper_pct of 0.20 a window of 0.15 passed the check while running
+    # from 115 up to 105. Every price between those two was then tested
+    # against the lower edge first, so a price near the top of the band
+    # came back no_trade_lower and any caller branching on the state
+    # acted on the wrong side of the market.
+    narrower = min(self.lower_pct, self.upper_pct)
+    if self.no_trade_pct > 0.0 and self.no_trade_pct >= narrower:
+      side = 'lower_pct' if self.lower_pct <= self.upper_pct \
+        else 'upper_pct'
       raise ValueError(
         f'no_trade_pct {self.no_trade_pct} must be narrower than '
-        f'upper_pct {self.upper_pct}, or normal trading is unreachable')
+        f'{side} {narrower}, which is the narrower band; a window at or '
+        'beyond it swallows normal trading on one side and, measured '
+        'inward from both edges, crosses over itself so that the top of '
+        'the band reads as the bottom')
     if self.tick <= 0.0:
       raise ValueError(f'tick must be positive, got {self.tick}')
 

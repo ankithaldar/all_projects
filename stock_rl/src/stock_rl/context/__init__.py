@@ -77,9 +77,10 @@ if TYPE_CHECKING:
   # binding a function to it is the defect this package just fixed. The
   # module is itself callable and delegates to ``fuse_vector``, so
   # ``from stock_rl.context import fuse; fuse(ctx)`` runs -- but a static
-  # analyser cannot see a ``sys.modules[...].__class__`` assignment, so
-  # the alias is declared here for type checkers and linters only. It is
-  # never true at runtime, so it shadows nothing.
+  # analyser cannot see a ``sys.modules[...].__class__`` assignment and
+  # would call the module "not callable", so the alias is declared here
+  # for type checkers and linters only. It is never true at runtime, so
+  # it shadows nothing.
   fuse = fuse_vector
 
 __all__ = [

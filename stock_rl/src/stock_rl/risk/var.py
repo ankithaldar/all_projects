@@ -95,6 +95,14 @@ min_confidence = 0.5
 #: one-observation estimate wearing a confidence level as a hat.
 max_confidence = 0.999
 
+#: Relative slack allowed on a Cholesky pivot before it is read as
+#: negative. Set well above double-precision rounding on a scale-1
+#: matrix and well below the negative pivots a genuinely indefinite
+#: matrix produces. Without it, a singular sample covariance -- two
+#: identical return series give an exactly rank-1 matrix -- would be
+#: refused for a pivot that is zero rather than negative.
+pivot_tolerance = 1e-12
+
 #: Normal distribution reused for the quantile function. ``NormalDist``
 #: is the standard library's rational approximation, accurate to about
 #: 1e-15, and it means this module does not carry its own inverse normal
@@ -469,15 +477,48 @@ def portfolio_variance(weights: Sequence[float],
   shrunk matrix -- the only kind worth using -- this is well behaved; the
   eigenvector shortcut is a performance trick this project does not need.
 
+  **A negative quadratic form raises. It is not floored to zero.**
+
+  Flooring was how the "never negative" promise was kept, and it is the
+  worst possible answer in a variance estimator. The way a shrinkage or
+  Ledoit-Wolf step goes wrong in practice is by producing a matrix that
+  is not positive semi-definite; for a weight vector that exposes the
+  indefiniteness, ``w' Sigma w`` is negative, and ``max(0.0, total)``
+  answers that with a portfolio carrying *no risk at all*. No error, no
+  warning, and a book that reports zero volatility while the estimator
+  feeding it is broken. :func:`var_from_returns` then quotes
+  ``tail_gap=0`` and ``coherent()=True``, because those are properties of
+  the numbers it was handed.
+
+  Raising names the failure where it can still be traced to the estimator
+  that produced it. A caller that genuinely wants a non-negative floor --
+  for instance to survive a near-singular matrix whose smallest
+  eigenvalue is negative by rounding -- can apply it at the call site,
+  where it is visible. A floor applied here is not.
+
+  **Checking the quadratic form alone is not enough**, which is worth
+  stating because it looks sufficient. An indefinite matrix has *some*
+  weight vector giving a negative variance, not all of them: the test
+  matrix ``[[0.03, 0.05], [0.05, -0.03]]`` is indefinite and returns
+  ``+0.025`` at ``[0.5, 0.5]``, because that direction happens to align
+  with the positive eigenvector. Refusing only negative forms therefore
+  lets half of every indefinite matrix straight through, and the half it
+  lets through is the half that reports no risk. So the matrix itself is
+  checked, via :func:`_is_positive_semidefinite`.
+
   Args:
     weights: Portfolio weight per asset, aligned with the matrix.
     covariance: Covariance matrix as nested sequences.
 
   Returns:
-    Portfolio variance, never negative.
+    Portfolio variance, never negative and never floored: a covariance
+    that is not positive semi-definite, or that produces a negative
+    variance here, is refused.
 
   Raises:
-    ValueError: If the shapes disagree.
+    ValueError: If the shapes disagree, the matrix is not symmetric, the
+      matrix is not positive semi-definite, or the quadratic form is
+      negative for the given weights.
   '''
   size = len(weights)
   if len(covariance) != size or any(
@@ -485,11 +526,99 @@ def portfolio_variance(weights: Sequence[float],
     raise ValueError(
       f'weights of {size} do not match a {len(covariance)}x'
       f'{len(covariance[0]) if covariance else 0} covariance')
+  if not _is_positive_semidefinite(covariance):
+    raise ValueError(
+      f'the {size}x{size} covariance matrix is not positive '
+      'semi-definite, so it has a direction in which the portfolio '
+      'variance is negative. A variance estimator that answers this with '
+      'zero reports a book with no risk at all, so the matrix is refused '
+      'and named rather than clamped')
   total = 0.0
   for i in range(size):
     for j in range(size):
       total += weights[i] * covariance[i][j] * weights[j]
-  return max(0.0, total)
+  if total < 0.0:
+    raise ValueError(
+      f'portfolio variance is {total:.6g}, which is negative. A '
+      'positive semi-definite matrix cannot produce that, so the input '
+      'is not a covariance matrix at these weights')
+  return total
+
+
+def _is_positive_semidefinite(matrix: Sequence[Sequence[float]]) -> bool:
+  '''Return whether a square matrix is positive semi-definite.
+
+  Cholesky without pivoting, which is exact for a symmetric
+  positive-semi-definite matrix: every pivot is a Schur complement and is
+  therefore non-negative. A pivot that comes out negative means the
+  matrix has a negative eigenvalue, and the function returns False at
+  that point rather than finishing a factorisation that does not exist.
+
+  A pivot within ``_pivot_tolerance`` of zero is a direction the matrix
+  is flat in, which is legal for a PSD matrix and is what a singular
+  sample covariance almost always is -- two assets with identical return
+  series give a rank-1 matrix whose second pivot is exactly zero. It is
+  clamped to zero and the factorisation continues past it.
+
+  PONYTAIL: this is O(n cubed) per call and recomputed on every
+  :func:`portfolio_variance`, which is fine for a 30-name book sized a
+  handful of times a session and wrong for anything per-bar. It is also a
+  ~30 line reimplementation of LAPACK's ``dpstrf``, because the project
+  takes no runtime dependencies. Ceiling: it allocates two n-by-n
+  working copies, it is unpivoted, and it verifies symmetry rather than
+  repairing an asymmetric input. Upgrade path: factor once in the
+  estimator that owns the matrix (:func:`covariance_matrix`, or a
+  shrinkage step upstream) and pass the factorisation in, or adopt numpy
+  when the no-dependency rule is retired.
+
+  Args:
+    matrix: Square matrix as nested sequences.
+
+  Returns:
+    True when the matrix is symmetric and every pivot is non-negative
+    within tolerance, False otherwise. An empty matrix is trivially
+    positive semi-definite.
+  '''
+  size = len(matrix)
+  if size == 0:
+    return True
+  original = [[float(value) for value in row] for row in matrix]
+  # L, the Cholesky factor under construction. Kept apart from
+  # ``original`` rather than written in place: the factorisation reads
+  # the *original* Schur complements, so overwriting the input with the
+  # factor is the classic way to get a silently wrong pivot sequence.
+  factor = [[0.0] * size for _ in range(size)]
+  scale = max((abs(original[i][j])
+               for i in range(size) for j in range(size)), default=0.0)
+  tolerance = pivot_tolerance * max(1.0, scale)
+  for i in range(size):
+    for j in range(i + 1, size):
+      if abs(original[i][j] - original[j][i]) > tolerance:
+        return False
+  for k in range(size):
+    # The pivot is the Schur complement: the original diagonal minus
+    # everything the already-factored columns of this row have claimed.
+    # ``factor[k][j]`` holds L[k][j] for j < k, kept separately from
+    # ``working`` so the two are never confused.
+    pivot = original[k][k] - sum(
+      factor[k][j] ** 2 for j in range(k))
+    if pivot < -tolerance:
+      return False
+    if pivot <= tolerance:
+      # A flat direction, which a singular PSD matrix always has. Zero
+      # the row of L and continue against the projection; the remaining
+      # pivots are then computed for the subspace orthogonal to it.
+      for i in range(k + 1, size):
+        factor[i][k] = 0.0
+      factor[k][k] = 0.0
+      continue
+    root = math.sqrt(pivot)
+    factor[k][k] = root
+    for i in range(k + 1, size):
+      offset = original[i][k] - sum(
+        factor[i][j] * factor[k][j] for j in range(k))
+      factor[i][k] = offset / root
+  return True
 
 
 def portfolio_var(
@@ -510,19 +639,27 @@ def portfolio_var(
   Args:
     weights: Portfolio weight per asset.
     covariance: Covariance matrix as nested sequences.
-    mean: Mean periodic return per asset. Defaults to zero drift, which
-      is the conservative choice: assuming a positive mean would shrink
-      every VaR by a number the sample may not support.
+    mean: Mean periodic return per asset, one per weight. Defaults to
+      empty, which is zero drift, and is the conservative choice:
+      assuming a positive mean would shrink every VaR by a number the
+      sample may not support.
     confidence: Tail confidence.
 
   Returns:
     Loss as a positive fraction, ``0.0`` on a zero-variance portfolio.
 
   Raises:
-    ValueError: If the shapes disagree or the confidence is
+    ValueError: If the shapes disagree, or the confidence is
       unsupported.
   '''
   _require_confidence(confidence)
+  if mean and len(mean) != len(weights):
+    raise ValueError(
+      f'mean has {len(mean)} entries for {len(weights)} weights: the '
+      'drift vector is read one per asset, so a short vector raises an '
+      'IndexError from the summation several lines below and a long one '
+      'is silently truncated. Both hide a shape disagreement that this '
+      'call site is the right place to name')
   variance = portfolio_variance(weights, covariance)
   if variance <= 0.0:
     return 0.0

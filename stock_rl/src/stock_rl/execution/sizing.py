@@ -57,6 +57,7 @@ import math
 from math import isfinite
 from dataclasses import dataclass
 
+from stock_rl.costs import DELIVERY, CostModel
 from stock_rl.risk.checks import (
   AccountState,
   OrderRequest,
@@ -65,6 +66,7 @@ from stock_rl.risk.checks import (
   RmsChecker,
   buy,
 )
+from stock_rl.weights import affordable_scale, clamp_weight
 
 __all__ = [
   'RiskCapBreach',
@@ -123,12 +125,32 @@ def kelly_fraction(prob_win: float, win_loss_ratio: float) -> float:
     the bet has no edge; it is returned rather than clamped so the caller
     sees the sign instead of a zero it has to interpret.
 
+  A **non-finite payoff ratio returns ``0.0``**, which is this
+    function's own existing answer for "no measurable edge" -- the same
+    number a break-even ratio produces. It does not raise, and that is a
+    deliberate departure from the guard on :func:`vol_target_fraction`, so
+    it is worth naming.
+
+    The reason is which way a NaN leaks. ``max(0.0, nan)`` returns
+    ``0.0`` and ``min(cap, nan)`` returns ``cap``, because ``nan < cap``
+    is False and ``min`` keeps its incumbent. So a NaN ratio would leave
+    this function and reach ``min(max_fraction, ...)`` as the *largest*
+    fraction the module permits -- the worst available answer, produced
+    from an input that means nothing. ``0.0`` is a real size, it flows
+    into a zero-quantity result, and it never becomes an order. An
+    undefined ratio has no measurable edge, and "no measurable edge" is
+    already this function's documented answer rather than a new case.
+
   Raises:
-    ValueError: If the probability is outside ``[0, 1]`` or the payoff
-      ratio is not positive.
+    ValueError: If the probability is outside ``[0, 1]``, or the payoff
+      ratio is a non-positive real number. A zero or negative odds is a
+      caller error with a fix, so it raises; an undefined one is not a
+      fixable error but an absent measurement.
   '''
   if not 0.0 <= prob_win <= 1.0:
     raise ValueError(f'prob_win must be in [0, 1], got {prob_win}')
+  if not isfinite(win_loss_ratio):
+    return 0.0
   if win_loss_ratio <= 0.0:
     raise ValueError(
       f'win_loss_ratio must be positive, got {win_loss_ratio}')
@@ -367,6 +389,7 @@ class StockSizer:
     capital: float,
     lot_size: int = 1,
     cap: float = max_fraction,
+    costs: CostModel = DELIVERY,
   ) -> None:
     '''Build a sizer over an existing checker.
 
@@ -375,6 +398,11 @@ class StockSizer:
       capital: Capital base in rupees.
       lot_size: Exchange lot size, at least 1.
       cap: Ceiling on any size as a fraction of capital.
+      costs: Rate card used by the affordability guard, so the charges
+        that leave the account alongside the notional are priced rather
+        than assumed to be zero. Defaults to
+        :data:`stock_rl.costs.DELIVERY`, the rate card the allocator
+        prices with.
 
     Raises:
       ValueError: If the capital is not finite and positive, the lot size
@@ -390,6 +418,7 @@ class StockSizer:
     self.capital = capital
     self.lot_size = lot_size
     self.cap = cap
+    self.costs = costs
 
   def size(
     self,
@@ -410,6 +439,14 @@ class StockSizer:
     approves. There is no path here that produces an order the RMS has
     not seen, which is the property that makes this a control rather
     than a report.
+
+    **The intended notional is scaled to what the account can pay before
+    any of that.** The cap bounds the position; it says nothing about
+    the charges, and a book that spends the whole mark on notional pays
+    the charges out of nothing. :func:`stock_rl.weights.affordable_scale`
+    is applied to the intended quantity against the remaining cash, and
+    the smaller order is what the RMS sees and what
+    :attr:`SizingResult.notional` reports.
 
     Args:
       symbol: Symbol to size.
@@ -437,9 +474,11 @@ class StockSizer:
       raise ValueError(
         f'price must be positive; a size cannot be computed from '
         f'{price}')
-    fraction = min(self.cap, inputs.fraction(method))
-    notional = self.capital * fraction
-    quantity = self._whole_lots(notional / price)
+    fraction = clamp_weight(inputs.fraction(method), self.cap)
+    budget = self.capital * fraction
+    intended = self._whole_lots(budget / price)
+    quantity = self._affordable_quantity(
+      symbol, price, side, intended, budget, account)
     if quantity < 1:
       return SizingResult(
         symbol=symbol, side=side, fraction=fraction, quantity=0,
@@ -466,6 +505,77 @@ class StockSizer:
       order=order,
       report=report,
     )
+
+  def _affordable_quantity(self, symbol: str, price: float, side: str,
+                           intended: int, budget: float,
+                           account: AccountState) -> int:
+    '''Return the intended quantity scaled to what the account can pay for.
+
+    **The cap is a position limit, not a funding limit.** It answers "how
+    much may this position be", never "can the account pay for it", and
+    those are different questions: the charges leave the account
+    alongside the notional. Four names at :data:`max_fraction` therefore
+    commit the whole mark *as notional* and then owe the delivery
+    charges on top of it, which is unpriced borrowing -- invisible on a
+    flat series and free leverage on a rising one.
+
+    The budget this scales against is the slice of capital this order may
+    commit, i.e. ``capital * fraction``, not the whole account. Scaling
+    against the whole account instead would leave every one of the four
+    names individually affordable and the book as a whole over-spent,
+    which is the bug in a different guise: ``affordable_scale`` answers
+    "what can this *set* of deltas afford", so the cash passed to it must
+    be the cash this set may consume.
+
+    When the ledger carries a cash balance, that balance is the tighter of
+    the two and wins. A ledger with none is not read as zero -- see
+    :attr:`~stock_rl.risk.checks.AccountState.cash` -- so the slice is
+    used, which is the conservative reading in the sense that matters:
+    four capped names still sum to no more than the mark.
+
+    PONYTAIL: this sizes ONE order against its own slice, so N callers
+    each sizing N-th of capital is bounded but a caller that ignores the
+    cap and sizes one huge order still gets the whole slice rather than
+    what is left after the earlier ones. Ceiling: no shared running
+    ledger, deliberately, because a stateful sizer would size against a
+    stale snapshot exactly as silently as before. Upgrade path: have the
+    caller pass a populated ``AccountState(cash=...)`` -- the RMS already
+    reads it, and this guard already prefers it -- rather than teaching
+    the sizer to remember.
+
+    **A sell is never scaled.** Selling releases cash rather than
+    consuming it, and the funding question for a short is a margin
+    question this ledger does not carry. Scaling a sell down would make
+    the module conservative in the one direction where the arithmetic has
+    nothing to say, and would silently refuse an exit.
+
+    Args:
+      symbol: Symbol being sized.
+      price: Limit price.
+      side: :data:`~stock_rl.risk.checks.buy` or its opposite.
+      intended: Quantity the sizing rule asked for, in whole lots.
+      budget: Cash this order may commit, in rupees.
+      account: The account ledger the affordability check will also read.
+
+    Returns:
+      A quantity in whole lots, never above ``intended`` and never
+      negative.
+
+    Raises:
+      ValueError: If the price is not positive. The guard below would
+        divide by it, and a zero price would produce a division error
+        three lines away from the mistake.
+    '''
+    if price <= 0.0:
+      raise ValueError(
+        f'price must be positive; affordability cannot be scaled from '
+        f'{price}')
+    if intended < 1 or side != buy:
+      return max(0, intended)
+    cash = budget if account.cash is None else min(budget, account.cash)
+    scale = affordable_scale(cash, {symbol: price}, {symbol: intended},
+                             self.costs)
+    return max(0, self._whole_lots(intended * scale))
 
   def _whole_lots(self, units: float) -> int:
     '''Return a whole number of lots, rounded down.

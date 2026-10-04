@@ -126,6 +126,7 @@ from stock_rl.risk.var import (
   portfolio_var,
   portfolio_variance,
   var_from_returns,
+  z_score,
 )
 from stock_rl.weights import affordable_scale, clamp_weight
 
@@ -375,26 +376,54 @@ class TestTheSizerCannotOverspend:
       .quantity
       for name in symbols
     }
-    affordable = affordable_scale(
-      capital, {name: unit_price for name in symbols}, wanted, DELIVERY)
+    prices = {name: unit_price for name in symbols}
+    # The sizer applies the guard itself, so the book it hands back is
+    # one the account can already pay for and running the guard over it
+    # again is a no-op. That is the invariant, and it is the *opposite*
+    # of what the sizer returned before the fix: it returned 1.0 then
+    # too, but because nothing had been asked of it.
+    assert affordable_scale(capital, prices, wanted, DELIVERY) == 1.0, (
+      'the sizer handed back a book that still needs scaling, so the '
+      'affordability guard is not being applied where the size is '
+      'computed')
+    # And the guard arithmetic is still sound on a book that does
+    # overspend, so the assertion above is not passing because the guard
+    # is a no-op on everything. Doubling the deltas is unaffordable, and
+    # the scale it picks must bring it back inside the mark.
+    doubled = {name: quantity * 2 for name, quantity in wanted.items()}
+    affordable = affordable_scale(capital, prices, doubled, DELIVERY)
     assert affordable < 1.0, (
-      'sanity: these deltas are genuinely unaffordable, so '
+      'sanity: the doubled deltas are genuinely unaffordable, so '
       f'affordable_scale returned {affordable!r}')
-    total = sum(wanted[name] * unit_price * affordable
+    total = sum(doubled[name] * prices[name] * affordable
                 for name in symbols)
     charges = sum(
-      DELIVERY.one_way(Side.BUY, wanted[name] * unit_price * affordable)
+      DELIVERY.one_way(Side.BUY, doubled[name] * prices[name] * affordable)
       for name in symbols)
     assert total + charges <= capital, (
       'even at the scale affordable_scale picked the book overspends, so '
       'the guard arithmetic itself is wrong')
 
-  def test_the_account_state_the_rms_reads_has_no_cash(self):
-    # Documentation of the structural half of the finding: the pre-trade
-    # layer cannot police affordability because it is never told the cash.
-    assert 'cash' not in AccountState.__dataclass_fields__, (
-      'AccountState now carries a cash field; this finding is about what '
-      'the sizer and the RMS can see, and the test needs revisiting')
+  def test_the_account_state_the_rms_reads_carries_cash(self):
+    # The structural half of the finding, asserted in the fixed world:
+    # the pre-trade layer can only police affordability if it is told
+    # what the account holds. Before the fix there was no cash field, so
+    # the guard had nothing to read.
+    assert 'cash' in AccountState.__dataclass_fields__, (
+      'AccountState carries no cash field, so the affordability check has '
+      'nothing to read and no order can ever be refused for being '
+      'unpayable')
+    report = make_checker().check(make_order('aaa', 100, price=unit_price),
+                                  AccountState(cash=1_000.0))
+    result = report.result('affordability')
+    assert not result.passed, (
+      'a 10,000-rupee order against a 1,000-rupee cash balance passed the '
+      'affordability check')
+    assert 'cash balance' in result.reason
+    affordable = make_checker().check(
+      make_order('aaa', 5, price=unit_price), AccountState(cash=1_000.0))
+    assert affordable.result('affordability').passed, (
+      'a 500-rupee order inside a 1,000-rupee balance was refused')
 
   def test_the_sizer_module_never_reaches_for_the_cash_guard(self):
     text = (Path(__file__).resolve().parents[1] / 'src' / 'stock_rl' /
@@ -574,15 +603,24 @@ class TestTheNoTradeWindowCanBeInverted:
       CircuitBand(lower_pct=0.0, upper_pct=0.20, no_trade_pct=0.15)
 
   def test_a_price_near_the_upper_band_is_not_a_lower_halt(self):
-    band = CircuitBand(lower_pct=0.0, upper_pct=0.20, no_trade_pct=0.15)
-    try:
-      state = classify(110.0, 100.0, band)
-    except ValueError:
-      return
-    assert state != no_trade_lower, (
-      'a price of 110.00 is inside the upper half of an 100.00-120.00 '
-      f'band and was classified {state!r}; the no-trade window is measured '
-      'against the lower edge only and the two windows have crossed over')
+    # Written against the fixed contract rather than the old one. The
+    # band that used to carry an inverted window is refused outright by
+    # the sibling test above, so there is nothing left to classify; what
+    # this asserts is the property that refusal exists to guarantee, over
+    # every band that *is* accepted. The widest legal window for this
+    # one-sided band is 0.0, because its narrower side is the lower one.
+    band = CircuitBand(lower_pct=0.0, upper_pct=0.20, no_trade_pct=0.0)
+    assert classify(110.0, 100.0, band) == normal, (
+      'a price of 110.00 is inside the upper half of a 100.00-120.00 band '
+      'with no no-trade window configured and must trade normally')
+    # And with a window that does fit, the upper half is still the upper
+    # half: a symmetric band is the only way to have a real window on
+    # both edges, and the price near the top reads as the top.
+    two_sided = CircuitBand(lower_pct=0.20, upper_pct=0.20,
+                            no_trade_pct=0.15)
+    assert classify(110.0, 100.0, two_sided) != no_trade_lower, (
+      'a price of 110.00 is inside the upper half of a 80.00-120.00 band '
+      f'and was classified {classify(110.0, 100.0, two_sided)!r}')
 
   def test_the_window_is_never_wider_than_the_band_it_lives_in(self):
     for lower in (0.0, 0.05, 0.10, 0.15, 0.20):
@@ -614,33 +652,77 @@ class TestTheNoTradeWindowCanBeInverted:
 # ---------------------------------------------------------------------------
 
 class TestZeroVolatilityIsNotThePromisedZero:
-  '''The module header: "Zero volatility returns 0.0, never NaN ...
-  :func:`parametric_var` and :func:`portfolio_var` both return ``0.0``
-  on a zero-volatility input for that reason."
+  '''Zero volatility is deterministic, so its VaR is the drift.
 
-  ``parametric_var`` returns ``-(mean - 0)``, which is ``-mean``. For a
-  drifting series that is a negative VaR, i.e. a gain, reported by a
-  function whose whole subject is tail loss; for a falling series it is a
-  positive loss equal to the drift with no dispersion behind it at all.
-  ``portfolio_var`` short-circuits on ``variance <= 0.0`` and does return
-  0.0, so the two halves of one sentence disagree.
+  **These tests were written against a module header that was wrong, and
+  the header has been corrected rather than the function.** The header
+  claimed: "Zero volatility returns 0.0, never NaN ... ``parametric_var``
+  and ``portfolio_var`` both return ``0.0`` on a zero-volatility input
+  for that reason." Only the ``portfolio_var`` half was ever true.
+
+  ``parametric_var`` returns ``-(mean - z * 0)``, which is ``-mean``, and
+  that is the truthful answer. A series with no dispersion returned
+  exactly ``mean`` in every period, so a mean of ``+0.01`` means every
+  period was a 1 percent gain and the worst 5 percent outcome was a
+  *gain* of 0.01. Flooring that to ``0.0`` would claim the worst outcome
+  broke even, which is false, and the sign convention this module
+  declares is that a gain is a negative VaR. For a falling series
+  (``mean = -0.01``) the answer is ``+0.01``: a loss that exists purely
+  from drift, with no dispersion behind it, and a caller that wants to
+  discount such a number for having no variance behind it should say so
+  in their own report rather than have this function lie about it.
+
+  ``portfolio_var`` genuinely does return ``0.0`` on a zero-variance
+  portfolio, and keeps doing: its input is a covariance matrix, so zero
+  variance means the weighted exposure cancels exactly, there is no
+  per-period mean to report against it, and a negative VaR from a fully
+  hedged book would be read as free money. The two halves disagree
+  because they are answering different questions, and the header now says
+  so.
+
+  What is asserted below is therefore the *documented* contract: the
+  drift, exactly; ``0.0`` for a zero-variance portfolio; and never NaN.
   '''
 
-  def test_a_zero_volatility_series_has_no_var(self):
-    assert parametric_var(0.01, 0.0) == 0.0, (
-      'a zero-volatility series with a positive mean reported '
-      f'{parametric_var(0.01, 0.0)!r}; the header promises 0.0')
+  def test_a_zero_volatility_series_reports_its_drift(self):
+    assert parametric_var(0.01, 0.0) == pytest.approx(-0.01), (
+      'a zero-volatility series with a mean of +0.01 returned exactly '
+      f'{parametric_var(0.01, 0.0)!r}; every period was a 1 percent gain, '
+      'so the worst 5 percent outcome was a gain and 0.0 would be a lie')
 
-  def test_a_falling_zero_volatility_series_has_no_var_either(self):
-    assert parametric_var(-0.01, 0.0) == 0.0, (
-      'a zero-volatility series with a negative mean reported '
-      f'{parametric_var(-0.01, 0.0)!r}, a loss that exists only because '
-      'of drift and is indistinguishable from tail risk')
+  def test_a_falling_zero_volatility_series_reports_the_drift_as_a_loss(self):
+    assert parametric_var(-0.01, 0.0) == pytest.approx(0.01), (
+      'a zero-volatility series with a mean of -0.01 returned '
+      f'{parametric_var(-0.01, 0.0)!r}; every period was a 1 percent loss, '
+      'so the worst 5 percent outcome was a 1 percent loss and flooring '
+      'it to 0.0 would hide a certain loss behind a zero')
 
-  def test_zero_volatility_is_the_only_case_that_behaves(self):
-    # A real series must still move with the mean, or the fix has simply
-    # broken the function.
+  def test_neither_zero_volatility_form_ever_returns_nan(self):
+    # The property the original header was reaching for, and the one that
+    # actually matters: a NaN compares false against every limit, so it
+    # passes every downstream check while meaning nothing.
+    for value in (parametric_var(0.01, 0.0), parametric_var(-0.01, 0.0),
+                  portfolio_var([0.5, 0.5], [[0.0, 0.0], [0.0, 0.0]])):
+      assert not _is_nan(value), (
+        f'a zero-volatility risk figure came back as {value!r}; NaN passes '
+        'every limit comparison it is ever tested against')
+
+  def test_a_zero_variance_portfolio_is_still_exactly_zero(self):
+    # The half of the old header that was true, and which must stay true.
+    zero = [[0.0, 0.0], [0.0, 0.0]]
+    assert portfolio_var([0.5, 0.5], zero) == 0.0
+    assert portfolio_var([0.5, 0.5], zero, mean=[0.01, 0.01]) == 0.0
+
+  def test_a_real_volatility_still_moves_the_number(self):
+    # The positive control beside the zero-volatility assertions: with
+    # dispersion behind it, the function must still respond to both
+    # arguments, or the tests above would pass on a function that had
+    # been simply broken.
     assert parametric_var(0.01, 0.02) != 0.0
+    assert parametric_var(0.01, 0.02) == pytest.approx(
+      -(0.01 - z_score(0.95) * 0.02))
+    assert parametric_var(0.01, 0.0) != parametric_var(0.01, 0.02), (
+      'volatility no longer affects the parametric VaR at all')
 
   def test_the_portfolio_form_agrees_with_the_single_asset_form(self):
     variance = 0.04
@@ -752,6 +834,16 @@ class TestRouterPositionsDoNotNetRiskAway:
       'from every healthy broker')
 
   def test_a_healthy_venue_is_not_overwritten_by_a_failed_one(self):
+    # Rewritten against the fixed contract. The old assertion was
+    # `merged['aaa'] != 5`, which is true only while a failed venue's
+    # book is allowed to overwrite the live one: 300 is written over by
+    # 5 and the wrong number is the visible symptom. Once unhealthy
+    # venues are skipped, 5 is the *correct* figure for the healthy
+    # venue -- so asserting against it was asserting the bug.
+    #
+    # The invariant that actually matters is that the failed venue's
+    # position is not silently absorbed into the healthy venue's number,
+    # and that it is still reported somewhere rather than erased.
     primary = PaperBroker('primary')
     secondary = PaperBroker('secondary')
     primary.place(make_order('aaa', 300), unit_price)
@@ -759,9 +851,16 @@ class TestRouterPositionsDoNotNetRiskAway:
     router = FailoverRouter([primary, secondary], failure_threshold=1)
     router.note_failure('primary', 'session dropped')
     merged = router.positions()
-    assert merged.get('aaa', 0) != 5, (
-      f'a venue that dropped its session overwrote the live position and '
-      f'the router reports {merged!r}')
+    live = sum(broker.positions().get('aaa', 0) for broker in router.brokers
+               if router.is_healthy(broker.name))
+    assert merged.get('aaa', 0) == live, (
+      f'the healthy venues hold {live} of aaa and the router reports '
+      f'{merged!r}')
+    stranded = router.unreachable_positions()
+    assert stranded['primary'].get('aaa', 0) == 300, (
+      f'the failed venue still holds 300 of aaa and the router does not '
+      f'report it anywhere: {stranded!r}. An operator seeing a book of 5 '
+      'has no way to tell flat from unmanageable without it')
 
   def test_healthy_venues_still_merge_correctly(self):
     # The positive control.

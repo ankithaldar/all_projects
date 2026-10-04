@@ -47,6 +47,47 @@ produces a *position*, not just a boolean. An append-only file with a
 plain checksum per line would not do: an attacker who edits a record
 simply recomputes that record's checksum, and only a chain resists.
 
+**The chain alone does not bind its own length, so an anchor file does.**
+A hash chain proves that the records present are the records that were
+written *in that order*. It says nothing about how many there were:
+deleting the last record leaves a shorter chain that verifies perfectly,
+because the shortened chain is a perfectly good chain. Worse, since
+:func:`AuditLog.append` takes its next sequence number from the verified
+count, the process then writes a new record *over the number of the one
+that was deleted*, and the deleted decision is unrecoverable and
+undetectable from the file itself.
+
+**A commitment inside a record cannot fix this**, and the reason is
+worth recording because it looks like it should work. Each record could
+carry the total the chain would reach, but a truncation from the tail
+removes precisely the record carrying the largest total, so the surviving
+chain's final commitment is exactly the count of what survives and the
+disagreement disappears with the evidence. The same is true of a trailing
+footer record: delete the last *n* records and the last *n* footers and
+the file is a consistent, shorter, self-certifying chain.
+
+So the commitment lives **outside** the file, in a small append-only
+sidecar: :func:`anchor_path`, rewritten atomically after every successful
+append, carrying the record count and the final record's hash.
+:func:`verify_chain` reads it and compares. Truncating the log does not
+truncate the anchor, because the two are separate files with separate
+lives -- that is the entire point, and it is why the mechanism is a
+sidecar rather than anything inside the chain.
+
+For a log whose stated purpose is discharging the NSE 9.1 / 9.9
+re-registration obligation, an operator able to remove the most recent
+decision with no trace is removing the evidence the obligation is about.
+
+**The limit of this, stated plainly.** The anchor is a second file
+protected by the same key that protects the first, so an attacker with
+write access to both can re-state the length exactly as they can re-seal
+the chain. Nothing here is a digital signature and nothing here is
+tamper-*proof*. What it buys is detection of the accidental and the
+unsophisticated case -- an operator trimming the tail of a file, an
+archiver truncating a log, a disk filling mid-write -- which is the
+realistic failure and the one the chain alone missed entirely. Making it
+tamper-proof needs an external witness, which is stated above.
+
 **The chain is not a digital signature and does not pretend to be.** It
 detects accidental corruption and it detects an editor who did not know
 the chain was there. An attacker with write access to the file can
@@ -60,12 +101,25 @@ guarantee is stronger than it is.
 written and flushed. A refusal to write raises; it does not return
 quietly, because an audit log that can lose records without saying so is
 worse than no audit log, because it looks like one.
+
+PONYTAIL: the anchor is rewritten whole on every append rather than
+appended to, so it is three numbers and one hash, and the log grows
+linearly while the anchor stays constant-size. Ceiling: it lives in the
+same directory as the log and is protected by the same key, so anyone who
+can rewrite one can rewrite both, and it gives no protection at all
+against an attacker who trims both together. That is why the chain is
+still called tamper-*evident* above and not tamper-proof. Upgrade path:
+an external witness -- a timestamp authority, an append-only object
+store, a co-signed record -- none of which is a standard library feature
+and all of which is what would make this log defensible as evidence to a
+third party rather than to ourselves.
 '''
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
@@ -78,10 +132,12 @@ from stock_rl.compliance.retention import (
 )
 
 __all__ = [
+  'AuditAnchor',
   'AuditChainError',
   'AuditLog',
   'AuditRecord',
   'ChainVerification',
+  'anchor_path',
   'audit_schema',
   'decision_log_class',
   'feature_hash',
@@ -102,6 +158,15 @@ decision_log_class = 'algo_audit_trail'
 
 #: Prev-hash of the first record in a chain.
 genesis_hash = '0' * 64
+
+#: Schema tag written into the anchor sidecar. Separate from
+#: :data:`audit_schema` because the two files are separate artefacts with
+#: separate formats, and an anchor written by a different layout must not
+#: be read as though it were this one's.
+anchor_schema = 'stock_rl.execution.audit.anchor/1'
+
+#: Suffix appended to the log's own name to derive the anchor's path.
+anchor_suffix = '.anchor'
 
 #: Source of wall-clock time as an aware UTC datetime. Injectable so a
 #: test produces a byte-identical log and asserts on the file itself.
@@ -135,6 +200,27 @@ def hash_payload(payload: Mapping[str, object]) -> str:
   text = json.dumps(payload, sort_keys=True, separators=(',', ':'),
                     ensure_ascii=True)
   return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def anchor_path(log_path: str | Path) -> Path:
+  '''Return the sidecar that anchors a log's length, beside the log.
+
+  Deriving the path rather than taking it is deliberate: every entry
+  point -- :meth:`AuditLog.append` and the standalone
+  :func:`verify_chain` -- must reach the *same* anchor without the caller
+  having to remember to pass it, because an anchor nobody passes is an
+  anchor nobody checks. A derived name also means the anchor cannot
+  silently become a different file per process, which would defeat the
+  whole mechanism.
+
+  Args:
+    log_path: Path to the JSONL decision log.
+
+  Returns:
+    The sidecar's path, which does not need to exist.
+  '''
+  target = Path(log_path)
+  return target.with_name(target.name + anchor_suffix)
 
 
 def feature_hash(features: Mapping[str, float]) -> str:
@@ -323,21 +409,37 @@ class ChainVerification:
   '''The result of walking a chain.
 
   Attributes:
-    ok: Whether every record verified and every link matched.
-    checked: Number of records that **verified**. On a failure this is
-      the count of good records *before* the break, not the size of the
-      file, because a file whose length an editor chose is not evidence.
+    ok: Whether every record verified, every link matched, and the chain
+      matched its :class:`AuditAnchor`.
+    checked: The length of the chain this verification accounted for.
+      For an intact chain, and for a break *inside* the file, that is the
+      count of records verified -- on a break, the count of good records
+      *before* it, because a file whose length an editor chose is not
+      evidence. For a **truncation** it is the anchored length, which is
+      larger than the number of records present: the records that were
+      removed are known to have existed, so the chain is not silently
+      reported as shorter than it was. A log that loses its tail
+      therefore cannot report a smaller ``checked`` than it did a moment
+      before, which is the property that makes the deletion visible to
+      anything polling the number.
     first_bad_seq: Sequence number of the first record that failed, or
       None when the chain is intact. A *position*, not a boolean, because
       "the log was edited" is much less useful to an operator than
       "record 41 was edited".
     reason: Why verification failed, or a statement that it passed.
+    truncated: Whether the chain verified internally but does not match
+      its anchor. Distinguished because the two are different events with
+      different responses: an internal break is tampering *inside* the
+      evidence and the log must refuse to be extended, while a truncation
+      is a known gap that the log may continue past -- provided it never
+      reissues a sequence number the deleted records held.
   '''
 
   ok: bool
   checked: int
   first_bad_seq: int | None = None
   reason: str = ''
+  truncated: bool = False
 
   @property
   def verified(self) -> bool:
@@ -365,6 +467,134 @@ class AuditChainError(RuntimeError):
   the file is bad, and the caller cannot fix it by passing something
   else. It carries the verification so the caller can log *where*.
   '''
+
+
+@dataclass(frozen=True, slots=True)
+class AuditAnchor:
+  '''How long a log is, and where its last record points.
+
+  **This is what makes the chain's *length* evidence rather than its
+  order alone.** A hash chain verifies that the records present are the
+  records that were written in order; it cannot tell a chain of forty-one
+  records from the first forty of a chain of forty-one, because a
+  shortened chain is still a perfectly good chain. Deleting the tail
+  therefore verifies clean, and the next append reuses the deleted
+  record's sequence number.
+
+  A commitment *inside* a record cannot close this hole, because
+  truncating the tail removes the record carrying the largest
+  commitment, and the surviving chain's final commitment then agrees
+  exactly with what survives. The commitment has to live in a file with a
+  separate life, which is what this sidecar is. Trimming the log does not
+  trim the anchor.
+
+  Both fields are cross-checked rather than trusted:
+
+    * ``records`` is compared against the number of records the walk
+      actually verified, so a tail deletion is a count mismatch.
+    * ``last_hash`` is compared against the final verified record's own
+      digest, so a *replacement* of the last record is caught even when
+      the count is restored, and so an anchor that has fallen out of step
+      with its log is itself reported.
+
+  Attributes:
+    records: Number of records the log held when this anchor was written.
+    last_hash: ``record_hash`` of the final record at that moment, or
+      :data:`genesis_hash` for an empty log.
+  '''
+
+  records: int
+  last_hash: str
+
+  def __post_init__(self) -> None:
+    '''Validate the anchor at construction.
+
+    Raises:
+      ValueError: If the record count is not a non-negative integer or
+        the hash is not a non-empty string. An anchor that cannot describe
+        a chain must not be written beside one, because the next
+        verification would then be comparing against nonsense.
+    '''
+    if isinstance(self.records, bool) or \
+        not isinstance(self.records, int) or self.records < 0:
+      raise ValueError(
+        f'records must be a non-negative int, got {self.records!r}')
+    if not isinstance(self.last_hash, str) or not self.last_hash.strip():
+      raise ValueError(
+        f'last_hash must be a non-empty str, got {self.last_hash!r}')
+
+  def matches(self, verified: int, last_hash: str) -> tuple[str, ...]:
+    '''Return the reasons this anchor does not describe a chain.
+
+    Args:
+      verified: Number of records the walk actually verified.
+      last_hash: ``record_hash`` of the final verified record, or
+        :data:`genesis_hash` for an empty chain.
+
+    Returns:
+      One human-readable string per disagreement, empty when the anchor
+      describes exactly this chain. Empty is the only "ok" answer, so a
+      caller cannot accidentally treat a partial match as a pass.
+    '''
+    problems: list[str] = []
+    if verified < self.records:
+      missing = self.records - verified
+      problems.append(
+        f'the log holds {verified} records but its anchor commits to '
+        f'{self.records}: {missing} record(s) were removed from the end '
+        'of this file. The chain is intact and incomplete, which is the '
+        'one thing a chain of hashes alone cannot detect')
+    elif verified > self.records:
+      problems.append(
+        f'the log holds {verified} records but its anchor commits to '
+        f'{self.records}: records were added outside append(), or the '
+        'anchor is stale')
+    if last_hash != self.last_hash:
+      problems.append(
+        f'the final record hash is {last_hash[:12]} but the anchor '
+        f'commits to {self.last_hash[:12]}: the last record was replaced '
+        'or the anchor does not belong to this log')
+    return tuple(problems)
+
+  def to_json(self) -> dict[str, object]:
+    '''Return the anchor as JSON-stable primitives.
+
+    Returns:
+      Mapping with string keys and JSON-safe values, ready for the
+      sidecar.
+    '''
+    return {
+      'schema': anchor_schema,
+      'records': self.records,
+      'last_hash': self.last_hash,
+    }
+
+  @classmethod
+  def from_json(cls, payload: Mapping[str, object]) -> 'AuditAnchor':
+    '''Rebuild an anchor from parsed JSON.
+
+    Args:
+      payload: Mapping produced by :meth:`to_json`.
+
+    Returns:
+      The :class:`AuditAnchor`.
+
+    Raises:
+      ValueError: If the schema is unknown or a value will not parse. A
+        sidecar that cannot be read is not a sidecar that can be assumed
+        to agree with anything.
+    '''
+    schema = payload.get('schema')
+    if schema != anchor_schema:
+      raise ValueError(
+        f'anchor schema {schema!r} is not {anchor_schema!r}')
+    try:
+      return cls(
+        records=int(payload['records']),  # type: ignore[call-overload]
+        last_hash=str(payload['last_hash']),
+      )
+    except (KeyError, TypeError, ValueError) as exc:
+      raise ValueError(f'malformed audit anchor: {exc}') from exc
 
 
 class AuditLog:
@@ -497,9 +727,16 @@ class AuditLog:
     Raises:
       ValueError: If the decision is blank or both feature forms are
         given.
-      AuditChainError: If the existing chain on disk does not verify. A
-        log with a broken chain is evidence; appending to it would bury
-        the evidence under more records.
+      AuditChainError: If the existing chain on disk is broken *inside* -- a
+        record edited, reordered or removed from the middle. That is
+        evidence, and appending to it would bury the evidence under more
+        records. **A truncated log is not refused**, because refusing to
+        record decisions is the worse failure: the records are already
+        gone and the strategy is still running. The append proceeds past
+        the gap and the chain stays flagged, and
+        :attr:`ChainVerification.truncated` is what tells the two cases
+        apart. See :meth:`_next_seq` for why the sequence number is then
+        taken from the anchor rather than from the file.
       OSError: If the record cannot be written.
     '''
     if not isinstance(decision, str) or not decision.strip():
@@ -511,14 +748,15 @@ class AuditLog:
         'supply either features or feature_digest, not both: a record '
         'carrying two different notions of its own state is worse than '
         'one carrying neither')
-    if not self._verification.ok:
+    if not self._verification.ok and not self._verification.truncated:
       raise AuditChainError(
         f'refusing to extend a broken chain: {self._verification.render()}')
     values = dict(indicators or {})
     digest = feature_digest or feature_hash(features or {})
     last_hash = self._last_hash()
+    seq = self._next_seq()
     record = AuditRecord(
-      seq=self._verification.checked + 1,
+      seq=seq,
       at=_stamp(at if at is not None else self._clock()),
       decision=decision,
       rule_ids=tuple(rule_ids),
@@ -541,6 +779,13 @@ class AuditLog:
         f'audit record for {record.decision!r} could not be written to '
         f'{self.path} ({exc}); a decision that is not recorded is a '
         'decision nobody can account for') from exc
+    # The anchor is written after the record, so a crash between the two
+    # leaves an anchor that commits to more records than exist -- which
+    # verification reports as truncation, the correct conservative
+    # reading. The reverse order would leave an anchor claiming fewer
+    # records than the log holds, which reads as "records were added
+    # outside append()" and is a much louder, less accurate accusation.
+    self._write_anchor(AuditAnchor(seq, record.record_hash))
     self._verification = ChainVerification(
       ok=True, checked=record.seq, reason='chain extended in memory')
     return record
@@ -567,6 +812,41 @@ class AuditLog:
     self._verification = self._walk()
     return self._verification
 
+  def _write_anchor(self, anchor: AuditAnchor) -> None:
+    '''Write the length anchor beside the log, atomically.
+
+    A temporary file in the same directory is renamed into place, exactly
+    as :meth:`AuditLog._persist` does for a kill-switch state file. The
+    anchor is three numbers and is rewritten whole on every append, so it
+    cannot be append-only; atomic replacement is what makes that safe
+    instead of a truncation risk of its own.
+
+    **A failure here is loud.** An unwritten anchor leaves the log
+    longer than its anchor claims, which verification reports as records
+    added outside :meth:`append`. Silently continuing would mean the
+    control is off and nobody was told, and this is precisely the control
+    whose absence is invisible.
+
+    Args:
+      anchor: The anchor to write.
+
+    Raises:
+      AuditChainError: If the anchor cannot be written.
+    '''
+    target = anchor_path(self.path)
+    temporary = target.with_name(target.name + '.tmp')
+    text = json.dumps(anchor.to_json(), indent=2, sort_keys=True) + '\n'
+    try:
+      target.parent.mkdir(parents=True, exist_ok=True)
+      temporary.write_text(text, encoding='utf-8')
+      os.replace(temporary, target)
+    except OSError as exc:
+      raise AuditChainError(
+        f'the length anchor for {self.path} could not be written ({exc}); '
+        'the log has grown without an anchor, so its length can no longer '
+        'be verified and any later truncation would be undetectable') \
+        from exc
+
   def _walk(self) -> ChainVerification:
     '''Verify the chain currently on disk.
 
@@ -576,6 +856,39 @@ class AuditLog:
       to contradict.
     '''
     return verify_chain(self.path)
+
+  def _next_seq(self) -> int:
+    '''Return the sequence number the next record must carry.
+
+    **Never a number a deleted record held.** The verified count is the
+    answer in the ordinary case, but after a truncation it is the count
+    of what *survives*, and continuing from it would write a record over
+    the number of one that was deleted -- leaving the removed decision
+    unrecoverable and making the log assert that it contains a decision
+    it destroyed. The anchor still holds the pre-truncation count, so the
+    anchor wins whenever it is larger, and the gap is permanent in the
+    numbering rather than papered over.
+
+    The sequence numbers that were skipped stay skipped forever. A
+    verifier sees a break at the first missing sequence and reports it,
+    which is the honest outcome: the log carries a permanent, visible
+    gap rather than a silently renumbered history.
+
+    Args:
+      None.
+
+    Returns:
+      One past the higher of the verified record count and the anchored
+      record count.
+    '''
+    anchored = self._verification.checked
+    try:
+      anchor = _read_anchor(anchor_path(self.path))
+    except ValueError:
+      anchor = None
+    if anchor is not None:
+      anchored = max(anchored, anchor.records)
+    return anchored + 1
 
   def _last_hash(self) -> str:
     '''Return the hash the next record must chain onto.
@@ -614,7 +927,7 @@ def verify_chain(path: str | Path) -> ChainVerification:
   rather than trusting anything cached, which is the only way a file
   edited behind a running process is noticed.
 
-  Three distinct failures are distinguished, because they mean different
+  Five distinct failures are distinguished, because they mean different
   things to whoever has to fix them:
 
     * **content mismatch**: a record's own hash does not match its
@@ -622,11 +935,26 @@ def verify_chain(path: str | Path) -> ChainVerification:
     * **link mismatch**: a record's ``prev_hash`` is not its
       predecessor's hash, so a record was edited, removed or reordered;
     * **sequence mismatch**: the file has a gap or a renumbering, so a
-      record was deleted without touching the rest.
+      record was deleted without touching the rest;
+    * **anchor count mismatch**: the chain verifies end to end but its
+      :class:`AuditAnchor` commits to a different number of records, so
+      records were removed from (or added to) the **tail**. This is the
+      case a chain of hashes cannot see on its own, because a shortened
+      chain is still a perfectly good chain. It is checked last, so a
+      chain broken anywhere else reports the break rather than the
+      symptom;
+    * **anchor hash mismatch**: the final record is not the one the
+      anchor vouches for, so the last record was replaced with a
+      re-sealed one or the anchor belongs to a different log.
+
+  A log with **no anchor** verifies as intact, with a reason that says
+  its length is unverified. That is the honest reading for a chain
+  written before this mechanism existed, and it is why the anchor's
+  absence is named in the reason rather than passing silently.
 
   Args:
     path: Path to the JSONL log. A missing file verifies as an empty
-      chain.
+      chain. Its anchor, if any, is found via :func:`anchor_path`.
 
   Returns:
     A :class:`ChainVerification`. ``first_bad_seq`` is set to the
@@ -666,7 +994,58 @@ def verify_chain(path: str | Path) -> ChainVerification:
   except (ValueError, OSError) as exc:
     return ChainVerification(
       False, verified, verified + 1, f'unreadable record: {exc}')
+  # The chain itself is intact. It is now checked against the anchor,
+  # which is what turns "the records present verify" into "no records are
+  # missing": a shortened chain verifies perfectly on its own.
+  last_hash = expected if verified else genesis_hash
+  try:
+    anchor = _read_anchor(anchor_path(target))
+  except ValueError as exc:
+    return ChainVerification(
+      False, verified, verified + 1, f'unreadable anchor: {exc}')
+  if anchor is None:
+    return ChainVerification(
+      True, verified, reason='chain verified; no anchor, so the length is '
+      'unverified and a truncation would not be detected')
+  problems = anchor.matches(verified, last_hash)
+  if problems:
+    return ChainVerification(
+      False, max(verified, anchor.records), verified + 1,
+      '; '.join(problems), truncated=True)
   return ChainVerification(True, verified, reason='chain verified')
+
+
+def _read_anchor(path: Path) -> AuditAnchor | None:
+  '''Read a length anchor, or return None when there is none.
+
+  A missing anchor is not a failure. It means the log predates the
+  mechanism, or was written by something other than
+  :class:`AuditLog`, and in both cases the chain still verifies on its own
+  terms. It does mean the length is unverified, which the verification
+  reason says out loud rather than passing in silence.
+
+  Args:
+    path: The anchor sidecar's path.
+
+  Returns:
+    The :class:`AuditAnchor`, or None if the file does not exist.
+
+  Raises:
+    ValueError: If the file exists but cannot be read or parsed. An
+      unreadable anchor is not an absent one: silently treating it as
+      absent would turn a corrupt control into a disabled one.
+  '''
+  if not path.exists():
+    return None
+  try:
+    payload = json.loads(path.read_text(encoding='utf-8'))
+  except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    raise ValueError(
+      f'anchor at {path} cannot be read ({exc}); a corrupt anchor is not '
+      'an absent one, so it is reported rather than ignored') from exc
+  if not isinstance(payload, dict):
+    raise ValueError(f'anchor at {path} is not a JSON object')
+  return AuditAnchor.from_json(payload)
 
 
 def _read(path: Path) -> list[AuditRecord]:

@@ -126,7 +126,10 @@ tr:last-child td { border-bottom: none; }
 
 .empty { padding: 0.6rem 0; color: var(--muted); font-style: italic; }
 
-.confidence { display: inline-block; min-width: 5.5rem; }
+/* The bar under a rank percentile is a position in the cross-section, not
+ * a probability. It is muted rather than a status colour for the same
+ * reason: nothing here has been fitted to outcome frequency. */
+.rank { display: inline-block; min-width: 5.5rem; }
 .meter { display: block; height: 4px; margin-top: 0.25rem;
          background: var(--line); border-radius: 2px; }
 .meter > span { display: block; height: 100%; background: var(--muted);

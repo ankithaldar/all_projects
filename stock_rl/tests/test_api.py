@@ -436,9 +436,16 @@ class TestEmptyPortfolio:
     assert payload['best_sharpe'] is None
 
   def test_var_reports_no_observations_rather_than_zero_risk(self):
+    # This asserted one_period_fraction == 0.0, which is the finding the
+    # adversarial review recorded: a VaR of exactly zero on a book with
+    # no history is a claim of exactly zero risk, not an absence of a
+    # measurement. The intent of the test is unchanged and stronger --
+    # absence is reported as absence -- but the absence is now None rather
+    # than the degenerate value historical_var used to return.
     payload = get(service(), '/api/risk')
     assert payload['var']['observations'] == 0
-    assert payload['var']['one_period_fraction'] == 0.0
+    assert payload['var']['one_period_fraction'] is None
+    assert payload['var']['rupees'] is None
 
   def test_breaches_are_empty_when_no_switch_is_wired(self):
     assert get(service(), '/api/risk')['breaches'] == []
@@ -895,7 +902,16 @@ class TestBacktest:
     positions = get(svc, '/api/positions')
     assert [row['symbol'] for row in positions['positions']] == ['AAA']
     assert positions['capital'] == 2_000_000.0
-    assert positions['cash'] == pytest.approx(1_800_000.0)
+    # This asserted cash == 1_800_000.0, i.e. capital * (1 - invested),
+    # while each position's value is weight * the book's marked value.
+    # The two disagreed by the book's gain, which is the finding the
+    # adversarial review recorded. The property worth pinning is the one
+    # that was actually broken: the rows and the cash share one
+    # denominator and sum to the reported value.
+    held = sum(row['value'] for row in positions['positions'])
+    assert positions['cash'] == pytest.approx(
+      positions['value'] * (1.0 - positions['invested']))
+    assert held + positions['cash'] == pytest.approx(positions['value'])
     assert get(svc, '/api/equity')['source'] == 'backtest'
 
   def test_injected_runner_receives_the_validated_request(self):

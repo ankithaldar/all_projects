@@ -122,12 +122,43 @@ class BrokerAck:
   def __post_init__(self) -> None:
     '''Validate the acknowledgement at construction.
 
+    **A fill is checked against the order it claims to fill.** Three
+    properties, all of which a paper broker can produce by accident and a
+    real adapter can produce by mis-mapping a field:
+
+      * a fill carries a **positive quantity** -- an ack claiming a fill
+        with zero quantity reads as a fill downstream and books nothing;
+      * that quantity is **within the order**, because a broker cannot
+        fill 999 shares of an order for 10 and an ack saying otherwise
+        is either the wrong field or a venue that has lost track;
+      * the fill carries a **positive price**, because a fill at 0.0
+        books a position at zero value -- a position that exists, is
+        counted in every exposure limit, and prices the book at nothing.
+
+    The last two are the ones that were missing. Validating only the
+    quantity is what let both through.
+
+    The second and third need the *ordered* quantity to compare against,
+    so they run only when ``quantity`` is positive. Zero means the venue
+    did not state the order size, and there is nothing to check a fill
+    against; refusing an acknowledgement for a field the venue never
+    filled in would be refusing it for a missing reason.
+
+    PONYTAIL: an acknowledgement is checked for internal consistency, not
+    against the :class:`~stock_rl.risk.checks.OrderRequest` that was
+    actually sent, because an ack is a value that crosses a process
+    boundary and the dataclass carries no reference to the order. Ceiling:
+    a venue that fills the right count at the wrong symbol is accepted.
+    Upgrade path: a real adapter should re-check the ack against the
+    order it holds in its own outbox, where the correspondence is known
+    rather than inferred.
+
+    Args are the fields; there are none.
+
     Raises:
       ValueError: If the status is unrecognised, the broker name is
-        blank, or a filled acknowledgement carries no filled quantity.
-        The last is the failure a paper broker can hide: an ack claiming
-        a fill with zero quantity and no price reads as a fill downstream
-        and books no position.
+        blank, or a filled acknowledgement is not a plausible fill of the
+        order it names.
     '''
     if self.status not in order_statuses:
       raise ValueError(
@@ -137,6 +168,26 @@ class BrokerAck:
     if self.status == filled and self.filled_quantity < 1:
       raise ValueError(
         'a filled acknowledgement must carry a positive filled quantity')
+    # Both of the remaining checks are against *the order*, so they run
+    # only when the ack declares one. ``quantity`` of zero means the venue
+    # did not state the order size, and there is then nothing to check
+    # the fill against -- inventing a bound from an undeclared field
+    # would refuse acknowledgements for a missing reason rather than a
+    # real one.
+    if self.status == filled and self.quantity > 0:
+      if self.filled_quantity > self.quantity:
+        raise ValueError(
+          f'filled_quantity {self.filled_quantity} exceeds the ordered '
+          f'quantity {self.quantity}: a broker cannot fill more shares '
+          'than it was asked for, and an acknowledgement that says so is '
+          'either a mis-mapped field or a venue that has lost track of '
+          'the order')
+      if self.average_price <= 0.0:
+        raise ValueError(
+          'a filled acknowledgement must carry a positive average price, '
+          f'got {self.average_price}; a fill at zero books a position at '
+          'zero value, which counts in every exposure limit and prices '
+          'the book at nothing')
 
   @property
   def ok(self) -> bool:
@@ -638,24 +689,81 @@ class FailoverRouter:
       reason=f'no broker cancelled {order_id!r}; tried {attempted}')
 
   def positions(self) -> Mapping[str, int]:
-    '''Return positions from every healthy broker.
+    '''Return positions from every healthy broker, summed per symbol.
+
+    **Summed, not merged.** Merging with ``update`` lets a later venue
+    overwrite an earlier one for the same scrip, which erases a position
+    outright and nets risk away: two venues holding +500 and -500 of the
+    same scrip -- entirely normal immediately after a failover, since the
+    primary could not cancel what it already held -- reported a book of
+    zero while the full gross exposure was live at both. The reported
+    book was not a function of the real book at all, and a book the risk
+    layer cannot see is a book the risk layer cannot cap.
+
+    **Unhealthy venues are skipped, and that is not a small caveat.**
+    This docstring has always said "healthy brokers", and the loop read
+    every broker, healthy or not, so a venue that had dropped its session
+    kept reporting positions *over the top of* the venue that is actually
+    working. Skipping is the right direction rather than the cautious one:
+    a failed session's book is stale, and presenting a stale position as
+    current is how an operator reconciles against a position that was
+    closed an hour ago. The consequence is that a position held *only*
+    at an unhealthy venue is absent from this view, and
+    :meth:`unreachable_positions` exists so an operator can see exactly
+    that blind spot rather than infer it.
 
     Returns:
-      The union of the venues' position mappings, later venues
-      overwriting earlier ones. Merging rather than taking the first is
-      right because after a failover the first venue legitimately holds
-      nothing and the second holds the book; returning the first
-      non-empty mapping would report an empty account precisely when a
-      venue has failed over.
+      The sum over the healthy venues' signed quantities, per symbol.
+      A copy, so a caller cannot rewrite the router's view.
     '''
     merged: dict[str, int] = {}
     for broker in self.brokers:
+      if not self.is_healthy(broker.name):
+        continue
       try:
         found = dict(broker.positions())
       except BrokerError:
         continue
-      merged.update(found)
+      for symbol, quantity in found.items():
+        merged[symbol] = merged.get(symbol, 0) + quantity
     return merged
+
+  def unreachable_positions(self) -> Mapping[str, Mapping[str, int]]:
+    '''Return the positions held only at venues this router has given up.
+
+    The other half of :meth:`positions`, and it exists because that method
+    is deliberately incomplete. A venue marked unhealthy is skipped, so
+    anything it still holds is invisible there -- and an operator who
+    sees a flat book has no way to tell "flat" from "the venue that held
+    it stopped answering". This names the difference.
+
+    **Not summed into anything and not netted.** These are positions the
+    router cannot manage, and the right response to an unmanageable
+    position is to look at it, not to fold it silently into a number that
+    then gets compared against a limit.
+
+    Returns:
+      One mapping of symbol to signed quantity per unhealthy venue whose
+      query succeeded, in rotation order. Empty when every venue is
+      healthy, which is the ordinary case.
+
+    PONYTAIL: health is per venue and process-local, so a venue marked
+    unhealthy stays skipped for the life of the process. Ceiling: a
+    recovered venue is never re-probed, so it remains invisible until the
+    next restart. Upgrade path: a half-open probe that re-checks a skipped
+    venue after a backoff, which needs a scheduler and a clock this
+    project deliberately does not carry.
+    '''
+    stranded: dict[str, Mapping[str, int]] = {}
+    for broker in self.brokers:
+      if self.is_healthy(broker.name):
+        continue
+      try:
+        found = dict(broker.positions())
+      except BrokerError:
+        continue
+      stranded[broker.name] = found
+    return stranded
 
   def note_failure(self, name: str, error: str) -> None:
     '''Record a failed call and possibly mark the venue unhealthy.

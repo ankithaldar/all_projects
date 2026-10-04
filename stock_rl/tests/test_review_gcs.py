@@ -606,9 +606,10 @@ def test_the_context_gate_is_readable_through_its_documented_path() -> None:
     Nothing. The assertions are the deliverable.
   '''
   # The plain form is the thing under test, so it is not importlib.
-  # pylint: disable=import-outside-toplevel
+  # pylint: disable=import-outside-toplevel,reimported
   import stock_rl.context.fuse as fuse_module
-  # pylint: enable=import-outside-toplevel
+  from stock_rl.context import fuse as legacy
+  # pylint: enable=import-outside-toplevel,reimported
   assert isinstance(fuse_module, types.ModuleType), (
       'context/__init__.py:45 re-exports the function fuse, so '
       '`import stock_rl.context.fuse as m` binds the function and the '
@@ -619,7 +620,6 @@ def test_the_context_gate_is_readable_through_its_documented_path() -> None:
   # The rename kept the old spelling working, so no caller is left with
   # a broken import. This is the compatibility half of the fix and it is
   # the half a later tidy-up would silently drop.
-  legacy = fuse_module
   context = SymbolContext('RELIANCE', sentiment_score=0.4)
   assert legacy(context, True) == fuse_vector(context, True), (
       'fuse.py no longer delegates the module-level call to fuse_vector, '
@@ -774,6 +774,63 @@ def test_a_real_two_cycle_is_detected_and_reported() -> None:
   looped = small_loop()
   assert has_cycle(looped)
   assert ('macro:x', 'stock:B', 'stock:A', 'macro:x') in cycles(looped)
+
+
+def test_a_bad_context_is_refused_at_construction_not_at_fusion() -> None:
+  '''The documented ranges are enforced, so they are not decoration.
+
+  ``fuse.py`` said "a bad context is the caller's dataclass validation,
+  not this function's" while :class:`SymbolContext` validated nothing.
+  It therefore constructed cleanly and ``fuse`` published the values for
+  fields documented as ``[-1, 1]`` and ``[0, 1]`` straight into a state
+  vector::
+
+      SymbolContext(symbol='   ', sentiment_score=99.0,
+                    sentiment_disagreement=-5.0, sentiment_intensity=7.0,
+                    sentiment_source_ratio=42.0)   # used to be fine
+
+  Every ``_bounds`` entry is checked, one field at a time, so the error
+  names the field that is wrong rather than the first one alphabetically.
+
+  Returns:
+    Nothing. The assertions are the deliverable.
+  '''
+  with pytest.raises(ValueError, match='symbol context needs a symbol'):
+    SymbolContext('   ')
+  for field, value in (('sentiment_score', 99.0),
+                       ('sentiment_score', -99.0),
+                       ('sentiment_disagreement', -5.0),
+                       ('sentiment_disagreement', 1.5),
+                       ('sentiment_intensity', 7.0),
+                       ('sentiment_usable', 2.0),
+                       ('sentiment_source_ratio', 42.0),
+                       ('graph_depth', -1.0),
+                       ('commodity_dependencies', -1.0),
+                       ('macro_dependencies', -1.0),
+                       ('sector_dependencies', -1.0),
+                       ('options_pcr', -0.5),
+                       ('options_iv_rank', 1.5),
+                       ('options_net_oi_change', float('inf'))):
+    with pytest.raises(ValueError, match=field):
+      SymbolContext('RELIANCE', **{field: value})
+  # nan must be refused, and the negated comparison is what does it:
+  # every comparison involving a nan is false, so an "is it in range"
+  # test would let it through. This is the same trap
+  # _reject_underspecified exists to close.
+  for field in ('sentiment_disagreement', 'sentiment_score', 'graph_depth',
+                'options_pcr', 'options_iv_rank'):
+    with pytest.raises(ValueError, match=field):
+      SymbolContext('RELIANCE', **{field: float('nan')})
+  # A number of the right shape is still accepted, including the ints a
+  # graph traversal returns for a hop count.
+  clean = SymbolContext('RELIANCE', sentiment_score=-1.0,
+                        sentiment_disagreement=1.0, graph_depth=3,
+                        options_pcr=1.4, options_iv_rank=0.0,
+                        options_net_oi_change=-0.5)
+  assert fuse_vector(clean, True)[5] == 3.0
+  # A validated context still cannot smuggle a non-finite number in
+  # through the one field that is legitimately signed.
+  assert len(fuse_vector(SymbolContext('RELIANCE'), True)) == CONTEXT_WIDTH
 
 
 def test_a_typo_in_a_hand_maintained_seed_table_fails_loudly() -> None:

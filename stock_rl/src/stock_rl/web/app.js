@@ -25,6 +25,13 @@ const svg_ns = 'http://www.w3.org/2000/svg';
 const plot = {wide: 1000, tall: 280, left: 62, right: 16, top: 16,
               bottom: 28};
 
+/* The VaR rows name the confidence the API reported, not a number typed
+ * in here: var.confidence is in the payload precisely so this label can
+ * be derived from it. The literal below is the fallback for a payload
+ * that omits the field, and it is the only place a confidence is written
+ * out; the reported level replaces the digits in both rows. */
+const var_fallback = 'VaR 95%';
+
 /* ---------------------------------------------------------------- DOM -- */
 
 function el(tag, text, class_name) {
@@ -130,6 +137,13 @@ function rupees(value) {
     }
   }
   return sign + 'Rs ' + value.toFixed(0);
+}
+
+function var_label(reported, suffix) {
+  /* The row label states the level the estimate was measured at, read
+   * from the payload rather than assumed. */
+  const level = is_number(reported) ? Math.round(reported * 100) : 95;
+  return (is_number(reported) ? 'VaR ' + level + '%' : var_fallback) + suffix;
 }
 
 /* -------------------------------------------------------------- fetch -- */
@@ -288,15 +302,34 @@ function render_risk(data) {
   pair_row(body, 'Recorded trips',
     String(Array.isArray(sw.trips) ? sw.trips.length : 0));
   const vr = data.var || {};
-  pair_row(body, 'VaR 95% (1 bar)', pct(vr.one_period_fraction));
-  pair_row(body, 'VaR 95% in rupees', rupees(vr.rupees));
+  const level = var_label(vr.confidence, '');
+  pair_row(body, level + ' (1 bar)', pct(vr.one_period_fraction));
+  pair_row(body, level + ' in rupees', rupees(vr.rupees));
   const breaches = Array.isArray(data.breaches) ? data.breaches : [];
   pair_row(body, 'Breached now',
     breaches.length ? breaches.join('; ') : 'none');
-  document.getElementById('risk-note').textContent =
-    (vr.note || '') + ' (' + (vr.observations || 0) +
-    ' observations behind it)';
+  /* Zero observations is an absence of a measurement, not a measurement
+   * of zero risk, and the difference is the whole point of the row. */
+  const counted = is_number(vr.observations) ? vr.observations : 0;
+  document.getElementById('risk-note').textContent = counted
+    ? (vr.note || '') + ' (' + counted + ' observations behind it)'
+    : 'No return history yet, so no VaR is reported: ' + (vr.note || '');
   render_halt(sw);
+}
+
+function render_halt_unknown(reason, latch) {
+  /* The banner is never hidden while the control cannot be read. A
+   * dashboard that hides "KILL SWITCH TRIPPED" exactly when /api/risk
+   * fails shows an operator a clear page while the one thing they must
+   * not act on is unknown. Unknown is reported as unknown. */
+  const banner = document.getElementById('halted');
+  const lead = latch === 'TRIPPED'
+    ? 'THE HEALTH ENDPOINT REPORTS THE KILL SWITCH TRIPPED, and this ' +
+      'page could not confirm it: '
+    : 'THE KILL SWITCH STATE IS UNKNOWN, not clear: ';
+  banner.hidden = false;
+  banner.textContent = lead + reason + '. Nothing on this page may be ' +
+    'acted on until /api/risk answers.';
 }
 
 function render_halt(sw) {
@@ -338,7 +371,7 @@ function render_signals(data) {
       'action ' + String(item.action || '').toLowerCase());
     tr.appendChild(action);
     const conf = el('td', null, 'num');
-    const wrap = el('span', pct(item.confidence, 0), 'confidence');
+    const wrap = el('span', pct(item.confidence, 0), 'rank');
     const meter = el('span', null, 'meter');
     const fill = el('span');
     fill.style.width = Math.round(
@@ -366,23 +399,67 @@ function render_baselines(data) {
   const rows = Array.isArray(data.strategies) ? data.strategies : [];
   if (!rows.length) {
     unavailable('baselines', 'No baselines were reported.');
+    document.getElementById('baselines-note').textContent =
+      'No baselines were reported.';
     return;
   }
   for (const item of rows) {
     const ok = item.status === 'ok';
+    /* The Status column carries the status word. A raw error sentence in
+     * a column headed "Status" reads as the status, and the reason an arm
+     * did not run belongs in the row's tooltip beside the word. */
     const tr = row(body, [
       [item.name],
       [num(item.sharpe, 3), 'num'],
       [pct(item.max_drawdown), 'num'],
       [num(item.turnover, 3), 'num'],
       [rupees(item.total_cost), 'num'],
-      [ok ? 'measured' : (item.error || 'skipped')]
+      [ok ? 'measured' : (item.status || 'skipped')]
     ]);
+    if (item.error) {
+      tr.title = String(item.error);
+    }
     if (item.name === data.best_sharpe) {
       tr.className = 'best';
       tr.title = 'highest Sharpe of the measured rows';
     }
   }
+  const measured = rows.filter((item) => item.status === 'ok').length;
+  document.getElementById('baselines-note').textContent =
+    'Every provider measured on the identical backtester, costs and ' +
+    'splits, at capital ' + rupees(data.capital) + ', rebalanced every ' +
+    (data.rebalance_days || '?') + ' bars, capped at ' +
+    pct(data.max_weight) + ' per symbol, after ' + (data.history || '?') +
+    ' bars of history. ' + measured + ' of ' + rows.length +
+    ' arms produced a number. A learned policy that cannot beat equal ' +
+    'weight has not earned its complexity.';
+}
+
+function render_positions(data) {
+  const body = tbody_of('positions');
+  const rows = Array.isArray(data.positions) ? data.positions : [];
+  const held = data;
+  if (!rows.length) {
+    unavailable('positions', 'No positions. The book is empty.');
+  } else {
+    for (const item of rows) {
+      row(body, [
+        [item.symbol],
+        [num(item.weight, 3), 'num'],
+        [num(item.target_weight, 3), 'num'],
+        [rupees(item.value), 'num']
+      ]);
+    }
+  }
+  document.getElementById('positions-note').textContent =
+    rows.length + ' rows. Holdings ' + rupees(
+      rows.reduce((sum, item) => sum + (is_number(item.value) ? item.value : 0),
+        0)) +
+    ' plus cash ' + rupees(held.cash) + ' is the reported value ' +
+    rupees(held.value) + ' on ' + rupees(held.capital) + ' of capital - ' +
+    pct(held.invested, 1) + ' invested, drawdown ' + pct(held.drawdown) +
+    '. Cash is the residual of the marked value, not a share of the ' +
+    'capital the book started with.';
 }
 
 /* ---------------------------------------------------------------- run -- */
@@ -430,7 +507,8 @@ async function load() {
   if (risk.error) {
     unavailable('risk', risk.error);
     document.getElementById('risk-note').textContent = '';
-    document.getElementById('halted').hidden = true;
+    render_halt_unknown(risk.error,
+      health && !health.error ? health.data.kill_switch : null);
   } else {
     render_risk(risk.data);
   }
@@ -451,11 +529,11 @@ async function load() {
   }
 
   const positions = by_path['/api/positions'];
-  const held = positions.error ? null : positions.data;
-  if (!positions.error) {
-    document.getElementById('signals-note').textContent +=
-      ' - book: ' + pct(held.invested, 1) + ' invested, ' +
-      rupees(held.cash) + ' cash, drawdown ' + pct(held.drawdown);
+  if (positions.error) {
+    unavailable('positions', positions.error);
+    document.getElementById('positions-note').textContent = '';
+  } else {
+    render_positions(positions.data);
   }
 
   const failures = answers.filter((answer) => answer.error);
