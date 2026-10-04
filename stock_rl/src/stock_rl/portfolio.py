@@ -18,6 +18,16 @@ less, but needs the provider to expose its target weights, which couples
 the backtester to strategy internals. Upgrade path: accept an optional
 ``should_rebalance`` callable alongside the provider; nothing else in
 this module changes.
+
+**The return series covers the trading window only.** ``equity`` carries
+one point per bar, because the equity path is a property of the whole
+history, but ``returns`` starts at bar ``history`` -- the first bar on
+which a decision can be taken -- so it holds exactly ``len - history``
+entries and none of them is one of the warm-up bars of flat cash. That
+window is the one :class:`stock_rl.rl.portfolio_env.WeightAllocationEnv`
+reports, and the two engines are only comparable over a shared window: a
+Sharpe computed over a series padded with ``history`` zeros carries a
+mean and a variance the other engine's series does not have.
 '''
 
 from __future__ import annotations
@@ -48,11 +58,16 @@ class PortfolioResult:
   '''Outcome of a cross-sectional backtest.
 
   Attributes:
-    equity: Equity curve normalised to 1.0, one entry per bar.
-    returns: Per-bar portfolio returns aligned with ``equity``.
+    equity: Equity curve normalised to 1.0, one entry per bar including
+      the warm-up.
+    returns: Per-bar portfolio returns over the trading window, i.e. one
+      entry per bar from ``history`` onward. Shorter than ``equity`` by
+      exactly ``history``, and index-aligned with it from that point, so
+      ``returns[index - history]`` is the return of ``equity[index]``.
     weights: Target weight snapshot per rebalance, in order.
-    sharpe: Annualised Sharpe of the return series.
-    max_drawdown: Deepest peak-to-trough decline as a positive fraction.
+    sharpe: Annualised Sharpe of the trading-window return series.
+    max_drawdown: Deepest peak-to-trough decline as a positive fraction,
+      over the whole equity curve.
     total_return_multiple: Growth factor, so 1.21 is a 21 percent gain.
     turnover: Total absolute weight traded across all rebalances.
     total_cost: Transaction cost charged, in rupees.
@@ -296,13 +311,18 @@ def run_portfolio(
     returns.append(
       0.0 if index == 0 else equity[index] / equity[index - 1] - 1.0)
 
+  # Trimmed to the trading window, see the module docstring. The warm-up
+  # bars are flat cash, so they contribute exactly 0.0 and only dilute the
+  # mean while inflating nothing: they are the reason the Sharpe of this
+  # engine disagreed with the environment's for reasons that had nothing
+  # to do with the strategy.
   return PortfolioResult(
     equity=equity,
-    returns=returns,
+    returns=returns[history:],
     weights=snapshots,
-    sharpe=sharpe_ratio(returns, periods=TRADING_DAYS_PER_YEAR),
+    sharpe=sharpe_ratio(returns[history:], periods=TRADING_DAYS_PER_YEAR),
     max_drawdown=max_drawdown(equity).depth,
-    total_return_multiple=total_return(returns),
+    total_return_multiple=total_return(returns[history:]),
     turnover=book.traded,
     total_cost=book.cost,
     rebalances=len(snapshots),

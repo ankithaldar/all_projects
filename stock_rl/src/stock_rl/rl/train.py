@@ -158,18 +158,25 @@ def _returns_from_equity(equity: list[float]) -> list[float]:
   return returns
 
 
-def rollout(env: ReplayEnv, policy: Policy) -> list[float]:
+def rollout(env: ReplayEnv, policy: Policy,
+            seed: int | None = None) -> list[float]:
   '''Run one episode to termination and return the per-bar returns.
 
   Args:
     env: Any environment satisfying ``ReplayEnv``.
     policy: Policy driving the episode.
+    seed: Seed handed to ``env.reset``. Both shipped environments are
+      deterministic and discard it, so today this changes nothing; it is
+      threaded through anyway because a search that cannot vary its seed
+      has no way to measure the dispersion a seed is supposed to cause,
+      and a stochastic environment plugged in later would silently be
+      evaluated once.
 
   Returns:
     Per-bar portfolio returns, the unit every metric in
     :mod:`stock_rl.metrics` expects.
   '''
-  observation = env.reset()
+  observation = env.reset(seed)
   done = False
   while not done:
     observation, _, done, _ = env.step(policy.act(observation))
@@ -232,6 +239,13 @@ class Trial:
 class TrialLog:
   '''Every run that was tried, and only the statistics that are honest.
 
+  A *configuration* is a distinct :attr:`Trial.name`, and a *run* is one
+  evaluation of one configuration under one seed. The two counts are not
+  the same number and conflating them is what made this log lie: the
+  search runs ``trials * len(seeds)`` times, but it only ever tried
+  ``trials`` configurations, and the Deflated Sharpe is a statement about
+  configurations.
+
   Attributes:
     trials: One entry per run, in the order they were run.
   '''
@@ -258,10 +272,12 @@ class TrialLog:
   def count(self) -> int:
     '''Return the number of independent configurations tried.
 
-    Seeds of one configuration are correlated runs of the same hypothesis,
-    so they are not counted as separate trials. Undercounting this weakens
-    the deflation silently, which is why it is a named quantity rather than
-    an argument someone can forget to pass.
+    Distinct names, not runs: the seeds of one configuration are the
+    same hypothesis measured again, so counting them would inflate the
+    search the Deflated Sharpe has to survive. Undercounting this weakens
+    the deflation silently, which is why it is a named quantity rather
+    than an argument someone can forget to pass, and overcounting it is
+    no better: it invents a search that did not happen.
     '''
     return len(self.names)
 
@@ -305,11 +321,35 @@ class TrialLog:
     '''
     return [trial.sharpe for trial in self.trials if trial.name == name]
 
+  def seed_returns(self, name: str) -> list[list[float]]:
+    '''Return the per-seed return series of one configuration.
+
+    This is what :func:`sharpe_report` deflates: the selected
+    configuration's own returns, not the highest-Sharpe run of some other
+    configuration.
+
+    Args:
+      name: Configuration label.
+
+    Returns:
+      One return series per recorded seed, in recorded order.
+    '''
+    return [list(trial.returns) for trial in self.trials
+            if trial.name == name]
+
   def seed_stdev(self, name: str | None = None) -> float:
     '''Return the dispersion of the seeds of one configuration.
 
     This is the number to compare an effect size against. A claimed edge
     smaller than the seed dispersion of the same policy is not an edge.
+
+    It is zero for every configuration produced by
+    :func:`random_search`, and that is a fact about the environments
+    rather than a measurement: both shipped environments are
+    deterministic, so re-running one configuration under three seeds
+    returns the same three times. A non-zero value here is meaningful
+    only when the environment actually responds to the seed, which is why
+    the seeds are threaded into ``reset`` rather than merely recorded.
 
     Args:
       name: Configuration label. Defaults to the first recorded one.
@@ -364,8 +404,10 @@ class SharpeReport:
     trials: Number of independent configurations tried.
     required_years: Years of history the search needs to justify itself.
     available_years: Years of history actually available.
-    deflated: Deflated Sharpe probability, or ``None`` when the gate
-      refused it.
+    deflated: Deflated Sharpe probability of the selected
+      configuration, or ``None`` when the gate refused it. Computed
+      from that configuration's own per-seed returns, and reported as
+      the weakest of them.
     reason: Why the gate did or did not refuse.
   '''
 
@@ -392,6 +434,12 @@ def sharpe_report(log: TrialLog) -> SharpeReport:
   whose ``sharpe`` is ``None``, and a ``reason`` naming the shortfall. No
   amount of implementation correctness rescues a sample that short.
 
+  ``deflated`` is computed from the selected configuration's own per-seed
+  returns and reported as the weakest of them. Both halves matter: a
+  Deflated Sharpe over a different strategy from the one it is quoted for
+  is decoration, and quoting the best seed of a configuration is the
+  selection this whole module exists to refuse.
+
   Args:
     log: Every run that was tried.
 
@@ -407,7 +455,16 @@ def sharpe_report(log: TrialLog) -> SharpeReport:
   selected = max(log.names, key=lambda name: fmean(log.seed_sharpes(name)))
   sharpes = log.seed_sharpes(selected)
   reported = fmean(sharpes)
-  available = len(best.returns) / TRADING_DAYS_PER_YEAR
+  # Available history and the deflated probability both come from the
+  # SELECTED configuration. Taking them from best_trial() mixes two
+  # strategies in one report: the Sharpe on one line is the mean across
+  # the seeds of `selected`, and the probability underneath it was
+  # computed from the single luckiest run of whichever configuration got
+  # the highest number. A Deflated Sharpe that deflates a different
+  # strategy from the one it is reported for is decoration.
+  seed_returns = log.seed_returns(selected)
+  available = (min(len(series) for series in seed_returns)
+               / TRADING_DAYS_PER_YEAR)
   trials = log.count
   base = {
     'mean_sharpe': log.mean_sharpe,
@@ -437,11 +494,21 @@ def sharpe_report(log: TrialLog) -> SharpeReport:
       reason=f'{trials} trials at Sharpe {reported:.3f} need {required:.2f} '
              f'years of returns, only {available:.2f} are available',
       **base)
+  # Deflate every seed of the selected configuration, and report the
+  # weakest of them. The seeds are the same hypothesis re-measured, so the
+  # honest reading of "does this survive its own search" is the seed that
+  # looks least convincing.
+  scored = [
+    value for value in (
+      deflated_sharpe(series, trials,
+                      trial_sharpes=log.per_period_sharpes)
+      for series in seed_returns)
+    if value is not None
+  ]
   return SharpeReport(
     sharpe=reported,
     required_years=required,
-    deflated=deflated_sharpe(
-      best.returns, trials, trial_sharpes=log.per_period_sharpes),
+    deflated=min(scored) if scored else None,
     reason=f'{available:.2f} years available against {required:.2f} required',
     **base)
 
@@ -486,12 +553,22 @@ def random_search(
   '''Run random search over the policy space and log every run.
 
   This is a driver, not a learner. Its job is to produce an honest trial
-  log, because a Deflated Sharpe over one run is decoration. Each
-  configuration is evaluated under every seed, and each seed draws an
-  independent configuration from the same space, so the reported seed
-  dispersion is the dispersion of the search itself. That is the more
-  conservative of the two available readings: the other one varies only a
-  network's initialisation.
+  log, because a Deflated Sharpe over one run is decoration.
+
+  One configuration is drawn per trial and evaluated under **every**
+  seed, which is the only reading in which a seed is a seed. The policy
+  used to be drawn inside the seed loop, so the three entries sharing one
+  ``name`` were three unrelated configurations: ``TrialLog.count``
+  counted one trial where three had been evaluated, which weakens the
+  deflation, and ``seed_stdev`` reported the dispersion of *which
+  configuration got drawn* while claiming to report seed dispersion.
+
+  Both shipped environments are deterministic and discard the seed, so
+  the seeds of one configuration now produce identical runs and
+  ``seed_stdev`` is exactly ``0.0``. That is the honest number, and it is
+  why the seed is still recorded: it is the key that would vary the run
+  the moment a stochastic environment is plugged in, and a search that
+  cannot vary its seed cannot honestly report what varying it would do.
 
   Args:
     panels: Mapping of symbol to bars, all sharing one timeline.
@@ -505,7 +582,8 @@ def random_search(
     seed: Seed for the configuration draw.
 
   Returns:
-    A ``TrialLog`` with ``trials * len(seeds)`` entries.
+    A ``TrialLog`` with ``trials * len(seeds)`` runs covering exactly
+    ``trials`` configurations.
   '''
   if trials < 1:
     raise ValueError(f'trials must be >= 1, got {trials}')
@@ -514,8 +592,9 @@ def random_search(
   source = random.Random(seed)
   log: list[Trial] = []
   for index in range(trials):
+    name = f'trial_{index:03d}'
+    policy = _draw_policy(source)
     for trial_seed in seeds:
-      policy = _draw_policy(source)
       env = WeightAllocationEnv(
         panels,
         capital=capital,
@@ -524,20 +603,20 @@ def random_search(
         max_weight=max_weight,
         rebalance_days=rebalance_days,
       )
-      returns = rollout(env, policy)
-      log.append(Trial.from_returns(f'trial_{index:03d}', trial_seed, returns))
+      returns = rollout(env, policy, trial_seed)
+      log.append(Trial.from_returns(name, trial_seed, returns))
   return TrialLog(log)
 
 
 @dataclass(frozen=True, slots=True)
 class EngineComparison:
-  '''The same policy measured by two engines.
+  '''The same policy measured by two engines over one window.
 
   Attributes:
     env: Metrics from the RL environment: ``sharpe``, ``max_drawdown``,
       ``total_return``, ``turnover`` and ``total_cost``.
     portfolio: The same five keys from
-      :func:`stock_rl.portfolio.run_portfolio`.
+      :func:`stock_rl.portfolio.run_portfolio`, over the same window.
     fingerprint: Deployment fingerprint of the policy.
   '''
 
@@ -555,19 +634,33 @@ def compare(
   max_weight: float = 0.10,
   rebalance_days: int = 21,
 ) -> EngineComparison:
-  '''Measure one policy with both engines on identical inputs.
+  '''Cross-check one policy between the two engines.
 
-  The comparison is only meaningful because the two engines share panels,
-  costs, capital, warm-up length and rebalance cadence. The cadence is
-  aligned down to the fill *bar*, not merely the interval:
-  ``run_portfolio`` fills on bars where ``index % rebalance_days == 0``,
-  while this environment's step ``s`` fills on bar ``history + s``, so the
-  environment is built with ``rebalance_offset = -history % rebalance_days``.
-  With the calendars aligned the two books trade the same bars, at the same
-  opens, sized on the same decision-bar close, so their Sharpe, cost and
-  turnover must agree to within whole-share rounding. A divergence larger
-  than that means one of the two has a bug, which is the entire reason for
-  having two engines.
+  A cost and cadence cross-check, not a parity assertion. The two engines
+  share panels, costs, capital, warm-up length and rebalance cadence, and
+  the cadence is aligned down to the fill *bar*: ``run_portfolio`` fills
+  on bars where ``index % rebalance_days == 0``, while this environment's
+  step ``s`` fills on bar ``history + s``, so the environment is built
+  with ``rebalance_offset = -history % rebalance_days`` and the two books
+  trade the same bars at the same opens.
+
+  Both engines then report over the **same window**.
+  :func:`stock_rl.portfolio.run_portfolio` returns one return per bar from
+  ``history`` onward and the environment returns one per step, which is
+  ``len - history`` of them. The previous claim that their Sharpes and
+  turnover "must agree to within whole-share rounding" was not merely
+  imprecise, it was unsatisfiable: one series was padded with
+  ``history`` zeros and the other was not, so a gap was guaranteed by
+  construction and the check carried no information about either engine.
+
+  What remains true, and is what this function is for: **cost agrees
+  exactly**, because it is a sum of rupees over the same fills on the same
+  bars, and the two engines therefore trade the same book. Sharpe and
+  turnover agree approximately, to the extent that the two books round
+  their share counts the same way; a divergence there is a rounding
+  artefact rather than the whole-share equality the old docstring
+  promised, which is why it is reported side by side instead of
+  asserted.
 
   Args:
     policy: Policy to measure.
@@ -580,7 +673,7 @@ def compare(
 
   Returns:
     An ``EngineComparison`` with both engines' Sharpe, cost, turnover,
-    total return and maximum drawdown.
+    total return and maximum drawdown over the shared window.
   '''
   env = WeightAllocationEnv(
     panels,
@@ -602,6 +695,15 @@ def compare(
     history=history,
   )
   env_returns = env.returns
+  # Guard the window claim rather than trusting it: the two series are
+  # only comparable one for one, and a future change to either engine's
+  # warm-up convention must fail here instead of silently producing two
+  # different windows again.
+  if len(baseline.returns) != len(env_returns):
+    raise ValueError(
+      f'the engines report different windows: run_portfolio returned '
+      f'{len(baseline.returns)} bars and the environment '
+      f'{len(env_returns)}, so no comparison is meaningful')
   return EngineComparison(
     env={
       'sharpe': sharpe_ratio(env_returns),

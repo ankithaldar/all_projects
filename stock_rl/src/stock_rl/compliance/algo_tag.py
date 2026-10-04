@@ -214,11 +214,20 @@ def build_nnf_id(platform: str, flag: int, tail: str = '00') -> str:
 
   Raises:
     AlgoTagError: If the platform is not 12 digits, the flag is not a
-      single decimal digit, or the tail is not two digits.
+      whole number in 0 to 9, or the tail is not two digits.
   '''
   if len(platform) != 12 or not platform.isdecimal():
     raise AlgoTagError(
       f'platform prefix must be 12 digits, got {platform!r}')
+  # An int, not merely a number in range. The f-string below interpolates
+  # the flag rather than a digit, so 0.5 or True would build a
+  # seventeen-character string that still looks like an NNF ID and is
+  # only caught one call later by validate_algo_tag. bool is excluded
+  # explicitly because it is an int and True would otherwise pass as 1.
+  if isinstance(flag, bool) or not isinstance(flag, int):
+    raise AlgoTagError(
+      f'algo flag must be a whole number, got '
+      f'{type(flag).__name__} {flag!r}')
   if not 0 <= flag <= 9:
     raise AlgoTagError(f'algo flag must be a digit 0-9, got {flag}')
   if len(tail) != 2 or not tail.isdecimal():

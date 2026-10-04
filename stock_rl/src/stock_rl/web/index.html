@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No Content-Security-Policy meta tag and no external origins: the page
+     loads only the two sibling files below, which is what lets it run
+     from file:// with no build step and no network at all. -->
+<title>stock_rl - backtest dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div>
+    <h1>stock_rl <span class="muted">backtest dashboard</span></h1>
+    <p class="muted" id="status-line">connecting...</p>
+  </div>
+  <div class="bar-actions">
+    <label class="field">
+      <span>API</span>
+      <input id="api-base" type="text" spellcheck="false"
+             autocomplete="off" size="28">
+    </label>
+    <button id="refresh" type="button">Refresh</button>
+  </div>
+</header>
+
+<!-- Load-bearing, not decorative. The sentence is the exact one the API
+     attaches to every payload (stock_rl.api.not_advice), so the page and
+     the JSON can never disagree about what this is. A screen that prints
+     a Sharpe next to a number without this attached is an
+     advertisement. -->
+<p class="disclaimer" role="note">
+  <strong>Not financial advice.</strong>
+  Research output from a backtested model. Not financial advice, not a
+  recommendation, and not a solicitation to buy or sell anything. A
+  Sharpe ratio computed on historical prices says nothing about what
+  this strategy does next.
+</p>
+
+<p id="error" class="error" role="alert" hidden></p>
+<p id="halted" class="halted" role="alert" hidden></p>
+
+<main>
+  <section class="card wide">
+    <h2>Equity curve</h2>
+    <p class="muted" id="equity-note">normalised to 1.0 at the start</p>
+    <div id="equity-chart" class="chart"></div>
+  </section>
+
+  <section class="card">
+    <h2>Metrics</h2>
+    <table id="metrics">
+      <thead>
+        <tr><th scope="col">Measure</th><th scope="col">Value</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted small" id="metrics-note"></p>
+  </section>
+
+  <section class="card">
+    <h2>Risk</h2>
+    <table id="risk">
+      <thead>
+        <tr><th scope="col">Measure</th><th scope="col">Value</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted small" id="risk-note"></p>
+  </section>
+
+  <section class="card wide">
+    <h2>Signals</h2>
+    <p class="muted" id="signals-note"></p>
+    <table id="signals">
+      <thead>
+        <tr>
+          <th scope="col">Symbol</th>
+          <th scope="col">Action</th>
+          <th scope="col">Confidence</th>
+          <th scope="col">Weight</th>
+          <th scope="col">Reason</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card wide">
+    <h2>Baselines</h2>
+    <p class="muted" id="baselines-note">
+      Every provider measured on the identical backtester, costs and
+      splits. A learned policy that cannot beat equal weight has not
+      earned its complexity.
+    </p>
+    <table id="baselines">
+      <thead>
+        <tr>
+          <th scope="col">Strategy</th>
+          <th scope="col">Sharpe</th>
+          <th scope="col">Max drawdown</th>
+          <th scope="col">Turnover</th>
+          <th scope="col">Total cost</th>
+          <th scope="col">Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <p class="muted small">
+    Served read-only on loopback by <code>stock_rl.api</code>, which has
+    no authentication and can neither trip nor clear the kill switch.
+    Opened straight from <code>file://</code> the browser's same-origin
+    policy blocks every request by design; serve this page from
+    <code>python -m stock_rl.api</code> and open
+    <code>http://127.0.0.1:8765/</code> instead.
+  </p>
+  <p class="muted small">
+    No frameworks, no CDN, no external fonts, no build step. Vanilla
+    JavaScript and inline SVG.
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

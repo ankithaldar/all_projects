@@ -90,17 +90,24 @@ class Session:
 
   @property
   def duration_minutes(self) -> float | None:
-    '''Session length in minutes, or None when the hours are unknown.
+    '''Session length in minutes, or None when it is not a session.
 
-    A session whose close precedes its open returns None rather than a
-    negative length or a wrapped 24-hour one. No Indian exchange runs
-    an overnight equity session, so such an input is a mistake, and a
-    caller is better served by the nonsense than by a silent correction.
+    None covers two mistakes rather than one: the hours were never
+    announced, and the announced hours do not describe a window. A close
+    that precedes **or equals** its open returns None rather than a
+    negative length, a wrapped 24-hour one, or a 0.0 that reads like a
+    real zero-minute trading day. A zero-length window is not a session;
+    reporting it as zero minutes asserts that a trading day happened and
+    contained nothing.
+
+    No Indian exchange runs an overnight equity session, so a close at or
+    before its open is a mistake in the input, and a caller is better
+    served by the nonsense than by a silent correction.
     '''
     if not self.has_times:
       return None
     span = _minutes(self.closes) - _minutes(self.opens)
-    return None if span < 0.0 else span
+    return None if span <= 0.0 else span
 
   def contains(self, moment: time) -> bool:
     '''Return True if a wall-clock time falls inside this session.

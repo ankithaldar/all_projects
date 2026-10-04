@@ -26,7 +26,11 @@ The vendor facts this module records, and the traps around them:
     CD, Debt and Index separately. A feed that carries Nifty futures
     prints may have no cash-market or no debt entitlement at all, so a
     single ``has_data=True`` is not a usable abstraction. Hence
-    :class:`Entitlement` and :class:`Segment`.
+    :class:`Entitlement` and :class:`Segment`. A per-segment grant is
+    still not a decision at the point of a request, so the entitlement
+    carries the symbol-to-segment map it is checked against as well:
+    without that map a feed cannot name the segment of the symbol being
+    asked for, and a check against nothing is not a check.
   * **TradingView Inc. is on the authorised list.** Treating TradingView
     as free or public is wrong at the exchange level; the same applies to
     Bloomberg, Refinitiv, FactSet, ICE and the rest.
@@ -47,7 +51,7 @@ result can be reproduced from a file without a vendor account.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -105,6 +109,13 @@ class EntitlementError(ValueError):
 class Entitlement:
   '''What a feed is licensed to carry, per segment.
 
+  Two facts, and both are needed before a request can be shown to be
+  licensed: *which segments* the feed covers, and *which segment each
+  symbol trades in*. The second was missing, which made the first
+  unusable at the point of a request -- a protocol can promise to raise
+  on an unlicensed symbol only if it can name the segment, and a symbol
+  with no recorded segment cannot be shown to be licensed at all.
+
   Attributes:
     vendor: Vendor or feed name, free text. Deliberately not validated
       against a list, because the authoritative list is a PDF on the
@@ -112,19 +123,29 @@ class Entitlement:
       not become a stale copy of it.
     segments: Segments the feed may deliver. Empty is a meaningful and
       licensed-for-nothing state, not an absence of information.
+    symbol_segments: Venue symbol to the segment it trades in. Absent
+      symbol means unknown segment, and :meth:`require_symbol` refuses
+      it rather than assuming cash: assuming a licence nobody showed is
+      the failure that costs money.
   '''
 
   vendor: str
   segments: frozenset[Segment] = frozenset()
+  symbol_segments: Mapping[str, Segment] = field(
+    default_factory=lambda: {})
 
   @classmethod
-  def granted(cls, vendor: str,
-              *segments: Segment) -> Entitlement:
+  def granted(cls, vendor: str, *segments: Segment,
+              symbol_segments: Mapping[str, Segment] | None = None,
+              ) -> Entitlement:
     '''Return an entitlement covering the named segments.
 
     Args:
       vendor: Vendor or feed name.
       segments: Segments the feed is licensed for.
+      symbol_segments: Venue symbol to the segment it trades in. Passed
+        through so the same value answers both halves of the question,
+        "is this segment licensed" and "is this symbol in it".
 
     Returns:
       The entitlement, with the segments frozen so it cannot be widened
@@ -132,7 +153,8 @@ class Entitlement:
       in place would make the record of what was licensed disagree with
       what the code does.
     '''
-    return cls(vendor=vendor, segments=frozenset(segments))
+    return cls(vendor=vendor, segments=frozenset(segments),
+               symbol_segments=dict(symbol_segments or {}))
 
   @classmethod
   def none(cls, vendor: str) -> Entitlement:
@@ -145,6 +167,8 @@ class Entitlement:
       An empty entitlement. The honest default for a feed whose licence
       has not been read yet, and safer than guessing CM because a wrong
       guess produces licensed-looking data from an unlicensed source.
+      It also classifies no symbol, so every request through it is
+      refused until a caller says which segment a symbol is in.
     '''
     return cls(vendor=vendor, segments=frozenset())
 
@@ -158,6 +182,18 @@ class Entitlement:
       True if the segment is in the granted set.
     '''
     return segment in self.segments
+
+  def segment_of(self, symbol: str) -> Segment | None:
+    '''Return the segment a symbol trades in, or None if unrecorded.
+
+    Args:
+      symbol: Venue symbol.
+
+    Returns:
+      The recorded segment, or None when this entitlement carries no
+      classification for that symbol. None means unknown, never "cash".
+    '''
+    return self.symbol_segments.get(symbol)
 
   def missing(self, needed: Iterable[Segment]) -> frozenset[Segment]:
     '''Return the needed segments this entitlement does not cover.
@@ -187,6 +223,30 @@ class Entitlement:
         f'{self.vendor} is not licensed for segment(s) {joined}; '
         'entitlements are per segment, not a single boolean')
 
+  def require_symbol(self, symbol: str) -> None:
+    '''Raise unless the segment carrying ``symbol`` is licensed.
+
+    This is the check that makes :attr:`segments` usable at the point of
+    a request rather than only on paper, and it refuses in two distinct
+    ways because they are two distinct problems: a symbol with no
+    recorded segment cannot be shown to be licensed at all, and a symbol
+    in an unlicensed segment is a licence breach.
+
+    Args:
+      symbol: Venue symbol being requested.
+
+    Raises:
+      EntitlementError: If the symbol's segment is unrecorded, or if it
+        is recorded and not licensed.
+    '''
+    segment = self.segment_of(symbol)
+    if segment is None:
+      raise EntitlementError(
+        f'{self.vendor} records no segment for {symbol}, so no licence '
+        'can be shown for it; classify the symbol rather than assuming '
+        'a segment')
+    self.require(segment)
+
 
 @runtime_checkable
 class MarketDataFeed(Protocol):
@@ -201,9 +261,11 @@ class MarketDataFeed(Protocol):
     vendor_name: Vendor or feed name, for the audit trail. The audit
       trail records which feed produced a price, so this is a compliance
       field rather than a label.
-    entitlements: Per-segment licence state. Any implementation must
-      expose it, so that a caller can fail before using a segment the
-      feed is not licensed for.
+    entitlements: Per-segment licence state, including the symbol to
+      segment mapping it is checked against. Any implementation must
+      expose it and enforce it on ``bars``: a licence state nothing
+      consults is a comment, and an unchecked one is the licence breach
+      nobody was told about.
   '''
 
   vendor_name: str
@@ -222,7 +284,8 @@ class MarketDataFeed(Protocol):
       Bars in ascending timestamp order.
 
     Raises:
-      EntitlementError: If the symbol's segment is not licensed.
+      EntitlementError: If the symbol's segment is not licensed, or the
+        feed records no segment for it.
       KeyError: If the symbol is not carried by this feed.
     '''
 
@@ -259,7 +322,9 @@ class ReplayVendor:
   This is the implementation the test suite runs against, and it is not
   a mock: it enforces the same contract a real feed would, so a strategy
   that breaks against it breaks against the vendor too. It performs no
-  I/O, holds no licence, and asserts nothing about who is authorised.
+  I/O. It does enforce entitlements, on the explicit record the caller
+  supplies: every :meth:`bars` call is gated on the symbol's segment
+  being licensed, and a symbol with no recorded segment is refused.
 
   Staleness is the reason it exists rather than a plain list of bars. A
   real-time feed is only useful while it is current, and this project's
@@ -276,6 +341,7 @@ class ReplayVendor:
     entitlements: Entitlement | None = None,
     stale_after: timedelta = default_stale_after,
     clock: Callable[[], datetime] | None = None,
+    symbol_segments: Mapping[str, Segment] | None = None,
   ) -> None:
     '''Build a replay feed from in-memory bars.
 
@@ -286,14 +352,22 @@ class ReplayVendor:
         list.
       bars_by_symbol: Mapping of symbol to its bars, each in strictly
         ascending timestamp order.
-      entitlements: Per-segment licence state. Defaults to no
-        entitlement at all rather than to cash, since assuming a licence
-        the caller has not shown is the failure that actually costs
-        money.
+      entitlements: Per-segment licence state, including the symbol to
+        segment classification the licence is checked against. Defaults
+        to no entitlement at all rather than to cash, since assuming a
+        licence the caller has not shown is the failure that actually
+        costs money -- and an undeclared licence refuses every request
+        rather than serving it.
       stale_after: Age at which the newest bar for a symbol counts as
         stale.
       clock: Callable returning the current time, injected so staleness
         can be tested without a wall clock.
+      symbol_segments: Venue symbol to segment, merged into the
+        entitlement's own classification. Pass it here to keep the
+        instrument master next to the bars; pass it to
+        :meth:`Entitlement.granted` instead to keep it with the licence.
+        Later entries win, so a feed-specific mapping can correct a
+        licence-wide one.
 
     Raises:
       ValueError: If the vendor name is empty, if ``bars_by_symbol`` is
@@ -312,7 +386,11 @@ class ReplayVendor:
     if stale_after <= timedelta(0):
       raise ValueError(f'stale_after must be positive, got {stale_after}')
     self.vendor_name = vendor_name
-    self.entitlements = entitlements or Entitlement.none(vendor_name)
+    base = entitlements or Entitlement.none(vendor_name)
+    self.entitlements = replace(
+      base,
+      symbol_segments={**base.symbol_segments, **dict(symbol_segments or {})},
+    )
     self.stale_after = stale_after
     self._clock = clock or datetime.now
     self._bars: dict[str, tuple[Bar, ...]] = {
@@ -363,6 +441,10 @@ class ReplayVendor:
         returning an empty list, because an empty list is exactly what a
         backtest silently completes on, and a missing symbol is the
         single most likely ingestion mistake there is.
+      EntitlementError: If the symbol's segment is not licensed, or is
+        not recorded at all. Checked before the range, because a licence
+        that does not cover the request does not become valid by asking
+        for less of it.
       ValueError: If ``start`` is after ``end``.
     '''
     series = self._bars.get(symbol)
@@ -370,6 +452,7 @@ class ReplayVendor:
       raise KeyError(
         f'{self.vendor_name} does not carry {symbol}; known symbols: '
         f'{self.symbols()}')
+    self.entitlements.require_symbol(symbol)
     if start > end:
       raise ValueError(f'start {start} is after end {end}')
     return [bar for bar in series if start <= bar.timestamp <= end]

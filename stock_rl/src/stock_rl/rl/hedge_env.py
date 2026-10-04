@@ -788,16 +788,22 @@ class HedgeEnv:
     self._roll(decision)
     vol = self._implied_vol(decision)
     bounds = self.coverage_bounds()
-    self._delta_log.append(
-      self.exposure_units + self._leg_greeks(decision, vol)[0])
     targets = self._target_contracts(action, bounds)
     cost = self._execute(targets, fill, vol)
+    # Logged AFTER the fill, and that ordering is the whole point. The
+    # pre-trade delta on step one is a full unhedged observation, so
+    # averaging it in gives a book hedged from bar 1 onward an average
+    # delta of about exposure/n_steps for no reason other than the bar it
+    # was measured on before it traded. The delta the book actually
+    # carried into the next bar is the post-trade one.
+    self._delta_log.append(
+      self.exposure_units + self._leg_greeks(decision, vol)[0])
     self._mark(fill)
     reward = -self.risk.cost * cost
     self._step_index += 1
     terminated = self._step_index >= self.n_steps
     if terminated:
-      reward -= self.risk.risk * self.risk_measure()
+      reward -= self.risk.risk * self.risk_penalty()
     self._decisions.append({
       'step': self._step_index,
       'timestamp': self.timestamps[decision],
@@ -956,6 +962,26 @@ class HedgeEnv:
       return cvar(self._errors, self.risk.alpha)
     return semi_rmse(self._errors)
 
+  def risk_penalty(self) -> float:
+    '''Return the terminal risk measure as a penalty magnitude.
+
+    Both measures are returned on a scale where a LARGER value means
+    WORSE risk, so the caller can always subtract it. They do not
+    naturally share a sign: ``cvar`` is signed and negative (it is the
+    mean of the lower tail), while ``semi_rmse`` is a non-negative
+    semideviation. Subtracting both with one sign therefore rewards
+    whichever measure happens to be negative, which for ``cvar`` means
+    a book that never hedges scores the best terminal reward of all --
+    the agent is paid to stop hedging.
+
+    Returns:
+      Penalty magnitude, non-negative and increasing in tail risk.
+    '''
+    measure = self.risk_measure()
+    if measure >= 0.0:
+      return measure
+    return -measure
+
   def _info(self, cost: float = 0.0) -> Info:
     '''Build the auxiliary info mapping for the current step.
 
@@ -1068,6 +1094,11 @@ class HedgeEnv:
     A hedged book should sit near zero. A positive mean means the policy
     underhedged, which is what Francois et al. observed at low CVaR alpha
     and what Zernikov measured as an average delta haircut against BS.
+
+    The mean is taken over post-trade deltas, one per step. A pre-trade
+    log would put one full unhedged observation at the front of a book
+    that hedges on its very first step, which is a measurement of the
+    bar before the trade rather than of the policy.
 
     Returns:
       Mean net delta, or 0.0 for an empty episode.

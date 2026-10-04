@@ -81,6 +81,12 @@ def vendor(**kwargs):
   defaults = {
     'vendor_name': 'test-replay',
     'bars_by_symbol': {'RELIANCE': bars(10)},
+    # Reliance is cash equity and the replay feed is licensed for it, so
+    # bars() serves it. Entitlement is enforced on every call, so a feed
+    # with no licence at all would refuse rather than serve.
+    'entitlements': Entitlement.granted(
+      'test-replay', Segment.CASH,
+      symbol_segments={'RELIANCE': Segment.CASH}),
   }
   defaults.update(kwargs)
   return ReplayVendor(**defaults)
@@ -532,8 +538,12 @@ class TestReplayVendorConstruction:
 
   def test_default_entitlement_is_none(self):
     # Not cash: assuming a licence the caller has not shown is the
-    # failure that costs money.
-    assert vendor().entitlements.allows(Segment.CASH) is False
+    # failure that costs money. The harness default above grants cash so
+    # that bars() serves; the shipped default grants nothing.
+    assert vendor(entitlements=Entitlement.none('test-replay')).entitlements \
+      .allows(Segment.CASH) is False
+    assert ReplayVendor('test-replay', {'RELIANCE': bars(4)}) \
+      .entitlements.allows(Segment.CASH) is False
 
   def test_entitlement_is_carried_through(self):
     replay = vendor(

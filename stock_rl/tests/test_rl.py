@@ -1420,11 +1420,28 @@ class TestRandomSearch:
                            seed=11)
     assert first.sharpes == second.sharpes
 
-  def test_seeds_produce_different_books(self):
+  def test_seeds_of_one_configuration_re_run_the_same_book(self):
+    # The search draws one policy per configuration and evaluates it under
+    # every seed. Both shipped environments are deterministic and discard
+    # the seed, so the three runs are identical, and that is the honest
+    # outcome: a non-zero "seed dispersion" here would be an artefact of
+    # the seed having drawn a different policy inside the seed loop.
     log = random_search(make_panels(count=120), trials=1, seeds=(1, 2, 3),
                         history=HISTORY)
+    assert len(set(log.sharpes)) == 1
+    assert log.seed_stdev() == 0.0
+    assert [trial.seed for trial in log.trials] == [1, 2, 3]
+    assert log.count == 1, 'one policy, so one configuration'
+
+  def test_one_configuration_is_not_the_whole_search(self):
+    # The control for the test above: several configurations of one
+    # search must differ, or there is nothing to select between. Four
+    # draws rather than two because several weight settings on a
+    # single-symbol panel are the same fully-invested book.
+    log = random_search(make_panels(count=120), trials=4, seeds=(1,),
+                        history=HISTORY, seed=1)
     assert len(set(log.sharpes)) > 1
-    assert log.seed_stdev() > 0.0
+    assert log.count == 4
 
   def test_rollout_runs_to_termination(self):
     env = WeightAllocationEnv(make_panels(count=60), history=HISTORY)
@@ -1469,3 +1486,54 @@ class TestCompareParity:
 
   def test_equal_weight_control_arm_is_positive_on_rising_panels(self):
     assert equal_weight_sharpe(make_panels(count=200)) > 0.0
+
+
+class TestHedgeRewardDirection:
+  '''The terminal reward must pay for hedging, not against it.
+
+  Both risk measures are returned on a scale where a larger value means
+  worse risk, so the caller can always subtract. They do not naturally
+  share a sign -- cvar is signed and negative because it is the mean of
+  the lower tail, semi_rmse is a non-negative semideviation -- so a single
+  sign applied to both rewarded whichever measure was negative. Under
+  cvar that meant a book which never hedged scored the best terminal
+  reward of all, which is the agent abandoning hedging, the exact
+  pathology the module docstring says it exists to prevent.
+  '''
+
+  @staticmethod
+  def _terminal(coverage, measure='cvar'):
+    env = HedgeEnv(smooth_bars(), capital=1_000_000.0, history=40,
+                   iv_window=20, risk=HedgeRisk(measure=measure))
+    env.reset()
+    for _ in range(20):
+      env.step({'nifty_future': coverage})
+    return env
+
+  def test_penalty_is_non_negative_for_cvar(self):
+    env = self._terminal(0.0)
+    assert env.risk_penalty() >= 0.0
+
+  def test_penalty_is_non_negative_for_semi_rmse(self):
+    env = self._terminal(0.0, measure='semi_rmse')
+    assert env.risk_penalty() >= 0.0
+
+  @pytest.mark.parametrize('measure', ['cvar', 'semi_rmse'])
+  def test_better_hedge_pays_no_more_penalty(self, measure):
+    unhedged = self._terminal(0.0, measure).risk_penalty()
+    hedged = self._terminal(1.0, measure).risk_penalty()
+    assert hedged <= unhedged + 1e-12, (
+      f'{measure}: full hedge penalty {hedged} exceeded unhedged '
+      f'{unhedged}, so the objective pays for not hedging')
+
+  @pytest.mark.parametrize('measure', ['cvar', 'semi_rmse'])
+  def test_terminal_reward_is_higher_for_the_better_hedge(self, measure):
+    unhedged = self._terminal(0.0, measure)
+    hedged = self._terminal(1.0, measure)
+    assert (-hedged.risk.risk * hedged.risk_penalty()
+            >= -unhedged.risk.risk * unhedged.risk_penalty() - 1e-12)
+
+  def test_perfect_hedge_has_zero_penalty(self):
+    assert self._terminal(1.0).risk_penalty() == pytest.approx(0.0, abs=1e-6)
+
+
