@@ -39,16 +39,23 @@ class CostModel:
   '''Rates as fractions of traded notional, plus fixed rupee charges.
 
   Attributes:
-    brokerage_pct: Broker commission rate. Delivery is commonly zero.
+    brokerage_pct: Broker commission rate. Delivery is zero only for a
+      retail individual at a discount broker; institutional entity types
+      and some brokers are charged 0.1% or Rs 20.
     brokerage_cap: Per-order rupee cap on brokerage, e.g. Zerodha's Rs 20.
     stt_buy: Securities transaction tax, buy side.
     stt_sell: Securities transaction tax, sell side.
-    exchange_pct: NSE transaction charge rate (buy and sell).
+    exchange_pct: NSE transaction charge, buy and sell. The client pays
+      Rs 307 per crore (0.00307%) in total: since the March 2026
+      reclassification this is Rs 306.99 as transaction charge plus
+      Rs 0.01 as the NSE IPFT contribution. The older Rs 297 line item
+      understates the real all-in charge by 3.3 percent.
     sebi_pct: SEBI turnover fee rate (buy and sell).
     stamp_duty_buy: Stamp duty, buy side only, never charged on sell.
     gst_pct: GST applied to brokerage + exchange + SEBI fees. Deliberately
-      not applied to STT, which is a tax, not a fee.
-    dp_charge: Rupee charge per sell order for the depository.
+      not applied to STT or stamp duty, which are themselves taxes.
+    dp_charge: Rupee DP charge per sell. See the note on daily capping
+      below; brokers quote Rs 15 to Rs 25 inclusive of GST.
     slippage_bps: Half-spread plus impact, applied to both sides.
   '''
 
@@ -56,7 +63,7 @@ class CostModel:
   brokerage_cap: float = 20.0
   stt_buy: float = 0.001
   stt_sell: float = 0.001
-  exchange_pct: float = 0.0000297
+  exchange_pct: float = 0.0000307
   sebi_pct: float = 0.000001
   stamp_duty_buy: float = 0.00015
   gst_pct: float = 0.18
@@ -148,19 +155,32 @@ class CostModel:
     return brokerage + charges + self.slippage(notional)
 
 
-#: Delivery-equity defaults. Brokerage waived, symmetric STT, full charges.
+#: Delivery-equity defaults for a retail individual at a discount broker.
+#: Brokerage is waived only for that case: Zerodha and Groww charge HUF,
+#: trust, partnership and LLP accounts 0.1% or Rs 20 on delivery.
 #
-# PONYTAIL: these rate defaults are a single dated snapshot taken from the
-# public SEBI/NSE circulars and Zerodha's published brokerage table. Ceiling:
-# STT, stamp duty and exchange charges are all revised by circular on an
-# irregular basis, and discount-broker plans change the brokerage term
-# quarterly, so this table WILL drift. Upgrade path: load a dated rate card
-# from a broker-published CSV and construct ``CostModel(**row)`` -- the
-# dataclass is already the whole interface, so no logic changes.
+# PONYTAIL: these defaults are a dated snapshot verified against primary
+# sources -- NSE's investor levies page (updated 17 Apr 2026), circular
+# NSE/FA/73061 of 27 Feb 2026 for the exchange-charge reclassification,
+# and SEBI (Stock Brokers) Regulations 2026 reg. 41 for the turnover fee.
+# Two known ceilings remain. (1) DP charges are charged per DAY per scrip,
+# not per order, so a strategy that sells one symbol twice in a session is
+# over-charged here; on daily bars the two coincide, so per-order is kept
+# and the intraday case is left to a future caller. (2) STT is levied on
+# the side's VWAP across a settlement day, not per fill, which is why
+# splitting one large order into slices is modelled as additive here and
+# will slightly overstate STT. Upgrade path for both: load a dated rate
+# card and a per-session accumulator. The dataclass is already the whole
+# interface, so neither fix requires touching the arithmetic.
 DELIVERY = CostModel()
 
-#: Intraday defaults. Cheaper STT, lower stamp duty, no DP charge.
+#: Intraday defaults. Cheaper STT, lower stamp duty, no DP charge, but
+#: brokerage is NOT free: discount brokers charge 0.03% per executed
+#: order capped at Rs 20 (Zerodha, Dhan; Groww 0.05%, Angel 0.1%,
+#: Upstox flat Rs 20). Leaving this at zero understates intraday cost by
+#: roughly 60 percent, because brokerage then dominates a 3.55 bps levy.
 INTRADAY = CostModel(
+  brokerage_pct=0.0003,
   stt_buy=0.0,
   stt_sell=0.00025,
   stamp_duty_buy=0.00003,

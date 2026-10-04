@@ -35,8 +35,18 @@ from stock_rl.costs import DELIVERY, CostModel, Side
 
 __all__ = ['BacktestResult', 'Fill', 'run_backtest']
 
-#: A signal maps the visible history to a target weight. Weight 0 is
-#: flat. Weight is clamped into ``[-max_weight, max_weight]``.
+#: A signal maps the visible history to a target weight in ``[0, 1]``,
+#: where 0 is flat and 1 is fully invested. Negative values are floored to
+#: flat rather than interpreted as a short.
+#:
+#: PONYTAIL: this returns a bare float, which carries no record of *why*
+#: the decision was made. That is acceptable for measuring a strategy but
+#: not for running one: an unauditable decision cannot be defended to a
+#: broker, an exchange or a regulator, and cannot be reviewed after a loss.
+#: Ceiling: a signal can explain its own weight but not the reasoning
+#: behind it. Upgrade path: widen this to a record carrying an action,
+#: a timeframe and a reason; ``run_backtest`` needs only ``.weight``, so
+#: the change is additive and does not disturb the backtest loop.
 Signal = Callable[[list[Bar]], float]
 
 

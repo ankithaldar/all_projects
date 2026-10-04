@@ -87,14 +87,50 @@ class TestAsymmetry:
   def test_intraday_side_breakdown_in_rupees(self):
     # Pins the full arithmetic so a future rate change is visible as a
     # deliberate diff rather than a silent shift in reported Sharpe.
+    # Brokerage is included, and GST is levied on it as well as on the
+    # exchange and SEBI charges.
+    brokerage = INTRADAY.commission(Side.BUY, RUPEE)
     exchange = RUPEE * INTRADAY.exchange_pct
     sebi = RUPEE * INTRADAY.sebi_pct
-    gst = INTRADAY.gst_pct * (exchange + sebi)
+    gst = INTRADAY.gst_pct * (brokerage + exchange + sebi)
     slippage = RUPEE * INTRADAY.slippage_bps / 10_000.0
     expected_buy = RUPEE * 0.00003 + exchange + sebi + gst + slippage
+    expected_buy += brokerage
     expected_sell = RUPEE * 0.00025 + exchange + sebi + gst + slippage
+    expected_sell += brokerage
     assert INTRADAY.one_way(Side.BUY, RUPEE) == pytest.approx(expected_buy)
     assert INTRADAY.one_way(Side.SELL, RUPEE) == pytest.approx(expected_sell)
+
+  def test_intraday_brokerage_is_not_free(self):
+    # Regression guard: intraday brokerage was 0.0, which understated a
+    # real intraday round trip by roughly 60 percent, because brokerage
+    # then dominates the 3.55 bps of levies.
+    assert INTRADAY.brokerage_pct > 0.0
+    assert INTRADAY.one_way(Side.BUY, RUPEE) > 50.0
+
+  def test_brokerage_cap_binds_on_intraday_ticket(self):
+    # 0.03% of 1 lakh is 30, above the 20 rupee cap.
+    assert INTRADAY.commission(Side.BUY, RUPEE) == pytest.approx(20.0)
+
+  def test_delivery_round_trip_levies_are_about_22bps(self):
+    # Cross-check against the published all-in delivery levy of 22.25 bps.
+    # Excludes slippage (an assumption, not a levy) and the DP charge,
+    # which is levied once per day per scrip rather than per round trip.
+    levies = (DELIVERY.round_trip(RUPEE)
+              - 2 * DELIVERY.slippage(RUPEE)
+              - DELIVERY.dp_charge)
+    bps = levies / RUPEE * 10_000.0
+    assert bps == pytest.approx(22.25, abs=0.05)
+
+  def test_stt_dominates_delivery_cost(self):
+    # STT is 90 percent of a delivery round trip. If this assertion ever
+    # breaks, the cost model has a structural error worth investigating
+    # before any strategy is judged.
+    stt = 2 * RUPEE * DELIVERY.stt_buy
+    total = (DELIVERY.round_trip(RUPEE)
+             - 2 * DELIVERY.slippage(RUPEE)
+             - DELIVERY.dp_charge)
+    assert stt / total == pytest.approx(20.0 / 22.25, abs=0.02)
 
 
 class TestZeroNotional:
