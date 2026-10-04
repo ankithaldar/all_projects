@@ -98,9 +98,13 @@ class Rejection(StrEnum):
   Attributes:
     NO_READINGS: Nothing was supplied for the symbol.
     LOOK_AHEAD: At least one reading was public **after** the decision
-      bar. The reading is dropped and the aggregate is refused, because
-      one leak poisons the whole average and there is no way to subtract
-      it.
+      bar. The reading is dropped AND the aggregate is refused, so
+      ``usable`` is False. The refusal is the point: a leak means the
+      inputs to this average are not all knowable at the bar, and there
+      is no way to subtract one from a mean afterwards. Nothing in the
+      package reads ``rejected``, so recording the leak without refusing
+      it would have been a note to self that no code acted on -- which
+      is exactly what happened before.
     SINGLE_SOURCE: Fewer distinct sources than the minimum. The reading
       is an unverified opinion, and a FinBERT-class signal used alone
       was measured with the wrong sign.
@@ -305,7 +309,7 @@ def require_visible(
 def aggregate(
   readings: list[SentimentReading],
   symbol: str,
-  decision_bar: datetime | None = None,
+  decision_bar: datetime,
   min_sources: int = default_min_sources,
 ) -> SentimentAggregate:
   '''Aggregate readings for ``symbol`` into one equal-weight number.
@@ -314,9 +318,16 @@ def aggregate(
 
   1. Filter to the symbol.
   2. Drop anything not yet public at ``decision_bar``, recording
-     :attr:`Rejection.LOOK_AHEAD` if any were dropped. Without a
-     ``decision_bar`` the filter is skipped, which is only safe for
-     live use -- in a backtest a bar must be supplied.
+     :attr:`Rejection.LOOK_AHEAD` if any were dropped.
+
+     ``decision_bar`` is REQUIRED and has no default. It used to default
+     to ``None``, which skipped the filter entirely rather than applying
+     it, so the permissive default was the one that let the future in:
+     four readings dated a year after the bar reached a context as usable
+     sentiment at full strength, with ``rejected`` empty and no record
+     that anything had been dropped. In a backtesting library the
+     unattributed call is the dangerous one, so the signature now forces
+     the caller to say which bar it is standing on.
   3. Collapse readings to one score per **distinct source**, so one
      prolific wire feed cannot masquerade as three corroborating voices.
      Readings with no ``source`` collapse into a single unlabelled
@@ -383,6 +394,14 @@ def aggregate(
   usable = len(source_scores) >= min_sources
   if not usable:
     rejections.append(Rejection.SINGLE_SOURCE.value)
+  # A leak refuses the aggregate outright, whatever the source count says.
+  # The docstring for Rejection.LOOK_AHEAD has always promised this; the
+  # code dropped the offending reading and published the average of the
+  # survivors with usable=True. Nothing in the package reads `rejected`,
+  # so the leak was recorded and then ignored, and the surviving score
+  # reached a state vector at full strength.
+  if Rejection.LOOK_AHEAD.value in rejections:
+    usable = False
   return SentimentAggregate(
     symbol=symbol,
     score=fmean(source_scores) if usable else 0.0,

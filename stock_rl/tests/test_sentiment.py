@@ -115,15 +115,43 @@ def test_reading_public_after_the_bar_is_rejected_as_look_ahead() -> None:
 
 
 def test_look_ahead_reading_is_never_used_even_alongside_good_ones() -> None:
-  '''One leak poisons the average; there is no way to subtract it.'''
+  '''A leak poisons the aggregate, so the aggregate is refused.
+
+  The leaked reading is dropped from the per-source scores, which is why
+  ``source_scores`` is the two good sources only. But the aggregate is
+  ALSO refused, which this test previously did not check: it asserted a
+  published score of 0.5 and stopped there. That is the gap a reviewer
+  found, since nothing in the package reads ``rejected`` and so a
+  recorded leak changed nothing about what a caller saw.
+
+  ``score`` is 0.0 rather than 0.5 on purpose. The field documents that a
+  number which must not be used should not reach a caller that forgets to
+  check the flag, and ``source_scores`` above is the audit trail.
+  '''
   readings = [reading(score=0.4, source='reuters'),
               reading(score=0.6, source='bloomberg'),
               reading(score=-0.9, source='cnbc',
                       available_from=BAR + timedelta(minutes=1))]
   result = aggregate(readings, 'RELIANCE', BAR)
   assert result.source_count == 2
-  assert result.score == pytest.approx(0.5)
+  assert result.source_scores == pytest.approx((0.4, 0.6)), (
+    'the leaked source must not appear in the per-source scores')
+  assert result.score == 0.0, (
+    'a refused aggregate must not publish a usable-looking score')
+  assert result.usable is False, (
+    'Rejection.LOOK_AHEAD documents that the aggregate is refused')
   assert Rejection.LOOK_AHEAD.value in result.rejected
+
+
+def test_aggregate_requires_a_decision_bar() -> None:
+  '''The permissive default was the one that let the future in.
+
+  ``decision_bar`` used to default to None, which skipped the visibility
+  filter rather than applying it. In a backtesting library the
+  unattributed call is the dangerous one, so the argument is required.
+  '''
+  with pytest.raises(TypeError):
+    aggregate([reading(source='reuters')], 'RELIANCE')  # pylint: disable=E1120
 
 
 def test_available_from_is_public_time_not_fetch_time() -> None:
@@ -150,10 +178,16 @@ def test_visible_and_required_filters_agree_on_what_is_usable() -> None:
 
 # --- aggregation ----------------------------------------------------------
 
-def test_aggregate_without_a_decision_bar_uses_every_reading() -> None:
-  '''Live use has no bar to leak past; the caller takes responsibility.'''
+def test_aggregate_with_a_decision_bar_uses_every_visible_reading() -> None:
+  """With a bar, everything public at that bar is used, and nothing else.
+
+  This replaced a test that pinned the removed ``decision_bar=None``
+  default, which asserted that omitting the bar used every reading. That
+  was the permissive default: no bar meant no filter, so a reading dated
+  after the bar reached an aggregate unexamined.
+  """
   readings = [reading(source='reuters'), reading(source='cnbc')]
-  result = aggregate(readings, 'RELIANCE')
+  result = aggregate(readings, 'RELIANCE', BAR)
   assert result.usable
   assert result.source_count == 2
   assert Rejection.LOOK_AHEAD.value not in result.rejected

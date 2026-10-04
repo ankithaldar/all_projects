@@ -325,6 +325,28 @@ def symbol_context(
     if readings is None:
       raise ValueError(
         f'{symbol}: supply readings or a pre-computed aggregate')
+    if decision_bar is None:
+      # A missing bar must not mean "no filter". It used to, and the
+      # permissive default was the one that let the future in: readings
+      # dated a year past the decision bar produced sentiment_usable=1.0
+      # at score 1.0, with nothing recorded. For a backtesting library the
+      # unattributed call is the dangerous one, so refusing is the only
+      # safe reading of a bar the caller did not name.
+      return SymbolContext(
+        symbol=symbol,
+        sentiment_score=0.0,
+        sentiment_disagreement=0.0,
+        sentiment_intensity=0.0,
+        sentiment_usable=0.0,
+        sentiment_source_ratio=0.0,
+        graph_depth=graph_depth,
+        commodity_dependencies=commodity_dependencies,
+        macro_dependencies=macro_dependencies,
+        sector_dependencies=sector_dependencies,
+        options_pcr=options_pcr,
+        options_iv_rank=options_iv_rank,
+        options_net_oi_change=options_net_oi_change,
+      )
     result = aggregate(readings, symbol, decision_bar)
   usable = 1.0 if result.usable else 0.0
   return SymbolContext(
@@ -561,6 +583,20 @@ def evaluate_kill_criteria(
       'monthly_one_sided_turnover': monthly_one_sided_turnover,
     },
     failures)
+  # NaN is a missing measurement and becomes a named failure. A negative
+  # number is a caller bug and raises. Both checks are needed: replacing
+  # one with the other is a regression the existing suite caught.
+  if alpha_pvalue < 0.0 or sharpe_pvalue < 0.0:
+    raise ValueError(
+      f'p-values must be >= 0, got alpha={alpha_pvalue!r} '
+      f'sharpe={sharpe_pvalue!r}')
+  if abs_t < 0.0:
+    raise ValueError(f'abs_t must be >= 0, got {abs_t!r}')
+  if folds_passed < 0:
+    raise ValueError(f'folds_passed must be >= 0, got {folds_passed!r}')
+  if monthly_one_sided_turnover < 0.0:
+    raise ValueError(
+      f'turnover must be >= 0, got {monthly_one_sided_turnover!r}')
   if alpha_pvalue > criteria.alpha_pvalue:
     failures.append(
       f'alpha p={alpha_pvalue:.3f} > {criteria.alpha_pvalue}: delete all '

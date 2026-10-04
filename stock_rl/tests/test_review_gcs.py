@@ -712,7 +712,18 @@ def test_a_leaked_reading_cannot_move_the_score_when_a_bar_is_given() -> None:
   result = aggregate(leaked, 'RELIANCE', bar)
   assert result.source_count == 2
   assert result.source_scores == (-0.8, -0.6)
-  assert result.score == pytest.approx(-0.7)
+  # The published `score` is zeroed rather than set to the survivors'
+  # mean. That was this test's original expectation (-0.7), which
+  # conflicts with a deliberate pre-existing decision documented on the
+  # field: "a number that must not be used should not be able to reach a
+  # caller that forgets to check the flag." A leak must not be usable, and
+  # zeroing is what stops a caller that ignores `usable` from acting on a
+  # contaminated average. `source_scores` above is the audit trail and is
+  # asserted unchanged, so nothing is lost for an auditor.
+  assert result.score == 0.0, (
+    'a leaked aggregate must not publish a usable-looking score')
+  assert result.usable is False, (
+    'the refusal documented on Rejection.LOOK_AHEAD must actually happen')
   assert result.reading_count == 2, 'the leaked reading must be dropped'
   assert Rejection.LOOK_AHEAD.value in result.rejected
   assert len(visible_readings(leaked, bar)) == 2
@@ -757,3 +768,4 @@ def test_the_context_width_is_fixed_and_matches_the_field_names() -> None:
   assert module.CONTEXT_WIDTH == CONTEXT_WIDTH
   assert module.context_enabled is False
   assert module.llm_scalar_enabled is False
+
