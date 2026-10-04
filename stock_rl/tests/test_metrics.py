@@ -12,6 +12,9 @@ from stock_rl.metrics import (
   TRADING_DAYS_PER_YEAR,
   calmar_ratio,
   deflated_sharpe,
+  dsr_from_moments,
+  max_z,
+  minimum_backtest_length,
   drawdown_curve,
   max_drawdown,
   sharpe_ratio,
@@ -23,6 +26,14 @@ from stock_rl.metrics import (
 # Hand-checkable series. Mean 0.02, sample stdev 0.0081650, so the
 # unannualised Sharpe is 0.02 / 0.0081650 = 2.4494897.
 SIMPLE = [0.02, 0.01, 0.03, 0.02]
+
+# Published worked example, Bailey and Lopez de Prado (2014) p.10:
+# N=100, V[SR]=1/2, T=1250, annualised SR=2.5, skew=-3, raw kurtosis=10,
+# 250 observations per year. Per-period Sharpe is the annualised figure
+# divided by sqrt(250); trial dispersion is sqrt(1/2) also divided by
+# sqrt(250), which puts both in the same units the formula requires.
+paper_sharpe = 2.5 / math.sqrt(250)
+paper_dispersion = math.sqrt(0.5) / math.sqrt(250)
 
 # Equity path: rises to 1.2, falls to 0.8 (a 33.33% decline from 1.2),
 # then recovers above 1.2 at index 5.
@@ -178,15 +189,69 @@ class TestTurnover:
 
 
 class TestDeflatedSharpe:
-  '''Honest accounting for having searched many configurations.'''
+  '''Honest accounting for having searched many configurations.
 
-  def test_requires_more_than_one_year(self):
-    # 252 daily returns is exactly one year, and the statistic needs
-    # T > 1, so this must report 0.0 rather than a misleading number.
-    assert deflated_sharpe(series(252), trials=10) == 0.0
+  The regression values below are the published worked example from
+  Bailey and Lopez de Prado, "The Deflated Sharpe Ratio" (2014), p.10:
+  N=100, V[SR]=1/2, T=1250, annualised SR=2.5, skew=-3, kurtosis=10,
+  250 observations per year. Pinning the paper's own numbers means any
+  future error in the formula shows up as a concrete diff.
+  '''
 
-  def test_two_years_is_reported(self):
-    value = deflated_sharpe(series(504), trials=10)
+  def test_max_z_matches_the_papers_trials_100(self):
+    assert max_z(100) == pytest.approx(2.530603, abs=1e-5)
+
+  def test_expected_max_sharpe_matches_the_paper(self):
+    expected = paper_dispersion * max_z(100)
+    assert expected == pytest.approx(0.113172, abs=1e-5)
+
+  def test_matches_published_dsr_for_100_trials(self):
+    value = dsr_from_moments(
+      paper_sharpe,
+      paper_dispersion * max_z(100),
+      -3.0,
+      10.0,
+      1250,
+    )
+    assert value == pytest.approx(0.9004, abs=1e-4)
+
+  def test_matches_published_dsr_for_46_trials(self):
+    value = dsr_from_moments(
+      paper_sharpe,
+      paper_dispersion * max_z(46),
+      -3.0,
+      10.0,
+      1250,
+    )
+    assert value == pytest.approx(0.9505, abs=1e-4)
+
+  def test_matches_published_dsr_for_88_trials_normal_returns(self):
+    # The paper's normal-returns case: skew 0, raw kurtosis 3.
+    value = dsr_from_moments(
+      paper_sharpe,
+      paper_dispersion * max_z(88),
+      0.0,
+      3.0,
+      1250,
+    )
+    assert value == pytest.approx(0.9505, abs=1e-4)
+
+  def test_strong_strategies_are_not_annihilated(self):
+    # Regression guard. An earlier denominator used the Euler-Mascheroni
+    # constant in place of skewness and kurtosis, which went negative
+    # once annualised Sharpe passed roughly 1.7 and made the function
+    # return 0.0 for the very strategies it should endorse.
+    returns = series(504, seed=5)
+    boosted = [value + 0.004 for value in returns]
+    value = deflated_sharpe(boosted, trials=2)
+    assert value is not None
+    assert value > 0.5
+
+  def test_sub_year_sample_is_reported_not_discarded(self):
+    # T > 1 observation, not T > 1 year. A 200-day backtest is a valid
+    # sample and must not silently collapse to "no verdict".
+    value = deflated_sharpe(series(200, seed=3), trials=5)
+    assert value is not None
     assert 0.0 <= value <= 1.0
 
   def test_more_trials_never_helps(self):
@@ -195,21 +260,51 @@ class TestDeflatedSharpe:
     many = deflated_sharpe(returns, trials=500)
     assert many <= few
 
-  def test_too_few_trials_is_zero(self):
-    assert deflated_sharpe(series(504), trials=1) == 0.0
+  def test_too_few_trials_raises(self):
+    with pytest.raises(ValueError, match='trials'):
+      deflated_sharpe(series(504), trials=1)
 
-  def test_empty_is_zero(self):
-    assert deflated_sharpe([], trials=10) == 0.0
+  def test_empty_is_undefined(self):
+    assert deflated_sharpe([], trials=10) is None
 
-  def test_no_dispersion_has_no_search_threshold(self):
-    # A perfectly flat series has zero deviation, so there is no
-    # search-induced Sharpe to beat.
-    assert deflated_sharpe([0.0] * 504, trials=10) == 0.0
+  def test_no_dispersion_is_undefined(self):
+    # Undefined, not 0.0: zero asserts "not credible after search", which
+    # is a claim, whereas a flat series supports no claim at all.
+    assert deflated_sharpe([0.0] * 504, trials=10) is None
 
-  def test_search_inflates_the_threshold(self):
-    # A strategy that beats a low bar should beat a high one, so the
-    # probability of clearing a 200-config search must not exceed the
-    # probability of clearing a 2-config search on identical returns.
-    returns = series(504, seed=11)
-    assert (deflated_sharpe(returns, trials=200)
-            <= deflated_sharpe(returns, trials=2) + 1e-12)
+  def test_empirical_trials_widen_the_bar(self):
+    # A genuinely wide sweep must not report more significance than the
+    # plug-in default. The default is 1/sqrt(years) ~= 0.707 per period
+    # here, so the trial Sharpes below are deliberately wider than that.
+    returns = series(504, seed=13)
+    wide = [1.5, -1.5, 2.0, -2.0, 1.8, -1.8]
+    assert (deflated_sharpe(returns, trials=50, trial_sharpes=wide)
+            <= deflated_sharpe(returns, trials=50))
+
+
+class TestMinimumBacktestLength:
+  '''Whether the history can support the number of trials claimed.'''
+
+  def test_reproduces_the_paper_two_years_claim(self):
+    # "2 years -> no more than 7 trials": the Sharpe that exactly fills
+    # two years at N=7 is max_z(7) / sqrt(2).
+    target = max_z(7) / math.sqrt(2.0)
+    assert minimum_backtest_length(7, target) == pytest.approx(2.0)
+
+  def test_reproduces_the_paper_five_years_claim(self):
+    target = max_z(45) / math.sqrt(5.0)
+    assert minimum_backtest_length(45, target) == pytest.approx(5.0)
+
+  def test_more_trials_need_more_history(self):
+    assert (minimum_backtest_length(500, 1.0)
+            > minimum_backtest_length(10, 1.0))
+
+  def test_higher_sharpe_needs_less_history(self):
+    assert (minimum_backtest_length(100, 2.0)
+            < minimum_backtest_length(100, 1.0))
+
+  def test_rejects_invalid_inputs(self):
+    with pytest.raises(ValueError, match='trials'):
+      minimum_backtest_length(1, 1.0)
+    with pytest.raises(ValueError, match='target_sharpe'):
+      minimum_backtest_length(10, 0.0)

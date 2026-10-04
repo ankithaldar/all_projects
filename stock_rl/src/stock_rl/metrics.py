@@ -13,11 +13,21 @@ period count is an explicit argument with a single documented default
 Second, the Deflated Sharpe Ratio is implemented here rather than left
 implicit. Backtesting is a multiple-testing problem: run enough parameter
 sweeps and the best result clears zero by luck alone. ``deflated_sharpe``
-prices that search honestly.
+prices that search honestly, and ``minimum_backtest_length`` reports
+whether the available history can support the number of trials claimed at
+all.
 
 No numpy or scipy. ``statistics`` supplies mean, sample stdev and the
 normal distribution (``cdf`` and ``inv_cdf``), which is everything the
 Deflated Sharpe needs.
+
+One caveat worth stating plainly, because it is a property of the
+published statistic rather than of this code: the Deflated Sharpe is not a
+calibrated significance test. It compares against the *mean* of the null
+distribution of the maximum, so a strategy sitting exactly on the
+threshold scores 0.5 by construction and the conventional 0.95 bar is a
+convention layered on top. Read it as a deflation magnitude, not as a 5
+percent error rate.
 '''
 
 from __future__ import annotations
@@ -35,6 +45,9 @@ __all__ = [
   'max_drawdown',
   'sharpe_ratio',
   'sortino_ratio',
+  'dsr_from_moments',
+  'max_z',
+  'minimum_backtest_length',
   'total_return',
   'turnover',
 ]
@@ -265,79 +278,181 @@ def turnover(weights: list[float]) -> float:
     previous = weight
   return traded
 
+def max_z(trials: int) -> float:
+  '''Return the expected maximum of ``trials`` standard normals.
 
-def _expected_max_sharpe(deviation: float, trials: int) -> float:
-  '''Return the expected best Sharpe from ``trials`` independent trials.
-
-  Implements the Blumenthal/Euler-Mascheroni approximation from Bailey and
-  Lopez de Prado: the expected maximum of N standard normals is not N but
-  a smaller quantity, and assuming otherwise is exactly the mistake that
-  makes a lucky sweep look significant.
+  This is the Blumenthal/Euler-Mascheroni approximation from Bailey and
+  Lopez de Prado (2014), equation 1. The expected maximum of N standard
+  normals is far smaller than N, and treating it otherwise is precisely
+  the mistake that makes a lucky parameter sweep look significant.
 
   Args:
-    deviation: Standard deviation of trial Sharpes.
     trials: Number of independent configurations tried.
 
   Returns:
-    Expected maximum Sharpe across those trials.
+    Expected maximum of ``trials`` standard normal draws.
+
+  Raises:
+    ValueError: If fewer than two trials are supplied, since the
+      approximation is undefined for a single draw.
   '''
-  if trials < 2 or deviation <= 0.0:
-    return 0.0
+  if trials < 2:
+    raise ValueError(f'trials must be >= 2, got {trials}')
   best = _NORMAL.inv_cdf(1.0 - 1.0 / trials)
   tail = _NORMAL.inv_cdf(1.0 - 1.0 / (trials * math.e))
-  return deviation * ((1.0 - EULER_GAMMA) * best + EULER_GAMMA * tail)
+  return (1.0 - EULER_GAMMA) * best + EULER_GAMMA * tail
+
+
+def _moments(values: list[float]) -> tuple[float, float, float, float]:
+  '''Return mean, sample stdev, skewness and raw kurtosis.
+
+  Args:
+    values: Return series.
+
+  Returns:
+    Tuple of (mean, sample stdev, skewness, raw kurtosis). Skewness and
+    kurtosis are 0.0 and 3.0 respectively when they are undefined, which
+  is the Gaussian reference case the Mertens term assumes.
+  '''
+  if len(values) < 2:
+    raise ValueError(f'need >= 2 observations, got {len(values)}')
+  mean = fmean(values)
+  deviation = stdev(values)
+  if deviation == 0.0:
+    return mean, 0.0, 0.0, 3.0
+  total = len(values)
+  third = sum((value - mean) ** 3 for value in values) / total
+  fourth = sum((value - mean) ** 4 for value in values) / total
+  return mean, deviation, third / deviation ** 3, fourth / deviation ** 4
+
+
+def dsr_from_moments(
+  sharpe: float,
+  expected_max_sharpe: float,
+  skew: float,
+  kurtosis: float,
+  observations: int,
+) -> float:
+  '''Return the Deflated Sharpe from precomputed distribution moments.
+
+  Isolated from ``deflated_sharpe`` so the published worked example can be
+  reproduced exactly, feeding in the skewness and kurtosis the paper states
+  rather than values estimated from a sample.
+
+  Args:
+    sharpe: Per-period Sharpe of the selected strategy, not annualised.
+    expected_max_sharpe: Expected maximum per-period Sharpe across the
+      trial set.
+    skew: Skewness of the return distribution.
+    kurtosis: Raw kurtosis of the return distribution. 3.0 is Gaussian.
+    observations: Number of return observations, T.
+
+  Returns:
+    Probability in ``[0, 1]`` that the Sharpe exceeds the search maximum.
+  '''
+  if observations < 2:
+    raise ValueError(f'observations must be >= 2, got {observations}')
+  variance = (1.0 - skew * sharpe
+              + (kurtosis - 1.0) / 4.0 * sharpe ** 2)
+  if variance <= 0.0:
+    return 0.0
+  numerator = (sharpe - expected_max_sharpe) * math.sqrt(observations - 1)
+  return _NORMAL.cdf(numerator / math.sqrt(variance))
 
 
 def deflated_sharpe(
   returns: list[float],
   trials: int,
+  trial_sharpes: list[float] | None = None,
   risk_free: float = 0.0,
   periods: int = TRADING_DAYS_PER_YEAR,
-) -> float:
+) -> float | None:
   '''Return the probability that a Sharpe survives its own search.
 
-  A strategy that was selected as the best of many configurations needs a
-  higher Sharpe to be credible than one that was not. This returns the
-  probability that the observed Sharpe exceeds the expected maximum from
-  ``trials`` independent tries.
+  A strategy chosen as the best of many configurations needs a higher
+  Sharpe to be credible than one that was not chosen at all. This returns
+  the probability that the observed Sharpe exceeds the expected maximum
+  across ``trials`` independent tries, in the sense of Bailey and Lopez de
+  Prado (2014), equation 2.
 
-  PONYTAIL: this requires at least one year of returns, because the
-  statistic is defined in terms of ``sqrt(T - 1)``. Shorter series return
-  0.0 rather than a misleading number. Ceiling: sub-year strategies,
-  where a rolling or block-bootstrap variant of T would be needed.
-  Upgrade path: pass a ``periods``/``years`` estimate that allows T > 1
-  once enough history exists; no other change is required.
+  The computation runs entirely in per-period units. The annualised Sharpe
+  reported by ``sharpe_ratio`` is a display statistic and must not be fed
+  in here: the ``sqrt(T - 1)`` term counts observations, not years.
+
+  PONYTAIL: the dispersion of trial Sharpes defaults to the theoretical
+  plug-in ``1 / sqrt(years)``, which assumes every trial had zero true
+  edge. Ceiling: a parameter grid spanning very different volatilities
+  has wider dispersion than that, so the plug-in understates the bar.
+  Upgrade path: pass ``trial_sharpes`` from your own sweep log, which is
+  the empirical estimator the paper prefers and which strictly dominates
+  the default.
 
   Args:
     returns: Periodic returns as fractions.
     trials: How many configurations were tried before selecting this one.
-      This is the number that makes the result honest, and the caller is
-      the only one who knows it.
+      Only the caller knows this, and undercounting it weakens the
+      deflation silently.
+    trial_sharpes: Per-period Sharpes of every configuration tried. When
+      omitted the theoretical plug-in is used, see the note above.
     risk_free: Periodic risk-free rate.
     periods: Periods per year.
 
   Returns:
-    Probability in ``[0, 1]`` that the Sharpe exceeds the search-induced
-    maximum.
+    Probability in ``[0, 1]``, or ``None`` when the statistic is undefined
+    because the series has no dispersion or fewer than two observations.
+    Undefined is deliberately not reported as 0.0: zero asserts "not
+    credible after search", which is a claim, whereas an insufficient
+    sample is an absence of one.
+
+  Raises:
+    ValueError: If fewer than two trials are supplied.
   '''
-  if len(returns) < 2 or trials < 2:
-    return 0.0
-  deviation = _deviation(returns)
+  if trials < 2:
+    raise ValueError(f'trials must be >= 2, got {trials}')
+  if len(returns) < 2:
+    return None
+  adjusted = [value - risk_free for value in returns]
+  mean, deviation, skew, kurtosis = _moments(adjusted)
   if deviation == 0.0:
-    # A series with no dispersion has no Sharpe and therefore no
-    # search-induced threshold to beat. Falling through would evaluate
-    # cdf(0) = 0.5 and dress up a strategy that did nothing as "50
-    # percent credible", so this is undefined and reported as 0.0 to
-    # match sharpe_ratio.
-    return 0.0
-  observed = sharpe_ratio(returns, risk_free, periods)
-  scaled = deviation * math.sqrt(periods)
-  expected_max = _expected_max_sharpe(scaled, trials)
+    return None
+  observed = mean / deviation
   years = len(returns) / periods
-  if years <= 1.0:
-    return 0.0
-  numerator = (observed - expected_max) * math.sqrt(years - 1.0)
-  spread = 1.0 - EULER_GAMMA * observed + EULER_GAMMA * expected_max ** 2
-  if spread <= 0.0:
-    return 0.0
-  return _NORMAL.cdf(numerator / math.sqrt(spread))
+  if trial_sharpes is None:
+    dispersion = 1.0 / math.sqrt(years)
+  else:
+    dispersion = stdev(trial_sharpes) if len(trial_sharpes) > 1 else 0.0
+  return dsr_from_moments(
+    observed,
+    dispersion * max_z(trials),
+    skew,
+    kurtosis,
+    len(returns),
+  )
+
+
+def minimum_backtest_length(trials: int, target_sharpe: float) -> float:
+  '''Return the years of history needed to justify ``trials`` trials.
+
+  Bailey, Borwein, Lopez de Prado and Zhu (2014) show that searching N
+  configurations requires a minimum sample length before any Sharpe is
+  worth anything. Run this as a gate before trusting ``deflated_sharpe``:
+  if the requirement exceeds the history available, no amount of
+  implementation correctness rescues the result.
+
+  Args:
+    trials: Number of independent configurations tried.
+    target_sharpe: Annualised Sharpe being claimed.
+
+  Returns:
+    Required sample length in years.
+
+  Raises:
+    ValueError: If ``trials`` is below two or the target Sharpe is not
+      positive.
+  '''
+  if trials < 2:
+    raise ValueError(f'trials must be >= 2, got {trials}')
+  if target_sharpe <= 0.0:
+    raise ValueError(f'target_sharpe must be positive, got {target_sharpe}')
+  return (max_z(trials) / target_sharpe) ** 2
+
