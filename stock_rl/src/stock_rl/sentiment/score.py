@@ -43,6 +43,13 @@ byte-identical portfolios on the same scenario. Identical independent
 extractors are the pathology, so cross-source spread is reported as its
 own number rather than folded into the mean where nothing can see it.
 
+The anti-convergence guard itself is :func:`converged`, and
+:func:`aggregate` calls it on every set of per-source scores it
+publishes, so the answer travels on
+:attr:`SentimentAggregate.converged` rather than waiting for a caller
+to remember. It is reported, not enforced, and the docstring there says
+why refusing on it would be wrong.
+
 An LLM judge is deliberately absent. The review's comparison found a
 plain equal-weight mean competitive with a judge, and a mean is
 reproducible, free and auditable.
@@ -53,6 +60,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from itertools import combinations
 from statistics import fmean, pstdev
 
 __all__ = [
@@ -77,9 +85,9 @@ __all__ = [
 #: discard the reading exactly when the tape is interesting.
 default_min_sources = 2
 
-#: Two sources agreeing to within this mean absolute score are treated
-#: as converged. The Jensen-Shannon divergence guard was the only
-#: significant intervention in the Stanford study (Sharpe +0.14,
+#: Smallest gap between two scores at or below which those two sources
+#: count as having converged. The Jensen-Shannon divergence guard was the
+#: only significant intervention in the Stanford study (Sharpe +0.14,
 #: p = 0.028), and its point was that independent extractors which
 #: produce identical output have stopped being independent. This is the
 #: standard-library stand-in for that idea, on a different scale: it is
@@ -220,6 +228,24 @@ class SentimentAggregate:
       scores. **This is a feature, not noise.** High disagreement means
       the sources do not agree on the sign, which is information about
       uncertainty that an average destroys.
+    converged: True when the **closest pair** of per-source scores sits
+      within :data:`convergence_tolerance` of each other, i.e. when at
+      least two sources agree closely enough that averaging them is
+      averaging a voice with itself. Computed by :func:`converged` on
+      every aggregate, so the guard is on the production path rather
+      than exported and never called.
+
+      **Reported, not enforced.** :func:`aggregate` still publishes the
+      mean, because a genuine news event really can produce unanimous
+      scores and a hard refusal would throw away the reading exactly
+      when every desk saw the same thing. Refusing is therefore the
+      caller's decision, on a flag this module computes and hands over.
+      What it does *not* do is what the old spread-about-the-mean
+      statistic did: with two cloned extractors and one honest dissenter
+      it reported False, so the flag was silent in the case the review
+      says it exists for. The default is ``False`` and the field is
+      declared last so a hand-built aggregate cannot be accused of a
+      convergence it never measured.
     source_count: Number of **distinct** sources behind the score. This
       is what the minimum is applied to.
     reading_count: Number of readings collapsed into those sources.
@@ -247,6 +273,9 @@ class SentimentAggregate:
   usable: bool
   rejected: tuple[str, ...]
   source_scores: tuple[float, ...]
+  # Defaulted, and last, so the positional order of the fields above is
+  # unchanged for any caller that builds an aggregate by hand.
+  converged: bool = False
 
 
 def visible_readings(
@@ -336,6 +365,15 @@ def aggregate(
   4. Refuse below ``min_sources`` distinct sources.
   5. Average with equal weights and report the cross-source spread
      alongside it.
+  6. Run :func:`converged` over the per-source scores and publish the
+     answer on :attr:`SentimentAggregate.converged`.
+
+  Step 6 is the anti-convergence guard, and it is here rather than
+  nowhere because :func:`converged` used to be called by nothing in the
+  package: a documented, tested and completely unreachable guard. It is
+  reported and not enforced, because a unanimous score really can mean a
+  single shared event, and the caller is the only thing that knows
+  whether it does.
 
   No LLM, no judge, no weighting scheme. The review found a plain mean
   competitive with an LLM judge, and a weighted mean would be a model
@@ -383,6 +421,7 @@ def aggregate(
       usable=False,
       rejected=tuple(rejections),
       source_scores=(),
+      converged=False,
     )
   per_source: dict[str, list[SentimentReading]] = {}
   for reading in mine:
@@ -413,6 +452,7 @@ def aggregate(
     usable=usable,
     rejected=tuple(rejections),
     source_scores=source_scores,
+    converged=converged(source_scores),
   )
 
 
@@ -442,7 +482,7 @@ def converged(
   scores: list[float] | tuple[float, ...],
   tolerance: float = convergence_tolerance,
 ) -> bool:
-  '''Return True when sources agree suspiciously well.
+  '''Return True when any two sources agree suspiciously well.
 
   The Stanford study's mechanism was sycophantic convergence: three
   different providers produced byte-identical portfolios, and cash
@@ -451,21 +491,37 @@ def converged(
   independent, and averaging them then buys nothing but an amplified
   error. This is the cheap check for that on the sentiment side.
 
+  **The statistic is the CLOSEST PAIR, not the spread.** It used to be
+  the mean absolute deviation about the mean, which cannot detect the
+  case it exists for: one dissenting outlier inflates that average past
+  any tolerance, so two cloned extractors plus one honest source came
+  back ``converged=False``, and only the case where every source agreed
+  was ever caught. Measured on the old code::
+
+      converged([1.0, 1.0, 0.0])    -> False   # the pathology, missed
+      converged([0.4, 0.4, -0.4])   -> False   # ditto
+      converged([1.0, 1.0])         -> True    # only all-identical
+
+  The minimum pairwise gap has the property the guard needs: the number
+  of dissenting sources is irrelevant, because averaging a distance over
+  sources is exactly what let the dissenter speak over the clones.
+
   **This is not the Jensen-Shannon divergence the review reports.** It
-  is a spread threshold on scores, it says nothing about *why* the
-  sources agree, and a genuine news event really can produce unanimous
-  scores. Treat a True here as "these inputs are not independent
+  is a pairwise distance threshold on scores, it says nothing about *why*
+  the sources agree, and a genuine news event really can produce
+  unanimous scores. Treat a True here as "these inputs are not independent
   evidence", not as a bug.
 
   Args:
     scores: Per-source scores.
-    tolerance: Mean absolute deviation below which the sources count as
-      converged.
+    tolerance: Largest gap between two scores at or below which those two
+      sources count as converged.
 
   Returns:
-    True when at least two scores agree to within ``tolerance``. Fewer
-    than two scores is False, because one source cannot disagree with
-    itself.
+    True when the **closest pair** of scores is within ``tolerance`` of
+    each other, which is what "at least two scores agree to within
+    tolerance" means. Fewer than two scores is False, because one source
+    cannot disagree with itself.
 
   Raises:
     ValueError: If ``tolerance`` is negative.
@@ -474,9 +530,8 @@ def converged(
     raise ValueError(f'tolerance must be >= 0, got {tolerance}')
   if len(scores) < 2:
     return False
-  centre = fmean(scores)
-  spread = fmean([abs(score - centre) for score in scores])
-  return spread <= tolerance
+  closest = min(abs(left - right) for left, right in combinations(scores, 2))
+  return closest <= tolerance
 
 
 def _require_aware(moment: datetime, name: str) -> None:

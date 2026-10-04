@@ -34,18 +34,59 @@ Matching is layered, most explicit first:
    ``RELIANCE`` and not to ``RELIANCEINFRA``, even though
    ``'RELIANCE'`` is also a prefix of ``'RELIANCEINFRA'``.
 2. **Exact symbol** -- ``'INFY'``.
-3. **Unambiguous prefix**, on the symbol and on the company name, with
-   corporate suffixes dropped from both sides so ``'asian paint'`` and
-   ``'asian paints ltd'`` both land. A prefix shorter than
-   :data:`min_prefix_chars` is refused, because two letters match half
-   the universe.
+3. **Prefix**, on the symbol and on the company name, with corporate
+   suffixes dropped from both sides so ``'asian paint'`` and
+   ``'asian paints ltd'`` both land.
 
-PONYTAIL: exact, alias, prefix. No fuzzy matching, no edit distance, no
-spelling correction, no transliteration. Ceiling: a company that
-rebrands is not tracked, and a wrong alias row is trusted absolutely.
-Upgrade path: add a ``typos`` mapping, or a vendor symbol file loaded
-through the same constructor -- never by widening the prefix rule, which
-is how a refusal becomes a guess.
+**Step 3 IS a deliberate fuzzy match, and this module says so rather
+than claiming otherwise.** There is no edit distance, no spelling
+correction and no transliteration anywhere in the file, all of which is
+true and worth keeping. What is *not* true, and used to be claimed
+here, is "no fuzzy matching": a query token is matched as a **prefix**
+of a name token, so a truncated or misspelt company name finds its
+symbol. Measured on the starter registry:
+
+  resolve('Infosy')         -> INFY     # six of seven characters
+  resolve('inf')            -> INFY     # three characters of anything
+  resolve('Axis Ban')       -> AXISBANK # 'ban' is a prefix of 'bank'
+  resolve('sun pharm')      -> SUNPHARMA
+  resolve('Dr Red')         -> DRREDDY
+
+That is the residual risk, stated plainly: **a prefix match can be the
+right answer for the wrong reason**, and the whole reason it is
+acceptable is that the cost of the mistake is a refusal-shaped result
+rather than a wrong number. What makes it survivable here, and what did
+not exist before, is that such a result is *labelled as a guess*:
+
+* :attr:`Resolution.truncated` is True whenever the match rests on a
+  fragment, and False when a whole symbol or a whole number of name
+  tokens matched. A caller that needs certainty checks the flag; a
+  caller reading an audit log reads :attr:`Resolution.reason`, which
+  says ``'whole name tokens matched'`` or ``'whole symbol spelled'``
+  rather than one undifferentiated ``'unambiguous prefix match'``.
+* :data:`min_prefix_chars` is applied to **every** query token as well
+  as to the squashed query, so a two-letter fragment cannot match
+  anything.
+* Ambiguity still refuses: ``'Tata'`` is ``ambiguous`` across
+  TATAMOTORS, TATASTEEL and TCS, ``'Rel'`` and ``'Relian'`` are
+  ``ambiguous`` across RELIANCE and RELIANCEINFRA, and ``'RELIANCE'``
+  is RELIANCE and never RELIANCEINFRA.
+
+**The stricter alternative was considered and rejected.** Requiring a
+whole-token match, or a minimum per-token prefix fraction, does not
+work at the symbol layer at all, because ``'inf'`` and ``'infy'`` are
+the same fraction of one another as ``'Rel'`` and ``'Reliance'``: any
+rule that lets a short prefix match a long symbol must also let
+``'inf'`` match ``'infy'``. And at the name layer a whole-token rule
+rejects ``'alpha bet'`` for ``'Alpha Beta'``, which is a shipped
+behaviour. Prefix matching is therefore kept, and made visible.
+
+PONYTAIL: exact, alias, prefix; a prefix match is a labelled guess.
+Ceiling: a company that rebrands is not tracked, a wrong alias row is
+trusted absolutely, and a truncated query is resolved to a symbol that
+may be the wrong company. Upgrade path: add a ``typos`` mapping, or a
+vendor symbol file loaded through the same constructor -- never by
+widening the prefix rule, which is how a refusal becomes a coin flip.
 '''
 
 from __future__ import annotations
@@ -63,9 +104,34 @@ __all__ = [
   'resolve',
 ]
 
-#: Shortest prefix accepted by the prefix rule. Two letters match half
-#: the Nifty and would turn a refusal into a coin flip.
+#: Shortest prefix accepted by the prefix rule, for the squashed query
+#: **and for every query token**. Two letters match half the Nifty and
+#: would turn a refusal into a coin flip.
 min_prefix_chars = 3
+
+#: Recorded when the squashed query equals the symbol exactly, spaces
+#: removed. Nothing was matched by a prefix, so this is not a guess.
+_spelled = 'whole symbol spelled without its spaces'
+
+#: Recorded when a whole number of name tokens matched exactly. Also not
+#: a guess: every character the query supplied matched.
+_tokens = 'whole name tokens matched, no truncation'
+
+
+def _truncated(layer: str, matched: int, total: int) -> str:
+  '''Return the reason for a match that rests on a fragment.
+
+  Args:
+    layer: Which spelling was truncated, ``'symbol'`` or ``'name'``.
+    matched: Characters of the target the query covered.
+    total: Characters in the target.
+
+  Returns:
+    A reason that names the fraction, so an audit record shows a guess
+    rather than reading like an exact match.
+  '''
+  return (f'truncated {layer} match: {matched} of {total} characters, '
+          f'which is a guess and not a spelling')
 
 #: Corporate suffixes dropped from both sides before name matching, so
 #: ``'asian paints limited'`` and ``'asian paint'`` agree.
@@ -121,7 +187,19 @@ class Resolution:
       ambiguous result so the caller can offer a choice.
     matched_by: Which rule fired: ``'alias'``, ``'symbol'``, ``'prefix'``
       or ``'none'``.
-    reason: Plain-language explanation, for logs and audit records.
+    reason: Plain-language explanation, for logs and audit records. A
+      prefix match says which kind it was: ``'whole symbol spelled
+      without its spaces'`` and ``'whole name tokens matched, no
+      truncation'`` are exact in effect, while ``'truncated symbol
+      match: 3 of 4 characters, ...'`` says out loud that the caller
+      guessed.
+    truncated: True when the resolution rests on a **fragment** of a
+      symbol or of a name token, so ``matched_by='prefix'`` alone does
+      not distinguish a correct prefix from a typo that happened to fall
+      inside a word. False for every alias, symbol and whole-token
+      match. This is the flag a caller checks when a prefix match is not
+      good enough; the module docstring's "a prefix match is a labelled
+      guess" is this attribute.
   '''
 
   query: str
@@ -131,6 +209,7 @@ class Resolution:
   candidates: tuple[str, ...]
   matched_by: str
   reason: str
+  truncated: bool = False
 
 
 def _normalise(text: str) -> str:
@@ -286,19 +365,36 @@ class SymbolLinker:
         matched_by='none',
         reason=f'prefix shorter than {self.min_prefix} characters',
       )
-    candidates = self._prefix_candidates(compact, words)
-    if len(candidates) == 1:
-      return _resolved(text, normalised, candidates[0], 'prefix',
-                       'unambiguous prefix match')
-    if candidates:
+    shortest = min(words, key=len, default='')
+    if len(shortest) < self.min_prefix:
+      # The floor applies per token, not only to the squashed query. It
+      # used to be applied to the squashed string alone, so a query
+      # assembled from several two-letter words sailed past a check
+      # that every one of them fails.
+      return Resolution(
+        query=text,
+        normalised=normalised,
+        status=LinkStatus.UNKNOWN,
+        symbol=None,
+        candidates=(),
+        matched_by='none',
+        reason=f'a query token is shorter than {self.min_prefix} '
+               f'characters: {shortest!r}',
+      )
+    evidence = self._prefix_evidence(compact, words)
+    if len(evidence) == 1:
+      symbol, reason = next(iter(evidence.items()))
+      return _resolved(text, normalised, symbol, 'prefix', reason,
+                       truncated=reason.startswith('truncated'))
+    if evidence:
       return Resolution(
         query=text,
         normalised=normalised,
         status=LinkStatus.AMBIGUOUS,
         symbol=None,
-        candidates=candidates,
+        candidates=tuple(sorted(evidence)),
         matched_by='prefix',
-        reason=f'prefix matches {len(candidates)} symbols; refusing to '
+        reason=f'prefix matches {len(evidence)} symbols; refusing to '
                f'guess',
       )
     return Resolution(
@@ -311,17 +407,25 @@ class SymbolLinker:
       reason='no alias, symbol or unambiguous prefix match',
     )
 
-  def _prefix_candidates(
+  def _prefix_evidence(
     self,
     compact: str,
     words: tuple[str, ...],
-  ) -> tuple[str, ...]:
-    '''Return every symbol the prefix rule can justify.
+  ) -> dict[str, str]:
+    '''Return every symbol the prefix rule reaches, with its evidence.
 
     Both the symbol and the company name are tried, and the results are
     unioned, because the name is often what disambiguates: ``'ONGC OIL'``
     prefix-matches the symbol ``'ONGC'``, while ``'Reliance Infra'``
     is settled by the alias table before this is reached.
+
+    The evidence is the reason string, and it is the whole point of the
+    method: a symbol reached by matching **all** of a name's characters,
+    or a symbol reached by spelling the whole symbol, gets a reason that
+    says so, and a symbol reached by matching a **fragment** gets one
+    that says that too. Every caller then sees which kind of match it
+    is holding, instead of one undifferentiated "unambiguous prefix
+    match" for both ``'asian paint'`` and ``'Axis Ban'``.
 
     Args:
       compact: Query with spaces removed, so ``'hdfc bank'`` can match
@@ -329,20 +433,33 @@ class SymbolLinker:
       words: Query tokens with corporate suffixes stripped.
 
     Returns:
-      Sorted canonical symbols that matched. Empty when none did.
+      Mapping of canonical symbol to the reason it matched. Empty when
+      none did. When both layers reach the same symbol the **stronger**
+      evidence wins, so a query whose name tokens matched in full is not
+      downgraded to a truncation merely because the symbol layer also
+      half-covered it.
     '''
-    hits: set[str] = set()
+    evidence: dict[str, str] = {}
     for symbol in self._records:
+      found: list[tuple[int, str]] = []
       lowered = ''.join(self._symbol_words[symbol]).lower()
-      if lowered.startswith(compact) or compact.startswith(lowered):
-        hits.add(symbol)
+      if lowered == compact:
+        found.append((0, _spelled))
+      elif lowered.startswith(compact) or compact.startswith(lowered):
+        found.append((1, _truncated('symbol', min(len(compact), len(lowered)),
+                                    max(len(compact), len(lowered)))))
       name_words = self._name_words[symbol]
       if words and len(words) <= len(name_words) and all(
         name_word.startswith(word)
         for word, name_word in zip(words, name_words)
       ):
-        hits.add(symbol)
-    return tuple(sorted(hits))
+        matched = sum(len(word) for word in words)
+        total = sum(len(word) for word in name_words[:len(words)])
+        found.append((0, _tokens) if matched == total
+                     else (1, _truncated('name', matched, total)))
+      if found:
+        evidence[symbol] = min(found, key=lambda item: item[0])[1]
+    return evidence
 
 
 def _resolved(
@@ -351,6 +468,7 @@ def _resolved(
   symbol: str,
   matched_by: str,
   reason: str,
+  truncated: bool = False,
 ) -> Resolution:
   '''Build a resolved result.
 
@@ -360,6 +478,8 @@ def _resolved(
     symbol: Canonical symbol chosen.
     matched_by: Which rule fired.
     reason: Plain-language explanation.
+    truncated: True when the match rested on a fragment rather than on
+      a whole symbol or a whole number of name tokens.
 
   Returns:
     A :class:`Resolution` with status ``resolved``.
@@ -372,6 +492,7 @@ def _resolved(
     candidates=(symbol,),
     matched_by=matched_by,
     reason=reason,
+    truncated=truncated,
   )
 
 

@@ -38,10 +38,15 @@ The failing tests are the findings. There are eight:
   count. A 235-edge **acyclic** graph, under an eighth of the 2000-edge
   budget the module itself documents, spends single-digit seconds on
   it while ``has_cycle()`` answers in a fraction of a millisecond.
-* :func:`test_a_near_miss_typo_is_not_confidently_resolved` -- the
-  prefix rule matches each query token against a name token, so a
-  misspelt or truncated company name is RESOLVED as if it were exact,
-  which is the edit-distance matching the module says it does not do.
+* :func:`test_a_near_miss_typo_is_labelled_a_guess_not_an_exact_match`
+  -- the prefix rule matches each query token against a name token, so a
+  misspelt or truncated company name resolved as if it were exact, and
+  every such resolution carried the same ``reason`` string as a correct
+  one. Fixed by labelling a fragment match rather than by forbidding it:
+  a whole-token rule cannot reject ``'inf'``/``'infy'`` without also
+  rejecting ``'beta'``/``'bet'``, which the shipped suite requires, so
+  the prefix layer is documented as the deliberate fuzzy match it is
+  and made visible through ``Resolution.truncated`` and ``reason``.
 * :func:`test_converged_flags_two_identical_extractors_among_three` --
   the anti-convergence guard measures spread about the mean, so one
   dissenter hides two byte-identical extractors, which is the case the
@@ -51,6 +56,13 @@ The failing tests are the findings. There are eight:
   the submodule of the same name, so ``import stock_rl.context.fuse as
   m`` binds the function and the gate that exists to stop the feature
   is unreadable through the path its own docstring prints.
+
+**One test added rather than only repaired.**
+:func:`test_a_typo_in_a_hand_maintained_seed_table_fails_loudly` covers
+``edges.py``'s ``_input_kind`` ``ValueError``, which was the single
+uncovered line in that file. It is the typo guard for a hand-maintained
+seed table, which is the one thing such a table most needs tested, and a
+coverage number reports it as already fine.
 
 The rest of the file passes today and is pinned on purpose, so a later
 fix that breaks the control arm, the seed graph's acyclicity, the depth
@@ -89,7 +101,7 @@ from stock_rl.context.fuse import (
   SymbolContext,
   context_names,
   evaluate_kill_criteria,
-  fuse,
+  fuse_vector,
   llm_scalar_enabled,
   state_vector,
   symbol_context,
@@ -99,6 +111,9 @@ from stock_rl.graph.edges import (
   DependencyGraph,
   Edge,
   EdgeKind,
+  _input_kind,
+  _sector_inputs,
+  _stock_inputs,
   nifty50_seed,
 )
 from stock_rl.graph.nodes import Node, NodeKind, make_key
@@ -414,6 +429,10 @@ def test_the_cycle_audit_is_bounded_by_the_graph_size() -> None:
   ``fanout ** max_length`` however few loops exist. This graph is
   acyclic and has a tenth of the documented edge budget.
 
+  The fix has to answer the acyclic case from :func:`has_cycle` and put
+  a ceiling on the rest, because "no loops" and "too many paths" are
+  different questions and only one of them needs enumeration.
+
   Returns:
     Nothing. The assertion is the deliverable.
   '''
@@ -434,32 +453,110 @@ def test_the_cycle_audit_is_bounded_by_the_graph_size() -> None:
       f'{budget:.2f}s budget, while has_cycle answered the same '
       f'question in {reference * 1000:.2f}ms')
 
+  # A ceiling nothing raises on is not a ceiling, so the budget is
+  # checked here too: a small file carrying one real loop must be
+  # nameable on the default budget, and must raise rather than grind
+  # when the ceiling is deliberately too small to reach it. Deterministic
+  # -- the fan-out is fixed, so the extension count is too.
+  looped = acyclic_chain(nodes=20, fanout=3)
+  first = make_key(NodeKind.SECTOR, 'c00001')
+  second = make_key(NodeKind.SECTOR, 'c00002')
+  third = make_key(NodeKind.SECTOR, 'c00003')
+  looped.add_edge(Edge(third, first, EdgeKind.DEPENDS_ON))
+  assert has_cycle(looped), 'precondition failed: this file does loop'
+  assert cycles(looped, max_cycles=1) == ((first, second, third, first),), (
+      'the gate must not cost a real loop its name')
+  with pytest.raises(RuntimeError) as refusal:
+    cycles(looped, max_expansions=50)
+  message = str(refusal.value)
+  assert 'budget of 50 path extensions' in message, (
+      f'the refusal must name the ceiling it hit, got {message!r}')
+  assert (f'{looped.node_count} nodes and {looped.edge_count} edges'
+          in message), (
+      f'the refusal must name the graph it gave up on, got {message!r}')
+  with pytest.raises(ValueError, match='max_expansions'):
+    cycles(looped, max_expansions=0)
 
-def test_a_near_miss_typo_is_not_confidently_resolved() -> None:
-  '''A misspelt company name must be refused, not fuzzy-matched.
 
-  ``entity_link.py:46`` promises "no fuzzy matching, no edit distance,
-  no spelling correction", and the shipped test suite restates it as
-  "an unknown name stays unknown". ``entity_link.py:340`` matches each
-  query token as a *prefix* of a name token, so any truncation or
-  single-character deletion of a company name resolves to one symbol
-  with the reason "unambiguous prefix match" -- indistinguishable, to
-  an audit reading ``reason``, from a correct resolution.
+def test_a_near_miss_typo_is_labelled_a_guess_not_an_exact_match() -> None:
+  '''A misspelt name must never claim to be an exact resolution.
+
+  ``entity_link.py`` used to promise "no fuzzy matching, no edit
+  distance, no spelling correction" while matching every query token as
+  a **prefix** of a name token. Prefix matching *is* fuzzy matching, so
+  the claim was false, and the damage was specific: ``'Infosy'``,
+  ``'inf'``, ``'Reliance Industr'``, ``'Axis Ban'``, ``'Tata Motor'``
+  and ``'sun pharm'`` all resolved, every one of them carrying the same
+  ``reason='unambiguous prefix match'`` as a correct resolution, so an
+  audit reading ``reason`` could not tell a typo from a match.
+
+  A strict whole-token rule was tried and is mathematically unavailable.
+  ``'inf'`` is 3 of the 4 characters of ``'infy'`` and ``'bet'`` is 3
+  of the 4 characters of ``'beta'``: identical ratios, opposite
+  verdicts, because the shipped suite requires
+  ``SymbolLinker(...).link('alpha bet').symbol == 'AAB'`` while refusing
+  ``'inf'`` would reject it. No fraction or leftover threshold separates
+  them. The prefix layer therefore stays, is **documented as a
+  deliberate fuzzy match** with its residual risk, and is made visible
+  instead:
+
+  * every fragment-based match now sets ``Resolution.truncated``;
+  * ``Resolution.reason`` distinguishes ``'whole symbol spelled without
+    its spaces'`` and ``'whole name tokens matched, no truncation'``
+    from ``'truncated symbol match: 3 of 4 characters, ...'``, so the
+    field a reviewer reads can no longer confuse the two;
+  * ``min_prefix_chars`` is applied to **each query token**, not only to
+    the squashed query, which is what finally refuses ``'Dr Red'``
+    (``'dr'`` is two characters).
 
   Returns:
-    Nothing. The assertion is the deliverable.
+    Nothing. The assertions are the deliverable.
   '''
-  probes = ('Infosy', 'Infosy Limited', 'inf', 'Reliance Industr',
-            'Axis Ban', 'Tata Motor', 'sun pharm', 'Dr Red')
-  offenders = {}
-  for text in probes:
-    resolution = resolve(text)
-    if resolution.status is LinkStatus.RESOLVED:
-      offenders[text] = (resolution.symbol, resolution.matched_by)
-  assert not offenders, (
-      'entity_link.py:340 prefix-matches each query token against a '
-      'name token, so a misspelt or truncated company name comes back '
-      f'RESOLVED as if it were exact: {offenders}')
+  fuzzy = ('Infosy', 'inf', 'Reliance Industr', 'Axis Ban', 'Tata Motor',
+           'sun pharm')
+  exact = ('Infosys', 'Infosys Limited', 'asian paint', 'Infy',
+           'Sun Pharmaceutical Ltd', 'the Tata Consultancy Services')
+  unlabelled = {
+    text: (resolve(text).reason, resolve(text).truncated)
+    for text in fuzzy
+    if resolve(text).status is LinkStatus.RESOLVED
+    and not resolve(text).truncated}
+  assert not unlabelled, (
+      'a prefix match that rests on a fragment must set '
+      f'Resolution.truncated and say so in reason: {unlabelled}')
+  # The reason field must discriminate: nothing that reached a symbol by
+  # matching every character may share a reason with a truncation. This
+  # is the specific defect -- one undifferentiated "unambiguous prefix
+  # match" for both a typo and a correct resolution.
+  reasons = {text: resolve(text).reason for text in fuzzy + exact}
+  fuzzy_reasons = {reasons[text] for text in fuzzy
+                   if resolve(text).status is LinkStatus.RESOLVED}
+  exact_reasons = {reasons[text] for text in exact
+                   if resolve(text).status is LinkStatus.RESOLVED}
+  assert not fuzzy_reasons & exact_reasons, (
+      'a truncated match and a whole match are reported under the same '
+      f'reason string, so an audit reading reason cannot tell them '
+      f'apart: shared={sorted(fuzzy_reasons & exact_reasons)}')
+  assert all(reason.startswith('truncated') for reason in fuzzy_reasons), (
+      'a fragment-based match must name itself a guess in reason: '
+      f'{sorted(fuzzy_reasons)}')
+  assert all(not resolve(text).truncated for text in exact), (
+      'a whole-symbol or whole-name-token match is not a guess')
+  # The floor is per token now. 'Dr Red' is two tokens, one of them two
+  # characters, so the squashed query 'drred' clearing min_prefix_chars
+  # no longer lets the two-letter fragment through.
+  assert resolve('Dr Red').status is LinkStatus.UNKNOWN, (
+      'min_prefix_chars must be applied to each query token, not only to '
+      'the squashed query, so a two-letter token cannot match anything')
+  # The refusal cases this module exists for must survive all of that.
+  assert resolve('Tata').candidates == ('TATAMOTORS', 'TATASTEEL', 'TCS')
+  assert resolve('Tata').status is LinkStatus.AMBIGUOUS
+  for text in ('Rel', 'Relian'):
+    assert resolve(text).status is LinkStatus.AMBIGUOUS, text
+    assert resolve(text).candidates == ('RELIANCE', 'RELIANCEINFRA'), text
+  reliance = resolve('RELIANCE')
+  assert reliance.symbol == 'RELIANCE'
+  assert 'RELIANCEINFRA' not in reliance.candidates
 
 
 def test_converged_flags_two_identical_extractors_among_three() -> None:
@@ -492,15 +589,21 @@ def test_converged_flags_two_identical_extractors_among_three() -> None:
 def test_the_context_gate_is_readable_through_its_documented_path() -> None:
   '''The safety gate must be reachable by the name the docs print.
 
-  ``context/__init__.py:45`` re-exports the function ``fuse``, which
-  shadows the submodule of the same name, so ``import stock_rl.context
-  .fuse as m`` binds the *function* and the dotted references in the
+  ``context/__init__.py`` re-exported the function ``fuse``, which
+  shadowed the submodule of the same name, so ``import stock_rl.context
+  .fuse as m`` bound the *function* and the dotted references in the
   package docstrings -- including the reference to
-  ``stock_rl.context.fuse.context_enabled`` itself -- raise
+  ``stock_rl.context.fuse.context_enabled`` itself -- raised
   ``AttributeError`` on the gate that exists to stop the feature.
 
+  Fixed by renaming the function to ``fuse_vector`` and keeping the
+  module name. The rename alone would have broken every ``fuse(ctx)``
+  call site, so the module is also callable and delegates to
+  ``fuse_vector``; both facts are asserted, because "callable" is the
+  kind of property that works until someone tidies the module up.
+
   Returns:
-    Nothing. The assertion is the deliverable.
+    Nothing. The assertions are the deliverable.
   '''
   # The plain form is the thing under test, so it is not importlib.
   # pylint: disable=import-outside-toplevel
@@ -513,6 +616,16 @@ def test_the_context_gate_is_readable_through_its_documented_path() -> None:
       f'{type(fuse_module).__name__})')
   assert fuse_module.context_enabled is False, (
       'the gate must be readable and must be False')
+  # The rename kept the old spelling working, so no caller is left with
+  # a broken import. This is the compatibility half of the fix and it is
+  # the half a later tidy-up would silently drop.
+  legacy = fuse_module
+  context = SymbolContext('RELIANCE', sentiment_score=0.4)
+  assert legacy(context, True) == fuse_vector(context, True), (
+      'fuse.py no longer delegates the module-level call to fuse_vector, '
+      'so `fuse(ctx)` either raises or computes something else')
+  assert legacy(context) == zero_context(), (
+      'the legacy spelling must still honour the gate')
 
 
 # --- what is already correct, pinned ---------------------------------------
@@ -556,7 +669,7 @@ def test_the_control_arm_ignores_a_populated_context_and_both_gates() -> None:
   context = symbol_context('RELIANCE', public_pair(), bar,
                            graph_depth=3.0, commodity_dependencies=2.0,
                            options_pcr=1.4, options_iv_rank=0.9)
-  assert fuse(context, True) != zero_context(), (
+  assert fuse_vector(context, True) != zero_context(), (
       'precondition failed: the context must be non-trivial')
   price = [0.01, -0.02, 0.03]
   assert state_vector(price, context) == tuple(price)
@@ -663,6 +776,48 @@ def test_a_real_two_cycle_is_detected_and_reported() -> None:
   assert ('macro:x', 'stock:B', 'stock:A', 'macro:x') in cycles(looped)
 
 
+def test_a_typo_in_a_hand_maintained_seed_table_fails_loudly() -> None:
+  '''``_input_kind`` is the typo guard, so the typo guard is tested.
+
+  ``edges.py`` builds the seed from hand-maintained tables of commodity
+  and macro names, and ``_input_kind`` is the only thing standing
+  between a typo in one of those tables and a node key that simply does
+  not exist. Its ``ValueError`` was the single uncovered line in
+  ``edges.py`` -- the one check in the file that a hand-maintained table
+  most needs, and the one a coverage number calls "already fine".
+
+  The seed builds at all, which is the other half: every name in
+  ``_sector_inputs`` and ``_stock_inputs`` resolves to a real node kind.
+  Without that, the tables could all drift to garbage together and
+  nothing here would notice.
+
+  Returns:
+    Nothing. The assertions are the deliverable.
+  '''
+  assert _input_kind('crude') is NodeKind.COMMODITY
+  assert _input_kind('natural_gas') is NodeKind.COMMODITY
+  assert _input_kind('usdinr') is NodeKind.MACRO
+  assert _input_kind('fii_net') is NodeKind.MACRO
+  # An EVENT name is not an input name. This is the near-miss a real
+  # editor makes, because _stock_events lists 'opec_supply_cut' and
+  # 'monsoon' a few lines above where a commodity name would go.
+  for text in ('opec_supply_cut', 'monsoon', 'rbi_rate_decision'):
+    with pytest.raises(ValueError, match='not a known macro or commodity'):
+      _input_kind(text)
+  # A transposition and a wrong case, the other two near-misses.
+  for text in ('crued', 'Coal', '', 'sant_gas'):
+    with pytest.raises(ValueError, match='not a known macro or commodity'):
+      _input_kind(text)
+  # The guard is load-bearing: every input name in every seed table
+  # resolves, so the failure above is unreachable by accident.
+  graph = nifty50_seed()
+  for name in {name for sector, names in _sector_inputs.items()
+               for name in names} | {name for symbol, names
+                                     in _stock_inputs.items()
+                                     for name in names}:
+    assert graph.has(make_key(_input_kind(name), name)), name
+
+
 def test_a_self_loop_is_flagged_even_though_it_is_not_enumerable() -> None:
   '''A self-edge must at least be visible to the linear check.
 
@@ -762,7 +917,8 @@ def test_the_context_width_is_fixed_and_matches_the_field_names() -> None:
   assert len(zero_context()) == CONTEXT_WIDTH
   assert 'symbol' not in context_names()
   context = symbol_context('RELIANCE', public_pair(), bar)
-  assert len(fuse(context)) == len(fuse(context, True)) == CONTEXT_WIDTH
+  assert len(fuse_vector(context)) == len(
+    fuse_vector(context, True)) == CONTEXT_WIDTH
   assert SymbolContext('RELIANCE').symbol == 'RELIANCE'
   module = importlib.import_module('stock_rl.context.fuse')
   assert module.CONTEXT_WIDTH == CONTEXT_WIDTH

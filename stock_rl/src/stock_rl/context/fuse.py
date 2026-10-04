@@ -49,11 +49,11 @@ every saved policy's input layer.
 
 **UPGRADE PATH: a sparse ``(symbol, value)`` mapping is a drop-in
 replacement for this dense vector.** Same gate, same width semantics, but
-each entry carries its name, so :func:`fuse` and :func:`fuse_panel` can
-be swapped for a mapping-returning pair without touching the call site.
-The RL state then keeps a name alongside every number, and the audit
-record from :mod:`stock_rl.compliance.retention` can say *which* context
-signal produced a decision.
+each entry carries its name, so :func:`fuse_vector` and
+:func:`fuse_panel` can be swapped for a mapping-returning pair without
+touching the call site. The RL state then keeps a name alongside every
+number, and the audit record from :mod:`stock_rl.compliance.retention`
+can say *which* context signal produced a decision.
 
 **One free fact is worth getting regardless of the experiment's
 outcome:** options positioning from the free daily bhavcopy. It is the
@@ -65,15 +65,30 @@ history than price features (bhavcopy ~6-10 years, RBI DBIE less), so
 an 8-year price-trained policy is learning a higher-dimensional state
 from a shorter sample, and that alone can explain why context "doesn't
 help".
+
+**The fusion function is ``fuse_vector``, not ``fuse``, and that is not
+cosmetic.** The package used to re-export a *function* called ``fuse``,
+which shadowed this *module* of the same name, so ``import
+stock_rl.context.fuse as m`` bound the function and every dotted
+reference in the package docstrings -- including the reference to the
+gate itself -- raised ``AttributeError``. A gate you cannot read is a
+gate you cannot audit. So the function was renamed and the module kept
+its name, which leaves one thing to reconcile: existing call sites that
+say ``fuse(context)``. This module is therefore also **callable**, and
+``fuse(context, enabled)`` runs :func:`fuse_vector`. That keeps the
+historical spelling working while leaving ``import stock_rl.context.fuse
+as m`` bound to the module. New code should say ``fuse_vector``.
 '''
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime
 from enum import StrEnum
-from math import isfinite, isnan
+from math import inf, isfinite, isnan
+from types import ModuleType
 from typing import Final
 
 from stock_rl.sentiment.score import (
@@ -93,8 +108,8 @@ __all__ = [
   'context_enabled',
   'context_names',
   'evaluate_kill_criteria',
-  'fuse',
   'fuse_panel',
+  'fuse_vector',
   'llm_scalar_enabled',
   'max_sources',
   'state_vector',
@@ -127,7 +142,7 @@ llm_scalar_enabled: Final[bool] = False
 #: The same gate under the design doc's spelling.
 LLM_SCALAR_ENABLED: Final[bool] = llm_scalar_enabled
 
-#: Number of floats :func:`fuse` returns per symbol. Fixed, and
+#: Number of floats :func:`fuse_vector` returns per symbol. Fixed, and
 #: asserted by the tests, because a context vector that changes width
 #: with the data would silently invalidate every saved policy.
 CONTEXT_WIDTH = 12
@@ -136,6 +151,24 @@ CONTEXT_WIDTH = 12
 #: Readings beyond this do not make the mean more trustworthy, they just
 #: make the raw count a worse feature.
 max_sources = 5
+
+#: The ranges :class:`SymbolContext` documents, enforced in its
+#: ``__post_init__``. Keyed by field name so a check cannot disagree with
+#: the docstring it claims to implement. ``inf`` is the upper bound for a
+#: count or a ratio with no documented ceiling.
+_bounds: dict[str, tuple[float, float]] = {
+  'sentiment_score': (-1.0, 1.0),
+  'sentiment_disagreement': (0.0, 1.0),
+  'sentiment_intensity': (0.0, 1.0),
+  'sentiment_usable': (0.0, 1.0),
+  'sentiment_source_ratio': (0.0, 1.0),
+  'graph_depth': (0.0, inf),
+  'commodity_dependencies': (0.0, inf),
+  'macro_dependencies': (0.0, inf),
+  'sector_dependencies': (0.0, inf),
+  'options_pcr': (0.0, inf),
+  'options_iv_rank': (0.0, 1.0),
+}
 
 
 class ContextArm(StrEnum):
@@ -194,6 +227,17 @@ class SymbolContext:
     options_iv_rank: Implied-volatility rank in ``[0, 1]``.
     options_net_oi_change: Fractional net change in open interest over
       the window, signed.
+
+  Every range in that list is enforced in ``__post_init__``, not merely
+  documented. It used to be neither: the class validated nothing, so
+  ``SymbolContext(symbol='   ', sentiment_score=99.0,
+  sentiment_disagreement=-5.0)`` constructed cleanly and
+  :func:`fuse_vector` then published 99.0 into a state vector whose
+  every other field is a bounded number. The bounds are
+  :data:`_bounds`, and the check is written as ``not (low <= value <=
+  high)`` on purpose -- the positive form would let a ``nan`` through,
+  because every comparison involving a ``nan`` is false, which is the
+  same failure :func:`_reject_underspecified` exists to stop.
   '''
 
   symbol: str
@@ -209,6 +253,29 @@ class SymbolContext:
   options_pcr: float = 1.0
   options_iv_rank: float = 0.5
   options_net_oi_change: float = 0.0
+
+  def __post_init__(self) -> None:
+    '''Validate the context at construction time.
+
+    Raises:
+      ValueError: If the symbol is blank, or any field is outside the
+        range its docstring documents. :data:`_bounds` is the single
+        source of those ranges, so the docstring and the check cannot
+        drift apart silently.
+      TypeError: If a field is not a number at all, e.g. ``None``.
+    '''
+    if not self.symbol.strip():
+      raise ValueError('symbol context needs a symbol')
+    for name, (low, high) in _bounds.items():
+      value = getattr(self, name)
+      if not low <= value <= high:
+        raise ValueError(
+          f'{self.symbol}: {name} must be in [{low:g}, {high:g}], '
+          f'got {value!r}')
+    if not isfinite(self.options_net_oi_change):
+      raise ValueError(
+        f'{self.symbol}: options_net_oi_change must be finite, got '
+        f'{self.options_net_oi_change!r}')
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,8 +327,8 @@ def context_names() -> tuple[str, ...]:
 
   This is the mapping the fixed-length vector does **not** carry. Keep
   it beside the policy that consumes the vector: index ``i`` of
-  :func:`fuse` is ``context_names()[i]``, and the whole point of the
-  sparse upgrade path is to stop needing this indirection.
+  :func:`fuse_vector` is ``context_names()[i]``, and the whole point of
+  the sparse upgrade path is to stop needing this indirection.
 
   Returns:
     Field names of :class:`SymbolContext`, minus ``symbol``, in
@@ -379,11 +446,20 @@ def zero_context() -> tuple[float, ...]:
   return (0.0,) * CONTEXT_WIDTH
 
 
-def fuse(
+def fuse_vector(
   context: SymbolContext,
   enabled: bool | None = None,
 ) -> tuple[float, ...]:
   '''Fuse one symbol's context into a fixed-length float vector.
+
+  Named ``fuse_vector`` rather than ``fuse`` because the package used to
+  re-export a function called ``fuse``, and that shadowed this module of
+  the same name: ``import stock_rl.context.fuse as m`` bound the
+  *function*, so ``stock_rl.context.fuse.context_enabled`` -- the gate
+  that exists to stop the whole feature -- raised ``AttributeError``.
+  The function is renamed; the module keeps its name. Calling the module
+  still works, which is what keeps existing ``fuse(...)`` call sites
+  working; see the module docstring.
 
   Args:
     context: Context to fuse.
@@ -398,8 +474,9 @@ def fuse(
     length when the gate is off.
 
   Raises:
-    ValueError: Never. A bad context is the caller's dataclass
-      validation, not this function's.
+    ValueError: Never. :class:`SymbolContext` validates its own fields
+      at construction, so a context that reaches this function is
+      already in range, and this function adds no rules of its own.
   '''
   if not (context_enabled if enabled is None else enabled):
     return zero_context()
@@ -418,7 +495,7 @@ def fuse_panel(
       preserved and **is** the layout, so a caller passing a
       differently-ordered list silently reorders the state; the tests
       pin the layout rather than sorting it.
-    enabled: Override for the module gate, as in :func:`fuse`.
+    enabled: Override for the module gate, as in :func:`fuse_vector`.
 
   Returns:
     Tuple of ``len(contexts) * CONTEXT_WIDTH`` floats. Empty input gives
@@ -430,7 +507,7 @@ def fuse_panel(
   '''
   out: list[float] = []
   for context in contexts:
-    out.extend(fuse(context, enabled))
+    out.extend(fuse_vector(context, enabled))
   return tuple(out)
 
 
@@ -454,7 +531,7 @@ def state_vector(
     context argument is ignored, which is what makes it a control
     rather than a zero-padded one.
   * ``numeric_context`` (arm B) -- price features plus
-    :func:`fuse` output.
+    :func:`fuse_vector` output.
   * ``llm_scalar`` (arm C) -- arm B plus **one** injected scalar.
 
   Args:
@@ -483,7 +560,7 @@ def state_vector(
     return tuple(features)
   if context is None:
     raise ValueError(f'arm {arm.value} needs a SymbolContext')
-  features.extend(fuse(context, enabled))
+  features.extend(fuse_vector(context, enabled))
   if arm is ContextArm.NUMERIC_CONTEXT:
     return tuple(features)
   if not (llm_scalar_enabled if llm_enabled is None else llm_enabled):
@@ -620,4 +697,35 @@ def evaluate_kill_criteria(
       f'{criteria.max_monthly_one_sided_turnover:.0%}: abandon regardless '
       f'of backtest return')
   return KillCriteriaResult(passed=not failures, failures=tuple(failures))
+
+
+class _CallableModule(ModuleType):
+  '''A module that is also the historical ``fuse`` call.
+
+  Renaming :func:`fuse_vector` fixed the shadowing that made
+  ``stock_rl.context.fuse.context_enabled`` unreadable, and created one
+  compatibility problem: call sites that say ``fuse(context)`` -- which
+  is what ``from stock_rl.context import fuse`` hands them, since that
+  name now refers to this module -- have to keep working.
+
+  Args:
+    args: Positional arguments for :func:`fuse_vector`.
+    kwargs: Keyword arguments for :func:`fuse_vector`.
+
+  Returns:
+    Whatever :func:`fuse_vector` returns.
+
+  Note:
+    This is the standard ``sys.modules[__name__].__class__`` swap, and it
+    is deliberately the only magic in the package. It is here so the
+    rename is a rename and not a breaking change, and it is not a
+    licence to add more: ``import stock_rl.context.fuse as m`` is still a
+    module, and ``m.context_enabled`` is still the gate.
+  '''
+
+  def __call__(self, *args, **kwargs):
+    return fuse_vector(*args, **kwargs)
+
+
+sys.modules[__name__].__class__ = _CallableModule
 

@@ -197,7 +197,9 @@ class DependencyGraph:
     The research review sizes a Nifty-50 dependency graph at ~300-2000
     static edges. Crossing 2000 means the graph has either grown stale
     or become a database in disguise, and either way a reviewer should
-    look before a traversal is trusted.
+    look before a traversal is trusted. Note that the **seed** graph is
+    far below the low end: :func:`nifty50_seed` builds 76 edges, so this
+    flag is False on it by a factor of four, not by a little.
     '''
     return self.edge_count > 2000
 
@@ -478,8 +480,18 @@ _sector_inputs: dict[str, tuple[str, ...]] = {
 
 #: Extra direct inputs per symbol, beyond the symbol's sector and the
 #: sector's own inputs. The design doc's named cases are the ones worth
-#: stating explicitly; the rest keep the edge count near the low end of
-#: the researched 300-2000 range rather than inventing precision.
+#: stating explicitly; the rest add only what is common sector reasoning
+#: rather than inventing precision.
+#:
+#: What this table costs, exactly: the seed graph is **76** edges over
+#: **55** nodes -- 29 stock-to-sector, 19 sector-to-input, 21 of these
+#: direct inputs, 2 macro chains and 5 event edges. The review sizes a
+#: Nifty-50 dependency graph at ~300-2000 static edges, so the seed sits
+#: at about a **quarter of the stated low end**, not near it. That is a
+#: known and deliberate gap, stated here rather than implied: 29 of the
+#: 50 starter symbols carry no direct input at all beyond their sector,
+#: and a reviewer who wants a denser graph should add rows here and say
+#: why. :attr:`DependencyGraph.edge_budget_exceeded` still trips at 2000.
 _stock_inputs: dict[str, tuple[str, ...]] = {
   'ASIANPAINT': ('crude',),
   'BHARTIARTL': ('usdinr',),
