@@ -1,0 +1,47 @@
+[build-system]
+requires = ['hatchling']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'stock-rl'
+version = '0.1.0'
+description = 'Backtest core and compliance harness for NSE-listed equities.'
+readme = 'README.md'
+requires-python = '>=3.14'
+license = 'MIT'
+authors = [{ name = 'RL + Capital Markets Team' }]
+keywords = ['backtesting', 'reinforcement-learning', 'nse', 'india']
+classifiers = [
+  'Programming Language :: Python :: 3.14',
+  'Topic :: Office/Business :: Financial :: Investment',
+]
+
+# No runtime dependencies. The backtest core is pure standard library on
+# purpose: see src/stock_rl/engine.py for the performance ceiling comment.
+dependencies = []
+
+[dependency-groups]
+dev = [
+  'pytest>=8.3',
+  'pytest-cov>=6.0',
+  'pylint>=3.3',
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/stock_rl']
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '-q --strict-markers'
+markers = [
+  'network: tests that perform real outbound HTTP; deselect with -m "not network"',
+]
+
+[tool.coverage.run]
+source = ['src/stock_rl']
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 90

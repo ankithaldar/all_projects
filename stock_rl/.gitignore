@@ -1,0 +1,15 @@
+# Market data. Licensed NSE/TrueData/GFDL vendor payloads must never be
+# committed: see docs/NIFTY-RL-Technical-Doc.md section 9.2 (redistribution
+# rights are not ours to grant). Only code goes in this repository.
+data/
+*.parquet
+*.feather
+
+# Local scratch
+out/
+*.sqlite
+*.sqlite3
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
