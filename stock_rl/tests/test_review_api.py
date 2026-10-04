@@ -33,9 +33,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
+import zipfile
 from datetime import datetime, timedelta
 from http.client import HTTPConnection, RemoteDisconnected
+from pathlib import Path
 
 import pytest
 
@@ -277,7 +281,18 @@ class TestProviderFailureIsNotAClientError:
     assert 'Traceback' not in response.body.decode()
 
   def test_a_failed_backtest_leaves_the_reported_book_untouched(self):
-    '''A crash mid-run must not half-write the book.'''
+    '''A crash mid-run must not half-write the book.
+
+    This test previously expected ``pytest.raises(TypeError)``, which was
+    the state before ``dispatch`` gained its terminal ``except
+    Exception``. That expectation contradicted
+    ``test_an_unexpected_exception_raises_rather_than_returning_a_body``
+    in the class below, which drives the identical fixture through the
+    identical call and requires a 500 body: a function cannot both raise
+    and return for one input. The invariant this test was written to
+    protect is unchanged and is what is asserted here -- the run failed,
+    and the reported book is exactly as it was before the request.
+    '''
 
     def runner(request):
       '''Fail after the request is fully validated.
@@ -292,8 +307,8 @@ class TestProviderFailureIsNotAClientError:
       raise TypeError('a bug in the runner')
 
     svc = service(backtest_runner=runner)
-    with pytest.raises(TypeError):
-      api.dispatch(svc, 'POST', '/api/backtest', b'{}')
+    response = api.dispatch(svc, 'POST', '/api/backtest', b'{}')
+    assert response.status == 500
     assert get(svc, '/api/equity')['source'] == 'none'
     assert get(svc, '/api/positions')['positions'] == []
 
@@ -594,10 +609,50 @@ class TestAssetLoaderCannotEscapeThePackage:
     with pytest.raises((FileNotFoundError, ValueError)):
       web.asset_text(name)
 
+  @pytest.mark.parametrize('name', [
+    'C:\\Windows\\win.ini',
+    '..\\..\\etc\\passwd',
+    '',
+    '   ',
+  ])
+  def test_other_escapes_and_shapes_are_refused_too(self, name):
+    # Both path flavours are consulted, because a name shaped for Windows
+    # is still a name, and a refusal must not depend on the host OS.
+    with pytest.raises(ValueError):
+      web.asset_text(name)
+
+  def test_a_subdirectory_name_is_a_missing_file_not_an_escape(self):
+    # Not an escape, so FileNotFoundError rather than a refusal: the
+    # loader draws the line at leaving the package, not at nesting.
+    with pytest.raises(FileNotFoundError):
+      web.asset_text('nested/index.html')
+
   def test_the_real_assets_still_load(self):
     assert web.stylesheet().strip()
     assert web.script().strip()
     assert web.index_html().startswith('<!DOCTYPE html>')
+
+  def test_the_assets_still_load_from_a_zipimport(self, tmp_path):
+    # The traversal check is lexical precisely because that is the only
+    # defence a zipimport has: there is no filesystem to resolve a path
+    # against. So the check has to be proven not to have broken the case
+    # importlib.resources was chosen for.
+    archive = tmp_path / 'zipped.zip'
+    root = Path(web.__file__).parent
+    with zipfile.ZipFile(archive, 'w') as zipped:
+      for asset in ('__init__.py', 'index.html', 'app.js', 'style.css'):
+        zipped.write(root / asset, f'stock_rl/web/{asset}')
+      zipped.writestr('stock_rl/__init__.py', "__version__ = '0.1.0'\n")
+    probe = (
+      'from stock_rl import web\n'
+      'print(web.index_html().startswith("<!DOCTYPE html>"))\n'
+      'print(len(web.script()) > 200, len(web.stylesheet()) > 200)\n')
+    finished = subprocess.run(
+      [sys.executable, '-c', probe], cwd=tmp_path,
+      env={**os.environ, 'PYTHONPATH': str(archive)},
+      capture_output=True, text=True, timeout=120, check=False)
+    assert finished.returncode == 0, finished.stderr
+    assert finished.stdout.split() == ['True', 'True', 'True']
 
 
 class TestLabelsTrackTheNumbers:

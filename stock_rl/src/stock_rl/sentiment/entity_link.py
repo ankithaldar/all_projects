@@ -87,6 +87,15 @@ trusted absolutely, and a truncated query is resolved to a symbol that
 may be the wrong company. Upgrade path: add a ``typos`` mapping, or a
 vendor symbol file loaded through the same constructor -- never by
 widening the prefix rule, which is how a refusal becomes a coin flip.
+
+**Nothing in this package acts on :attr:`Resolution.truncated`.** It is a
+label carried into ``reason`` for a human, not a gate. That is stated
+here because the same shape has been a real defect twice elsewhere in
+this repository: ``Rejection.LOOK_AHEAD`` recorded a leaked reading that
+no consumer ever read, and the dashboard referenced two assets that no
+route served. A flag with no consumer is a note to self, so a caller who
+wants truncation refused must check it explicitly. Until one does, the
+guarantee is "a typo is labelled", not "a typo cannot resolve".
 '''
 
 from __future__ import annotations
@@ -554,3 +563,4 @@ def resolve(text: str) -> Resolution:
     exceptions.
   '''
   return default_linker.link(text)
+

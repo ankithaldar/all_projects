@@ -20,6 +20,16 @@ resolving the moment the wheel is installed as a zipimport, and an API
 that serves its own dashboard should not have a filesystem layout
 assumption buried in it.
 
+``asset_text`` therefore takes a *name*, not a path. To be precise about
+what that closes: this is a hardening gap in a public function, not a
+reachable vulnerability. No HTTP route passes a caller-supplied name --
+:func:`stock_rl.api.dispatch` names the three assets with module-level
+constants -- so ``'../api.py'`` or ``'/etc/passwd'`` is not something a
+request can express today. It is fixed anyway because ``asset_text`` is
+in ``__all__``, a caller of this package can pass it anything, and a
+loader that reads whatever it is handed is one refactor away from being
+a file-disclosure primitive.
+
 PONYTAIL: one asset per endpoint shape, all static. Ceiling: no build
 step means no bundling, minification or content hashing, so a large
 dashboard would ship unminified and without cache busting. Upgrade path:
@@ -30,6 +40,7 @@ built output, so callers do not learn where the bytes came from.
 from __future__ import annotations
 
 from importlib.resources import files
+from pathlib import PurePosixPath, PureWindowsPath
 
 __all__ = ['asset_text', 'index_html', 'script', 'stylesheet']
 
@@ -43,20 +54,53 @@ stylesheet_document = 'style.css'
 script_document = 'app.js'
 
 
+def _refuse_traversal(name: str) -> None:
+  '''Refuse an asset name that could leave this package.
+
+  The checks are lexical and both path flavours are consulted: the
+  process may be POSIX, and a name shaped for Windows is still a name.
+  This holds for a zipimport too, where there is no filesystem to resolve
+  against and the only possible defence is lexical.
+
+  Args:
+    name: Candidate asset name.
+
+  Raises:
+    ValueError: If the name is empty, is not a string, is absolute in
+      either path flavour, or contains a ``..`` component. A refused name
+      is a programming error rather than a missing file, so it is not
+      reported as :class:`FileNotFoundError`: a caller that catches that
+      and falls back to a default would be silently handed the wrong
+      document.
+  '''
+  if not isinstance(name, str) or not name.strip():
+    raise ValueError(f'asset name must be a non-empty string, got {name!r}')
+  if PurePosixPath(name).is_absolute() or PureWindowsPath(name).is_absolute():
+    raise ValueError(
+      f'asset name must be relative to the package, got {name!r}')
+  parts = PurePosixPath(name).parts
+  if '..' in parts or '..' in PureWindowsPath(name).parts:
+    raise ValueError(
+      f'asset name must not walk out of the package, got {name!r}')
+
+
 def asset_text(name: str) -> str:
   '''Return the text of one dashboard asset.
 
   Args:
-    name: File name relative to this package, e.g. ``'index.html'``.
+    name: File name relative to this package, e.g. ``'index.html'``. Must
+      be a relative name inside the package; see :func:`_refuse_traversal`.
 
   Returns:
     The file's contents decoded as UTF-8.
 
   Raises:
+    ValueError: If the name is absolute or walks out of the package.
     FileNotFoundError: If no such asset exists. Raised rather than
       returning an empty string, because an empty dashboard body is
       indistinguishable from a working one with no data.
   '''
+  _refuse_traversal(name)
   return files(__name__).joinpath(name).read_text(encoding='utf-8')
 
 
