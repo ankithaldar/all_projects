@@ -41,11 +41,24 @@ loss and a negative number for a gain. A VaR of ``0.02`` means "the
 worst 5 percent outcome lost 2 percent"; a negative VaR means the 95th
 percentile outcome was a gain, which is a real answer and not an error.
 
-**Zero volatility returns 0.0, never NaN.** A degenerate input is the
-case that silently poisons a downstream risk report, because NaN
-compares false against every limit and therefore passes every check.
-:func:`parametric_var` and :func:`portfolio_var` both return ``0.0`` on
-a zero-volatility input for that reason.
+**Zero volatility never produces NaN.** A degenerate input is the case
+that silently poisons a downstream risk report, because NaN compares
+false against every limit and therefore passes every check. Neither
+parametric function can return it: the volatility is validated before the
+division, and a zero volatility is divided only after being caught.
+
+The two of them answer a zero-volatility input differently, and the
+difference is deliberate:
+
+- :func:`parametric_var` returns ``-mean``. A series with no dispersion
+  is deterministic, so a mean of ``+0.01`` means every period returned
+  exactly ``+0.01`` and the worst 5 percent outcome was a gain. Reporting
+  that as ``-0.01`` is informative; flooring it to ``0.0`` would claim
+  the worst outcome broke even, which is false.
+- :func:`portfolio_var` returns ``0.0``. Its input is a covariance
+  matrix, so a zero variance means the weighted exposure cancels exactly.
+  There is no per-period mean to report against it, and a negative VaR
+  from a fully hedged book would be read as free money.
 '''
 
 from __future__ import annotations

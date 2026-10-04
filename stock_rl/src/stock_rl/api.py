@@ -122,7 +122,7 @@ from stock_rl.bars import Bar, load_csv
 from stock_rl.indicators import momentum
 from stock_rl.metrics import max_drawdown, sharpe_ratio, total_return
 from stock_rl.portfolio import WeightProvider, run_portfolio
-from stock_rl.web import index_html
+from stock_rl.web import index_html, script, stylesheet
 
 __all__ = [
   'ApiHandler',
@@ -1625,6 +1625,15 @@ def _error(status: int, message: str) -> Response:
 routes: dict[str, frozenset[str]] = {
   '/': frozenset({'GET', 'HEAD'}),
   '/index.html': frozenset({'GET', 'HEAD'}),
+  # The two sibling files index.html pulls in. These were missing, which
+  # made the dashboard render as unstyled text with no script at all: the
+  # document was served, the stylesheet and the script were not, and
+  # nothing in the suite noticed because it checked that the document was
+  # served and that the assets were readable as text, but never that the
+  # document's own references resolved. Every subresource named by the
+  # served HTML must have a route here, or the page is a corpse.
+  '/style.css': frozenset({'GET', 'HEAD'}),
+  '/app.js': frozenset({'GET', 'HEAD'}),
   '/api/health': frozenset({'GET', 'HEAD'}),
   '/api/signals': frozenset({'GET', 'HEAD'}),
   '/api/equity': frozenset({'GET', 'HEAD'}),
@@ -1671,6 +1680,14 @@ def dispatch(
   try:
     if route in ('/', '/index.html'):
       return Response.of_html(HTTPStatus.OK, index_html())
+    if route == '/style.css':
+      return Response(
+        HTTPStatus.OK, stylesheet().encode('utf-8'),
+        'text/css; charset=utf-8')
+    if route == '/app.js':
+      return Response(
+        HTTPStatus.OK, script().encode('utf-8'),
+        'text/javascript; charset=utf-8')
     if route == '/api/backtest':
       request = _parse_request(body, service.symbols)
       return Response.of_json(
@@ -2058,3 +2075,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == '__main__':
   raise SystemExit(main())
+

@@ -54,6 +54,7 @@ serving the wrong purpose.
 from __future__ import annotations
 
 import math
+from math import isfinite
 from dataclasses import dataclass
 
 from stock_rl.risk.checks import (
@@ -168,7 +169,7 @@ def uncertainty_adjusted_size(prob_win: float, win_loss_ratio: float,
     ValueError: If any argument is out of range.
   '''
   if not 0.0 <= uncertainty < 1.0:
-    raise ValueError(f'uncertainty must be in [0, 1), got {uncertainty}')
+    raise ValueError(f'uncertainty must be in [0, 1), got {uncertainty!r}')
   raw = kelly_fraction(prob_win, win_loss_ratio) * (1.0 - uncertainty)
   return min(max_fraction, max(0.0, raw))
 
@@ -191,20 +192,30 @@ def vol_target_fraction(realised_vol: float, target_vol: float,
     Size as a fraction of capital, in ``[0, cap]``.
 
   Raises:
-    ValueError: If either volatility is not positive or the cap is
-      outside ``(0, 1]``. A zero realised volatility is refused rather
-      than divided by, because ``target / 0`` would be the largest
+    ValueError: If either volatility is not positive and finite, or the
+      cap is outside ``(0, 1]``. A zero realised volatility is refused
+      rather than divided by, because ``target / 0`` would be the largest
       possible size returned with no arithmetic error and no evidence
       behind it.
+
+      The comparison is written ``not x > 0.0`` rather than ``x <= 0.0``
+      deliberately. For NaN both are False, so the second form let NaN
+      through and the function then returned ``min(cap, nan)``, which is
+      ``cap`` -- Python's ``min`` keeps its incumbent when the comparison
+      is False. A NaN volatility therefore produced the single largest
+      order the sizer is permitted to write, silently, from an input that
+      means nothing. Realised volatility returns NaN routinely, from a
+      zero-variance window or a NaN in the return column.
   '''
-  if realised_vol <= 0.0:
+  if not realised_vol > 0.0 or not isfinite(realised_vol):
     raise ValueError(
-      f'realised_vol must be positive; a zero-volatility input has no '
-      f'size to scale, got {realised_vol}')
-  if target_vol <= 0.0:
-    raise ValueError(f'target_vol must be positive, got {target_vol}')
-  if not 0.0 < cap <= 1.0:
-    raise ValueError(f'cap must be in (0, 1], got {cap}')
+      f'realised_vol must be positive and finite; a zero or undefined '
+      f'volatility has no size to scale, got {realised_vol!r}')
+  if not target_vol > 0.0 or not isfinite(target_vol):
+    raise ValueError(
+      f'target_vol must be positive and finite, got {target_vol!r}')
+  if not 0.0 < cap <= 1.0 or not isfinite(cap):
+    raise ValueError(f'cap must be in (0, 1], got {cap!r}')
   return min(cap, target_vol / realised_vol)
 
 
@@ -232,6 +243,29 @@ class SizingInputs:
   uncertainty: float = 0.5
   realised_vol: float = 0.0
   target_vol: float = 0.15
+
+  def __post_init__(self) -> None:
+    '''Reject the non-finite values at construction.
+
+    Every field is checked here rather than only where it is used,
+    because ``realised_vol`` is legitimately ``0.0`` for the Kelly rule
+    and the volatility rule is where a NaN did the damage. Checking
+    finiteness without checking the range lets ``0.0`` through for the
+    rule that ignores it and refuses it for the rule that does not.
+
+    Raises:
+      ValueError: If any field is NaN or infinite.
+    '''
+    for name, value in (('prob_win', self.prob_win),
+                        ('win_loss_ratio', self.win_loss_ratio),
+                        ('uncertainty', self.uncertainty),
+                        ('realised_vol', self.realised_vol),
+                        ('target_vol', self.target_vol)):
+      if not isfinite(value):
+        raise ValueError(
+          f'{name} must be a finite number, got {value!r}. An undefined '
+          f'size input silently produces the maximum permitted position, '
+          f'so it is refused at the boundary instead')
 
   def fraction(self, method: str) -> float:
     '''Return the size fraction this input implies.
@@ -451,3 +485,4 @@ class StockSizer:
       raise ValueError(f'size must be finite, got {units}')
     lots = math.floor(max(0.0, units) / self.lot_size)
     return int(lots) * self.lot_size
+

@@ -30,12 +30,13 @@ import socket
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 from http.client import HTTPConnection
 from random import Random
 
 import pytest
 
-from stock_rl import __version__, api
+from stock_rl import __version__, api, web
 from stock_rl.bars import Bar
 from stock_rl.metrics import max_drawdown, sharpe_ratio
 from stock_rl.web import asset_text, index_html, script, stylesheet
@@ -1027,8 +1028,14 @@ class TestRouting:
     assert response.status == 200
 
   def test_routes_table_matches_the_documented_set(self):
+    # This assertion previously listed the routes by hand and omitted
+    # /style.css and /app.js, so it passed while the dashboard was
+    # completely dead. The dashboard routes below are now checked against
+    # the document that references them rather than against a second list
+    # that has to be kept in step by hand.
     assert set(api.routes) == {
-      '/', '/index.html', '/api/health', '/api/signals', '/api/equity',
+      '/', '/index.html', '/style.css', '/app.js',
+      '/api/health', '/api/signals', '/api/equity',
       '/api/positions', '/api/baselines', '/api/risk', '/api/backtest',
     }
     assert api.routes['/api/backtest'] == frozenset({'POST'})
@@ -1573,3 +1580,72 @@ class TestMain:
                         lambda svc, host, port: seen.update(service=svc))
     api.main(['--data-dir', str(tmp_path)])
     assert seen['service'].symbols == ['AAA']
+
+
+class TestTheDocumentReferencesResolve:
+  '''Every subresource the served HTML names must actually be served.
+
+  The suite checked that the dashboard document was served and that the
+  asset files were readable as text, and passed both while the page was
+  completely dead: `/style.css` and `/app.js` had no route, so the
+  browser got unstyled markup, no script, and never issued a single
+  request to any endpoint. Neither existing check noticed, because a file
+  nobody serves is still a readable file.
+
+  This closes the gap structurally rather than by listing the two known
+  names, so adding a third asset to index.html without a route fails here.
+  '''
+
+  @staticmethod
+  def _referenced(document):
+    '''Return every same-origin path index.html asks the browser to load.
+
+    Args:
+      document: The served HTML text.
+
+    Returns:
+      Paths from `href` and `src` attributes, skipping absolute URLs,
+      fragment-only links and non-fetchable namespace declarations.
+    '''
+    found = []
+    for match in re.finditer(r'(?:href|src)="([^"]+)"', document):
+      target = match.group(1).strip()
+      if not target or target.startswith(('#', 'http://', 'https://',
+                                        '//', 'data:')):
+        continue
+      found.append(target.split('#', 1)[0])
+    return found
+
+  def test_the_document_references_at_least_one_subresource(self):
+    # Without this, an index.html with no references would satisfy every
+    # assertion below vacuously.
+    assert len(self._referenced(index_html())) >= 2
+
+  def test_every_referenced_subresource_has_a_route(self):
+    referenced = self._referenced(index_html())
+    assert referenced, 'index.html references nothing to load'
+    unrouted = [name for name in referenced if '/' not in name
+                and f'/{name}' not in api.routes]
+    assert not unrouted, (
+      f'index.html references {unrouted} but api.routes serves no such '
+      f'path, so the browser gets a 404 and the page renders as bare text')
+
+  def test_every_referenced_subresource_is_served_with_real_bytes(self):
+    service = api.ApiService()
+    for name in self._referenced(index_html()):
+      response = api.dispatch(service, 'GET', f'/{name}')
+      assert response.status == HTTPStatus.OK, f'/{name} -> {response.status}'
+      assert response.body, f'/{name} served an empty body'
+      assert response.content_type.split(';')[0] in (
+        'text/css', 'text/javascript', 'application/javascript'), (
+        f'/{name} has content type {response.content_type}')
+
+  def test_the_stylesheet_and_script_are_the_ones_on_disk(self):
+    for name, accessor in (('style.css', web.stylesheet),
+                           ('app.js', web.script)):
+      response = api.dispatch(api.ApiService(), 'GET', f'/{name}')
+      assert response.body == accessor().encode('utf-8'), (
+        f'/{name} does not serve the packaged asset')
+
+
+

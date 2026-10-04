@@ -209,14 +209,25 @@ class Trip:
     '''Validate the trip record at construction.
 
     Raises:
-      ValueError: If the code is unknown or the detail is empty. A trip
-        with no reason is precisely the record an inspection asks for,
-        so this class must never be able to write one.
+      ValueError: If the code is unknown, the detail is empty, or ``at`` is
+        not a non-empty string. A trip with no reason is precisely the
+        record an inspection asks for, so this class must never be able to
+        write one.
+
+        ``at`` is validated as a string because that is what the attribute
+        declares and what :meth:`to_json` emits. It was previously
+        unchecked, so a ``datetime`` passed here constructed cleanly and
+        then failed much later, inside an unrelated caller's JSON encode,
+        with a ``TypeError`` that pointed nowhere near the mistake.
     '''
     if self.code not in trip_codes:
       raise ValueError(f'unknown trip code {self.code!r}')
     if not isinstance(self.detail, str) or not self.detail.strip():
       raise ValueError('a trip must record what tripped it')
+    if not isinstance(self.at, str) or not self.at.strip():
+      raise ValueError(
+        f'a trip must record an ISO 8601 string for when it tripped, got '
+        f'{self.at!r} of type {type(self.at).__name__}')
 
   def to_json(self) -> dict[str, object]:
     '''Return the record as JSON-stable primitives.
