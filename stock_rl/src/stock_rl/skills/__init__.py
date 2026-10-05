@@ -45,6 +45,7 @@ direction.
 from __future__ import annotations
 
 from stock_rl.skills.loader import (
+  describe_sources,
   discover_skills,
   load_skill,
   load_skills,
@@ -76,6 +77,7 @@ from stock_rl.skills.schema import (
 )
 
 __all__ = [
+  'describe_sources',
   'EvidenceTier',
   'Gate',
   'KillCriterion',
@@ -101,3 +103,5 @@ __all__ = [
   'split_document',
   'tiers',
 ]
+
+

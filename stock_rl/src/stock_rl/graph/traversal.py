@@ -5,8 +5,9 @@
 
 The design doc's one graph-shaped sentence is
 ``Crude +5% -> ONGC, RELIANCE, ASIANPAINT``. This module is that, and
-the whole reason it is 431 lines rather than a Cypher query is that the
-operation is a breadth-first walk over an adjacency dict.
+the whole reason it is a few hundred lines rather than a Cypher
+query is that the operation is a breadth-first walk over an adjacency
+dict.
 
 **Both depth and cycles are handled, because both will happen.** A
 hand-maintained dependency graph acquires a cycle the first time someone
@@ -432,3 +433,4 @@ def _check_depth(max_depth: int) -> None:
     raise ValueError(
       f'max_depth must be <= {max_traversal_depth}, got {max_depth}; a '
       f'deep request on a cyclic graph has no meaning')
+

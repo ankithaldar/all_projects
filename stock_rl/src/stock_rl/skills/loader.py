@@ -52,6 +52,7 @@ from stock_rl.skills.schema import (
 )
 
 __all__ = [
+  'describe_sources',
   'discover_skills',
   'load_skill',
   'load_skills',
@@ -475,3 +476,4 @@ def describe_sources(skills: Iterable[Skill]) -> tuple[str, ...]:
   '''
   names = {source for skill in skills for source in skill.data_sources}
   return tuple(sorted(names))
+

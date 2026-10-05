@@ -99,9 +99,16 @@ the flag out of the `Makefile`.
 
 Two more conventions the root `.pylintrc` enforces:
 
-- `variable-rgx=^[a-z][a-z0-9_]*$` rejects UPPERCASE, so **module constants
-  are lowercase**. Enum *members* are the one exception, since
-  `class-const-rgx` demands they be uppercase (`costs.Side.BUY`).
+- `variable-rgx=^[a-z][a-z0-9_]*$` rejects UPPERCASE for ordinary names, so
+  **functions and variables are lowercase**. Two conventions are deliberate
+  and permitted by `const-rgx`: **module constants are UPPERCASE**
+  (`costs.DELIVERY`, `metrics.TRADING_DAYS_PER_YEAR`,
+  `context.CONTEXT_ENABLED`) and **type aliases are CamelCase**
+  (`gym.Obs`, `gym.Info`, `killswitch.Clock`, `policy.Action`). An earlier
+  version of this file claimed module constants were lowercase, which was
+  simply wrong — it described a convention the code never used. Enum
+  *members* are uppercase because `class-const-rgx` demands it
+  (`costs.Side.BUY`).
 - `bad-indentation` is disabled precisely because the built-in check
   assumes 4-space blocks and cannot be configured for 2.
 
