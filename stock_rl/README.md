@@ -27,7 +27,7 @@ configuration returned −0.27% at the *highest* reasoning quality setting.
 
 Consequently `CONTEXT_ENABLED = False` and the sentiment/context layer is
 gated behind a pre-registered experiment rather than switched on. See
-see [the agent research][agents].
+[the agent research][agents].
 
 **Recommendation: run the three-arm A/B test before building the data
 fabric.** It costs about two weeks and $40. The alternative is building
@@ -169,7 +169,7 @@ years.
 **Per-decision rationale is not a SEBI requirement.** The actual driver of
 documentation is NSE para 9.1/9.9: re-registration is required when
 strategy *logic* changes. See
-See [the attribution research][attribution].
+[the attribution research][attribution].
 
 ---
 

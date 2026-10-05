@@ -5,7 +5,7 @@
 
 The design doc's one graph-shaped sentence is
 ``Crude +5% -> ONGC, RELIANCE, ASIANPAINT``. This module is that, and
-the whole reason it is 150 lines rather than a Cypher query is that the
+the whole reason it is 431 lines rather than a Cypher query is that the
 operation is a breadth-first walk over an adjacency dict.
 
 **Both depth and cycles are handled, because both will happen.** A
@@ -280,8 +280,11 @@ def cycles(
   reviewed, a contradiction nobody sees is a contradiction nobody fixes.
 
   Only *short* loops are reported. Every simple loop in a dense graph is
-  combinatorial, and the seed graph has 47 once fan-out is counted
-  undirected; that is why this walk is directed and length-bounded.
+  combinatorial: the 55-node seed graph has 34 triangles and 3262
+  undirected simple cycles in total, and none of them is a directed
+  loop. The argument for a directed, length-bounded walk does not
+  depend on that count - undirected enumeration calls ordinary fan-out
+  a cycle - so the count is stated for scale and nothing more.
 
   **An acyclic graph is answered, not walked.** :func:`has_cycle` is
   linear and settles the question in about a millisecond on the

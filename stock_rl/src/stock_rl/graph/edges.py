@@ -73,7 +73,7 @@ class EdgeKind(StrEnum):
       design doc's example: a stock depends on crude.
     AFFECTED_BY: The source node is affected by the target, where the
       target is typically an event rather than a price. Structurally
-      identical to :attr:`depends_on` in the direction information
+      identical to :attr:`EdgeKind.DEPENDS_ON` in the direction information
       travels; it exists because an event edge and an exposure edge mean
       different things to a reviewer even though traversal treats them
       alike.

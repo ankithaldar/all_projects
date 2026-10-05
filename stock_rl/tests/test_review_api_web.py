@@ -26,6 +26,7 @@ import re
 import socket
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import date, datetime, timedelta, timezone
@@ -274,16 +275,53 @@ def test_aggregate_is_refused_when_any_reading_leaked() -> None:
 def test_baselines_row_matches_the_backtest_of_the_same_request() -> None:
   '''The control arm must measure what the trigger measures.
 
-  api.py:787 runs ``run_portfolio(panels, provider)`` with the library
-  defaults, ignoring the request. The same named strategy therefore
-  carries two Sharpes on one dashboard, the Baselines panel's and the
-  Metrics panel's, and the Baselines payload never says which
-  ``rebalance_days`` or ``history`` produced its numbers.
+  **What this test is for.** The finding was that ``GET /api/baselines``
+  ran ``run_portfolio(panels, provider)`` with the library defaults,
+  ignoring whatever configuration the caller had in hand, so one named
+  strategy carried two Sharpes on one dashboard -- the Baselines panel's
+  and the Metrics panel's -- and the Baselines payload never disclosed
+  which ``rebalance_days`` or ``history`` produced its number. The
+  property under test is the one the dashboard actually relies on: **the
+  two routes measure the same book, so one strategy name cannot carry two
+  Sharpe numbers.**
+
+  **Why the GET carries the parameters.** The assertion compares a GET to
+  a POST, and a comparison is only meaningful between two measurements of
+  the same configuration. This test previously issued a *bare* ``GET
+  /api/baselines`` and compared it against a POST that set
+  ``rebalance_days=5, max_weight=0.3, history=10`` explicitly. A bare GET
+  carries none of those, so the two could agree only if the module's
+  defaults happened to equal 5/0.3/10 -- and those values appear nowhere
+  else in this repository: ``portfolio.py``, ``baselines.py``,
+  ``experiment/harness.py`` and ``rl/policy.py`` all use 21/0.10/60.
+  Making them agree would have meant hardcoding 5/0.3/10 into the module,
+  which turns the test green by reintroducing precisely the defect it
+  describes -- an arm measured at settings nobody asked for.
+
+  So the GET asks for the configuration the POST will use. That is the
+  claim being tested, and it is satisfiable because
+  ``GET /api/baselines`` accepts ``capital``, ``rebalance_days``,
+  ``max_weight`` and ``history`` as validated query parameters and
+  measures the arm under exactly the request the caller will trigger.
+  Option (b), making the bare GET agree with a non-default POST, was
+  rejected: it requires the defaults to be a specific non-default set,
+  which breaks every caller that relied on 21/0.10/60 being the library
+  default and makes the GET's unstated configuration the *only* thing it
+  can report.
+
+  The disclosure assertion stays, because disclosure was half of the
+  original finding, and the unparameterised case is asserted separately
+  below rather than being deleted here.
   '''
   request = {'strategy': 'momentum_ranked', 'rebalance_days': 5,
              'max_weight': 0.3, 'history': 10, 'capital': 10_000_000.0}
   service = api.ApiService(panels=rising_panel())
-  table = json.loads(api.dispatch(service, 'GET', '/api/baselines').body)
+  query = urllib.parse.urlencode({
+    name: request[name]
+    for name in ('capital', 'rebalance_days', 'max_weight', 'history')
+  })
+  table = json.loads(
+      api.dispatch(service, 'GET', f'/api/baselines?{query}').body)
   triggered = json.loads(
       api.dispatch(service, 'POST', '/api/backtest',
                    json.dumps(request).encode('utf-8')).body)
@@ -294,6 +332,9 @@ def test_baselines_row_matches_the_backtest_of_the_same_request() -> None:
     assert name in table or name in row, (
         f'GET /api/baselines does not disclose the {name!r} it measured, '
         f'so its Sharpe cannot be attributed to a configuration')
+  assert table['request']['rebalance_days'] == request['rebalance_days']
+  assert table['request']['max_weight'] == request['max_weight']
+  assert table['request']['history'] == request['history']
   measured = row['sharpe']
   asked = triggered['sharpe']
   wanted = request['strategy']
@@ -301,6 +342,47 @@ def test_baselines_row_matches_the_backtest_of_the_same_request() -> None:
       f'GET /api/baselines reports Sharpe {measured} for {wanted} while '
       f'POST /api/backtest reports {asked} for the same strategy under '
       f'the requested parameters')
+
+
+def test_a_bare_baselines_row_matches_a_bare_backtest() -> None:
+  '''The unparameterised pair must agree too, and by construction.
+
+  This is the property the previous version of the test above was trying
+  to assert, held separately so that fixing it could not quietly drop it.
+  It is satisfiable *without* hardcoding anything, because
+  :data:`stock_rl.api.control_arm` is a :class:`api.BacktestRequest`
+  carrying :class:`api.BacktestRequest`'s own defaults -- the same 21 /
+  0.10 / 60 that ``portfolio.py``, ``baselines.py``,
+  ``experiment/harness.py`` and ``rl/policy.py`` use. So a bare GET and
+  a bare POST measure one book by construction, which is the property the
+  module docstring at ``api.py:431-456`` claims and this pins.
+
+  It is a **separate** assertion from the parameterised one above because
+  it is a different claim. The parameterised test says the two routes
+  agree *for a configuration the caller chose*; this one says they agree
+  *for the configuration neither chose*. A fix that hardcoded 5/0.3/10 as
+  the module default would pass the first and fail this, which is exactly
+  why it needs its own test.
+  '''
+  service = api.ApiService(panels=rising_panel())
+  table = json.loads(api.dispatch(service, 'GET', '/api/baselines').body)
+  triggered = json.loads(
+      api.dispatch(service, 'POST', '/api/backtest', b'{}').body)
+  row = next(item for item in table['strategies']
+             if item['name'] == triggered['request']['strategy'])
+  assert row['status'] == 'ok'
+  measured = row['sharpe']
+  asked = triggered['sharpe']
+  assert measured == pytest.approx(asked), (
+      f'the declared control arm {api.control_arm.to_json()} reports '
+      f'Sharpe {measured} while a default POST /api/backtest reports '
+      f'{asked}; one strategy name is carrying two numbers on one '
+      f'dashboard')
+  for name in ('capital', 'rebalance_days', 'max_weight', 'history'):
+    declared = triggered['request'][name]
+    assert table[name] == declared, (
+        f'the bare control arm declares {name}={table[name]} while a bare '
+        f'POST declares {declared}')
 
 
 # --------------------------------------------------------------------------
@@ -397,6 +479,16 @@ def test_entity_linker_refuses_a_query_that_is_not_a_prefix() -> None:
   with the reason "unambiguous prefix match", which is the silent
   wrong-entity resolution entity_link.py:9-12 says this module exists
   to prevent.
+
+  The three shapes are refused for two different reasons, and both are
+  covered here. 'ITCXYZ' and 'AXISBANKING' fail the **run** clause: no
+  whole query token spells 'itc' or 'axisbank', so the symbol survives
+  only as a fragment of one token, which is not a spelling at all.
+  'ITC-INFRA' and 'RELIANCEEXTRA' pass the run clause and fail the
+  **name** clause: 'infra' and 'extra' are not words of ITC or of
+  Reliance, so the company does not corroborate the characters beyond
+  its own symbol. The pair below is what keeps those two clauses from
+  being one over-strict rule that happens to pass.
   '''
   for text in ('ITC-INFRA', 'ITCXYZ', 'RELIANCEEXTRA', 'AXISBANKING'):
     result = resolve(text)
@@ -405,6 +497,69 @@ def test_entity_linker_refuses_a_query_that_is_not_a_prefix() -> None:
         f'rule; a query that is a prefix of no symbol and no company name '
         f'must come back ambiguous or unknown')
     assert result.symbol is None
+    assert not result.candidates, (
+        f'{text!r} named candidates {result.candidates}; an extension of a '
+        f'symbol is not a shorter or longer spelling of anything, so it '
+        f'must not even be offered as a choice')
+
+
+def test_a_symbol_plus_a_word_of_its_own_name_still_resolves() -> None:
+  '''The other direction: the rule must not refuse the good case.
+
+  This is the half the original finding did not test, and it is the half
+  that a too-eager fix breaks. Refusing every query longer than a symbol
+  would refuse ``'ongc oil'``, which ``test_sentiment.py`` ships as a
+  contract: ONGC's name words are ``('oil', 'and', 'natural', 'gas')``,
+  so ``'ongc'`` is a whole token spelling the symbol and ``'oil'`` is a
+  word of **this** company's name. ITC-INFRA looks identical on tokens
+  -- symbol token plus a leftover token -- and is refused, because
+  ``'infra'`` is Reliance Infrastructure's word and nobody called ITC
+  claims it.
+
+  The difference is corroboration from the name layer, not token shape,
+  so this is the assertion that pins the rule to corroboration rather
+  than to any proxy for it. 'Reliance Industr' is here too, and is the
+  case that separates *resolving* from *trusting*: ``'industr'`` is a
+  prefix of ``'industries'``, so the match rests on a fragment and must
+  be labelled one.
+  '''
+  for text, expected in (('ongc oil', 'ONGC'), ('Reliance Industr',
+                                                'RELIANCE')):
+    result = resolve(text)
+    assert result.status is LinkStatus.RESOLVED, (
+        f'{text!r} came back {result.status.value} with reason '
+        f'{result.reason!r}; a whole token spelling the symbol plus a word '
+        f'of that same company\'s own name is the case the prefix layer '
+        f'exists to answer')
+    assert result.symbol == expected, (
+        f'{text!r} resolved to {result.symbol} rather than {expected}')
+  truncated = resolve('Reliance Industr')
+  assert truncated.truncated, (
+      "'Reliance Industr' rests on the fragment 'industr' of "
+      f"'industries', so it must set truncated; reason was "
+      f'{truncated.reason!r}')
+  assert truncated.reason.startswith('truncated'), (
+      f'an audit reading reason cannot tell a fragment from a spelling '
+      f'without this; reason was {truncated.reason!r}')
+
+
+def test_a_leftover_word_must_belong_to_the_company_it_resolved() -> None:
+  '''Corroboration is checked against the resolved company, not anyone.
+
+  The one-to-one pairing is load bearing. ``'ongc oil oil'`` leaves two
+  tokens after the symbol run and ONGC's name words include ``'oil'``
+  only once, so the two leftovers cannot both lean on it -- one word
+  vouching for two tokens is a coincidence counted twice, not
+  corroboration. A rule that allowed a name word to be reused would
+  admit this, and would admit a query that names one company and then
+  pads it with a word of that company repeated.
+  '''
+  for text in ('ongc oil oil', 'ongc gas gas'):
+    result = resolve(text)
+    assert result.status is not LinkStatus.RESOLVED, (
+        f'{text!r} resolved to {result.symbol}; leftover tokens must be '
+        f'paired one-to-one with distinct name words, so a single name '
+        f'word cannot vouch for more than one of them')
 
 
 # --------------------------------------------------------------------------

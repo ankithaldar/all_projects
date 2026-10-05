@@ -7,7 +7,7 @@ Indian transaction costs are not one percentage. A single round trip pays
 brokerage, STT, exchange transaction charges, SEBI turnover fees, stamp
 duty (buy side only), GST (on brokerage + exchange + SEBI, not on STT),
 DP charges (sell side only) and slippage. Each has a different side and a
-different base. Getting this wrong by even 10bpper round trip dominates
+different base. Getting this wrong by even 10 bps per round trip dominates
 the difference between a good and a mediocre strategy.
 
 Every rate is a field on ``CostModel`` so a strategy can be priced under
@@ -178,7 +178,12 @@ DELIVERY = CostModel()
 #: brokerage is NOT free: discount brokers charge 0.03% per executed
 #: order capped at Rs 20 (Zerodha, Dhan; Groww 0.05%, Angel 0.1%,
 #: Upstox flat Rs 20). Leaving this at zero understates intraday cost by
-#: roughly 60 percent, because brokerage then dominates a 3.55 bps levy.
+#: up to 34 percent below the brokerage cap and 3.4 percent at a rupee
+#: lakh, because :attr:`brokerage_cap` is a flat rupee amount while the
+#: levies scale with notional. An earlier version of this comment claimed
+#: a flat unconditional percentage; that figure is unreachable at
+#: every notional, since brokerage is capped. The taxes-only round trip
+#: is 3.55 bps at a crore, which is the part of that sentence that held.
 INTRADAY = CostModel(
   brokerage_pct=0.0003,
   stt_buy=0.0,

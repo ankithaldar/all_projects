@@ -156,13 +156,6 @@ check_ids: tuple[str, ...] = (
 )
 
 #: Checks that cannot be made at all without per-symbol venue data.
-venue_check_ids = frozenset({
-  'price_band',
-  'order_quantity',
-  'order_value',
-  'trade_price_protection',
-  'mwpl',
-})
 
 #: A single check's verdict. Immutable, so a report cannot be edited
 #: after the fact by whoever holds it.

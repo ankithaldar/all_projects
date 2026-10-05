@@ -554,7 +554,7 @@ def _is_positive_semidefinite(matrix: Sequence[Sequence[float]]) -> bool:
   matrix has a negative eigenvalue, and the function returns False at
   that point rather than finishing a factorisation that does not exist.
 
-  A pivot within ``_pivot_tolerance`` of zero is a direction the matrix
+  A pivot within :data:`pivot_tolerance` of zero is a direction the matrix
   is flat in, which is legal for a PSD matrix and is what a singular
   sample covariance almost always is -- two assets with identical return
   series give a rank-1 matrix whose second pivot is exactly zero. It is

@@ -108,12 +108,22 @@ class RiskCapBreach(RiskRejected):
 def kelly_fraction(prob_win: float, win_loss_ratio: float) -> float:
   '''Return the Kelly fraction for a binary payoff.
 
-  ``f* = (p * b - (1 - p)) / b``, i.e. edge over odds. It is
-  ``1 / win_loss_ratio`` at break-even and rises towards
-  ``1 / win_loss_ratio`` less a half as the edge grows, which is why the
-  raw fraction is routinely small for a realistic edge and why the
-  "half the account" drawdown of full Kelly arrives with a fractional
-  Kelly of only a few percent.
+  ``f* = (p * b - (1 - p)) / b``, i.e. edge over odds. It is exactly zero
+  at the break-even probability ``1 / (1 + b)`` and rises to 1 as
+  ``prob_win`` approaches 1, for every odds ratio: measured over b in
+  {0.5, 1, 2, 4} the fraction is 0 at break-even in all four cases and 1.0
+  at ``p = 1`` in all four.
+
+  The odds ratio scales the whole curve, it does not set a ceiling. An
+  earlier version of this docstring claimed the fraction "is 1/b at
+  break-even and rises towards 1/b less a half"; both halves were false,
+  the second is unreachable for any b >= 1, and the argument about small
+  realistic edges was resting on them.
+
+  The practical consequence that survives: because the curve is flat
+  near break-even and steep above it, a modest edge produces a small
+  fraction, which is why the "half the account" drawdown of full Kelly
+  arrives with a fractional Kelly of only a few percent.
 
   Args:
     prob_win: Probability of the winning outcome, in ``[0, 1]``.
