@@ -235,6 +235,59 @@ def _normalise(text: str) -> str:
              for character in text).split()).lower()
 
 
+def _form_key(text: str) -> str:
+  """Return the lookup key for one written form of a company name.
+
+  This is the single normalisation used for BOTH sides of the lookup: the
+  forms are indexed with it when the linker is built, and the query is
+  keyed with it at resolve time. One function, used twice, is what makes
+  the two sides agree.
+
+  Corporate suffixes are dropped here, and therefore on both sides. A news
+  feed writes 'Sun Pharmaceutical Ltd' where the registry holds 'Sun
+  Pharmaceutical', so the suffix has to come off the QUERY too. Stripping a
+  legal-form word is a string cleanup, not an inference about identity: it
+  cannot turn one company into another, and being symmetric the two sides
+  cannot drift.
+
+  Args:
+    text: Any written form, e.g. 'HDFC Bank' or 'Infosys Ltd'.
+
+  Returns:
+    Lowercase alphanumeric with separators removed, so 'HDFC Bank',
+    'hdfc-bank' and 'HDFCBANK' all key to 'hdfcbank'.
+  """
+  words = [word for word in _normalise(text).split() if word not in _suffixes]
+  return ''.join(words)
+
+
+def _forms_for(symbol: str, record: SymbolRecord) -> tuple[str, ...]:
+  """Return every written form that should resolve to ``symbol``.
+
+  Each form is a ROW added once when the linker is built. That is the whole
+  design: what used to be a rule evaluated against the query is now a key
+  present in the table. Resolution stays a dict hit, and the knowledge is
+  auditable in one place instead of spread across branches of a matcher.
+
+  The forms are the exchange symbol whole and each hyphen-separated part of
+  it (so 'BAJAJ-AUTO' answers to 'bajaj' as well as to itself), the company
+  name, and each alias.
+
+  Args:
+    symbol: Canonical exchange symbol.
+    record: The registry row for it.
+
+  Returns:
+    Written forms, duplicates removed, order not significant.
+  """
+  bases = (symbol, *symbol.split('-'), record.name, *record.aliases)
+  forms: list[str] = []
+  for base in bases:
+    if base and base not in forms:
+      forms.append(base)
+  return tuple(forms)
+
+
 def _strip_suffixes(words: tuple[str, ...]) -> tuple[str, ...]:
   '''Drop corporate suffixes from a normalised token tuple.
 
@@ -294,11 +347,25 @@ class SymbolLinker:
       raise ValueError(f'min_prefix must be >= 2, got {min_prefix}')
     self._records = {record.symbol.strip().upper(): record
                      for record in records}
-    self._aliases: dict[str, str] = {}
+    # The lookup. Every written form of every company is keyed once, here,
+    # at construction. Resolution is then a single dict hit - no rule at
+    # query time can decide what a string "means".
+    #
+    # This replaced a design that tokenised the company name and guessed
+    # with prefix rules, which produced 'AXISBANKING' -> AXISBANK,
+    # 'ITC-INFRA' -> ITC and 'RELIANCEEXTRA' -> RELIANCE. Those name
+    # different companies. A lookup cannot produce them: an extension of a
+    # symbol is simply not a key.
+    index: dict[str, tuple[str, ...]] = {}
     for symbol, record in self._records.items():
-      self._add_alias(_normalise(record.name), symbol)
-      for alias in record.aliases:
-        self._add_alias(_normalise(alias), symbol)
+      for form in _forms_for(symbol, record):
+        key = _form_key(form)
+        if not key:
+          continue
+        existing = index.get(key, ())
+        if symbol not in existing:
+          index[key] = (*existing, symbol)
+    self._index = index
     self._name_words = {
       symbol: _strip_suffixes(tuple(_normalise(record.name).split()))
       for symbol, record in self._records.items()
@@ -331,90 +398,53 @@ class SymbolLinker:
         f'alias {alias!r} is claimed by both {existing} and {symbol}')
 
   def link(self, text: str) -> Resolution:
-    '''Resolve free text to a canonical symbol.
+    """Resolve free text to a canonical symbol by table lookup.
+
+    The whole method is: key the query, look it up, report what the table
+    says. There is no similarity measure, no prefix rule and no truncation
+    ratio, because each of those had to be tuned against a shipped example
+    and every fix broke a different one. Two forms that should both resolve
+    are two rows in the registry; a form nobody thought to add is UNKNOWN,
+    which is the honest answer.
 
     Args:
-      text: Free text, e.g. ``'reliance'`` or ``'Reliance Infra'``.
+      text: Free text, e.g. 'reliance' or 'Reliance Infra'.
 
     Returns:
-      A :class:`Resolution`. Ambiguous and unknown inputs are returned
-      as themselves, not raised, because a news feed contains both and
-      the caller needs to know *which* symbols were plausible.
+      A :class:`Resolution`. Ambiguous and unknown inputs are returned as
+      themselves rather than raised, because a news feed contains both and
+      the caller needs to know which symbols were plausible.
 
     Raises:
       ValueError: Never. Refusal is a value here by design.
-    '''
+    """
     normalised = _normalise(text)
     if not normalised:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason='empty query',
-      )
-    alias_hit = self._aliases.get(normalised)
-    if alias_hit is not None:
-      return _resolved(text, normalised, alias_hit, 'alias',
-                       'exact company name or alias')
-    words = _strip_suffixes(tuple(normalised.split()))
-    compact = ''.join(words)
-    if compact.upper() in self._records:
-      return _resolved(text, normalised, compact.upper(), 'symbol',
-                       'exact exchange symbol')
-    if len(compact) < self.min_prefix:
+        query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+        symbol=None, candidates=(), matched_by='none',
+        reason='empty query')
+    key = _form_key(text)
+    if not key:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason=f'prefix shorter than {self.min_prefix} characters',
-      )
-    shortest = min(words, key=len, default='')
-    if len(shortest) < self.min_prefix:
-      # The floor applies per token, not only to the squashed query. It
-      # used to be applied to the squashed string alone, so a query
-      # assembled from several two-letter words sailed past a check
-      # that every one of them fails.
+        query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+        symbol=None, candidates=(), matched_by='none',
+        reason='no alphanumeric characters to look up')
+    candidates = self._index.get(key, ())
+    if len(candidates) == 1:
+      return _resolved(text, normalised, candidates[0], 'table',
+                       'exact exchange symbol, company name or alias')
+    if len(candidates) > 1:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason=f'a query token is shorter than {self.min_prefix} '
-               f'characters: {shortest!r}',
-      )
-    evidence = self._prefix_evidence(compact, words)
-    if len(evidence) == 1:
-      symbol, reason = next(iter(evidence.items()))
-      return _resolved(text, normalised, symbol, 'prefix', reason,
-                       truncated=reason.startswith('truncated'))
-    if evidence:
-      return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.AMBIGUOUS,
-        symbol=None,
-        candidates=tuple(sorted(evidence)),
-        matched_by='prefix',
-        reason=f'prefix matches {len(evidence)} symbols; refusing to '
-               f'guess',
-      )
+        query=text, normalised=normalised, status=LinkStatus.AMBIGUOUS,
+        symbol=None, candidates=candidates, matched_by='none',
+        reason=(f'the form {key!r} is claimed by {len(candidates)} symbols, '
+                f'so none was chosen'))
     return Resolution(
-      query=text,
-      normalised=normalised,
-      status=LinkStatus.UNKNOWN,
-      symbol=None,
-      candidates=(),
-      matched_by='none',
-      reason='no alias, symbol or unambiguous prefix match',
-    )
+      query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+      symbol=None, candidates=(), matched_by='none',
+      reason=(f'{key!r} is not a symbol, company name or alias in the '
+              f'registry, and this module never guesses a nearest match'))
 
   def _prefix_evidence(
     self,
@@ -513,10 +543,18 @@ _registry: tuple[SymbolRecord, ...] = (
   SymbolRecord('RELIANCEINFRA', 'Reliance Infrastructure',
                ('Reliance Infra', 'Reliance Infrastructure Ltd')),
   SymbolRecord('ONGC', 'Oil and Natural Gas Corporation',
-               ('Oil India', 'ONGC Ltd')),
+               # 'Ongc Oil' is an explicit row, not something a matcher infers.
+               # It used to resolve only because the squashed query 'ongcoil'
+               # happened to start with the symbol 'ongc' - and that accident
+               # also made 'AXISBANKING' resolve to AXISBANK. The accident is
+               # gone and the knowledge lives here, where a human can see it.
+               ('Oil India', 'ONGC Ltd', 'Ongc Oil')),
   SymbolRecord('ASIANPAINT', 'Asian Paints'),
   SymbolRecord('INFY', 'Infosys', ('Infosys Ltd', 'Infosys Limited')),
-  SymbolRecord('TCS', 'Tata Consultancy Services', ('TCS Ltd',)),
+  SymbolRecord('TCS', 'Tata Consultancy Services',
+               # Explicit row: a query stopping short of the registered name is
+               # unknown under a lookup, which is the correct behaviour.
+               ('TCS Ltd', 'Tata Consultancy')),
   SymbolRecord('HCLTECH', 'HCL Technologies', ('HCL',)),
   SymbolRecord('WIPRO', 'Wipro'),
   SymbolRecord('HDFCBANK', 'HDFC Bank', ('HDFC',)),
@@ -563,4 +601,7 @@ def resolve(text: str) -> Resolution:
     exceptions.
   '''
   return default_linker.link(text)
+
+
+
 
