@@ -38,6 +38,7 @@ from typing import Any
 
 from stock_rl.api.constants import not_advice
 from stock_rl.api.errors import BadRequest, ProviderFailed, Refused
+from stock_rl.api import graphview
 from stock_rl.api.service import ApiService
 from stock_rl.api.validate import _control_of, _parse_request
 from stock_rl.web import index_html, script, stylesheet
@@ -150,6 +151,11 @@ routes: dict[str, frozenset[str]] = {
   # served HTML must have a route here, or the page is a corpse.
   '/style.css': frozenset({'GET', 'HEAD'}),
   '/app.js': frozenset({'GET', 'HEAD'}),
+  '/graph.css': frozenset({'GET', 'HEAD'}),
+  '/graph.js': frozenset({'GET', 'HEAD'}),
+  '/graph.html': frozenset({'GET', 'HEAD'}),
+  '/api/graph': frozenset({'GET', 'HEAD'}),
+  '/api/graph/news': frozenset({'GET', 'HEAD'}),
   '/api/health': frozenset({'GET', 'HEAD'}),
   '/api/signals': frozenset({'GET', 'HEAD'}),
   '/api/equity': frozenset({'GET', 'HEAD'}),
@@ -204,6 +210,29 @@ def dispatch(
       return Response(
         HTTPStatus.OK, script().encode('utf-8'),
         'text/javascript; charset=utf-8')
+    if route == '/graph.css':
+      return Response(
+        HTTPStatus.OK, graphview.asset('graph.css').encode('utf-8'),
+        'text/css; charset=utf-8')
+    if route == '/graph.js':
+      return Response(
+        HTTPStatus.OK, graphview.asset('graph.js').encode('utf-8'),
+        'text/javascript; charset=utf-8')
+    if route == '/graph.html':
+      # The island is filled server-side rather than fetched, so the first
+      # paint needs no second round trip and the page cannot render an
+      # empty graph and then correct itself.
+      return Response.of_html(
+        HTTPStatus.OK, graphview.document(
+          graphview.asset('graph.html'), _panels(service), _directory(service)))
+    if route in ('/api/graph', '/api/graph/news'):
+      symbol = graphview.symbol_of(path)
+      builder = (
+        graphview.slice_for
+        if route == '/api/graph' else graphview.news_for)
+      return Response.of_json(
+        HTTPStatus.OK,
+        builder(symbol, _directory(service), _panels(service)))
     if route == '/api/backtest':
       request = _parse_request(body, service.symbols)
       return Response.of_json(
@@ -238,6 +267,30 @@ def dispatch(
     return _error(
       HTTPStatus.INTERNAL_SERVER_ERROR,
       f'{type(exc).__name__}: {exc} (this is a bug; see the server log)')
+
+
+def _directory(service: Any) -> str | None:
+  '''Return the data directory the service was pointed at.
+
+  Args:
+    service: The service, which may not carry the attribute at all.
+
+  Returns:
+    The directory, or ``None``.
+  '''
+  return getattr(service, 'directory', None)
+
+
+def _panels(service: Any) -> Any:
+  '''Return the price panels, which supply the graph's decision bar.
+
+  Args:
+    service: The service.
+
+  Returns:
+    Whatever the service exposes as panels, possibly empty.
+  '''
+  return getattr(service, 'panels', None) or {}
 
 
 #: GET routes mapped to the service method that answers them.

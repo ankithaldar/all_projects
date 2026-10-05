@@ -591,5 +591,10 @@ def main(argv: Sequence[str] | None = None) -> int:
   logging.basicConfig(level=logging.INFO)
   panels = load_panels(arguments.data_dir) if arguments.data_dir else {}
   service = ApiService(panels=panels)
+  # The graph reads its sentiment readings from beside the price CSVs, so
+  # it needs the directory the service was pointed at. Recorded on the
+  # service rather than in module state, because a module global would make
+  # two services in one process share one data directory.
+  service.directory = arguments.data_dir
   serve(service, arguments.host, arguments.port)
   return 0

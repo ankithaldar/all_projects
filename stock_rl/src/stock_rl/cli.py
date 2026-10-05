@@ -509,9 +509,13 @@ def _run_serve(arguments: argparse.Namespace) -> int:
     _warn(f'loaded {len(panels)} symbol(s) from {arguments.data_dir}')
   _warn(f'binding {arguments.host}:{arguments.port} -- loopback only, '
         'no authentication, not financial advice')
+  service = api.ApiService(panels=panels)
+  # The dependency graph reads its sentiment readings from beside the price
+  # CSVs. Recorded on the service, not in module state, so two services in
+  # one process cannot share a directory by accident.
+  service.directory = arguments.data_dir
   try:
-    api.serve(api.ApiService(panels=panels), arguments.host,
-              arguments.port)
+    api.serve(service, arguments.host, arguments.port)
   except ValueError as exc:
     # The refusal is a *usage* error rather than a failure: the operator
     # typed an address this service will not bind, and no socket was ever

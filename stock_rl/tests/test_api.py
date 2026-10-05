@@ -1074,7 +1074,9 @@ class TestRouting:
   @pytest.mark.parametrize('route', ['/', '/index.html', '/api/health',
                                       '/api/signals', '/api/equity',
                                       '/api/positions', '/api/baselines',
-                                      '/api/risk'])
+                                      '/api/risk', '/graph.html',
+                                      '/graph.css', '/graph.js',
+                                      '/api/graph', '/api/graph/news'])
   def test_every_documented_route_answers(self, route):
     response = api.dispatch(service(), 'GET', route)
     assert response.status == 200
@@ -1087,8 +1089,10 @@ class TestRouting:
     # that has to be kept in step by hand.
     assert set(api.routes) == {
       '/', '/index.html', '/style.css', '/app.js',
+      '/graph.html', '/graph.css', '/graph.js',
       '/api/health', '/api/signals', '/api/equity',
       '/api/positions', '/api/baselines', '/api/risk', '/api/backtest',
+      '/api/graph', '/api/graph/news',
     }
     assert api.routes['/api/backtest'] == frozenset({'POST'})
     for route, allowed in api.routes.items():
