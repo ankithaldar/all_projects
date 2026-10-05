@@ -105,10 +105,15 @@ All caught by tests. A clean pylint score and high coverage are NOT evidence —
 
 ## Current state
 
-- **`make check` green**: 2100 passed + 31 subtests, pylint 10.00/10,
-  coverage 96.94%, `dependencies = []`. Nothing in flight.
-- `pipeline.py` landed and cross-checks the seams (432 configurations, max
-  Sharpe gap 0.0, max cost gap 1.16e-10 rupees).
+- **`make check` green at 3291 passed + 31 subtests**, pylint 10.00/10,
+  coverage 95.91-97.50%, `dependencies = []`.
+- 47 indicator functions in 4 modules (`indicators_trend/oscillators/
+  volatility/volume.py`) + `strategies.py`. All length-preserving, all
+  proven look-ahead-free by TRUNCATION, 100% branch coverage on each.
+- `api.py` (2892 lines) split into `api/` — 13 modules, largest 595 lines,
+  public surface byte-identical, all 81 definitions AST-identical.
+- `logging_support.py` landed (897 lines, 130 tests) but is **NOT yet wired
+  into anything**. See the follow-up list.
 - CLI works: `python -m stock_rl`.
 
 ## Naming conventions - CORRECTED, the README was wrong
@@ -120,22 +125,43 @@ are **CamelCase** (`gym.Obs`, `gym.Info`, `killswitch.Clock`,
 An earlier README claimed constants were lowercase and an audit test
 enforced that invented rule - both now pin what the code actually does.
 
-## Real seam defect found, STILL NOT fixed (highest-value next task)
+## Three bugs found by the api refactor, reported NOT fixed (do next)
 
-`run_portfolio` reads an omitted symbol from a weight mapping as target
-**0.0** (sells); `WeightAllocationEnv._target_weights` reads it as **hold
-current** (keeps). `baselines.trend_filtered_momentum` returns a partial
-mapping routinely — the only baseline of five that does, and it has no
-Policy wrapper so it cannot be parity-checked. Measured on one panel:
-Sharpe 1.994873 vs 2.175971, cost ₹122,435.95 vs ₹26,868.58 — a 4.4x cost
-difference that reads as a real result. Currently invisible because every
-published `Policy` emits complete mappings.
-**Fix: complete the mapping with `0.0`** (what `run_portfolio` and
-`momentum_ranked` already use).
+Found while splitting `api.py`. All three are pre-existing; the refactor was
+deliberately behaviour-preserving so they are documented, not patched.
 
-Also: any test panel must carry **more symbols than `1 / max_weight`** or
-four of five baselines collapse to the same uniform book and report the same
-Sharpe to 12 decimals.
+1. **`GET /api/baselines?capital=0` returns 200 with the defaults instead of
+   400.** In `_control_of` the parsed value is combined with `or`, and `0` /
+   `0.0` is falsy, so the validator never sees it. `?max_weight=0`,
+   `?rebalance_days=0`, `?history=0` behave the same way. The POST body path
+   refuses correctly (`{"capital": 0}` -> 400). This is exactly the
+   disagreement `_control_of`'s own docstring claims the two endpoints
+   cannot have. Now `api/validate.py:_control_of`.
+2. **`ApiService.positions` treats a supplied `cash == 0.0` as absent**:
+   `state.cash if state.cash else total - held_value`. A fully-invested book
+   with a real zero balance gets a synthetic residual. Now `api/service.py`.
+3. **`serve()` logs an unusable IPv6 URL**: no brackets, so an IPv6 bind
+   logs `http://::1:8765/`. `bound_address()` unpacks IPv6 correctly one
+   function above. Now `api/server.py`.
+
+## Fixed, do not re-open
+
+- **Partial weight mappings.** `run_portfolio` read an omitted symbol as
+  0.0 (exit), `WeightAllocationEnv._target_weights` read it as hold. Both now
+  read one shared constant `portfolio.omitted_weight`. **Two** providers
+  could emit partials, not one - `low_volatility` was the second, dropping
+  symbols with zero realised volatility. The 2.6x cost gap on
+  `trend_filtered_momentum` between backtester and env closed to zero.
+- **`max_weight` never reached the baseline.** Providers imposed their own
+  0.10 default, so 0.10 and 0.30 gave byte-identical Sharpe. Fixed in
+  `api.py` by binding the cap BY KEYWORD (the five baselines disagree about
+  its position, so positional is a live hazard) **and** reporting
+  `applied_max_weight` measured off the actual book, because the engine's cap
+  is a ceiling not a target.
+- **The Rink/India doc error.** `technical-indicators-nse.md` said twice
+  that Rink (2023) excluded India. His Table 3 Panel B lists `IND`, BSE
+  Sensex, 1979-2016. Corrected both places; the burden of proof is now
+  HEAVIER, not lighter.
 
 ## Process lessons (expensive, do not relearn)
 
@@ -157,11 +183,40 @@ Sharpe to 12 decimals.
 
 ## Next steps
 
-1. Fix the remaining 4 `test_audit_consistency.py` pins.
-2. Finish/verify `pipeline.py`; reconcile the duplicate assignment first.
-3. Fix the partial-mapping seam defect above.
-4. Add a CLI section to `docs/LOCAL-TESTING-GUIDE.md` quoting executed
-   commands.
-5. Real work still undone: no licensed NSE data wired up; the 3-arm A/B
+1. **Fix the three api bugs** above (falsy-`or` validation, `cash == 0.0`,
+   IPv6 log line). Small and now documented.
+2. **Wire `logging_support` into `cli.py`.** The facility exists and nothing
+   calls it. The valuable call sites are around `run_portfolio` and
+   `run_experiment` — that is where a wrong Sharpe currently gives no clue.
+   Leave `_fail()` as stderr prose: a CLI error must reach the user
+   regardless of level.
+3. **Deploy scripts for AWS and GCP** (user-requested, never started).
+4. **AWS/GCP deployment docs on README.md** (user-requested, never started).
+5. **Remaining monoliths**: `pipeline.py` (1722), `experiment/harness.py`
+   (1380), `decisions.py` (1141). `api.py` is done and shows the pattern:
+   record `__all__` and AST-compare definitions before and after.
+6. **Frontend dependency graph with news** — `graph/news.py` and
+   `web/graph.js` are landing; the join maps a commodity node to news via
+   its DEPENDENTS, never by fuzzy-matching a headline to a commodity name.
+7. **Real work still undone**: no licensed NSE data wired up; the 3-arm A/B
    experiment has only ever run on synthetic panels, so **no conclusion
-   about the strategy is supported yet**.
+   about the strategy is supported yet**. Crash simulation for RL training
+   is under research.
+
+## The live negative result, and why it matters
+
+Four independent lines now agree that this project's edge is not visible in
+any test available here:
+
+| Source | Finding |
+|---|---|
+| backtest | equal weight beat the SAC agent; HRP beat all four DRL agents |
+| research (trend) | momentum strong GROSS of costs, absent NET |
+| research (reversion) | RSI 30/70 never Indian-validated; the one corrected test FAILED it at p=0.1392 |
+| strategies | 4/5 LOSE to equal weight once drift is removed; 15-seed sweep is a coin flip (4/15, 5/15, 7/15, 7/15) |
+
+Likely reason: liquid momentum returns 8.51% net against the Nifty 50's own
+10.41%. The alpha is in illiquid names; this book trades liquid constituents.
+Also: SEBI replaced the close with a closing auction on 3 Aug 2026, so any
+backtest spanning it mixes two close definitions.
+
