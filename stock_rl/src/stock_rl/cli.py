@@ -122,6 +122,12 @@ from stock_rl.experiment import ArmConfig, Verdict, run_experiment
 from stock_rl.graph import nifty50_seed
 from stock_rl.portfolio import run_portfolio
 from stock_rl.skills import SkillRegistry
+from stock_rl.weights import (
+  WeightProvider,
+  accepts_weight_cap,
+  applied_weight_cap,
+  bind_weight_cap,
+)
 
 __all__ = [
   'main',
@@ -659,6 +665,9 @@ def _run_baselines(arguments: argparse.Namespace) -> int:
       'panel_kind': kind,
       'capital': arguments.capital,
       'free_costs': arguments.free_costs,
+      # The cap that was asked for. What each book was actually built at
+      # is on its own row, under applied_max_weight, so the two can be
+      # compared rather than one standing in for the other.
       'max_weight': arguments.max_weight,
       'rebalance_days': arguments.rebalance_days,
       'history': arguments.history,
@@ -678,12 +687,30 @@ def _run_baselines(arguments: argparse.Namespace) -> int:
 
 def _baseline_row(
   name: str,
-  provider: object,
+  provider: WeightProvider,
   panels: dict[str, list[Bar]],
   arguments: argparse.Namespace,
   costs: CostModel,
 ) -> dict[str, object]:
   '''Run one baseline and return its row, or the reason it failed.
+
+  The requested cap is bound to the provider as well as to the engine,
+  through :func:`stock_rl.weights.bind_weight_cap`. Every provider in
+  :mod:`stock_rl.baselines` carries its own ``max_weight`` default of
+  0.10, so passing the provider unbound made that default the binding
+  constraint: ``--max-weight 0.1`` and ``--max-weight 0.3`` printed the
+  same Sharpe, and the payload echoed a 0.30 the book never used. The
+  cap is bound by **keyword** because the five signatures disagree about
+  where it sits -- ``trend_filtered_momentum``'s fifth parameter is
+  ``ma_window`` -- and a positional call has already fed one to a
+  moving-average window.
+
+  Binding alone would still leave the payload asserting a number the
+  provider never saw, so the row carries both: ``cap_bound`` says the
+  provider was handed the cap at all, and ``applied_max_weight`` is read
+  back off the book's own snapshots. Equality between the two is expected
+  only while the cap is the binding constraint; see
+  :func:`stock_rl.weights.applied_weight_cap`.
 
   Args:
     name: Provider name, as exported by :mod:`stock_rl.baselines`.
@@ -699,11 +726,16 @@ def _baseline_row(
       provider raising, and an absent row would be indistinguishable
       from an untried control arm.
   '''
-  row: dict[str, object] = {'name': name}
+  row: dict[str, object] = {
+    'name': name,
+    # Stamped before anything runs, so a row that never got as far as a
+    # book still reports whether its provider could take a cap.
+    'cap_bound': accepts_weight_cap(provider),
+  }
   try:
     result = run_portfolio(
       panels,
-      provider,
+      bind_weight_cap(provider, arguments.max_weight),
       capital=arguments.capital,
       costs=costs,
       rebalance_days=arguments.rebalance_days,
@@ -726,6 +758,9 @@ def _baseline_row(
     'total_cost': round(result.total_cost, 2),
     'rebalances': result.rebalances,
     'points': len(result.equity),
+    # Measured, not echoed: the requested cap is the payload's own field
+    # and this is what the book was built at.
+    'applied_max_weight': applied_weight_cap(result.weights),
     'status': 'ok',
   })
   return row

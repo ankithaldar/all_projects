@@ -131,6 +131,11 @@ from stock_rl.risk.killswitch import KillSwitch
 from stock_rl.rl.policy import MomentumPolicy
 from stock_rl.rl.train import compare
 from stock_rl.sentiment.score import SentimentReading
+from stock_rl.weights import (
+  accepts_weight_cap,
+  applied_weight_cap,
+  bind_weight_cap,
+)
 
 __all__ = [
   'BaselineRun',
@@ -400,6 +405,14 @@ class BaselineRun:
     required_years: Years the claimed Sharpe needs.
     available_years: Years of returns the panel actually offers.
     gate_reason: Why the gate did or did not refuse, verbatim.
+    cap_bound: Whether the provider was handed the per-symbol cap. False
+      for a provider this module cannot introspect, whose book therefore
+      carries a cap of its own choosing.
+    applied_max_weight: Heaviest single-symbol weight across every
+      rebalance, read back off the book's own snapshots rather than
+      echoed from :attr:`RunSpec.max_weight`. Equal to the requested cap
+      whenever the cap is the binding constraint and lower when it is
+      not -- a cap is a ceiling, not a target -- and never above it.
   '''
 
   name: str
@@ -416,6 +429,8 @@ class BaselineRun:
   required_years: float = 0.0
   available_years: float = 0.0
   gate_reason: str = ''
+  cap_bound: bool = True
+  applied_max_weight: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,7 +514,9 @@ class BaselineTable:
     return {
       'available_years': self.available_years,
       'baselines': [{
+        'applied_max_weight': run.applied_max_weight,
         'bars': run.bars,
+        'cap_bound': run.cap_bound,
         'funded_symbols': run.funded_symbols,
         'max_drawdown': run.max_drawdown,
         'name': run.name,
@@ -857,6 +874,19 @@ def run_baselines(
   is supportable, and if it is not, no row reports a Sharpe. Gating one
   row and quoting another would be selecting a Sharpe after seeing it.
 
+  **The cap is bound to each provider, not just to the engine.**
+  :attr:`RunSpec.max_weight` reaches ``run_portfolio`` as its ceiling and
+  reaches the provider by keyword through
+  :func:`stock_rl.weights.bind_weight_cap`, because every baseline
+  carries its own ``max_weight`` default of 0.10. Passing the provider
+  unbound made 0.10 the binding constraint under all three settings, so
+  ``spec.max_weight`` was decoration on the rows that report it: a caller
+  asking for 0.30 was handed a 0.10 book and three different requested
+  caps returned one identical Sharpe. Each row therefore also reports
+  :func:`stock_rl.weights.applied_weight_cap`, measured off the book's
+  own snapshots, so the reported cap can be compared against the applied
+  one. See :class:`BaselineRun`.
+
   Args:
     panel: The panel every row is measured over. Its ``panels`` mapping
       is handed to the engine unchanged; this function never copies it.
@@ -884,20 +914,24 @@ def run_baselines(
     raise ValueError(
       f'the length gate needs at least two configurations to deflate '
       f'against, got {list(chosen)}')
-  measured: list[tuple[str, Any]] = []
+  measured: list[tuple[str, Any, Any]] = []
   for name in chosen:
+    provider = getattr(baselines, name)
     result = run_portfolio(
       panel.panels,
-      getattr(baselines, name),
+      # Bound by keyword: the five signatures disagree about where the cap
+      # sits, and a positional call has already fed one to a moving
+      # average window.
+      bind_weight_cap(provider, spec.max_weight),
       capital=spec.capital,
       costs=spec.costs,
       rebalance_days=spec.rebalance_days,
       max_weight=spec.max_weight,
       history=spec.history,
     )
-    measured.append((name, result))
-  claimed = max(result.sharpe for _, result in measured)
-  window = min(len(result.returns) for _, result in measured)
+    measured.append((name, result, provider))
+  claimed = max(result.sharpe for _, result, _ in measured)
+  window = min(len(result.returns) for _, result, _ in measured)
   available = window / TRADING_DAYS_PER_YEAR
   required = (minimum_backtest_length(len(measured), claimed)
               if claimed > 0.0 else 0.0)
@@ -926,8 +960,12 @@ def run_baselines(
       required_years=required,
       available_years=available,
       gate_reason=gate_reason,
+      # Stamped from the provider itself, so a table row cannot claim a
+      # cap was applied when the provider never saw one.
+      cap_bound=accepts_weight_cap(provider),
+      applied_max_weight=applied_weight_cap(result.weights),
     )
-    for name, result in measured
+    for name, result, provider in measured
   )
   return BaselineTable(
     runs=runs,
