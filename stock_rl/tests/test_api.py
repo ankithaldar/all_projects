@@ -1225,11 +1225,22 @@ class TestBinding:
     assert api.is_loopback(host) is False
 
   def test_build_server_defaults_to_loopback(self):
-    server = api.build_server(service())
+    # Asserted on the DEFAULT VALUE rather than by binding the default
+    # port. Binding api.default_port made this the one test in the file
+    # that collides with anything else on the machine holding 8765 - which
+    # it did twice, against a dashboard someone was running, and it read
+    # as a real failure ("Address already in use") rather than as a test
+    # that should never have needed a fixed port. Every other test here
+    # already passes 0 for an ephemeral port.
+    assert api.is_loopback(api.default_host)
+    assert api.default_host == '127.0.0.1'
+    # And separately that a server built with no explicit port binds
+    # loopback, using an ephemeral one so it cannot collide.
+    server = api.build_server(service(), api.default_host, 0)
     try:
       host, port = api.bound_address(server)
       assert host == '127.0.0.1'
-      assert port == 0 or port > 0
+      assert port > 0
     finally:
       server.server_close()
 
