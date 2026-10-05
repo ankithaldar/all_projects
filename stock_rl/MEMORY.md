@@ -153,11 +153,21 @@ deliberately behaviour-preserving so they are documented, not patched.
   symbols with zero realised volatility. The 2.6x cost gap on
   `trend_filtered_momentum` between backtester and env closed to zero.
 - **`max_weight` never reached the baseline.** Providers imposed their own
-  0.10 default, so 0.10 and 0.30 gave byte-identical Sharpe. Fixed in
-  `api.py` by binding the cap BY KEYWORD (the five baselines disagree about
-  its position, so positional is a live hazard) **and** reporting
-  `applied_max_weight` measured off the actual book, because the engine's cap
-  is a ceiling not a target.
+  0.10 default, so 0.10 and 0.30 gave byte-identical Sharpe (`pipeline`
+  2.368442787274592 twice, `cli` 3.3955 twice). Fixed at all three seams -
+  `api`, `pipeline`, `cli` - by binding the cap BY KEYWORD and reporting
+  `applied_max_weight` measured off the book. Shared helpers now live in
+  `weights.py`: `bind_weight_cap`, `accepts_weight_cap`,
+  `applied_weight_cap`, `CAP_KEYWORD`.
+  **CORRECTION: the commit message for `5a38221` says "61 tests". It is 121**
+  (`tests/test_cap_binding.py`, verified by `--collect-only`). The number was
+  copied from the wrong agent's report. Do not trust that commit message on
+  this detail.
+  **The cap is a CEILING, not a target.** `applied <= reported` always, and
+  above 1/N the construction binds so applied drops strictly below
+  reported: at cap 0.30 with 4 symbols, four of five baselines report 0.30
+  but build at 0.25, while `low_volatility` does reach 0.30. A test asserting
+  reported == applied would be WRONG - it would encode target semantics.
 - **The Rink/India doc error.** `technical-indicators-nse.md` said twice
   that Rink (2023) excluded India. His Table 3 Panel B lists `IND`, BSE
   Sensex, 1979-2016. Corrected both places; the burden of proof is now
@@ -219,4 +229,5 @@ Likely reason: liquid momentum returns 8.51% net against the Nifty 50's own
 10.41%. The alpha is in illiquid names; this book trades liquid constituents.
 Also: SEBI replaced the close with a closing auction on 3 Aug 2026, so any
 backtest spanning it mixes two close definitions.
+
 
