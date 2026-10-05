@@ -1,6 +1,7 @@
 # MEMORY.md
 
-State of `stock_rl` as of commit `4e3e198` on `origin/stock-rl/main`.
+State of `stock_rl` as of commit `23c23f6` on `origin/stock-rl/main`.
+**`make check` is FULLY GREEN: 2100 passed, pylint 10.00/10, coverage 96.94%.**
 
 ## What this project is
 
@@ -104,15 +105,22 @@ All caught by tests. A clean pylint score and high coverage are NOT evidence —
 
 ## Current state
 
-- pylint **10.00/10**, ~1990+ tests passing, coverage 97%+,
-  `dependencies = []`.
-- **Known remaining failures** (in `tests/test_pipeline.py`, author still
-  iterating): naive-timestamp panel test, plus `test_audit_consistency.py`
-  has 4 open pins for findings not yet fixed (`api.py` uppercase `Clock`,
-  `describe_sources` not in `__all__`, entity_link `matched_by` doc).
-- `src/stock_rl/pipeline.py` is IN FLIGHT — `test_pipeline.py` has 1 failure.
+- **`make check` green**: 2100 passed + 31 subtests, pylint 10.00/10,
+  coverage 96.94%, `dependencies = []`. Nothing in flight.
+- `pipeline.py` landed and cross-checks the seams (432 configurations, max
+  Sharpe gap 0.0, max cost gap 1.16e-10 rupees).
+- CLI works: `python -m stock_rl`.
 
-## Real seam defect found, NOT yet fixed
+## Naming conventions - CORRECTED, the README was wrong
+
+Module CONSTANTS are **UPPERCASE** (`costs.DELIVERY`,
+`metrics.TRADING_DAYS_PER_YEAR`, `context.CONTEXT_ENABLED`) and type ALIASES
+are **CamelCase** (`gym.Obs`, `gym.Info`, `killswitch.Clock`,
+`policy.Action`). `const-rgx` accepts both; the build was always green.
+An earlier README claimed constants were lowercase and an audit test
+enforced that invented rule - both now pin what the code actually does.
+
+## Real seam defect found, STILL NOT fixed (highest-value next task)
 
 `run_portfolio` reads an omitted symbol from a weight mapping as target
 **0.0** (sells); `WeightAllocationEnv._target_weights` reads it as **hold
