@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 '''Aggregators pulled by a bulk run when no explicit list is given.'''
 DEFAULT_SOURCES: tuple = (
   'arbeitnow', 'jobicy', 'himalayas', 'remotive', 'remoteok', 'weworkremotely',
+  'cutshort',
 )
 
 
@@ -192,7 +193,10 @@ def _persist_records(
       })
       report.inserted += 1
     except Exception as exc:  # noqa: BLE001 - skip unpersistable rows
-      logger.debug('insert failed for %s: %s', record.url, exc)
+      # Surfaced at warning, not debug: a whole source failing to insert looks
+      # identical to a source with no new postings in the returned counters,
+      # which once hid an unregistered source_key foreign-key rejection.
+      logger.warning('insert failed for %s: %s: %s', record.url, type(exc).__name__, exc)
 
 
 async def bulk_fetch(

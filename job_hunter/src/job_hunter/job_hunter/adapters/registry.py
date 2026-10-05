@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Type
 from job_hunter.adapters.aggregators import AggregatorAdapter
 from job_hunter.adapters.ashby import AshbyAdapter
 from job_hunter.adapters.base import SourceAdapter
+from job_hunter.adapters.cutshort import CutshortAdapter
 from job_hunter.adapters.greenhouse import GreenhouseAdapter
 from job_hunter.adapters.http_client import HttpClient
 from job_hunter.adapters.lever import LeverAdapter
@@ -37,6 +38,7 @@ REGISTRY: Dict[str, Type[SourceAdapter]] = {
   'himalayas': AggregatorAdapter,
   'arbeitnow': AggregatorAdapter,
   'jobicy': AggregatorAdapter,
+  'cutshort': CutshortAdapter,
 }
 
 

@@ -30,8 +30,21 @@ python main.py scout-companies --queries 20 --max 15
 ```
 
 `fetch-jobs` pulls whole feeds from the public aggregator APIs
-(Arbeitnow, Jobicy, Himalayas, Remotive, RemoteOK, WeWorkRemotely) and
-stores unseen postings, creating company rows for names not yet tracked.
+(Arbeitnow, Jobicy, Himalayas, Remotive, RemoteOK, WeWorkRemotely,
+Cutshort) and stores unseen postings, creating company rows for names not
+yet tracked.
+
+Cutshort is the India-first source. The other six are global remote boards
+that only incidentally carry India roles (measured single-page India share:
+RemoteOK 5%, Jobicy 3%, Arbeitnow 1%, Himalayas and Remotive 0%). Cutshort
+returns 76% India-located postings with 99% carrying a structured INR
+salary, which is what `salary_hard_floor_lpa` needs.
+
+It has no public read API without a key, so the adapter reads the
+server-rendered category pages instead. `?page=` is ignored upstream and
+several category URLs render client-side only, so a pull yields roughly 200
+postings rather than the ~44k in its sitemap. Reaching the full inventory
+needs an API key from Cutshort.
 
 `scout-companies` looks for hiring companies on LinkedIn job pages, proves
 each company's website, detects its ATS board, and appends the result to

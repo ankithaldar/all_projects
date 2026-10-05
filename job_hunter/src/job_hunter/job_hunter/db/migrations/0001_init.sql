@@ -95,7 +95,9 @@ INSERT OR IGNORE INTO sources (key, kind) VALUES
   ('greenhouse', 'ats'), ('lever', 'ats'), ('ashby', 'ats'),
   ('workable', 'ats'), ('smartrecruiters', 'ats'), ('recruitee', 'ats'),
   ('personio', 'ats'), ('remotive', 'aggregator'), ('remoteok', 'aggregator'),
-  ('weworkremotely', 'aggregator'), ('manual', 'manual'), ('career_page', 'career');
+  ('weworkremotely', 'aggregator'), ('manual', 'manual'), ('career_page', 'career'),
+  ('himalayas', 'aggregator'), ('arbeitnow', 'aggregator'),
+  ('jobicy', 'aggregator'), ('cutshort', 'aggregator');
 
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY,

@@ -33,10 +33,15 @@ def bootstrap(config_path: str | Path, seeds_dir: Path | None = None) -> AppSett
   run_migrations(settings.db_path)
   from job_hunter.core.db import session
   with session(settings.db_path) as conn:
+    # jobs.source_key is a foreign key into sources, so every source that an
+    # adapter can persist under must exist before any insert runs. Migration
+    # 0001 covers fresh databases; this covers ones created before a given
+    # source was introduced, which never re-run the initial seed.
     conn.execute(
       "INSERT OR IGNORE INTO sources (key, kind) VALUES "
       "('workday', 'ats'), ('himalayas', 'aggregator'), "
-      "('arbeitnow', 'aggregator'), ('jobicy', 'aggregator')",
+      "('arbeitnow', 'aggregator'), ('jobicy', 'aggregator'), "
+      "('cutshort', 'aggregator')",
     )
 
   import yaml

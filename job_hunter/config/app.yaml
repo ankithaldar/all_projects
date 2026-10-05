@@ -29,6 +29,7 @@ sources:
   himalayas: {enabled: true, rate_limit_rpm: 10}
   arbeitnow: {enabled: true, rate_limit_rpm: 10}
   jobicy: {enabled: true, rate_limit_rpm: 10}
+  cutshort: {enabled: true, rate_limit_rpm: 10}
   manual: {enabled: true, rate_limit_rpm: 600}
 
 scout:
