@@ -28,6 +28,28 @@ projects or normalises. Feasibility is the environment's job
 QP projection inside the policy is not differentiable and back-propagating
 through one makes the policy gradient silently wrong.
 
+**Every baseline policy here delegates; none of them re-derives a
+weight.** :class:`EqualWeightPolicy`, :class:`BuyAndHoldPolicy`,
+:class:`MomentumPolicy`, :class:`TrendFilteredMomentumPolicy` and
+:class:`InverseVolPolicy` each call the matching function in
+:mod:`stock_rl.baselines` and return its answer unchanged. That is
+what gives :mod:`stock_rl.pipeline` something to compare the two
+engines against: a wrapper that recomputed the strategy would agree
+with itself and prove nothing, and a second implementation that
+disagreed would be a bug nobody was looking for. The corollary is that
+a wrapper may add no arguments of its own, so the two wrappers whose
+baselines take a cap pass that cap through by keyword and the one
+whose cap belongs to a different hypothesis (:class:`BuyAndHoldPolicy`)
+refuses to supply a default at all.
+
+**Delegation is by keyword throughout, because position does not mean
+the same thing twice.** The fifth positional parameter of
+``momentum_ranked`` is ``max_weight`` and the fifth positional
+parameter of ``trend_filtered_momentum`` is ``ma_window``, so a
+positional call written by copying one wrapper's argument order feeds a
+weight cap into a moving-average window and produces
+``sma(closes, 0.1)`` instead of an error a caller can read.
+
 PONYTAIL: ``RandomWeights`` exists so that random search can produce a
 genuine trial log for the Deflated Sharpe, not because a random policy is
 useful. Ceiling: it draws in sorted symbol order, so the same seed
@@ -50,12 +72,15 @@ from stock_rl.env.gym import Info, Obs
 
 __all__ = [
   'Action',
+  'BuyAndHoldPolicy',
   'ConstantWeights',
   'ContinuousEnv',
+  'EqualWeightPolicy',
   'InverseVolPolicy',
   'MomentumPolicy',
   'Policy',
   'RandomWeights',
+  'TrendFilteredMomentumPolicy',
   'fingerprint_schema',
   'panels_observation',
   'policy_fingerprint',
@@ -239,6 +264,96 @@ class ConstantWeights:
 
 
 @dataclass(frozen=True, slots=True)
+class EqualWeightPolicy:
+  '''Equal weights across the universe, wrapping the control arm.
+
+  :func:`stock_rl.baselines.equal_weight`, the 1/N rule that DeMiguel
+  (2009) makes the kill criterion. **This wrapper exists for parity
+  testing and must not be presented as a strategy.** Its entire value
+  is that it is a second code path reaching the same function, so a
+  divergence between the two engines surfaces on the one baseline
+  whose answer is not in doubt.
+
+  Do not confuse it with :class:`ConstantWeights`, which is a
+  different thing: ``ConstantWeights`` writes one number into every
+  symbol and never looks at how many symbols there are, while
+  :func:`stock_rl.baselines.equal_weight` divides by ``N`` and caps.
+  On any universe of more than ``1 / max_weight`` symbols the two
+  disagree, which is precisely why the control arm needed a wrapper
+  that calls the baseline rather than one more reimplementation of it.
+
+  Attributes:
+    max_weight: Cap the baseline itself applies. Whatever 1/N leaves
+      unused stays in cash rather than being silently over-weighted.
+  '''
+
+  max_weight: float = 0.10
+
+  def act(self, observation: Obs) -> Action:
+    '''Weight every visible symbol at 1/N.
+
+    Args:
+      observation: Visible state.
+
+    Returns:
+      Desired weight per symbol.
+    '''
+    return baselines.equal_weight(
+      _panels(observation), max_weight=self.max_weight)
+
+
+@dataclass(frozen=True, slots=True)
+class BuyAndHoldPolicy:
+  '''Passive index exposure, wrapping the buy-and-hold control.
+
+  :func:`stock_rl.baselines.buy_and_hold` delegates straight to
+  :func:`stock_rl.baselines.equal_weight`, so on a long-only universe
+  this emits the same book as :class:`EqualWeightPolicy` under the
+  same cap. It is still a separate class, because it is a separate
+  hypothesis -- momentum has to be judged against passive exposure,
+  not against 1/N -- and because a separate class carries a separate
+  fingerprint, so an exchange registration record cannot be satisfied
+  by the wrong hypothesis.
+
+  **Why ``max_weight`` defaults to ``None`` rather than to a number.**
+  The cap on buy-and-hold is not a knob this hypothesis owns; it is
+  ``equal_weight``'s cap reached through a one-line delegation, and a
+  wrapper that carried its own default would be choosing a value on
+  the baseline's behalf. It would also stop being weight-identical to
+  a bare call the moment the baseline's default moved, which is the
+  one property a parity wrapper exists to keep. So the default is
+  ``None``, and ``None`` means *pass no cap at all*: :meth:`act` calls
+  ``baselines.buy_and_hold(panels)`` with nothing added, which is the
+  only call a wrapper can make and still honestly say it adds
+  nothing. Set ``max_weight`` to impose a cap.
+
+  PONYTAIL: this wrapper delegates, so it adds no decisions and cannot
+  disagree with the baseline about what to hold. Ceiling: its only
+  parameter is a cap the baseline already had, so there is nothing
+  here for a random search to tune, and adding a tunable would turn
+  the control arm into a strategy and forfeit the role. Upgrade path:
+  none needed -- a richer passive baseline belongs in
+  :mod:`stock_rl.baselines`, not in this file.
+  '''
+
+  max_weight: float | None = None
+
+  def act(self, observation: Obs) -> Action:
+    '''Hold every visible symbol, capped only if a cap was asked for.
+
+    Args:
+      observation: Visible state.
+
+    Returns:
+      Desired weight per symbol.
+    '''
+    panels = _panels(observation)
+    if self.max_weight is None:
+      return baselines.buy_and_hold(panels)
+    return baselines.buy_and_hold(panels, max_weight=self.max_weight)
+
+
+@dataclass(frozen=True, slots=True)
 class MomentumPolicy:
   '''Cross-sectional momentum, wrapping the momentum baseline.
 
@@ -272,8 +387,84 @@ class MomentumPolicy:
       Desired weight per symbol, with unheld symbols at zero.
     '''
     return baselines.momentum_ranked(
-      _panels(observation), self.lookback, self.skip, self.top,
-      self.max_weight)
+      _panels(observation),
+      lookback=self.lookback,
+      skip=self.skip,
+      top=self.top,
+      max_weight=self.max_weight,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class TrendFilteredMomentumPolicy:
+  '''Momentum behind a moving-average gate, wrapping the trend filter.
+
+  :func:`stock_rl.baselines.trend_filtered_momentum`: Mitra (2011)'s
+  SMA(40) regime gate over the same 12-1 momentum
+  :class:`MomentumPolicy` already wraps. The gate is the point --
+  momentum is documented to turn negative in Indian crises, and the
+  cheapest guard against buying that drawdown is to stop buying.
+
+  **The delegation is by keyword, and that is load-bearing rather
+  than a style preference.** The fifth *positional* parameter of
+  ``trend_filtered_momentum`` is ``ma_window``; the fifth positional
+  parameter of ``momentum_ranked`` is ``max_weight``. A positional
+  call that copies the argument order of :class:`MomentumPolicy`
+  therefore hands ``0.10`` to a moving-average window and computes
+  ``sma(closes, 0.1)`` -- a gate that is neither an error a caller
+  can read nor a flat book. ``ma_window`` is declared before
+  ``max_weight`` here for exactly that reason.
+
+  PONYTAIL: this wrapper exists to make the trend filter checkable
+  between :func:`stock_rl.portfolio.run_portfolio` and
+  :mod:`stock_rl.rl.portfolio_env`, and it is the wrapper that earned
+  its place: ``trend_filtered_momentum`` was the only one of the five
+  baselines returning a **partial** weight mapping, while the
+  environment read an omitted symbol as *hold current* and
+  ``run_portfolio`` read it as *sell to zero*. One decision bar, two
+  different books, and no policy to notice, because the only other
+  four providers all emitted complete mappings. Both sides now agree on
+  :data:`stock_rl.portfolio.omitted_weight` and the baseline completes
+  its own mapping. Ceiling: this wrapper still repairs nothing itself,
+  because a wrapper whose one job is to add nothing must not paper over
+  an engine defect and then be quoted as agreement with it. Upgrade
+  path: none needed; widen :mod:`stock_rl.pipeline`'s engine seam to
+  call every wrapper here rather than only
+  :class:`MomentumPolicy`.
+
+  Attributes:
+    window: Momentum lookback in bars.
+    skip: Most recent bars excluded from the momentum.
+    top: Names held while the regime permits.
+    ma_window: Moving-average window of the regime gate.
+    max_weight: Cap the baseline itself applies.
+  '''
+
+  window: int = 252
+  skip: int = 21
+  top: int = 10
+  ma_window: int = 40
+  max_weight: float = 0.10
+
+  def act(self, observation: Obs) -> Action:
+    '''Rank on momentum and keep only the names above their average.
+
+    Args:
+      observation: Visible state.
+
+    Returns:
+      Desired weight per symbol, one entry per symbol in the
+      observation. The gate rejects by writing ``0.0``, not by leaving
+      a name out.
+    '''
+    return baselines.trend_filtered_momentum(
+      _panels(observation),
+      window=self.window,
+      skip=self.skip,
+      top=self.top,
+      ma_window=self.ma_window,
+      max_weight=self.max_weight,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,11 +472,15 @@ class InverseVolPolicy:
   '''Inverse realised volatility, wrapping the low-volatility baseline.
 
   :func:`stock_rl.baselines.low_volatility`, the guardrail baseline the
-  RL doc recommends as the control arm.
+  RL doc recommends as the control arm: five lines, historically close
+  to minimum-variance without the estimation error that destroys
+  sample MVO.
 
-  The guardrail baseline the RL doc recommends as the control arm: five
-  lines, historically close to minimum-variance without the estimation
-  error that destroys sample MVO.
+  This is the wrapper that makes low volatility cross-checkable
+  between the two engines, and it is here rather than duplicated under
+  a second name on purpose: two classes reaching one baseline produce
+  two fingerprints for one decision logic, which is precisely the
+  situation :func:`policy_fingerprint` exists to refuse.
 
   Attributes:
     window: Lookback in bars for the volatility estimate.
@@ -305,7 +500,10 @@ class InverseVolPolicy:
       Desired weight per symbol.
     '''
     return baselines.low_volatility(
-      _panels(observation), self.window, self.max_weight)
+      _panels(observation),
+      window=self.window,
+      max_weight=self.max_weight,
+    )
 
 
 @dataclass(frozen=True, slots=True)

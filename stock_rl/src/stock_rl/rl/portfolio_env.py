@@ -35,6 +35,18 @@ order decided at the close of bar ``t`` fills at the open of bar ``t+1``,
 and the only portfolio value known when it was sized was the mark at the
 close of bar ``t``. Marking at the fill bar's close before sizing, as
 ``env.nse`` does, quietly buys more shares as the price rises.
+
+**An omitted symbol is an exit, not a hold.** :func:`_target_weights`
+reads a missing key as :data:`stock_rl.portfolio.omitted_weight`, which
+is what :func:`stock_rl.portfolio.run_portfolio` already did. It used to
+read it as "hold current" instead, and the two engines then traded
+different books for one provider: the backtester liquidated the names a
+provider left out and charged for it, while this environment kept them,
+so one strategy reported two Sharpes and several times the cost. An
+actor that emits a subset must fill the rest with
+:data:`stock_rl.portfolio.omitted_weight` rather than drop the keys; the
+alternative makes a forgotten name impossible to sell, which is exactly
+the mistake that has to stay visible.
 '''
 
 from __future__ import annotations
@@ -47,6 +59,7 @@ from stock_rl.costs import DELIVERY, CostModel, Side
 from stock_rl.weights import affordable_scale, clamp_weight
 from stock_rl.env.gym import Info, Obs
 from stock_rl.metrics import TRADING_DAYS_PER_YEAR, max_drawdown
+from stock_rl.portfolio import omitted_weight
 from stock_rl.rl.policy import Action
 
 __all__ = ['AllocationReward', 'WeightAllocationEnv']
@@ -248,8 +261,11 @@ class WeightAllocationEnv:
 
     Args:
       action: Desired weight per symbol. Values outside ``[0, 1]`` are
-        clamped by the environment, and missing symbols are treated as
-        "hold current", so a partial action is still valid.
+        clamped by the environment, and a symbol the action omits is a
+        target of :data:`stock_rl.portfolio.omitted_weight`, i.e. an
+        exit. A partial action is therefore valid and is read as a book
+        with nothing in the omitted names, the same reading
+        :func:`stock_rl.portfolio.run_portfolio` applies.
 
     Returns:
       Tuple of (observation, reward, terminated, info). The episode
@@ -292,8 +308,16 @@ class WeightAllocationEnv:
     over its cap. The result is long-only by construction, so a short is
     not expressible even by accident.
 
+    A symbol the action does not name is a target of
+    :data:`stock_rl.portfolio.omitted_weight`, which is an exit. See the
+    module docstring for why: this engine used to read the omission as
+    "hold current" while :func:`stock_rl.portfolio.run_portfolio` read
+    it as that same zero, so the two engines traded different books for
+    one provider and neither of them said so.
+
     Args:
-      action: Desired weight per symbol.
+      action: Desired weight per symbol. A symbol the action omits is an
+        exit, not a hold.
       value: Portfolio value at the decision bar, used only to report.
 
     Returns:
@@ -302,7 +326,7 @@ class WeightAllocationEnv:
     del value
     wanted = {}
     for symbol in self.action_symbols:
-      raw = _as_float(action.get(symbol, self._weights[symbol]))
+      raw = _as_float(action.get(symbol, omitted_weight))
       wanted[symbol] = clamp_weight(float(raw), self.max_weight)
     total = sum(wanted.values())
     if total > 1.0:

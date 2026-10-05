@@ -102,6 +102,7 @@ payload stops being a disclaimer the moment someone reads the payload.
 from __future__ import annotations
 
 import argparse
+import inspect
 import ipaddress
 import json
 import logging
@@ -122,7 +123,7 @@ from stock_rl import __version__, baselines
 from stock_rl.bars import Bar, load_csv
 from stock_rl.indicators import momentum
 from stock_rl.metrics import max_drawdown, sharpe_ratio, total_return
-from stock_rl.portfolio import WeightProvider, run_portfolio
+from stock_rl.portfolio import PortfolioResult, WeightProvider, run_portfolio
 from stock_rl.web import index_html, script, stylesheet
 
 __all__ = [
@@ -197,6 +198,20 @@ signal_top = 10
 
 #: Cap on any single symbol's weight, matching ``env.nse.MAX_WEIGHT``.
 signal_max_weight = 0.10
+
+#: The keyword a weight provider takes its per-symbol cap on.
+#:
+#: It is bound by **keyword**, never positionally, and that is not a
+#: style preference. The five providers in :mod:`stock_rl.baselines`
+#: disagree about where the cap sits in their own signatures: second for
+#: ``equal_weight`` and ``buy_and_hold``, third for ``low_volatility``,
+#: fifth for ``momentum_ranked`` and sixth for
+#: ``trend_filtered_momentum``. One positional call over that table hands
+#: the weight cap to a moving-average window and computes
+#: ``sma(closes, 0.1)`` instead of raising anything a caller can read.
+#: ``pipeline._measure_engines`` documents the same hazard where it binds
+#: the same cap.
+cap_keyword = 'max_weight'
 
 #: Confidence reported as the historical one-period VaR level.
 var_confidence = 0.95
@@ -823,6 +838,15 @@ class ApiService:
     request, and then ``POST /api/backtest`` under those same settings
     reproduces the row exactly.
 
+    Echoing the requested configuration is only half of that, and the
+    half that is easy. The requested ``max_weight`` is now bound into
+    each provider as well as into the engine, and each row carries the
+    cap its book was actually built at under ``applied_max_weight``.
+    Declaring a configuration that the books were not built under is
+    the defect this endpoint's disclosure exists to prevent: it used to
+    answer ``?max_weight=0.3`` with a payload claiming 0.3 over a 0.10
+    book, and three different caps returned one byte-identical Sharpe.
+
     Args:
       request: Configuration to measure at, or None for
         :data:`control_arm`.
@@ -830,8 +854,9 @@ class ApiService:
     Returns:
       Mapping with one row per provider in :mod:`stock_rl.baselines`,
       each carrying Sharpe, drawdown, turnover and cost, or the reason it
-      could not run. The settings the rows were measured under are
-      disclosed at the top level as well as under ``request``.
+      could not run, plus whether the cap reached the provider and the
+      cap the book was built at. The settings the rows were measured
+      under are disclosed at the top level as well as under ``request``.
     '''
     settings = request or control_arm
     rows = [self._baseline_row(name, provider, settings)
@@ -877,6 +902,12 @@ class ApiService:
     ``POST /api/backtest``, so one named strategy cannot carry two
     Sharpes for one set of settings.
 
+    The requested ``max_weight`` is bound to the provider as well as to
+    the engine, and the row reports both numbers: ``cap_bound`` says the
+    provider was handed the cap, and ``applied_max_weight`` is read back
+    off the book's own snapshots. Echoing the requested cap alone is
+    what let a 0.30 request be answered with a 0.10 book.
+
     Args:
       name: Provider name as registered.
       provider: The weight provider to run.
@@ -887,7 +918,12 @@ class ApiService:
       Mapping with the strategy name and either its metrics or an error.
     '''
     settings = request or control_arm
-    row: dict[str, Any] = {'name': name}
+    row: dict[str, Any] = {
+      'name': name,
+      # Stamped before anything runs, so a row that never got as far as a
+      # book still reports whether its provider could take a cap.
+      'cap_bound': _accepts_cap(provider),
+    }
     panels = self.panels_for(settings.symbols)
     if not panels:
       row['status'] = 'skipped'
@@ -901,7 +937,7 @@ class ApiService:
     try:
       result = run_portfolio(
         panels,
-        _guarded(name, provider),
+        _guarded(name, _capped(provider, settings.max_weight)),
         capital=settings.capital,
         rebalance_days=settings.rebalance_days,
         max_weight=settings.max_weight,
@@ -930,6 +966,10 @@ class ApiService:
       'total_return_multiple': result.total_return_multiple,
       'rebalances': result.rebalances,
       'points': len(result.equity),
+      # Measured, not echoed. Equal to settings.max_weight whenever the
+      # requested cap is the binding constraint, and lower when it is
+      # not, which is the whole defect this field exists to make visible.
+      'applied_max_weight': _applied_cap(result),
     })
     return row
 
@@ -1091,6 +1131,137 @@ def _guarded(name: str, provider: WeightProvider) -> WeightProvider:
   return guarded
 
 
+def _accepts_cap(provider: WeightProvider) -> bool:
+  '''Return whether ``provider`` can be handed the cap by keyword.
+
+  Every provider in :mod:`stock_rl.baselines` takes ``max_weight``, but
+  the table is discovered from that module's ``__all__`` and is therefore
+  open to anything registered there later, including a callable with no
+  introspectable signature at all. The question is asked rather than
+  assumed, because assuming it is what produced the original defect: an
+  unbound cap is indistinguishable from a bound one until someone compares
+  a requested number against the book that came back.
+
+  A ``**kwargs`` parameter counts as accepting the cap, since a keyword
+  cannot collide with anything it declares.
+
+  PONYTAIL: introspection rather than a try/except around the call.
+  Ceiling: a callable object whose ``__call__`` hides the keyword behind
+  a decorator is reported as not accepting it, and its row then says so.
+  Upgrade path: let a provider declare ``cap_keyword`` as an attribute.
+
+  Args:
+    provider: The weight provider to inspect.
+
+  Returns:
+    True when the cap can be passed as a named argument.
+  '''
+  try:
+    parameters = inspect.signature(provider).parameters
+  except (TypeError, ValueError):
+    # A C builtin or a deliberately opaque callable. Its weight may not
+    # be settable, and the row reports that rather than guessing.
+    return False
+  by_keyword = (
+    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    inspect.Parameter.KEYWORD_ONLY,
+  )
+  return any(
+    parameter.kind is inspect.Parameter.VAR_KEYWORD
+    or (parameter.name == cap_keyword and parameter.kind in by_keyword)
+    for parameter in parameters.values()
+  )
+
+
+def _capped(provider: WeightProvider, max_weight: float) -> WeightProvider:
+  '''Return ``provider`` with the caller's cap bound into it.
+
+  The engine's cap is a ceiling, not a target.
+  :func:`stock_rl.portfolio.run_portfolio` clamps whatever it is handed to
+  ``max_weight``, so a provider that applies a *tighter* cap of its own
+  produces a book strictly inside the ceiling and the requested number is
+  never the binding constraint. That is not a harmless difference: each
+  of the five baselines in :mod:`stock_rl.baselines` defaults its own
+  ``max_weight`` to 0.10, so a caller asking for 0.30 used to be handed a
+  0.10 book and a payload claiming 0.30, and three different requested
+  caps returned a byte-identical Sharpe.
+
+  Binding the cap here is what
+  :func:`stock_rl.pipeline._measure_engines` already does for its own
+  ``momentum_ranked`` leg, and it is done for both sides of the seam:
+  the provider stops imposing its own default and the engine keeps
+  enforcing the ceiling.
+
+  A provider that cannot take the keyword is called unchanged rather than
+  refused. Refusing would file a provider this module cannot introspect
+  as a defect when it may simply derive weights from the panels and have
+  no opinion about the cap at all. What is not left unspecified is the
+  disclosure: the row reports ``cap_bound`` False alongside the cap the
+  book was actually built at, so an unbound provider cannot leave a
+  number in the payload that no book backs.
+
+  Args:
+    provider: The weight provider to bind.
+    max_weight: Cap on any single symbol's weight.
+
+  Returns:
+    A one-argument callable, the shape ``run_portfolio`` calls.
+  '''
+  if _accepts_cap(provider):
+    def bound(visible: Mapping[str, Sequence[Bar]]) -> dict[str, float]:
+      '''Return the provider's weights under the requested cap.
+
+      Args:
+        visible: Price panels visible at the decision bar.
+
+      Returns:
+        Target weight per symbol.
+      '''
+      return provider(visible, **{cap_keyword: max_weight})
+    return bound
+
+  def unbound(visible: Mapping[str, Sequence[Bar]]) -> dict[str, float]:
+    '''Return the provider's weights, which could not be given a cap.
+
+    Args:
+      visible: Price panels visible at the decision bar.
+
+    Returns:
+      Target weight per symbol.
+    '''
+    return provider(visible)
+  return unbound
+
+
+def _applied_cap(result: PortfolioResult) -> float | None:
+  '''Return the largest weight the book actually held, or None.
+
+  Measured from the snapshots the backtester recorded rather than from
+  the request, so it cannot disagree with the book it describes. This is
+  the number that makes ``applied == reported`` checkable: the engine
+  guarantees ``applied <= requested``, and a provider whose internal cap
+  was tighter is exactly the case where ``applied < requested``.
+
+  A cap is a ceiling and not a target, so equality is the expected
+  outcome only when the cap is the binding constraint -- 1/N over three
+  symbols tops out at 0.333 no matter how large the requested cap is.
+  Callers comparing the two need that in mind; see the module tests.
+
+  Args:
+    result: The backtester outcome.
+
+  Returns:
+    The heaviest single-symbol weight across every rebalance, or None if
+    the run never rebalanced.
+  '''
+  held = [
+    weight
+    for snapshot in result.weights
+    for weight in snapshot.values()
+  ]
+  return max(held) if held else None
+
+
 def strategies() -> dict[str, WeightProvider]:
   '''Return every provider in :mod:`stock_rl.baselines`, by name.
 
@@ -1120,6 +1291,14 @@ def run_baseline(
   instrument with one cost model -- three different Sharpes from three
   code paths would be unfalsifiable.
 
+  ``request.max_weight`` is bound to the provider as well as to the
+  engine, exactly as ``GET /api/baselines`` binds it, because this is
+  the runner that endpoint's rows claim to reproduce. A row measured at
+  one cap and a POST run at the same cap that disagreed about the cap
+  would reintroduce the split this module exists to close. The payload
+  reports ``applied_max_weight``, read back off the book, next to the
+  requested cap echoed under ``request``.
+
   Args:
     service: Service supplying the panels.
     request: Validated trigger.
@@ -1146,8 +1325,11 @@ def run_baseline(
     result = run_portfolio(
       panels,
       # Wrapped so a provider's own ValueError is not mistaken for the
-      # backtester refusing the parameter combination below.
-      _guarded(request.strategy, table[request.strategy]),
+      # backtester refusing the parameter combination below. The cap is
+      # bound inside that wrapper, so the provider still sees exactly one
+      # argument and a keyword it recognises.
+      _guarded(request.strategy,
+               _capped(table[request.strategy], request.max_weight)),
       capital=request.capital,
       rebalance_days=request.rebalance_days,
       max_weight=request.max_weight,
@@ -1176,6 +1358,9 @@ def run_baseline(
     'total_return_multiple': result.total_return_multiple,
     'rebalances': result.rebalances,
     'points': len(result.equity),
+    # Measured off the book rather than echoed from the request, so the
+    # two numbers on this payload can be compared against each other.
+    'applied_max_weight': _applied_cap(result),
     'not_advice': not_advice,
   }
 

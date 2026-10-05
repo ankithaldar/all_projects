@@ -40,6 +40,18 @@ Evidence behind the selection, from Indian and cross-market studies:
 Deliberately absent: RSI, Bollinger, ADX, MACD and OBV as standalone
 signals. None has Indian equity evidence, and ADX has none anywhere for
 equities. See docs/research/methodology/technical-indicators-nse.md.
+
+**Every provider here returns a weight for every symbol in ``panels``,
+including the zeros.** Both engines read an omitted symbol as
+:data:`stock_rl.portfolio.omitted_weight`, which is an exit, so the
+distinction between "excluded" and "omitted" is one the engines cannot
+make for the caller. ``trend_filtered_momentum`` and
+``low_volatility`` used to leave names out, and the two engines then
+traded different books for the same strategy: the backtester
+liquidated those names and paid for it while the RL environment kept
+them, which is a cost difference in the multiples and a Sharpe gap that
+reads as a result. Writing the zeros costs nothing and removes the
+ambiguity at the only place that can be ambiguous.
 '''
 
 from __future__ import annotations
@@ -191,7 +203,11 @@ def low_volatility(
     max_weight: Cap on any single weight.
 
   Returns:
-    Target weight per symbol. Symbols without enough history are excluded.
+    Target weight per symbol, one entry per symbol in ``panels``. A
+    symbol with no volatility estimate -- too short a history, or a
+    perfectly flat path whose realised volatility is zero -- is
+    weighted ``0.0``, which is what both engines read an omitted symbol
+    as.
   '''
   symbols = sorted(panels)
   inverse: list[tuple[str, float]] = []
@@ -207,9 +223,18 @@ def low_volatility(
   total = sum(value for _, value in inverse)
   if total <= 0.0:
     return equal_weight(panels, max_weight)
+  # Every symbol gets a weight, including the ones with no volatility
+  # estimate. Both engines read an omitted symbol as
+  # stock_rl.portfolio.omitted_weight, so the explicit zero and the
+  # omission agree; the entry is written anyway because a mapping that
+  # silently drops names is indistinguishable from one that means
+  # something else.
   weights = {
-    symbol: min(value / total, max_weight) for symbol, value in inverse
+    symbol: 0.0 for symbol in symbols
   }
+  weights.update({
+    symbol: min(value / total, max_weight) for symbol, value in inverse
+  })
   scale = sum(weights.values())
   if scale > 1.0:
     weights = {symbol: value / scale for symbol, value in weights.items()}
@@ -241,12 +266,15 @@ def trend_filtered_momentum(
     max_weight: Cap on any single weight.
 
   Returns:
-    Target weight per symbol. A flat book is returned when nothing
-    qualifies, which is the correct answer and not a failure.
+    Target weight per symbol, one entry per symbol in ``panels``. A name
+    that fails the gate is present at ``0.0`` rather than absent, because
+    both engines read an omitted symbol as an exit and this provider is
+    the one that used to leave names out. A flat book is returned when
+    nothing qualifies, which is the correct answer and not a failure.
   '''
   base = momentum_ranked(panels, window, skip, top, max_weight)
   symbols = sorted(panels)
-  filtered: dict[str, float] = {}
+  filtered = dict.fromkeys(symbols, 0.0)
   for symbol in symbols:
     weight = base.get(symbol, 0.0)
     if weight <= 0.0:

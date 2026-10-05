@@ -28,6 +28,19 @@ window is the one :class:`stock_rl.rl.portfolio_env.WeightAllocationEnv`
 reports, and the two engines are only comparable over a shared window: a
 Sharpe computed over a series padded with ``history`` zeros carries a
 mean and a variance the other engine's series does not have.
+
+**A weight mapping is a whole book, not a patch.** A symbol the provider
+does not name is a target of ``0.0``, i.e. an exit, and an empty mapping
+is the flat book. See :func:`_normalise`. This was chosen over "omitted
+means hold" because every provider in this repository expresses
+exclusion by omission -- the top-N funding rule in
+:mod:`stock_rl.experiment.harness`, the regime gate in
+:func:`stock_rl.baselines.trend_filtered_momentum`, the missing
+estimate in :func:`stock_rl.baselines.low_volatility` -- and all of
+them mean "no money in that name", not "leave it alone". The other
+engine now reads an omitted symbol the same way; the two defaults live
+in two modules that cannot share one constant, so
+``tests/test_weights_partial.py`` pins them to each other.
 '''
 
 from __future__ import annotations
@@ -46,6 +59,14 @@ from stock_rl.metrics import (
 )
 
 __all__ = ['PortfolioResult', 'WeightProvider', 'run_portfolio']
+
+#: Target weight for a symbol the provider did not name. Zero, i.e. an
+#: exit, and named here because the reading is a decision rather than a
+#: default: :class:`stock_rl.rl.portfolio_env.WeightAllocationEnv` used to
+#: read the same omission as "hold current", so one provider book was
+#: liquidated by this engine and held by that one, and the gap landed in
+#: the cost line instead of in an error.
+omitted_weight = 0.0
 
 #: A weight provider maps visible price history to target weights. Only
 #: bars strictly before the fill bar are passed in, so a provider cannot
@@ -162,16 +183,32 @@ def _normalise(
   strategy author cannot breach a cap by forgetting it, and every
   strategy is compared on identical rules.
 
+  **A symbol absent from ``raw`` is an exit: a target of
+  :data:`omitted_weight`, which is zero, not a hold.** The mapping is
+  the whole intended book: a name the provider declines to name gets no
+  capital, which is what the top-N funding rule, the trend gate and the
+  volatility screen all mean when they leave a name out. The
+  alternative -- reading omission as "keep whatever is held" -- was
+  measurably worse, because a provider that forgets a name would then
+  quietly keep a position its strategy had stopped wanting, invisibly
+  and without a cost. It was also the reading
+  :class:`stock_rl.rl.portfolio_env.WeightAllocationEnv` used, so the two
+  engines traded different books for one strategy and reported the
+  difference as turnover and rupees. An empty ``raw`` is therefore the
+  flat book, every symbol to zero.
+
   Args:
-    raw: Desired weight per symbol.
+    raw: Desired weight per symbol. May omit names, which become
+      :data:`omitted_weight`.
     symbols: Symbols in the portfolio, in fixed order.
     max_weight: Cap on any single symbol.
 
   Returns:
-    Weights summing to at most 1.0. The remainder is cash.
+    Weights summing to at most 1.0, one entry per symbol in ``symbols``.
+    The remainder is cash.
   '''
   wanted = {
-    symbol: clamp_weight(float(raw.get(symbol, 0.0)), max_weight)
+    symbol: clamp_weight(float(raw.get(symbol, omitted_weight)), max_weight)
     for symbol in symbols
   }
   total = sum(wanted.values())
@@ -274,7 +311,8 @@ def run_portfolio(
 
   Args:
     panels: Mapping of symbol to bars, all sharing one timeline.
-    provider: Maps visible history to target weights.
+    provider: Maps visible history to the complete target-weight book.
+      A symbol it leaves out is an exit, see :func:`_normalise`.
     capital: Starting cash in rupees.
     costs: Transaction cost model.
     rebalance_days: Bars between rebalances. The default is roughly

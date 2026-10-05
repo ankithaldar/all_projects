@@ -83,6 +83,32 @@ make lint     # pylint against ../.pylintrc
 make check    # lint + test. Run this before every push.
 ```
 
+### Running it
+
+`python -m stock_rl` reaches every module: `serve`, `experiment`,
+`baselines`, `health`, `skills`.
+
+```sh
+uv run python -m stock_rl --help
+uv run python -m stock_rl health
+uv run python -m stock_rl experiment --data-dir /path/to/vendor/csv
+```
+
+The **exit code is the product** — the harness verdict becomes a process
+status:
+
+| Exit | Meaning |
+|---|---|
+| 0 | `KEEP`, every pre-registered criterion cleared |
+| 1 | `KILL`, at least one failed; failures printed verbatim |
+| 2 | `INCONCLUSIVE`, or an argparse usage error |
+| 3 | nothing ran: no data, or a `--synthetic` panel |
+
+`--synthetic` **always exits 3**, whatever the verdict: a KILL on generated
+prices shows the harness discriminates, and a KEEP would prove nothing. A CI
+step cannot read a synthetic panel as a pass. Details and worked output in
+[the testing guide](docs/LOCAL-TESTING-GUIDE.md).
+
 ### The one trap that will waste your afternoon
 
 **pylint does not search parent directories for a configuration file.**

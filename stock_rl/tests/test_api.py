@@ -453,7 +453,14 @@ class TestEmptyPortfolio:
 
 
 class TestBaselines:
-  '''The control arm every learned policy has to clear.'''
+  '''The control arm every learned policy has to clear.
+
+  The declared configuration has to be the one the rows were measured
+  under, and ``tests/test_baselines_cap.py`` proves that in full for every
+  provider. What is asserted here is that the disclosure lives in the
+  shape this file already documents, so a row cannot quietly stop
+  reporting which cap its book was built at.
+  '''
 
   def test_every_provider_is_listed_with_a_status(self):
     payload = get(service(panels=three_panels()), '/api/baselines')
@@ -462,17 +469,46 @@ class TestBaselines:
     assert {row['name'] for row in rows} == set(api.strategies())
     for row in rows:
       assert row['status'] in ('ok', 'skipped', 'error')
+      assert isinstance(row['cap_bound'], bool)
       if row['status'] == 'ok':
         assert row['points'] == WINDOW + 40
         for key in ('sharpe', 'max_drawdown', 'turnover', 'total_cost',
                     'total_return_multiple', 'rebalances'):
           assert isinstance(row[key], (int, float))
+        assert row['applied_max_weight'] is not None
       else:
         assert row['error']
+        assert row.get('applied_max_weight') is None
     # Equal weight is the control and only reads the panel keys, so it
     # runs whatever the price-based providers happen to be doing.
     control = [row for row in rows if row['name'] == 'equal_weight']
     assert control[0]['status'] == 'ok'
+
+  def test_the_default_cap_reaches_the_book_not_just_the_payload(self):
+    '''The endpoint's own default configuration, measured end to end.
+
+    Under the default arm every row reported 0.10 and every book was
+    built at 0.10 for the wrong reason: the provider's own default,
+    never the request. Asking for something wider has to move the books.
+    '''
+    narrow = get(service(panels=three_panels()), '/api/baselines')
+    wide = get(service(panels=three_panels()),
+               '/api/baselines?max_weight=0.3')
+    assert wide['max_weight'] == 0.3
+    measured = {row['name']: row for row in wide['strategies']
+                if row['status'] == 'ok'}
+    for name, row in measured.items():
+      assert row['cap_bound'] is True
+      # Three symbols at 0.30 is 0.90 of capital, so the cap binds.
+      assert row['applied_max_weight'] == pytest.approx(0.3), name
+    assert measured
+    narrow_rows = {row['name']: row for row in narrow['strategies']
+                   if row['status'] == 'ok'}
+    # The control arm alone: one strategy, two caps, two books. Before
+    # the fix both rows carried the same Sharpe, which is the whole
+    # symptom.
+    assert narrow_rows['equal_weight']['sharpe'] != pytest.approx(
+      measured['equal_weight']['sharpe'])
 
   def test_best_sharpe_names_one_of_the_measured_rows(self):
     payload = get(service(panels=three_panels()), '/api/baselines')
