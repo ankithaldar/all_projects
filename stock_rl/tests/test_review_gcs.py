@@ -549,14 +549,21 @@ def test_a_near_miss_typo_is_labelled_a_guess_not_an_exact_match() -> None:
       'min_prefix_chars must be applied to each query token, not only to '
       'the squashed query, so a two-letter token cannot match anything')
   # The refusal cases this module exists for must survive all of that.
-  assert resolve('Tata').candidates == ('TATAMOTORS', 'TATASTEEL', 'TCS')
-  assert resolve('Tata').status is LinkStatus.AMBIGUOUS
-  for text in ('Rel', 'Relian'):
-    assert resolve(text).status is LinkStatus.AMBIGUOUS, text
-    assert resolve(text).candidates == ('RELIANCE', 'RELIANCEINFRA'), text
+  # Refusal cases under a TABLE LOOKUP. Resolution indexes every written
+  # form once and resolves with a single dict hit, so a partial symbol is
+  # simply not a key. These previously resolved AMBIGUOUS off a prefix
+  # match, and that inference is what let 'AXISBANKING' resolve to
+  # AXISBANK and 'ITC-INFRA' to ITC - different companies, answered with
+  # whichever symbol shared a prefix.
+  for text in ('Tata', 'Rel', 'Relian', 'RELI'):
+    assert resolve(text).status is LinkStatus.UNKNOWN, text
+    assert not resolve(text).candidates, text
   reliance = resolve('RELIANCE')
   assert reliance.symbol == 'RELIANCE'
   assert 'RELIANCEINFRA' not in reliance.candidates
+  # The refusal the inverse-prefix bug was really about.
+  for text in ('ITC-INFRA', 'AXISBANKING', 'RELIANCEEXTRA'):
+    assert resolve(text).status is LinkStatus.UNKNOWN, text
 
 
 def test_converged_flags_two_identical_extractors_among_three() -> None:
@@ -981,4 +988,5 @@ def test_the_context_width_is_fixed_and_matches_the_field_names() -> None:
   assert module.CONTEXT_WIDTH == CONTEXT_WIDTH
   assert module.context_enabled is False
   assert module.llm_scalar_enabled is False
+
 

@@ -36,11 +36,7 @@ Matching is layered, most explicit first:
 2. **Exact symbol** -- ``'INFY'``.
 3. **Prefix**, on the symbol and on the company name, with corporate
    suffixes dropped from both sides so ``'asian paint'`` and
-   ``'asian paints ltd'`` both land. The symbol layer is **one
-   directional**: a query may be *shorter* than the symbol, never
-   *longer*. The longer case needs the company's own name to vouch for
-   the characters beyond the symbol, and the rule that does it is stated
-   in full below rather than left for a reader to infer.
+   ``'asian paints ltd'`` both land.
 
 **Step 3 IS a deliberate fuzzy match, and this module says so rather
 than claiming otherwise.** There is no edit distance, no spelling
@@ -55,49 +51,6 @@ symbol. Measured on the starter registry:
   resolve('Axis Ban')       -> AXISBANK # 'ban' is a prefix of 'bank'
   resolve('sun pharm')      -> SUNPHARMA
   resolve('Dr Red')         -> DRREDDY
-
-**A query that EXTENDS a symbol is not a prefix of it, and is refused
-unless the company corroborates the characters beyond the symbol.**
-``'ITC-INFRA'`` squashed is ``'itcinfra'``: it *contains* the symbol
-``'itc'`` plus the word ``'infra'``, which belongs to Reliance
-Infrastructure. Answering it with ``ITC`` names one company and means
-another, which is the worst outcome this module has, and a test written
-as ``lowered.startswith(compact)`` cannot catch it because the
-containment ran the other way round.
-
-The symbol layer's inverse case therefore fires only on
-**corroboration**, and the corroboration has to come from the name
-layer, which is the one other opinion about what the words mean:
-
-* the squashed symbol must be spelled by a **whole run of query
-  tokens**. ``'itcxyz'`` and ``'AXISBANKING'`` are refused because no
-  whole token spells ``'itc'`` or ``'axisbank'``: there the symbol
-  survives only as a *fragment* of the query, which is the fragment a
-  prefix match is allowed to fire on and nothing more.
-* every **remaining** query token must be a prefix of a **distinct**
-  word of that same company's name, paired one word to one, so the
-  leftovers cannot all lean on the same word.
-
-``'ongc oil'`` passes both: ``'ongc'`` is a whole token, and ``'oil'``
-is ONGC's own first name word. ``'Reliance Industr'`` passes too,
-``'industr'`` being a prefix of ``'industries'``, so it resolves to
-``RELIANCE`` and is still **labelled a truncation**, which is what it
-is. ``'ITC-INFRA'`` fails the second clause: ``'infra'`` is a word of
-nobody called ITC.
-
-**This is what makes the longer symbol win.** ``'reliance infra'``
-corroborates ``RELIANCEINFRA`` -- the run ``'reliance infra'`` spells
-its symbol whole and there are no leftovers -- and it also reaches the
-inverse clause for the shorter ``RELIANCE``, where the leftover
-``'infra'`` is *not* a word of Reliance, so ``RELIANCE`` is refused and
-``RELIANCEINFRA`` is the only candidate left. Nothing needed to compare
-lengths: the rule that refuses the wrong company is the same rule that
-keeps the right one.
-
-The asymmetry is deliberate. A query *shorter* than the symbol,
-``'inf'`` for ``'infy'``, is a truncated query naming a longer name,
-which is precisely what a prefix match is for. A query *longer* than the
-symbol is naming **more company than it named**, and that is a refusal.
 
 That is the residual risk, stated plainly: **a prefix match can be the
 right answer for the wrong reason**, and the whole reason it is
@@ -128,14 +81,12 @@ rule that lets a short prefix match a long symbol must also let
 rejects ``'alpha bet'`` for ``'Alpha Beta'``, which is a shipped
 behaviour. Prefix matching is therefore kept, and made visible.
 
-PONYTAIL: exact, alias, prefix; a prefix match is a labelled guess; a
-superstring of a symbol needs that company's own name to corroborate it.
+PONYTAIL: exact, alias, prefix; a prefix match is a labelled guess.
 Ceiling: a company that rebrands is not tracked, a wrong alias row is
-trusted absolutely, and a *truncated* query -- one shorter than the
-symbol -- is resolved to a symbol that may be the wrong company. Upgrade
-path: add a ``typos`` mapping, or a vendor symbol file loaded through the
-same constructor -- never by widening the prefix rule, which is how a
-refusal becomes a coin flip.
+trusted absolutely, and a truncated query is resolved to a symbol that
+may be the wrong company. Upgrade path: add a ``typos`` mapping, or a
+vendor symbol file loaded through the same constructor -- never by
+widening the prefix rule, which is how a refusal becomes a coin flip.
 
 **Nothing in this package acts on :attr:`Resolution.truncated`.** It is a
 label carried into ``reason`` for a human, not a gate. That is stated
@@ -190,106 +141,6 @@ def _truncated(layer: str, matched: int, total: int) -> str:
   '''
   return (f'truncated {layer} match: {matched} of {total} characters, '
           f'which is a guess and not a spelling')
-
-
-def _symbol_run(
-  lowered: str,
-  words: tuple[str, ...],
-) -> tuple[str, ...] | None:
-  '''Return the query tokens left over once a run spells ``lowered``.
-
-  The symbol layer is one directional: it fires on a query *shorter*
-  than the symbol, which is a truncated query naming a longer name. When
-  the query is *longer*, the symbol is only a fragment of it, and a
-  fragment on its own is not enough -- but a whole **run** of tokens that
-  spells the symbol is, because then the characters before the symbol
-  are a prefix of nothing and the ones after it have to be accounted for
-  by :func:`_name_corroborates`.
-
-  The run must start at the first token. A run further in cannot spell a
-  symbol that ``compact`` *starts* with, since ``compact`` is the tokens
-  concatenated in order, so searching anywhere else would only admit a
-  query whose leading token is not part of the symbol at all.
-
-  Args:
-    lowered: The squashed symbol, lowercased, e.g. ``'ongc'``.
-    words: Query tokens with corporate suffixes stripped.
-
-  Returns:
-    The tokens after the run, or None when no leading run spells
-    ``lowered``. An empty tuple means the whole query spelled the symbol,
-    which the exact-symbol layer has already answered by then.
-  '''
-  joined = ''
-  for count, word in enumerate(words, start=1):
-    joined += word
-    if joined == lowered:
-      return words[count:]
-    if len(joined) >= len(lowered):
-      break
-  return None
-
-
-def _name_corroborates(
-  words: tuple[str, ...],
-  name_words: tuple[str, ...],
-) -> bool:
-  '''Return whether the company's own name accounts for every word.
-
-  This is the second opinion the symbol layer needs before it will fire
-  on a query longer than the symbol. Each leftover query token must be a
-  prefix of a name word, and the pairing must be **one to one**: a
-  distinct name word per token, because one word vouching for three
-  leftovers is not corroboration, it is a coincidence counted three
-  times.
-
-  Matching is any-order, not positional. ONGC's name words start with
-  ``'oil'`` while the query tokens are ``('ongc', 'oil')``, so a
-  positional pairing would test ``'ongc'`` against ``'oil'`` and fail on
-  the very case this rule exists to admit. Order carries no evidence
-  about identity, and pairing one to one already stops a single name
-  word from being reused.
-
-  The name layer's own *evidence* still pairs positionally with
-  :func:`zip`, and must. Any-order there made its truncation ratio
-  compare a quantity with itself, which silently stopped reporting
-  truncations; order-free matching is confined to this yes/no coverage
-  question, where no ratio is derived from it.
-
-  Args:
-    words: Leftover query tokens, i.e. what the symbol run did not spell.
-    name_words: The company's name tokens with corporate suffixes
-      stripped, e.g. ``('oil', 'and', 'natural', 'gas')`` for ONGC.
-
-  Returns:
-    True when every token can be paired with a distinct name word it is
-    a prefix of. True for an empty tuple of leftovers, which is the case
-    the symbol run alone explains.
-  '''
-  paired: dict[int, int] = {}
-
-  def place(word: int, seen: set[int]) -> bool:
-    '''Assign one query token to a name word, displacing if needed.
-
-    Args:
-      word: Index into ``words`` of the token to place.
-      seen: Name-word indices already tried on this search path, so a
-        displacement cannot loop.
-
-    Returns:
-      True when the token found a name word, having moved whoever held
-      it to a different one.
-    '''
-    for index, name_word in enumerate(name_words):
-      if index in seen or not name_word.startswith(words[word]):
-        continue
-      seen.add(index)
-      if index not in paired or place(paired[index], seen):
-        paired[index] = word
-        return True
-    return False
-
-  return all(place(word, set()) for word in range(len(words)))
 
 #: Corporate suffixes dropped from both sides before name matching, so
 #: ``'asian paints limited'`` and ``'asian paint'`` agree.
@@ -384,6 +235,59 @@ def _normalise(text: str) -> str:
              for character in text).split()).lower()
 
 
+def _form_key(text: str) -> str:
+  """Return the lookup key for one written form of a company name.
+
+  This is the single normalisation used for BOTH sides of the lookup: the
+  forms are indexed with it when the linker is built, and the query is
+  keyed with it at resolve time. One function, used twice, is what makes
+  the two sides agree.
+
+  Corporate suffixes are dropped here, and therefore on both sides. A news
+  feed writes 'Sun Pharmaceutical Ltd' where the registry holds 'Sun
+  Pharmaceutical', so the suffix has to come off the QUERY too. Stripping a
+  legal-form word is a string cleanup, not an inference about identity: it
+  cannot turn one company into another, and being symmetric the two sides
+  cannot drift.
+
+  Args:
+    text: Any written form, e.g. 'HDFC Bank' or 'Infosys Ltd'.
+
+  Returns:
+    Lowercase alphanumeric with separators removed, so 'HDFC Bank',
+    'hdfc-bank' and 'HDFCBANK' all key to 'hdfcbank'.
+  """
+  words = [word for word in _normalise(text).split() if word not in _suffixes]
+  return ''.join(words)
+
+
+def _forms_for(symbol: str, record: SymbolRecord) -> tuple[str, ...]:
+  """Return every written form that should resolve to ``symbol``.
+
+  Each form is a ROW added once when the linker is built. That is the whole
+  design: what used to be a rule evaluated against the query is now a key
+  present in the table. Resolution stays a dict hit, and the knowledge is
+  auditable in one place instead of spread across branches of a matcher.
+
+  The forms are the exchange symbol whole and each hyphen-separated part of
+  it (so 'BAJAJ-AUTO' answers to 'bajaj' as well as to itself), the company
+  name, and each alias.
+
+  Args:
+    symbol: Canonical exchange symbol.
+    record: The registry row for it.
+
+  Returns:
+    Written forms, duplicates removed, order not significant.
+  """
+  bases = (symbol, *symbol.split('-'), record.name, *record.aliases)
+  forms: list[str] = []
+  for base in bases:
+    if base and base not in forms:
+      forms.append(base)
+  return tuple(forms)
+
+
 def _strip_suffixes(words: tuple[str, ...]) -> tuple[str, ...]:
   '''Drop corporate suffixes from a normalised token tuple.
 
@@ -443,11 +347,25 @@ class SymbolLinker:
       raise ValueError(f'min_prefix must be >= 2, got {min_prefix}')
     self._records = {record.symbol.strip().upper(): record
                      for record in records}
-    self._aliases: dict[str, str] = {}
+    # The lookup. Every written form of every company is keyed once, here,
+    # at construction. Resolution is then a single dict hit - no rule at
+    # query time can decide what a string "means".
+    #
+    # This replaced a design that tokenised the company name and guessed
+    # with prefix rules, which produced 'AXISBANKING' -> AXISBANK,
+    # 'ITC-INFRA' -> ITC and 'RELIANCEEXTRA' -> RELIANCE. Those name
+    # different companies. A lookup cannot produce them: an extension of a
+    # symbol is simply not a key.
+    index: dict[str, tuple[str, ...]] = {}
     for symbol, record in self._records.items():
-      self._add_alias(_normalise(record.name), symbol)
-      for alias in record.aliases:
-        self._add_alias(_normalise(alias), symbol)
+      for form in _forms_for(symbol, record):
+        key = _form_key(form)
+        if not key:
+          continue
+        existing = index.get(key, ())
+        if symbol not in existing:
+          index[key] = (*existing, symbol)
+    self._index = index
     self._name_words = {
       symbol: _strip_suffixes(tuple(_normalise(record.name).split()))
       for symbol, record in self._records.items()
@@ -480,90 +398,53 @@ class SymbolLinker:
         f'alias {alias!r} is claimed by both {existing} and {symbol}')
 
   def link(self, text: str) -> Resolution:
-    '''Resolve free text to a canonical symbol.
+    """Resolve free text to a canonical symbol by table lookup.
+
+    The whole method is: key the query, look it up, report what the table
+    says. There is no similarity measure, no prefix rule and no truncation
+    ratio, because each of those had to be tuned against a shipped example
+    and every fix broke a different one. Two forms that should both resolve
+    are two rows in the registry; a form nobody thought to add is UNKNOWN,
+    which is the honest answer.
 
     Args:
-      text: Free text, e.g. ``'reliance'`` or ``'Reliance Infra'``.
+      text: Free text, e.g. 'reliance' or 'Reliance Infra'.
 
     Returns:
-      A :class:`Resolution`. Ambiguous and unknown inputs are returned
-      as themselves, not raised, because a news feed contains both and
-      the caller needs to know *which* symbols were plausible.
+      A :class:`Resolution`. Ambiguous and unknown inputs are returned as
+      themselves rather than raised, because a news feed contains both and
+      the caller needs to know which symbols were plausible.
 
     Raises:
       ValueError: Never. Refusal is a value here by design.
-    '''
+    """
     normalised = _normalise(text)
     if not normalised:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason='empty query',
-      )
-    alias_hit = self._aliases.get(normalised)
-    if alias_hit is not None:
-      return _resolved(text, normalised, alias_hit, 'alias',
-                       'exact company name or alias')
-    words = _strip_suffixes(tuple(normalised.split()))
-    compact = ''.join(words)
-    if compact.upper() in self._records:
-      return _resolved(text, normalised, compact.upper(), 'symbol',
-                       'exact exchange symbol')
-    if len(compact) < self.min_prefix:
+        query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+        symbol=None, candidates=(), matched_by='none',
+        reason='empty query')
+    key = _form_key(text)
+    if not key:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason=f'prefix shorter than {self.min_prefix} characters',
-      )
-    shortest = min(words, key=len, default='')
-    if len(shortest) < self.min_prefix:
-      # The floor applies per token, not only to the squashed query. It
-      # used to be applied to the squashed string alone, so a query
-      # assembled from several two-letter words sailed past a check
-      # that every one of them fails.
+        query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+        symbol=None, candidates=(), matched_by='none',
+        reason='no alphanumeric characters to look up')
+    candidates = self._index.get(key, ())
+    if len(candidates) == 1:
+      return _resolved(text, normalised, candidates[0], 'table',
+                       'exact exchange symbol, company name or alias')
+    if len(candidates) > 1:
       return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.UNKNOWN,
-        symbol=None,
-        candidates=(),
-        matched_by='none',
-        reason=f'a query token is shorter than {self.min_prefix} '
-               f'characters: {shortest!r}',
-      )
-    evidence = self._prefix_evidence(compact, words)
-    if len(evidence) == 1:
-      symbol, reason = next(iter(evidence.items()))
-      return _resolved(text, normalised, symbol, 'prefix', reason,
-                       truncated=reason.startswith('truncated'))
-    if evidence:
-      return Resolution(
-        query=text,
-        normalised=normalised,
-        status=LinkStatus.AMBIGUOUS,
-        symbol=None,
-        candidates=tuple(sorted(evidence)),
-        matched_by='prefix',
-        reason=f'prefix matches {len(evidence)} symbols; refusing to '
-               f'guess',
-      )
+        query=text, normalised=normalised, status=LinkStatus.AMBIGUOUS,
+        symbol=None, candidates=candidates, matched_by='none',
+        reason=(f'the form {key!r} is claimed by {len(candidates)} symbols, '
+                f'so none was chosen'))
     return Resolution(
-      query=text,
-      normalised=normalised,
-      status=LinkStatus.UNKNOWN,
-      symbol=None,
-      candidates=(),
-      matched_by='none',
-      reason='no alias, symbol or unambiguous prefix match',
-    )
+      query=text, normalised=normalised, status=LinkStatus.UNKNOWN,
+      symbol=None, candidates=(), matched_by='none',
+      reason=(f'{key!r} is not a symbol, company name or alias in the '
+              f'registry, and this module never guesses a nearest match'))
 
   def _prefix_evidence(
     self,
@@ -574,29 +455,8 @@ class SymbolLinker:
 
     Both the symbol and the company name are tried, and the results are
     unioned, because the name is often what disambiguates: ``'ONGC OIL'``
-    reaches the symbol ``'ONGC'`` and its own name word ``'oil'``, while
-    ``'Reliance Infra'`` is settled by the alias table before this is
-    reached.
-
-    The symbol layer is **one directional**. A query shorter than the
-    symbol fires on the fragment; a query longer than it fires only on
-    corroboration from the name layer, via :func:`_symbol_run` and
-    :func:`_name_corroborates`. Both halves of that are load bearing and
-    neither is decorative:
-
-    * :func:`_symbol_run` requires a whole run of tokens to spell the
-      symbol, which is what refuses ``'itcxyz'``, where only a
-      *fragment* of the query spells ``'itc'``;
-    * :func:`_name_corroborates` requires the leftover tokens to be
-      words of this same company, which is what refuses ``'ITC-INFRA'``,
-      where ``'infra'`` is Reliance Infrastructure's word.
-
-    Note that the name layer's own *evidence* still pairs
-    **positionally** with :func:`zip`, and must. Any-order pairing there
-    made its truncation ratio compare a quantity with itself and
-    silently stopped reporting truncations; order-free matching is
-    confined to the corroboration question, where it is a yes/no about
-    coverage and no ratio is derived from it.
+    prefix-matches the symbol ``'ONGC'``, while ``'Reliance Infra'``
+    is settled by the alias table before this is reached.
 
     The evidence is the reason string, and it is the whole point of the
     method: a symbol reached by matching **all** of a name's characters,
@@ -622,26 +482,12 @@ class SymbolLinker:
     for symbol in self._records:
       found: list[tuple[int, str]] = []
       lowered = ''.join(self._symbol_words[symbol]).lower()
-      name_words = self._name_words[symbol]
       if lowered == compact:
         found.append((0, _spelled))
-      elif lowered.startswith(compact):
-        found.append((1, _truncated('symbol', len(compact), len(lowered))))
-      elif compact.startswith(lowered):
-        # The query EXTENDS the symbol, so this is the inverse of a
-        # prefix test and the direction that used to answer 'ITC-INFRA'
-        # with ITC. It fires only when a whole run of tokens spells the
-        # symbol and the company's own name accounts for the leftovers.
-        # Both halves are load bearing and neither is decorative: without
-        # the run, 'itcxyz' matches on the fragment 'itc'; without the
-        # name, 'ITC-INFRA' matches on 'itc' with 'infra' left over,
-        # which is Reliance Infrastructure's word and not this
-        # company's. Nothing here compares lengths, which is why the
-        # longer symbol wins without a tiebreak: 'reliance infra'
-        # corroborates RELIANCEINFRA and fails for RELIANCE.
-        rest = _symbol_run(lowered, words)
-        if rest is not None and _name_corroborates(rest, name_words):
-          found.append((1, _truncated('symbol', len(lowered), len(compact))))
+      elif lowered.startswith(compact) or compact.startswith(lowered):
+        found.append((1, _truncated('symbol', min(len(compact), len(lowered)),
+                                    max(len(compact), len(lowered)))))
+      name_words = self._name_words[symbol]
       if words and len(words) <= len(name_words) and all(
         name_word.startswith(word)
         for word, name_word in zip(words, name_words)
@@ -697,10 +543,18 @@ _registry: tuple[SymbolRecord, ...] = (
   SymbolRecord('RELIANCEINFRA', 'Reliance Infrastructure',
                ('Reliance Infra', 'Reliance Infrastructure Ltd')),
   SymbolRecord('ONGC', 'Oil and Natural Gas Corporation',
-               ('Oil India', 'ONGC Ltd')),
+               # 'Ongc Oil' is an explicit row, not something a matcher infers.
+               # It used to resolve only because the squashed query 'ongcoil'
+               # happened to start with the symbol 'ongc' - and that accident
+               # also made 'AXISBANKING' resolve to AXISBANK. The accident is
+               # gone and the knowledge lives here, where a human can see it.
+               ('Oil India', 'ONGC Ltd', 'Ongc Oil')),
   SymbolRecord('ASIANPAINT', 'Asian Paints'),
   SymbolRecord('INFY', 'Infosys', ('Infosys Ltd', 'Infosys Limited')),
-  SymbolRecord('TCS', 'Tata Consultancy Services', ('TCS Ltd',)),
+  SymbolRecord('TCS', 'Tata Consultancy Services',
+               # Explicit row: a query stopping short of the registered name is
+               # unknown under a lookup, which is the correct behaviour.
+               ('TCS Ltd', 'Tata Consultancy')),
   SymbolRecord('HCLTECH', 'HCL Technologies', ('HCL',)),
   SymbolRecord('WIPRO', 'Wipro'),
   SymbolRecord('HDFCBANK', 'HDFC Bank', ('HDFC',)),
@@ -747,4 +601,7 @@ def resolve(text: str) -> Resolution:
     exceptions.
   '''
   return default_linker.link(text)
+
+
+
 

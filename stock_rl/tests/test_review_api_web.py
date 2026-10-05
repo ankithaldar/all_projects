@@ -503,44 +503,36 @@ def test_entity_linker_refuses_a_query_that_is_not_a_prefix() -> None:
         f'must not even be offered as a choice')
 
 
-def test_a_symbol_plus_a_word_of_its_own_name_still_resolves() -> None:
-  '''The other direction: the rule must not refuse the good case.
+def test_the_good_direction_is_a_table_row_not_a_prefix_rule() -> None:
+  """A whole token spelling the symbol plus a word of its own name.
 
-  This is the half the original finding did not test, and it is the half
-  that a too-eager fix breaks. Refusing every query longer than a symbol
-  would refuse ``'ongc oil'``, which ``test_sentiment.py`` ships as a
-  contract: ONGC's name words are ``('oil', 'and', 'natural', 'gas')``,
-  so ``'ongc'`` is a whole token spelling the symbol and ``'oil'`` is a
-  word of **this** company's name. ITC-INFRA looks identical on tokens
-  -- symbol token plus a leftover token -- and is refused, because
-  ``'infra'`` is Reliance Infrastructure's word and nobody called ITC
-  claims it.
+  This is the half the original finding did not test, and the half a
+  too-eager fix breaks.
 
-  The difference is corroboration from the name layer, not token shape,
-  so this is the assertion that pins the rule to corroboration rather
-  than to any proxy for it. 'Reliance Industr' is here too, and is the
-  case that separates *resolving* from *trusting*: ``'industr'`` is a
-  prefix of ``'industries'``, so the match rests on a fragment and must
-  be labelled one.
-  '''
-  for text, expected in (('ongc oil', 'ONGC'), ('Reliance Industr',
-                                                'RELIANCE')):
+  Under the inference design it needed a corroboration rule, because
+  'ongc oil' and 'ITC-INFRA' are identical on token shape - symbol token
+  plus a leftover token - and only the name layer could separate them.
+  That produced the worst outcome in the module: 'AXISBANKING' resolved to
+  AXISBANK and 'ITC-INFRA' to ITC, which name different companies.
+
+  Under a table lookup the separation is free. 'ongc oil' is an explicit
+  registry row, because someone wrote it down; 'ITC-INFRA' is not a row,
+  so it is UNKNOWN. Neither case needed a rule, and neither can drift.
+
+  'Reliance Industr' is here because it is the case that separates
+  *resolving* from *trusting*: it truncates 'industries', so under the
+  lookup it is simply not a registered form. Adding it as a row is a
+  decision a human makes about the data, not something a matcher infers.
+  """
+  assert resolve('ongc oil').symbol == 'ONGC'
+  assert resolve('ongc oil').status is LinkStatus.RESOLVED
+  for text in ('ITC-INFRA', 'AXISBANKING', 'Reliance Industr'):
     result = resolve(text)
-    assert result.status is LinkStatus.RESOLVED, (
-        f'{text!r} came back {result.status.value} with reason '
-        f'{result.reason!r}; a whole token spelling the symbol plus a word '
-        f'of that same company\'s own name is the case the prefix layer '
-        f'exists to answer')
-    assert result.symbol == expected, (
-        f'{text!r} resolved to {result.symbol} rather than {expected}')
-  truncated = resolve('Reliance Industr')
-  assert truncated.truncated, (
-      "'Reliance Industr' rests on the fragment 'industr' of "
-      f"'industries', so it must set truncated; reason was "
-      f'{truncated.reason!r}')
-  assert truncated.reason.startswith('truncated'), (
-      f'an audit reading reason cannot tell a fragment from a spelling '
-      f'without this; reason was {truncated.reason!r}')
+    assert result.status is LinkStatus.UNKNOWN, (
+        f'{text!r} resolved to {result.symbol!r} under a lookup; a form '
+        f'nobody registered must not reach a symbol')
+    assert 'never guesses' in result.reason
+
 
 
 def test_a_leftover_word_must_belong_to_the_company_it_resolved() -> None:
@@ -807,3 +799,4 @@ def test_the_reported_turnover_is_two_way_not_one_way() -> None:
   assert per_rebalance == pytest.approx(2.0, abs=0.05), (
       f'a book that swaps its entire contents every rebalance shows 2.0 '
       f'two-way turnover; got {per_rebalance}')
+

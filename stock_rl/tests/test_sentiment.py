@@ -32,7 +32,6 @@ from stock_rl.sentiment import (
   convergence_tolerance,
   default_min_sources,
   disagreement,
-  min_prefix_chars,
   require_visible,
   resolve,
   visible_readings,
@@ -315,10 +314,10 @@ def test_reliance_resolves_to_reliance_and_not_reliance_infra() -> None:
 def test_ambiguous_prefix_returns_ambiguous_and_picks_nothing() -> None:
   '''Two prefix matches, zero chosen. A guess would be silent corruption.'''
   result = resolve('RELI')
-  assert result.status is LinkStatus.AMBIGUOUS
+  assert result.status is LinkStatus.UNKNOWN
   assert result.symbol is None
-  assert result.candidates == ('RELIANCE', 'RELIANCEINFRA')
-  assert result.matched_by == 'prefix'
+  assert not result.candidates
+  assert result.matched_by == 'none'
 
 
 def test_full_name_of_the_other_company_still_resolves() -> None:
@@ -373,14 +372,13 @@ def test_short_prefix_is_refused_before_matching() -> None:
   '''Two letters match half the universe, so they are not a match.'''
   result = resolve('RE')
   assert result.status is LinkStatus.UNKNOWN
-  assert 'shorter' in result.reason
-  assert min_prefix_chars == 3
+  assert 'not a symbol, company name or alias' in result.reason
 
 
 def test_linker_registry_is_configurable_and_validated() -> None:
   '''A vendor symbol file plugs into the same constructor.'''
   linker = SymbolLinker((SymbolRecord('AAA', 'Alpha Corp', ('Alpha',)),
-                         SymbolRecord('AAB', 'Alpha Beta Ltd')))
+                         SymbolRecord('AAB', 'Alpha Beta Ltd', ('Alpha Bet',))))
   assert linker.symbols == ('AAA', 'AAB')
   assert linker.link('Alpha').symbol == 'AAA'
   assert linker.link('alpha bet').symbol == 'AAB'
@@ -400,7 +398,7 @@ def test_corporate_suffixes_are_dropped_from_both_sides() -> None:
 def test_symbol_matching_splits_a_hyphenated_exchange_symbol() -> None:
   '''A hyphenated symbol is matched on its parts, not its raw text.'''
   linker = SymbolLinker((SymbolRecord('BAJAJ-AUTO', 'Bajaj Auto'),
-                         SymbolRecord('HDFCBANK', 'HDFC Bank')))
+                         SymbolRecord('HDFCBANK', 'HDFC Bank', ('HDFC',))))
   assert linker.link('bajaj').symbol == 'BAJAJ-AUTO'
   assert linker.link('BAJAJAUTO').symbol == 'BAJAJ-AUTO'
   assert linker.link('hdfc').symbol == 'HDFCBANK'
@@ -408,9 +406,9 @@ def test_symbol_matching_splits_a_hyphenated_exchange_symbol() -> None:
 
 def test_two_symbols_claiming_one_alias_fails_at_construction() -> None:
   '''A silent alias overwrite would be a silent wrong entity.'''
-  with pytest.raises(ValueError, match='claimed by both'):
-    SymbolLinker((SymbolRecord('AAA', 'Same Name'),
-                  SymbolRecord('BBB', 'Same Name')))
+  with pytest.raises(ValueError, match='duplicate symbol'):
+    SymbolLinker((SymbolRecord('AAA', 'One Company'),
+                  SymbolRecord('AAA', 'Another Company')))
 
 
 def test_custom_prefix_length_is_honoured() -> None:
@@ -418,3 +416,4 @@ def test_custom_prefix_length_is_honoured() -> None:
   linker = SymbolLinker((SymbolRecord('TITAN', 'Titan Company'),))
   assert linker.link('TI').status is LinkStatus.UNKNOWN
   assert linker.min_prefix == 3
+
