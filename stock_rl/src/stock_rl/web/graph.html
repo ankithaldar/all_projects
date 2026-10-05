@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No Content-Security-Policy meta tag and no external origins: this page
+     loads exactly two sibling files and reaches nothing else. The payload
+     below is an inline JSON island, so the whole view renders from file://
+     with the network unplugged, no server and no build step. There is no
+     @font-face, no <link> to a stylesheet host and no script from a CDN,
+     because each of those is one more origin the page could not survive
+     losing. -->
+<title>stock_rl - dependency graph and its news</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="graph.css">
+</head>
+<body>
+<header class="bar">
+  <div>
+    <h1>stock_rl <span class="muted">dependency graph</span></h1>
+    <p class="muted" id="graph-status">loading...</p>
+  </div>
+</header>
+
+<p class="disclaimer" role="note">
+  <strong>Not financial advice.</strong>
+  Research output from a backtested model. Not financial advice, not a
+  recommendation, and not a solicitation to buy or sell anything.
+</p>
+
+<main>
+  <section class="card wide">
+    <h2>Dependency graph and its news</h2>
+    <!-- The mount points graph.js looks for. #graph-view receives the
+         drawn slice, #graph-news the readings for whichever node was last
+         clicked, and #graph-payload is the data. All three are described
+         in the header comment of graph.js. -->
+    <div class="graph">
+      <div id="graph-view" data-graph="1">Loading the dependency graph...</div>
+      <div id="graph-news"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p class="muted small">
+    No frameworks, no CDN, no external fonts, no build step. Vanilla
+    JavaScript and inline SVG, and the payload is an inline JSON island, so
+    this page renders identically with the network unplugged.
+  </p>
+  <p class="muted small">
+    Every edge in this view is unfitted sector reasoning, not measured
+    sensitivities. Nothing here was fitted to returns, no beta was
+    estimated, and no edge carries a date. A dashed arrow is a reviewable
+    claim about direction, not a quantity, and the same is true of every
+    news item shown beside one.
+  </p>
+</footer>
+
+<!-- The payload. The shape is stock_rl.graph.news.GraphSlice.to_dict(), and
+     it is inlined rather than fetched so the page has no runtime data
+     dependency at all. A payload of {} is the honest empty case: this
+     view then says no payload was supplied instead of drawing a market
+     with no dependencies in it. Replace the contents of this island with a
+     real slice to see the view with data; no other file has to change. -->
+<script type="application/json" id="graph-payload">{}</script>
+<script src="graph.js"></script>
+</body>
+</html>

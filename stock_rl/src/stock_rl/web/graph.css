@@ -1,0 +1,208 @@
+/* Styling for the dependency-graph-with-news view (web/graph.js).
+ *
+ * Separate from style.css because the dashboard document does not link
+ * it: graph.js is a standalone view with its own stylesheet, and adding
+ * a <link> to index.html would put an asset on a page whose serving
+ * route set is owned by another agent. Keeping it here means the view
+ * can be opened and judged on its own, which is also how the tests load
+ * it.
+ *
+ * No @import, no webfont, no external URL of any kind, for the reason
+ * style.css states: this must render identically with the network
+ * unplugged. Colours are inherited from the same palette as style.css so
+ * the two files read as one design when the view is embedded.
+ */
+
+/* The system stack, named here as well as on body in style.css. This
+ * stylesheet is also usable on its own, and a webfont would be an origin
+ * the page would have to reach -- the one thing this view is built not to
+ * need. */
+body, .graph, .graph-panel, .graph-news {
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --graph-unfitted-bg: #fdf3d8;
+  --graph-unfitted-ink: #6b4d05;
+  --graph-unfitted-line: #e6d49a;
+  --graph-empty-bg: #f2f4f7;
+  --graph-error-bg: #fbe4e2;
+  --graph-error-ink: #8c1f17;
+  --graph-node: #ffffff;
+  --graph-focus: #eef3fb;
+  --graph-stock: #f7faf7;
+}
+
+.graph {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 780px) {
+  .graph { grid-template-columns: minmax(0, 1fr); }
+}
+
+.graph-canvas { width: 100%; min-width: 0; }
+.graph-canvas svg { display: block; width: 100%; height: auto; }
+
+/* The unfitted caveat. Deliberately the same warn palette as the
+ * "not financial advice" banner, because it is the same class of
+ * statement: a thing that must not be skipped. It is never hidden. */
+.graph-unfitted {
+  margin: 0 0 0.7rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--graph-unfitted-bg);
+  color: var(--graph-unfitted-ink);
+  border: 1px solid var(--graph-unfitted-line);
+  border-radius: 4px;
+  font-size: 0.84rem;
+}
+
+.graph-legend-row {
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: #fafbfc;
+  border-left: 3px solid var(--line);
+  border-radius: 0 3px 3px 0;
+}
+
+/* The unfitted rows carry the same left border as the caveat, so an edge
+ * that is dashed on the canvas is traceable to its written claim without
+ * reading the canvas at all. */
+.graph-legend-row.graph-unfitted {
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.5rem;
+  background: #fafbfc;
+  border-left: 3px dashed var(--graph-unfitted-line);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* A node. The focus node is tinted rather than outlined, because an
+ * outline at this size reads as "selected" and nothing here is selected
+ * until it is clicked. */
+.gnode rect {
+  fill: var(--graph-node);
+  stroke: var(--line);
+  stroke-width: 1.2;
+}
+
+.gnode text { fill: var(--ink); }
+
+.gnode-stock rect { fill: var(--graph-stock); }
+.gnode-path rect { fill: #fbfbfd; }
+.gnode-focus rect { fill: var(--graph-focus); stroke: var(--ink); }
+
+/* A peer is a listed company the graph claims this node depends on. It is
+ * drawn with a hatched edge because it is a real claim in the file, and it
+ * is labelled "peer, not an input" in the box because nothing established
+ * that one listed company supplies another. */
+.gnode-peer rect { fill: #fbfbfd; stroke-dasharray: 3 3; }
+
+/* Clickable AND focusable, so the outline is drawn on :focus-visible
+ * only. A keyboard user must be able to see where they are; a mouse user
+ * clicking around must not be left with a stale ring. */
+.gnode { cursor: pointer; }
+.gnode:focus { outline: none; }
+.gnode:focus-visible rect { stroke: var(--ink); stroke-width: 2.4; }
+.gnode:hover rect { stroke: var(--muted); stroke-width: 2; }
+
+.graph-panel,
+.graph-news {
+  min-width: 0;
+  padding: 0.6rem 0.7rem;
+  background: #fafbfc;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.graph-news h3,
+.graph-legend h3,
+.graph-routes h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* An empty result and a failure are two different visual states, and
+ * neither is allowed to be a blank box. An empty panel is grey and
+ * italic; a failure is red. The distinction is the whole point of
+ * "degrade honestly": a reader who saw them both would know which one
+ * they are looking at. */
+.graph-empty {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--graph-empty-bg);
+  color: var(--muted);
+  border-radius: 4px;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.graph-error {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--graph-error-bg);
+  color: var(--graph-error-ink);
+  border: 1px solid #e5b5b0;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.gread {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.55rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.gread-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.gread-symbol { font-weight: 700; letter-spacing: 0.03em; }
+.gread-meta { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--muted); }
+
+/* Score colour reuses the dashboard's buy/sell palette. Muted for a
+ * reading whose aggregate is not usable: a single-source number is not
+ * the same kind of object as a corroborated one, and colouring it the
+ * same way would imply the corroboration. */
+.gread-score { font-variant-numeric: tabular-nums; font-weight: 600; }
+.gread-score.up { color: #0f7b46; }
+.gread-score.down { color: #a3231b; }
+.gread-score.flat { color: var(--muted); }
+.gread:not(.gread-usable) .gread-score { color: var(--muted); font-weight: 500; }
+
+/* The reason a headline is attached to a node. Set apart because it is
+ * the answer to "why am I looking at ONGC's news on the crude page",
+ * and an answer the reader has to infer is not an answer. */
+.gread-reason {
+  margin: 0.35rem 0 0;
+  padding: 0.35rem 0.45rem;
+  background: #f2f6fc;
+  border-left: 3px solid #1f4e9c;
+  border-radius: 0 3px 3px 0;
+  font-size: 0.8rem;
+  color: #24324a;
+}
+
+.gread-route {
+  margin: 0.25rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.graph-routes { margin-top: 0.7rem; }
