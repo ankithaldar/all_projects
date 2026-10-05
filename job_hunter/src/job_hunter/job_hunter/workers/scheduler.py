@@ -97,7 +97,8 @@ def start_scheduler(config_path: str | Path) -> None:
     '''Enqueue then execute a pinned-company quick poll.'''
     try:
       run_id = enqueue_run(config_path, kind='refresh', triggered_by='scheduler:quick_poll')
-      asyncio.run(execute_pending_run(config_path, run_id))
+      result = execute_pending_run(config_path, run_id)
+      logger.info('quick poll finished: %s', result['status'])
     except RuntimeError as exc:
       logger.info('skipping quick poll: %s', exc)
 
