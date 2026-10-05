@@ -116,6 +116,10 @@ minimize his frequency of trading may prefer longer moving averages."*
 - **Predictability decays with time.** Rink (2023): of 14 emerging markets
   predictable over the full sample, *"in the last subperiod between 2009
   and 2016, almost all emerging market indices are unpredictable."*
+  **India is one of the markets in that sample** (Table 3, Panel B: `IND`,
+  BSE Sensex), so this is a statement about Indian data and not a general
+  emerging-markets caveat. An earlier version of this file claimed
+  otherwise.
 - **Momentum inverts in crises.** Maheshwari & Dhankar: positive
   pre-crisis, **negative during**, positive post.
 - **Condition on volatility, not on a trend/sideways label.** Han, Yang &
@@ -200,12 +204,25 @@ informational signals across agents"*, not from the combination step.
 
 This is a fair characterisation. The burden of proof is on us.
 
-**Where it is weaker:** Rink's sample **excludes India**. The Indian
-positive evidence is not trivial. Momentum has been replicated four times
-across three institutions. And Rink's own framing is adaptive-markets:
-profitability decays *with competition*, which argues for slow-moving,
-low-turnover rules — exactly what survives Indian costs — rather than
-abandoning signals.
+**CORRECTION (2026-10): this paragraph was wrong.** It previously said
+Rink's sample *excludes* India. It does not: his Table 3, Panel B lists
+`IND`, the BSE Sensex, over 03/04/1979–31/05/2016. So his subperiod finding
+below — that emerging markets became unpredictable in 2009–2016 — **applies
+to India directly**, and the caveat that protected this project from it was
+void. Two things follow, and they do not cancel:
+
+- The burden is now *heavier*, not lighter. Rink tested 6,406 rules against
+  India with a stepwise SPA test, and a rule that is not significantly
+  positive out-of-sample after costs is not an edge in Indian data.
+- Rink's own framing is still adaptive-markets: profitability decays *with
+  competition*, which argues for slow-moving, low-turnover rules — exactly
+  what survives Indian costs — rather than abandoning signals outright.
+
+His India-specific rule count could not be isolated from the paper, so this
+project does not claim a number for it. See
+[indicator-trend-strategies.md](indicator-trend-strategies.md), which reaches
+the compatible conclusion from the other direction: Indian momentum is
+replicated across a dozen groups GROSS of costs, and absent NET.
 
 ## Non-negotiable validation
 
