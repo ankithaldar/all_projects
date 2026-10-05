@@ -1,0 +1,42 @@
+[project]
+name = "water-meter-billing-pipeline"
+version = "1.0.0"
+description = "Process versioned water meter Excel files, compute consumption deltas, and generate billing adjustments"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "you@example.com" }
+]
+dependencies = [
+    "pandas>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "openpyxl>=3.1.0",
+    "python-dateutil>=2.8.2",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+meter-pipeline = "meter_pipeline:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = "meter_pipeline.py"
+python_functions = "test_*"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 100
