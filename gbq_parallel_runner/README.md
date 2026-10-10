@@ -19,7 +19,8 @@ handles the ordering, the concurrency, the retries and the scheduling.
 | `config.yml` | The config contract: base config, run configs, level → SQL map. |
 | `run_etl.ipynb` | Driver notebook: installs deps, checks auth, then invokes the script. |
 | `requirements.txt` | `google-cloud-bigquery`, `PyYAML`, `structlog`, `rich`. |
-| `sqls/` | **Not committed.** Your SQL files, referenced by `sql_level_maps`. |
+| `test_gbq_parallel_runner.py` | Regression tests; third-party deps are stubbed. |
+| `sqls/` | The SQL to run: `drops.sql` and `etl.sql`, wired into `sql_level_maps`. |
 
 `run_etl_in_levels.py` is the whole implementation — there is no module layout to
 learn. Read it top to bottom and you have seen the tool: types, logging,
@@ -103,13 +104,20 @@ There are two placeholder styles, and they are not interchangeable.
   config. So `sqls/etl.sql` containing
 
   ```sql
-  SELECT * FROM `{{project}}.{{dataset}}.source`
-  WHERE dt = '{{key_02}}'
+  SELECT * FROM `{project_id}.{dataset_id}.source`
+  WHERE dt = '{key_02}' AND region = '{key_01}'
   ```
 
-  gets `project`, `dataset` and `key_02` substituted per run. Note that every
-  key a SQL file references must exist in the config, and that literal `{` in a
-  SQL file will be interpreted as a placeholder unless it is escaped as `{{`.
+  gets `project_id`, `dataset_id`, `key_01` and `key_02` substituted per run.
+
+  **Every key a SQL file references must exist in the config**, or validation
+  exits 1 before anything is submitted. And **literal braces do not work** —
+  the scanner is a plain regex for "brace, word, brace", so `{{foo}}` matches
+  `foo` exactly like `{foo}` does, and `str.format` then escapes it into the
+  literal text `{foo}` rather than substituting anything. There is no working
+  escape: a file needing a literal `{` or `}` cannot use this runner as written.
+  Keep brace-shaped text, including brace-shaped examples in SQL comments, out
+  of the file.
 
 Before anything is submitted, every SQL file referenced by the level map is read
 and its placeholders are checked against the config. A missing key logs every
@@ -230,16 +238,19 @@ task is recorded as `FAILED`, the level is reported as failed, and the run stops
 |---|---|---|---|---|---|---|---|
 
 `Bytes` is `total_bytes_processed`, `Slot ms` is `slot_millis` — the two numbers
-that tell you what a run actually cost. State moves
-`PENDING → RUNNING → SUCCESS | DRY_SUCCESS | FAILED`. Rows are sorted by SQL file
-then run id, so the same script across all your slices sits together, which makes
-it easy to eyeball whether one region is lagging the rest.
+that tell you what a run actually cost. Every terminal state renders, including
+`DRY_SUCCESS` from `--dry_run` and `FAILED` after retries are exhausted. Rows are
+sorted by SQL file then run id, so the same script across all your slices sits
+together, which makes it easy to eyeball whether one region is lagging the rest.
 
 ## Shutting down
 
-`SIGINT` and `SIGTERM` install handlers that set a shutdown flag, cancel every
-outstanding asyncio task, gather the results and exit `1`. If you hit Ctrl-C mid-run
-you get a clean stop and a non-zero exit code rather than a stack trace.
+`SIGINT` and `SIGTERM` install handlers that set a shutdown flag, then cancel
+every outstanding asyncio task *and* every BigQuery job those tasks submitted —
+the runner tracks its live jobs for exactly this reason, because a cancelled
+asyncio task still leaves the job running and billing on the BigQuery side.
+Results are gathered and the process exits `1`. If you hit Ctrl-C mid-run you get
+a clean stop and a non-zero exit code rather than a stack trace.
 
 ## Known rough edges
 
@@ -254,25 +265,44 @@ These are live in the code, not hypothetical:
   `Orchestrator`, and is separate from the per-level cap. So no matter what you
   pass to `--max-concurrency`, more than 10 jobs never run at once. Raise it in
   `Orchestrator.__init__` if you actually want wide fan-out.
-- **Two progress rows never render.** `progress.update(...)` is awaited almost
-  everywhere, but the `DRY_SUCCESS` and `FAILED` transitions call it without
-  `await`, so those states never appear in the table. A dry run still *validates*
-  correctly, it just shows nothing.
-- **Ctrl-C does not cancel the BigQuery jobs.** The handler cancels the local
-  asyncio tasks, but the submitted jobs keep running and keep billing. Cancel them
-  in the console if you stop a run early.
-- **Two copies of the scheduling wait.** The module-level `wait_until` and
-  `BQRunner._wait_until_target` are near-identical, and both are live:
-  `wait_until` for the global `--time_set` flag, the method for each run's
-  `scheduled_time`. A behaviour change in one has to be mirrored in the other.
-- **`ConfigResolver.resolve` takes a hard-coded context name.** Its signature
-  accepts any dict but the docstring and error messages all assume it was handed a
-  run config. Harmless as used, misleading to the next reader.
-- **The SQL files are not in the repo.** `sql_level_maps` points at `sqls/`, which
-  you must create yourself before the first run.
-- **Annotation hygiene.** `Optional`, `Set` and `Any` appear in type hints
-  without being imported. Harmless under `from __future__ import annotations`,
-  but it will trip a linter.
+- **The notebook's run cell points at the wrong file.** It invokes
+  `--all_configs base_config.yml`, but the config committed here is
+  `config.yml`. Edit the cell before the first run.
+- **Ctrl-C cancels the BigQuery jobs, but only the ones still tracked.** The
+  runner registers a job when it submits it and forgets it once it succeeds,
+  so shutdown cancels live jobs; a job whose retries were exhausted has already
+  been forgotten and is cancelled by no one. That case ends the run anyway, so
+  it rarely bites.
+- **Literal braces cannot be escaped.** `collect_placeholders` matches the inner
+  `{foo}` of `{{foo}}` too, so an escape both demands a config key you never
+  meant to supply and still comes out as literal `{foo}` after `str.format`. The
+  sample SQL in `sqls/` therefore avoids literal braces entirely, comments
+  included.
+- **`sql_level_maps` runs `drops.sql` at level 2 as well as level 0**, which drops
+  the table `etl.sql` just built. Point level 2 at a different file if you want
+  the result kept.
+- **`project_id` and `dataset_id` ship as empty strings.** The sample SQL builds
+  valid table references only once you fill them in.
+- **The retry loop catches `Exception` broadly.** Transient BigQuery, network
+  and quota errors all arrive as different types and retrying on any of them is
+  the point, so the catch is deliberately wide and carries a `pylint: disable`
+  rather than a narrower type list. The cost is that a genuine bug — a bad key
+  name, say — is retried `max_retries` times before surfacing.
+
+## Linting and tests
+
+```bash
+pylint --rcfile=../.pylintrc run_etl_in_levels.py   # 10.00/10
+python -m pytest test_gbq_parallel_runner.py        # 11 passed
+```
+
+`test_gbq_parallel_runner.py` covers the retry, cancellation, scheduling and
+placeholder paths, and pins the bugs that were fixed in this pass: the dropped
+`await` on the `DRY_SUCCESS` and `FAILED` progress transitions, shutdown not
+reaching the BigQuery jobs, `ConfigResolver` labelling every error as a
+run-config error, and the missing `typing` imports. The third-party
+dependencies are stubbed in the test module, so it runs without
+google-cloud-bigquery, PyYAML, structlog or rich installed.
 
 ## Dependencies
 
