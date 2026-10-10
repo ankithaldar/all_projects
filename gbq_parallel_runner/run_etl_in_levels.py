@@ -1,29 +1,31 @@
-#!/usr/bin/env python3
-'''
-bq_parallel_run.py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-A single-file, fully type-hinted, richly documented Python 3.10+ utility that
-orchestrates multi-level, parallel BigQuery runs with per-run configuration
-deep-merging, placeholder validation, retry logic, and a live TUI progress
-table.
+'''BigQuery parallel runner.
 
-Author: <you>
+A single-file, fully type-hinted Python 3.10+ utility that orchestrates
+multi-level, parallel BigQuery runs with per-run configuration deep-merging,
+placeholder validation, retry logic, and a live TUI progress table.
+
+Usage:
+  python run_etl_in_levels.py --all_configs config.yml [--dry_run]
+      [--max-concurrency N] [--time_set ISO8601]
 '''
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import copy
 import logging
+import re
 import signal
 import sys
-import re
-import copy
 import time
 import typing as t
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Optional, Set
 
 import structlog
 import yaml
@@ -38,8 +40,8 @@ SQL_DEBUG = False
 
 # ---------- Types -----------------------------------------------------------------
 
-JSON = t.Union[str, int, float, bool, None, t.Dict[str, "JSON"], t.List["JSON"]]
-ConfigDict = t.Dict[str, JSON]
+JsonType = t.Union[str, int, float, bool, None, t.Dict[str, 'JsonType'], t.List['JsonType']]
+ConfigDict = t.Dict[str, JsonType]
 
 # ---------- Logging --------------------------------------------------------------
 
@@ -77,19 +79,27 @@ def parse_time(time_str: str) -> datetime:
 
   try:
     # Handle Z suffix
-    time_str = time_str.replace("Z", "+00:00")
+    time_str = time_str.replace('Z', '+00:00')
     dt = datetime.fromisoformat(time_str)
     # Ensure timezone aware
     if dt.tzinfo is None:
       dt = dt.replace(tzinfo=timezone.utc)
     return dt
   except ValueError as e:
-    raise ConfigurationError(f"Invalid ISO 8601 timestamp: {e}")
+    raise ConfigurationError(f'Invalid ISO 8601 timestamp: {e}') from e
 
 
 
 async def wait_until(target_time: datetime):
-  '''Pauses the execution until the system clock reaches target_time'''
+  '''Sleep until the wall clock reaches target_time, in interruptible chunks.
+
+  A target time already in the past returns immediately with a warning rather
+  than waiting a full day, and the wait is split into short sleeps so a signal
+  can interrupt it.
+
+  Args:
+    target_time: When to resume. Naive datetimes are treated as UTC.
+  '''
   now = datetime.now(timezone.utc)
   if target_time.tzinfo is None:
     target_time = target_time.replace(tzinfo=timezone.utc)
@@ -101,7 +111,8 @@ async def wait_until(target_time: datetime):
     return
 
   delta = target_time - now
-  logger.info(f"Waiting for {str(delta).split('.')[0]} until {target_time}... ", trigger_time=str(target_time))
+  remaining = str(delta).split('.', maxsplit=1)[0]
+  logger.info(f'Waiting for {remaining} until {target_time}... ', trigger_time=str(target_time))
   # Sleep in chunks to allow responsiveness to signals
   try:
     chunk_size = 5.0
@@ -119,28 +130,56 @@ async def wait_until(target_time: datetime):
 
 
 class Config:
-  '''Thin wrapper around the merged configuration.'''
+  '''Thin dict-like wrapper around a merged configuration.'''
 
   def __init__(self, cfg: ConfigDict) -> None:
+    '''Wrap an already-merged configuration dict.
+
+    Args:
+      cfg: The merged base_config + run_config mapping.
+    '''
     self._cfg = cfg
 
   def get(self, key: str, default: t.Any = None) -> t.Any:
+    '''Return `key` from the config, or `default` when absent.
+
+    Args:
+      key: Config key to look up.
+      default: Value returned when `key` is not present.
+
+    Returns:
+      The configured value, or `default`.
+    '''
     return self._cfg.get(key, default)
 
   def __getitem__(self, key: str) -> t.Any:
+    '''Return `key` from the config, raising KeyError when absent.'''
     return self._cfg[key]
 
   def __setitem__(self, key: str, value: t.Any) -> None:
+    '''Set `key` to `value` in the underlying config dict.'''
     self._cfg[key] = value
 
   def __contains__(self, key: str) -> bool:
+    '''Return True when `key` is present in the config.'''
     return key in self._cfg
 
 
-def deep_merge(base: t.Dict[str, t.Any], override: JSON) -> JSON:
-  '''Deep-merge `override` into `base`. Lists are extended.'''
+def deep_merge(base: t.Dict[str, t.Any], override: JsonType) -> JsonType:
+  '''Recursively merge `override` into `base` and return the result.
+
+  Dicts merge key by key, lists are concatenated, and an explicit `None`
+  override leaves the base value untouched. Neither input is mutated.
+
+  Args:
+    base: The lower-precedence mapping, usually `base_config`.
+    override: The higher-precedence values, usually one run config.
+
+  Returns:
+    The merged structure.
+  '''
   if isinstance(base, dict) and isinstance(override, dict):
-    merged: dict[str, JSON] = base.copy()
+    merged: dict[str, JsonType] = base.copy()
     for k, v in override.items():
       merged[k] = deep_merge(base.get(k), v)
     return merged
@@ -150,11 +189,22 @@ def deep_merge(base: t.Dict[str, t.Any], override: JSON) -> JSON:
 
 
 def load_config(path: Path) -> ConfigDict:
-  '''Load and validate base configuration.'''
+  '''Read the YAML config file at `path`.
+
+  Args:
+    path: Path to the YAML file holding base_config, run_configs and
+      sql_level_maps.
+
+  Returns:
+    The parsed config mapping.
+
+  Exits:
+    With status 1 when the file cannot be read or is not valid YAML.
+  '''
   try:
     with path.open() as fh:
       return t.cast(ConfigDict, yaml.safe_load(fh))
-  except Exception as exc:
+  except (OSError, yaml.YAMLError) as exc:
     logger.error('Failed to load base config', path=str(path), exc=exc)
     sys.exit(1)
 
@@ -170,34 +220,51 @@ class CircularReferenceError(Exception):
 
 
 class ConfigResolver:
-  '''Initialize resolver with configurable placeholder syntax.'''
+  '''Resolves ``${var}`` placeholders against the config itself.
+
+  The config dict doubles as its own resolution context: a placeholder is
+  looked up as a direct key in the same structure being resolved, so
+  ``a: '${b}'`` and ``b: x`` resolves to ``a: x``.
+  '''
 
   def __init__(self, placeholder_pattern: str = r'\$\{([^}]+)\}'):
+    '''Build a resolver for one placeholder syntax.
+
+    Args:
+      placeholder_pattern: Regex whose group 1 captures the variable name.
+        Defaults to the `${var}` syntax used in the config files.
+    '''
     self.placeholder_pattern = placeholder_pattern
     self._placeholder_regex = re.compile(placeholder_pattern)
 
   def resolve(self, config: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
+    '''Resolve every placeholder in `config` and return the resolved copy.
+
+    The input is never mutated. `config` may be any dict -- a base config, a
+    run config, or a merged one -- the labels in the error messages follow
+    suit rather than assuming a particular caller.
+    '''
     # Validate input structure
     if not isinstance(config, dict):
-      raise ValueError('run_configs must be a dict')
+      raise ValueError('config must be a dict')
 
     # Create deep copies to avoid mutating original inputs
-    run_copies = copy.deepcopy(config)
+    resolved = copy.deepcopy(config)
 
     # PHASE 1: SCAN entire structure for placeholders
-    if not self._scan_for_placeholders(run_copies):
-      return run_copies
+    if not self._scan_for_placeholders(resolved):
+      return resolved
 
-    # PHASE 2: RESOLVE base_config (self-contained resolution)
-    resolved_base = self._resolve_structure(
-        run_copies,
-        context=run_copies,
-        path='run_config'
+    # PHASE 2: RESOLVE the config against itself (self-contained resolution)
+    resolved = self._resolve_structure(
+        resolved,
+        context=resolved,
+        path='config'
     )
 
     # PHASE 4: FINAL VALIDATION - ensure no unresolved placeholders remain
-    self._validate_no_placeholders(resolved_base, 'run_config')
-    return resolved_base
+    self._validate_no_placeholders(resolved, 'config')
+    return resolved
 
 
   def _scan_for_placeholders(self, data: t.Any) -> bool:
@@ -305,10 +372,10 @@ class ConfigResolver:
           # Type safety: only allow string replacements in strings
           if not isinstance(replacement, str):
             raise ValueError(
-              f"Cannot substitute non-string value {replacement!r} "
-              f"(type: {type(replacement).__name__}) for placeholder "
+              f'Cannot substitute non-string value {replacement!r} '
+              f'(type: {type(replacement).__name__}) for placeholder '
               f"'${{{var_name}}}' at {path}. Only string values allowed "
-              "in placeholder substitution."
+              'in placeholder substitution.'
             )
 
           # Perform ALL occurrences substitution in one pass
@@ -361,17 +428,36 @@ class ConfigResolver:
 
 
 def collect_placeholders(sql: str) -> set[str]:
-  '''Return all {var} placeholders found in SQL.'''
+  '''Return the set of {var} placeholder names found in `sql`.
+
+  Args:
+    sql: SQL text possibly containing {var} placeholders.
+
+  Returns:
+    The distinct placeholder names, without braces.
+  '''
   return set(re.findall(r'\{(\w+)\}', sql))
 
 
 def validate_placeholders(sql_files: list[Path], cfg: Config) -> None:
-  '''Fail fast if any placeholder is missing.'''
+  '''Check every placeholdered SQL file against the config, up front.
+
+  Reading all files before running anything means a config mistake costs no
+  BigQuery slots.
+
+  Args:
+    sql_files: The SQL files referenced by the level map.
+    cfg: The merged config a run will execute with.
+
+  Exits:
+    With status 1 when any SQL file is unreadable or references a placeholder
+    the config does not define.
+  '''
   missing: dict[str, set[str]] = {}
   for sql_path in sql_files:
     try:
       sql = sql_path.read_text()
-    except Exception as exc:
+    except (OSError, UnicodeDecodeError) as exc:
       logger.error('Cannot read SQL file', path=str(sql_path), exc=exc)
       sys.exit(1)
     placeholders = collect_placeholders(sql)
@@ -388,7 +474,7 @@ def validate_placeholders(sql_files: list[Path], cfg: Config) -> None:
 
 
 class BQRunner:
-  '''Handles BigQuery job submission, retry, and cancellation.'''
+  '''Submits, tracks and retries BigQuery jobs for a single run config.'''
 
   def __init__(
     self,
@@ -398,15 +484,37 @@ class BQRunner:
     dry_run: bool,
     universal_time: Optional[datetime]
   ) -> None:
+    '''Build a runner for one run config.
+
+    Args:
+      client: Shared BigQuery client, used from worker threads.
+      cfg: The merged config for this run.
+      global_sem: Semaphore shared by every runner, capping total concurrency.
+      dry_run: When True, submit nothing and report DRY_SUCCESS.
+      universal_time: Overrides every run's scheduled_time when set.
+    '''
     self.client = client
     self.cfg = cfg
     self.global_sem = global_sem
     self.dry_run = dry_run
     self._to_cancel: list[asyncio.Task[t.Any]] = []
     self.universal_time = universal_time
+    # Jobs submitted but not yet finished, keyed by the task that owns them, so
+    # shutdown can cancel the BigQuery side and not just the local asyncio side.
+    self._live_jobs: dict[t.Optional[asyncio.Task[t.Any]], QueryJob] = {}
 
   def _interpolate_sql(self, sql: str) -> str:
-    '''Replace {var} with values from config.'''
+    '''Substitute {var} placeholders in `sql` with values from the config.
+
+    Args:
+      sql: Raw SQL text, possibly containing {var} placeholders.
+
+    Returns:
+      The SQL with every placeholder replaced by its config value.
+
+    Raises:
+      KeyError: If a placeholder has no corresponding key in the config.
+    '''
     placeholders = collect_placeholders(sql)
     ctx = {k: self.cfg[k] for k in placeholders}
     return sql.format(**ctx)
@@ -419,7 +527,22 @@ class BQRunner:
     semaphore: asyncio.Semaphore,
     progress: 'ProgressTracker',
   ) -> None:
-    '''Core retry loop for a single SQL file.'''
+    '''Run one SQL file to completion, retrying with exponential backoff.
+
+    Waits for the run's scheduled time, submits the job through the blocking
+    BigQuery client on a worker thread, and retries up to `max_retries` times
+    with `min(2 ** attempt, max_backoff_seconds)` seconds between attempts.
+
+    Args:
+      sql_path: Path to the .sql file to execute.
+      run_id: Identifier of the run config this job belongs to.
+      level: Dependency level this job is executing in.
+      semaphore: Per-level concurrency limit.
+      progress: Tracker to publish job state to.
+
+    Raises:
+      Exception: The last failure, once retries are exhausted.
+    '''
     max_retries: int = int(self.cfg.get('max_retries', 20))
     max_backoff: int = int(self.cfg.get('max_backoff_seconds', 600))
     sql = sql_path.read_text()
@@ -436,6 +559,7 @@ class BQRunner:
 
     async with semaphore, self.global_sem:
       attempt = 0
+      task = asyncio.current_task()
       while True:
         job_id = f'bq_parallel_run__{run_id}__{sql_path.stem}__{level}__{int(time.time()*1000)}'
         try:
@@ -443,7 +567,7 @@ class BQRunner:
           await progress.update(run_id, str(sql_path), job_id, 'PENDING')
           if self.dry_run:
             await asyncio.sleep(0.1)
-            progress.update(run_id, str(sql_path), job_id, 'DRY_SUCCESS')
+            await progress.update(run_id, str(sql_path), job_id, 'DRY_SUCCESS')
             return
           job: QueryJob = await asyncio.to_thread(
             self.client.query,
@@ -452,6 +576,9 @@ class BQRunner:
             project=self.cfg.get('billing_project'),
             # labels=self.cfg.get("labels", {}),
           )
+          # Register before waiting so a cancel arriving mid-wait still finds
+          # the job to cancel.
+          self._live_jobs[task] = job
           await progress.update(
             run_id,
             str(sql_path),
@@ -460,6 +587,7 @@ class BQRunner:
             job=job,
           )
           await asyncio.to_thread(job.result)
+          self._forget_job(task)
           await progress.update(
             run_id,
             str(sql_path),
@@ -468,7 +596,10 @@ class BQRunner:
             job=job,
           )
           return
-        except Exception as exc:
+        # Retry on any failure: transient BigQuery, network and quota errors all
+        # arrive as different exception types and the retry loop is the only
+        # place that knows how to back off.
+        except Exception as exc:  # pylint: disable=broad-exception-caught
           logger.warning(
             'Job failed',
             job_id=job_id,
@@ -476,11 +607,16 @@ class BQRunner:
             exc=exc,
           )
           if attempt >= max_retries:
-            progress.update(run_id, str(sql_path), job_id, 'FAILED')
+            self._forget_job(task)
+            await progress.update(run_id, str(sql_path), job_id, 'FAILED')
             raise
           backoff = min(2**attempt, max_backoff)
           await asyncio.sleep(backoff)
           attempt += 1
+
+  def _forget_job(self, task: t.Optional[asyncio.Task[t.Any]]) -> None:
+    '''Stop tracking a job once it has reached a terminal state.'''
+    self._live_jobs.pop(task, None)
 
   def create_task(
     self,
@@ -490,7 +626,18 @@ class BQRunner:
     semaphore: asyncio.Semaphore,
     progress: 'ProgressTracker',
   ) -> asyncio.Task[t.Any]:
-    '''Create cancellable task.'''
+    '''Spawn the cancellable asyncio task for one SQL file.
+
+    Args:
+      sql_path: Path to the .sql file to execute.
+      run_id: Identifier of the run config this job belongs to.
+      level: Dependency level this job is executing in.
+      semaphore: Per-level concurrency limit.
+      progress: Tracker to publish job state to.
+
+    Returns:
+      The spawned task.
+    '''
     task = asyncio.create_task(
       self._run_with_retry(sql_path, run_id, level, semaphore, progress),
       name=f'{run_id}__{sql_path.stem}',
@@ -499,47 +646,45 @@ class BQRunner:
     return task
 
   async def cancel_all(self) -> None:
-    '''Cancel all running tasks gracefully.'''
-    for t in self._to_cancel:
-      if not t.done():
-        t.cancel()
+    '''Cancel every pending task and the BigQuery jobs they submitted.
+
+    Cancelling an asyncio task only unwinds the local wait; a job already
+    submitted to BigQuery keeps running and keeps billing, so each live job is
+    cancelled too. Jobs that reached a terminal state are skipped by the
+    `Job.cancel` call being harmless on them.
+    '''
+    live_jobs = list(self._live_jobs.values())
+    for task in self._to_cancel:
+      if not task.done():
+        task.cancel()
+    await asyncio.gather(
+      *(asyncio.to_thread(job.cancel) for job in live_jobs),
+      return_exceptions=True,
+    )
     await asyncio.gather(*self._to_cancel, return_exceptions=True)
 
   async def _wait_until_target(self, target_time: datetime):
-    '''Pauses the execution until the system clock reaches target_time'''
-    now = datetime.now(timezone.utc)
-    if target_time.tzinfo is None:
-      target_time = target_time.replace(tzinfo=timezone.utc)
+    '''Sleep until the wall clock reaches `target_time`, in interruptible chunks.
 
-    # If the time has passed today, wait is skipped (or could be interpreted as next day)
-    # Logic: strict scheduling for toda. If passed, warn and run immediately
-    if target_time < now:
-      logger.warn('Scheduled time is in the past. Running immediately.')
-      return
+    Thin wrapper over the module-level ``wait_until`` so the scheduling
+    behaviour -- past times run immediately, the wait is chunked so a signal
+    can interrupt it -- lives in exactly one place.
 
-    delta = target_time - now
-    logger.info(f"Waiting for {str(delta).split('.')[0]} until {target_time}... ", trigger_time=str(target_time))
-
-    # Sleep in chunks to allow responsiveness to signals
-    try:
-      chunk_size = 5.0
-      wait_seconds = delta.total_seconds()
-      while wait_seconds > 0:
-        sleep_time = min(chunk_size, wait_seconds)
-        await asyncio.sleep(sleep_time)
-        wait_seconds -= sleep_time
-    except asyncio.CancelledError:
-      logger.info('Scheduled wait cancelled')
-      raise
+    Args:
+      target_time: When to resume. A time already in the past returns
+        immediately after a warning rather than waiting a full day.
+    '''
+    await wait_until(target_time)
 
 
 # ---------- Progress TUI ----------------------------------------------------------
 
 
 class ProgressTracker:
-  '''Thread-safe progress store and rich table renderer.'''
+  '''Coroutine-safe store of job state, and the table that renders it.'''
 
   def __init__(self) -> None:
+    '''Create an empty tracker with its own asyncio lock.'''
     self._lock = asyncio.Lock()
     self._data: dict[
       tuple[str, str],
@@ -554,6 +699,19 @@ class ProgressTracker:
     state: str,
     job: QueryJob | None = None,
   ) -> None:
+    '''Record a state transition for one job, under the lock.
+
+    Rows are created on first sight of a (run_id, sql_path) pair, so every
+    later transition updates the same row. Cost fields are only refreshed when
+    a finished `job` is supplied.
+
+    Args:
+      run_id: Identifier of the run config the job belongs to.
+      sql_path: Path to the .sql file being executed.
+      job_id: BigQuery job_id currently being reported.
+      state: New state, e.g. PENDING, RUNNING, SUCCESS or FAILED.
+      job: Optional finished job to read byte and slot figures from.
+    '''
     async with self._lock:
       key = (run_id, sql_path)
       row = self._data.setdefault(
@@ -575,11 +733,12 @@ class ProgressTracker:
         row['runtime_s'] = (job.ended - job.started).total_seconds() if job.ended and job.started else 0
 
   def render(self) -> Table:
-    '''Build rich table for live display.'''
+    '''Build a rich Table of every tracked job, sorted by file then run id.'''
     table = Table(title='BigQuery Parallel Run')
     for col in ['Level', 'Run-ID', 'SQL File', 'Job ID', 'State', 'Bytes', 'Slot ms', 'Runtime s']:
       table.add_column(col)
     for row in sorted(self._data.values(), key=lambda r: (r['sql_path'], r['run_id'])):
+      runtime_s = row['runtime_s']
       table.add_row(
         str(row.get('level', '')),
         row['run_id'],
@@ -588,7 +747,7 @@ class ProgressTracker:
         row['state'],
         str(row['bytes']),
         str(row['slot_ms']),
-        f"{row['runtime_s']:.2f}",
+        f'{runtime_s:.2f}',
       )
     return table
 
@@ -597,7 +756,7 @@ class ProgressTracker:
 
 
 class Orchestrator:
-  '''Top-level orchestrator for level-by-level execution.'''
+  '''Runs jobs level by level, gating each level on the previous one's success.'''
 
   def __init__(
     self,
@@ -608,6 +767,16 @@ class Orchestrator:
     max_concurrency: int,
     universal_time: Optional[datetime]
   ) -> None:
+    '''Create the orchestrator for one batch of runs.
+
+    Args:
+      project_id: Project the BigQuery client runs as.
+      run_configs: One merged config per parallel run.
+      level_map: Dependency level -> SQL files for that level.
+      dry_run: When True, validate and simulate instead of submitting.
+      max_concurrency: Job cap applied per level.
+      universal_time: When set, overrides every run's scheduled_time.
+    '''
     self.run_configs = run_configs
     self.level_map = level_map
     self.dry_run = dry_run
@@ -617,11 +786,15 @@ class Orchestrator:
     self.progress = ProgressTracker()
     self.console = Console()
     self._shutting_down = False
-    self.all_tasks: list[asyncio.Task[t.Any]] = []
     self.universal_time = universal_time
+    self.bq_runners: list[BQRunner] = []
 
   async def run(self) -> bool:
-    '''Return True if all levels succeeded.'''
+    '''Run every level in order and report overall success.
+
+    Returns:
+      True if every level completed with no failed job, False otherwise.
+    '''
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
       loop.add_signal_handler(sig, lambda: asyncio.create_task(self._shutdown()))
@@ -642,7 +815,14 @@ class Orchestrator:
       return True
 
   async def _run_level(self, level: int) -> bool:
-    '''Run single level; return True if all succeeded.'''
+    '''Run every job in one level and report success.
+
+    Args:
+      level: The dependency level to execute.
+
+    Returns:
+      True if no job in the level raised, False if any did.
+    '''
     sql_files = [Path(p) for p in self.level_map[level]]
     semaphore = asyncio.Semaphore(self.max_concurrency)
     tasks: list[asyncio.Task[t.Any]] = []
@@ -655,6 +835,8 @@ class Orchestrator:
         cfg['scheduled_time'] = parse_time(cfg['scheduled_time'])
 
       runner = BQRunner(self.client, cfg, self.global_sem, self.dry_run, self.universal_time)
+      # Retained so _shutdown can reach the runner's live BigQuery jobs.
+      self.bq_runners.append(runner)
 
       for sql_path in sql_files:
         task = runner.create_task(
@@ -665,7 +847,6 @@ class Orchestrator:
           self.progress,
         )
         tasks.append(task)
-        self.all_tasks.append(task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
     failed = [r for r in results if isinstance(r, Exception)]
     for exc in failed:
@@ -673,15 +854,18 @@ class Orchestrator:
     return not failed
 
   async def _shutdown(self) -> None:
-    '''Graceful shutdown.'''
+    '''Cancel every pending task and every BigQuery job they submitted, then exit.
+
+    Delegates to each runner because only the runner knows which jobs it
+    submitted; cancelling the asyncio tasks alone would leave those jobs
+    running and billing.
+    '''
     if self._shutting_down:
       return
     self._shutting_down = True
     logger.warning('Shutting down gracefully...')
-    for ts in self.all_tasks:
-      if not ts.done():
-        ts.cancel()
-    await asyncio.gather(*self.all_tasks, return_exceptions=True)
+    for runner in self.bq_runners:
+      await runner.cancel_all()
     sys.exit(1)
 
 
@@ -689,6 +873,12 @@ class Orchestrator:
 
 
 def parse_cli() -> argparse.Namespace:
+  '''Parse the command line arguments for the runner.
+
+  Returns:
+    The parsed namespace holding all_configs, dry_run, max_concurrency and
+    time_set.
+  '''
   parser = argparse.ArgumentParser(description='Parallel BigQuery runner with per-run configs')
   parser.add_argument('--all_configs', required=True, type=Path, help='Path to base_config.yaml')
   parser.add_argument('--dry_run', action='store_true', help='Validate only, do not execute')
@@ -698,6 +888,12 @@ def parse_cli() -> argparse.Namespace:
 
 
 async def main() -> None:
+  '''Load the config, build the orchestrator and run every level.
+
+  Exits:
+    With status 0 when every level succeeded, 1 on validation failure or any
+    failed job.
+  '''
   args = parse_cli()
   all_configs = load_config(args.all_configs)
 
@@ -724,5 +920,5 @@ async def main() -> None:
   sys.exit(0 if ok else 1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   asyncio.run(main())
