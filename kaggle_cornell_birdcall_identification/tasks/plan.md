@@ -105,7 +105,8 @@ leaderboard score). No task claims more than it can prove.
 | AD-5 | The vote is a **pure numpy module** over `.npz` files, with **no** framework import | both backends import the same module; "byte-identical submission" is then a testable claim rather than a hope |
 | AD-6 | One **inference config** is added (`config_params/inference/final_5sec_sed.py`: `period=30`, `num_test_samples=20`, `valid_bs=1`) | the original had no inference config; `docs/modules/08` Part E lists it as required net-new work |
 | AD-7 | The PyTorch reference core lives under `src/birdcall/` (not a separate `ports/` tree) and is **imported unchanged** by the Lightning backend | the docs' Lightning guide assumes the core is importable; one tree, one import path |
-| AD-8 | Backend-specific code is namespaced by filename **prefix**: `pl_<name>.py` for the PyTorch Lightning implementation, `tf_<name>.py` for the TensorFlow/Keras implementation; **unprefixed modules are shared** and contain no framework import | keeps the scaffold's package structure, makes the split obvious at a glance in a file listing, avoids a `backends/` sub-tree the scaffold does not have |
+| AD-8 | Backend-specific code is namespaced by filename **prefix**: `pl_<name>.py` for the PyTorch Lightning implementation, `tf_<name>.py` for the TensorFlow implementation; **unprefixed modules are shared** and contain no framework import | keeps the scaffold's package structure, makes the split obvious at a glance in a file listing, avoids a `backends/` sub-tree the scaffold does not have |
+| AD-49 | The Keras backend goes through **`tf.keras`**, never the standalone `keras` package | `tf.keras` *is* Keras 3 on TensorFlow 2.16+, so nothing is lost, and the code stays on the API TensorFlow itself ships. One spelling, one import path, and the `keras.saving` module (which `tf.keras` does not expose) becomes `tf.keras.utils` |
 | AD-9 | `ast.literal_eval` replaces `eval` for the CSV's `secondary_labels` | `docs/code-issues` #10; same result, no code execution from a data file |
 | AD-10 | Model / criterion / scheduler dispatch is **registry dicts** with a clear error on an unknown key | `docs/code-issues` #12; the original's `if/elif` had no `else` and failed later with an unrelated `AttributeError` |
 | AD-11 | `lraps` keeps the **original** semantics (no background branch) as the tracked metric; a background-aware variant is available behind a constructor flag, off by default | changing the tracked metric changes checkpoint ranking and therefore the experiment |
@@ -508,6 +509,13 @@ summary table (`scripts/build_configs.py`).
 
 A port is finished when **all** of these are true. (Condensed from
 `docs/ports/porting-worklist.md` § "Definition of done".)
+
+**Status, 2026-10-21.** Everything below is done except the weight
+conversion, the one-epoch parity against live Ignite, the DDP sharding
+of the imbalanced sampler, and a real training run. The four are listed
+with their reasons in `tasks/todo.md`; each is blocked by something this
+environment does not have — a checkpoint, a multi-node setup, a GPU, or
+the competition audio — rather than by unfinished work.
 
 **Coverage**
 - [ ] every row of `docs/ports/feature-parity-matrix.md` A–J is ticked, or explicitly deferred with a reason recorded in this file

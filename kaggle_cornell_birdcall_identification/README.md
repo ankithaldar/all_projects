@@ -1,4 +1,4 @@
-# Cornell Birdcall Identification — PyTorch Lightning & TensorFlow/Keras
+# Cornell Birdcall Identification — PyTorch Lightning & TensorFlow (`tf.keras`)
 
 Two working implementations of the Cornell Birdcall 1st-place solution
 (PANNs-style sound event detection with a DenseNet121 backbone, `tanh`
@@ -38,13 +38,20 @@ frame ≥ 0.3**. That ensemble was 2nd on public (0.616) and **1st on private
 
 ## The two backends
 
-| | PyTorch Lightning | TensorFlow / Keras 3 |
+| | PyTorch Lightning | TensorFlow (`tf.keras`) |
 |---|---|---|
 | Prefix | `pl_*` | `tf_*` |
 | Entry point | `birdcall-train-pl` | `birdcall-train-tf` |
 | What is shared | the label space, the config schema, the mel matrix, the waveform augmentations, the mixup, the dataset core, the LR-schedule maths, the score artefact and the vote | |
 | What is rewritten | the control plane only | the control plane **and** the numeric core |
 | Numerical risk | low — the model and loss maths are untouched | higher — the mel scale, the dB formula, the reflect padding, the softmax axis and the frame padding all change silently if wrong |
+
+The Keras backend goes through **`tf.keras`**, not the standalone `keras`
+package: every layer, model, loss, metric, optimiser and callback is
+reached as `tf.keras.<...>`. On TensorFlow 2.16 and later `tf.keras` *is*
+Keras 3, so the two spellings are the same objects — but going through
+`tf.keras` keeps the code on the API TensorFlow itself ships, and it is
+the spelling that survives a Keras packaging change.
 
 The shared modules import neither framework. That is enforced by a test
 (`tests/test_shared_is_framework_free.py`), because a shared module that

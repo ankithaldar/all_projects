@@ -36,6 +36,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # The Keras backend. TensorFlow has no stable wheel for Python 3.14.
+# The code reaches Keras through `tf.keras`; the `keras` pin below is
+# TensorFlow's own, and it documents the Keras 3 release behind it.
 tf = [
   'tensorflow>=2.16,<2.21',
   'keras>=3.5',

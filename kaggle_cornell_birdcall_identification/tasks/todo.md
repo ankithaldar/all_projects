@@ -1,5 +1,38 @@
 # Task list — Cornell Birdcall: PyTorch Lightning + TensorFlow/Keras
 
+## Status — 2026-10-21
+
+**Implemented and tested.** 100 modules under `src/birdcall/`, 89 test
+modules under `tests/`, **788 passing, 4 skipped, 0 failing** on CPU.
+The two commits are `fd2cab5` (the PyTorch Lightning version, 239 files,
+512 tests green in isolation) and `4be1c7e` (the TensorFlow/Keras
+version, 55 files).
+
+Every task below is implemented except the four items listed under
+**Deliberately not done**, which are marked inline with a `⏭` and a
+reason.
+
+**Deliberately not done**
+
+| item | why |
+|---|---|
+| **Weight conversion** of the original's 744-tensor checkpoint | there is no checkpoint in this environment, and the original repository does not ship one. The two ports are compared numerically (front-end, losses, metrics, LR curve, submission bytes) instead |
+| **One-epoch parity against live Ignite** | `pytorch-ignite==0.4.0.post1` is not installable against the installed torch, and there is no competition audio. The LR curve is verified against the golden fixture transcribed from the guide, which the reference values match to 1e-12 |
+| **DDP sharding of the imbalanced sampler** | there is no GPU and no multi-node setup here. The sharding is a one-line index-space split and is documented, but unverified |
+| **A real training run and a leaderboard score** | there is no competition audio and no GPU. Everything is verified with synthetic data |
+
+**What the original source changed.** The upstream repository is public,
+so the implementation was checked against it rather than only against
+`docs/`. Four documentation claims turned out to be wrong and the
+implementation follows the source: the `_augd` criterion drops **30 %** of
+the primary positions (not 70 %), `fc1` is an `nn.Linear` (not a 1×1
+convolution), the mel matrix is a frozen `nn.Parameter` (not a buffer),
+and the competition's submission column is `birds` (not `labels`). The
+264 species codes and the 21 experiment configurations were recovered
+from it too.
+
+---
+
 Ordered execution list. The design decisions, risks and open questions live in
 [`plan.md`](plan.md). Every task obeys the **code style contract** in
 `plan.md` (2-space indent, 80 columns, single quotes, Google docstrings, the
