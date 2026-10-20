@@ -1,0 +1,6 @@
+metrics:
+- lraps
+- f1score_clip
+- f1score_frame
+track_metric: f1score_clip
+metric_factor: 1

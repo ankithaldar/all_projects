@@ -1,0 +1,36 @@
+name: final_5fold_sed_dense121_nomix_fold4
+fold: 4
+modules:
+- model
+- augmentation
+- loss
+- optimizer
+- scheduler
+- data
+- metrics
+- logging
+- checkpoint
+- runtime
+overrides:
+  aug_name: secondary_default
+  secondary_bckgrd_aug_dir: /pinknoise
+  train_ds_params:
+    csv_dir: /folds5/fold_4_train.csv
+  valid_ds_params:
+    csv_dir: /folds5/fold_4_test.csv
+  test_ds_params:
+    csv_dir: /folds5/fold_4_test.csv
+  train_bs: 28
+  track_metric: f1score_frame
+  logger_params:
+    name: final_5fold_sed_dense121_nomix_fold4
+    prefix_name: final_5fold_sed_dense121_nomix_fold4_best
+    tags:
+    - 4
+    - final_5fold_sed_dense121_nomix_fold4
+    - sed_dense121att
+    - sed_scaled_pos_neg_focal_loss
+  checkpoint_params:
+    save_dir: /saved_models/final_5fold_sed_dense121_nomix_fold4
+    n_saved: 10
+    prefix_name: final_5fold_sed_dense121_nomix_fold4

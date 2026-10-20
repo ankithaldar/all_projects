@@ -1,0 +1,2 @@
+scheduler_name: warmup_with_cosine
+lr_scale_factor: 0.01

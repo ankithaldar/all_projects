@@ -1,0 +1,32 @@
+name: final_sed_dense121_mix_fold1
+fold: 1
+modules:
+- model
+- augmentation
+- loss
+- optimizer
+- scheduler
+- data
+- metrics
+- logging
+- checkpoint
+- runtime
+overrides:
+  apply_mixup: true
+  train_ds_params:
+    csv_dir: /folds/fold_1_train.csv
+  valid_ds_params:
+    csv_dir: /folds/fold_1_test.csv
+  test_ds_params:
+    csv_dir: /folds/fold_1_test.csv
+  logger_params:
+    name: final_sed_dense121_mix_fold1
+    prefix_name: final_sed_dense121_mix_fold1_best
+    tags:
+    - 1
+    - final_sed_dense121_mix_fold1
+    - sed_dense121att
+    - sed_scaled_pos_neg_focal_loss
+  checkpoint_params:
+    save_dir: /saved_models/final_sed_dense121_mix_fold1
+    prefix_name: final_sed_dense121_mix_fold1

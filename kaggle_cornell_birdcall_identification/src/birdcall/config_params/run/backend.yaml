@@ -1,0 +1,16 @@
+# Which backend or backends a run exercises.
+#
+#   pl    the PyTorch Lightning backend
+#   tf    the TensorFlow / Keras 3 backend
+#   both  each of them, in turn
+#
+# The command line --backend flag overrides this file.
+backend: both
+
+backends:
+  pl:
+    enabled: true
+    entry_point: birdcall-train-pl
+  tf:
+    enabled: true
+    entry_point: birdcall-train-tf

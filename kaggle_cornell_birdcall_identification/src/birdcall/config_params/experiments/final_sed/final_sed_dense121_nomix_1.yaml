@@ -1,0 +1,30 @@
+name: final_sed_dense121_nomix_1
+fold: all
+modules:
+- model
+- augmentation
+- loss
+- optimizer
+- scheduler
+- data
+- metrics
+- logging
+- checkpoint
+- runtime
+overrides:
+  train_bs: 24
+  track_metric: lraps
+  logger_params:
+    name: final_sed_dense121_nomix_1
+    prefix_name: final_sed_dense121_nomix_1_best
+    tags:
+    - all
+    - final_sed_dense121_nomix_1
+    - sed_dense121att
+    - sed_scaled_pos_neg_focal_loss
+  checkpoint_params:
+    save_dir: /saved_models/final_sed_dense121_nomix_1
+    prefix_name: final_sed_dense121_nomix_1
+  checkpoint_dir: /saved_models/final_sed_dense121_nomix_1/final_sed_dense121_nomix_1_checkpoint_30_score=0.9117.pt
+  load_model_only: false
+  eval_every: 10

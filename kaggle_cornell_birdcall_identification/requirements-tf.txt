@@ -1,0 +1,10 @@
+# The TensorFlow/Keras backend. Install it into the SAME environment as
+# requirements.txt, because the cross-backend parity tests import torch
+# and tensorflow in one process.
+#
+#   pip install -r requirements.txt -r requirements-tf.txt
+#
+# Python must be 3.12 or 3.13: TensorFlow has no stable wheel for 3.14.
+
+tensorflow>=2.16,<2.21
+keras>=3.5

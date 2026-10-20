@@ -1,0 +1,6 @@
+criterion_name: sed_scaled_pos_neg_focal_loss
+criterion_params:
+  gamma: 0.0
+  alpha_0: 1.0
+  alpha_1: 1.0
+  secondary_factor: 1.0

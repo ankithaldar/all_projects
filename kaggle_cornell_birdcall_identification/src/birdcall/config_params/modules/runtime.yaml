@@ -1,0 +1,12 @@
+run_params:
+  max_epochs: 50
+  epoch_length: null
+dist_params: {}
+val_length: null
+eval_every: 2
+add_pbar: true
+accumulation_steps: 1
+gradient_clip_val: 0
+seed: 42
+mixup_seed: 1234
+deterministic: true

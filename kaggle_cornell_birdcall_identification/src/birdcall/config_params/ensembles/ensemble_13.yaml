@@ -1,0 +1,86 @@
+# The 13-model ensemble that won the competition.
+#
+# The three families are the original author's (README lines 41-43): the
+# four fold models without mixup, the five fold models without mixup and
+# the four fold models with mixup.  4 + 5 + 4 = 13.
+#
+# The vote is the winning configuration of the original's leaderboard
+# table: 4 votes out of 13, a clip threshold of 0.3 and a frame
+# threshold of 0.3.  The two thresholds are independent, so the clip
+# head and the frame head each have to clear their own gate.
+name: ensemble_13
+description: The winning 13-model ensemble, voted at 4 of 13.
+votes: 4
+clip_threshold: 0.3
+frame_threshold: 0.3
+frame_rate: 100.0
+default_site: 1
+
+# The audio files to vote over, and the site each of them was recorded
+# at.  Sites 1 and 2 are labelled in five second increments and get one
+# row per time window; site 3 is labelled per file and gets one row.
+# The list is empty by default: the audio files are then discovered from
+# the score artefacts, and every one of them is treated as a site 1
+# file.  Fill it in to pin the sites:
+#
+# audio:
+#   - audio_id: 0a997dff022e3ad9744d4e7bbf923288
+#     site: 1
+audio: []
+
+members:
+  # The four fold family, without mixup.
+  - name: final_sed_dense121_nomix_fold0
+    family: nomix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_nomix_fold0.yaml
+    scores: final_sed_dense121_nomix_fold0
+  - name: final_sed_dense121_nomix_fold1
+    family: nomix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_nomix_fold1.yaml
+    scores: final_sed_dense121_nomix_fold1
+  - name: final_sed_dense121_nomix_fold2_augd
+    family: nomix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_nomix_fold2_augd.yaml
+    scores: final_sed_dense121_nomix_fold2_augd
+  - name: final_sed_dense121_nomix_fold3_augd
+    family: nomix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_nomix_fold3_augd.yaml
+    scores: final_sed_dense121_nomix_fold3_augd
+  # The five fold family, without mixup.
+  - name: final_5fold_sed_dense121_nomix_fold0
+    family: nomix_5fold
+    experiment: config_params/experiments/final_sed_5_fold/final_5fold_sed_dense121_nomix_fold0.yaml
+    scores: final_5fold_sed_dense121_nomix_fold0
+  - name: final_5fold_sed_dense121_nomix_fold1
+    family: nomix_5fold
+    experiment: config_params/experiments/final_sed_5_fold/final_5fold_sed_dense121_nomix_fold1.yaml
+    scores: final_5fold_sed_dense121_nomix_fold1
+  - name: final_5fold_sed_dense121_nomix_fold2
+    family: nomix_5fold
+    experiment: config_params/experiments/final_sed_5_fold/final_5fold_sed_dense121_nomix_fold2.yaml
+    scores: final_5fold_sed_dense121_nomix_fold2
+  - name: final_5fold_sed_dense121_nomix_fold3
+    family: nomix_5fold
+    experiment: config_params/experiments/final_sed_5_fold/final_5fold_sed_dense121_nomix_fold3.yaml
+    scores: final_5fold_sed_dense121_nomix_fold3
+  - name: final_5fold_sed_dense121_nomix_fold4
+    family: nomix_5fold
+    experiment: config_params/experiments/final_sed_5_fold/final_5fold_sed_dense121_nomix_fold4.yaml
+    scores: final_5fold_sed_dense121_nomix_fold4
+  # The four fold family, with mixup.
+  - name: final_sed_dense121_mix_fold0
+    family: mix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_mix_fold0.yaml
+    scores: final_sed_dense121_mix_fold0
+  - name: final_sed_dense121_mix_fold1
+    family: mix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_mix_fold1.yaml
+    scores: final_sed_dense121_mix_fold1
+  - name: final_sed_dense121_mix_fold2
+    family: mix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_mix_fold2.yaml
+    scores: final_sed_dense121_mix_fold2
+  - name: final_sed_dense121_mix_fold3
+    family: mix_4fold
+    experiment: config_params/experiments/final_sed/final_sed_dense121_mix_fold3.yaml
+    scores: final_sed_dense121_mix_fold3

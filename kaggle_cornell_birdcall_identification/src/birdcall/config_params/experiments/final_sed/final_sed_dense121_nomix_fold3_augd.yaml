@@ -1,0 +1,36 @@
+name: final_sed_dense121_nomix_fold3_augd
+fold: 3
+modules:
+- model
+- augmentation
+- loss
+- optimizer
+- scheduler
+- data
+- metrics
+- logging
+- checkpoint
+- runtime
+overrides:
+  criterion_name: sed_scaled_pos_neg_focal_loss_augd
+  criterion_params:
+    primary_drop_out_factor: 0.3
+  weight_decay: 0.001
+  train_ds_params:
+    csv_dir: /folds/fold_3_train.csv
+  valid_ds_params:
+    csv_dir: /folds/fold_3_test.csv
+  test_ds_params:
+    csv_dir: /folds/fold_3_test.csv
+  train_bs: 24
+  logger_params:
+    name: final_sed_dense121_nomix_fold3_augd
+    prefix_name: final_sed_dense121_nomix_fold3_augd_best
+    tags:
+    - 3
+    - final_sed_dense121_nomix_fold3_augd
+    - sed_dense121att
+    - sed_scaled_pos_neg_focal_loss_augd
+  checkpoint_params:
+    save_dir: /saved_models/final_sed_dense121_nomix_fold3_augd
+    prefix_name: final_sed_dense121_nomix_fold3_augd

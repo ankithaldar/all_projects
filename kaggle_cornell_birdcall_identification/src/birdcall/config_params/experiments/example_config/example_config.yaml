@@ -1,0 +1,35 @@
+name: example_config
+fold: 0
+modules:
+- model
+- augmentation
+- loss
+- optimizer
+- scheduler
+- data
+- metrics
+- logging
+- checkpoint
+- runtime
+overrides:
+  aug_name: secondary_default
+  bckgrd_aug_dir: pinknoise
+  secondary_bckgrd_aug_dir: pinknoise
+  train_ds_params:
+    root_dir: data
+    csv_dir: fold_0_train.csv
+  valid_ds_params:
+    root_dir: data
+    csv_dir: fold_0_test.csv
+    background_audio_dir: background/data_ssw
+  test_ds_params:
+    root_dir: data
+    csv_dir: fold_0_test.csv
+    background_audio_dir: background/data_ssw
+  train_bs: 28
+  logger_params:
+    project_name: NEPTUNE_PROJECT_NAME
+  checkpoint_params:
+    save_dir: saved_models/example_config
+    n_saved: 10
+    prefix_name: example_config

@@ -1,0 +1,96 @@
+[build-system]
+requires = ['setuptools>=68', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'birdcall'
+version = '0.1.0'
+description = 'Cornell Birdcall Identification: PyTorch Lightning and TensorFlow/Keras ports of the 1st-place solution'
+readme = 'README.md'
+requires-python = '>=3.11,<3.14'
+license = { text = 'MIT' }
+keywords = ['audio', 'birdcall', 'sed', 'kaggle', 'pytorch-lightning', 'keras']
+classifiers = [
+  'Programming Language :: Python :: 3.12',
+  'Topic :: Scientific/Engineering :: Artificial Intelligence',
+]
+
+# The two backends live in one environment on purpose: the cross-backend
+# parity tests import torch and tensorflow in the same process, and a
+# submission produced by one backend must be byte-identical to the other's.
+dependencies = [
+  'numpy>=1.26,<2',
+  'pydantic>=2.7',
+  'pyyaml>=6',
+  'pandas>=2',
+  'scikit-learn>=1.3',
+  'soundfile>=0.12',
+  'tqdm>=4.35',
+  'psutil>=5.6',
+  'wandb>=0.16',
+  'torch>=2.2',
+  'torchvision>=0.17',
+  'lightning>=2.2,<3',
+  'torchmetrics>=1.0',
+]
+
+[project.optional-dependencies]
+# The Keras backend. TensorFlow has no stable wheel for Python 3.14.
+tf = [
+  'tensorflow>=2.16,<2.21',
+  'keras>=3.5',
+]
+# The waveform augmentation stack. audiomentations 0.11.0 is pinned because
+# its AddGaussianSNR treats min_SNR/max_SNR as a linear amplitude ratio; a
+# different version changes the experiment.
+augment = [
+  'audiomentations==0.11.0',
+]
+# Build-time only. librosa is needed to build the Slaney mel matrix, which
+# is then committed as a .npy so that neither backend needs librosa at
+# runtime. librosa 0.10.2 needs the older numba API.
+build = [
+  'librosa==0.10.2',
+  'numba>=0.60',
+  'soxr',
+]
+
+[project.scripts]
+birdcall-train-pl = 'birdcall.train_pl:main'
+birdcall-train-tf = 'birdcall.train_tf:main'
+birdcall-vote = 'birdcall.run_vote:main'
+birdcall-reproduce = 'birdcall.reproduce:main'
+
+[project.urls]
+Documentation = 'https://github.com/local/birdcall/tree/main/docs'
+
+[tool.setuptools]
+package-dir = { '' = 'src' }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ['src']
+
+[tool.setuptools.package-data]
+birdcall = [
+  'assets/*.npy',
+  'config_params/*.yaml',
+  'config_params/*.json',
+  'config_params/**/*.yaml',
+]
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '--strict-markers'
+markers = [
+  'parity: cross-backend parity checks (torch versus keras)',
+  'slow: tests that take more than a few seconds',
+]
+filterwarnings = [
+  'ignore::DeprecationWarning',
+  'ignore::UserWarning',
+]
+
+# NOTE: pylint configuration lives in the repository root .pylintrc and is
+# deliberately NOT duplicated here. Adding a [tool.pylint] section would
+# override that file, and the root file is read-only for this project.

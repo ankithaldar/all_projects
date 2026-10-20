@@ -1,0 +1,11 @@
+logger_name: wandb
+logger_params:
+  project_name: bird-song
+  log_every: 10
+  name: example_config
+  prefix_name: example_config_best
+  tags:
+  - 0
+  - example_config
+  - sed_dense121att
+  - sed_scaled_pos_neg_focal_loss

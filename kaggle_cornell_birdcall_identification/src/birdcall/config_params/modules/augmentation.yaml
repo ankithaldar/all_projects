@@ -1,0 +1,4 @@
+aug_name: default
+apply_mixup: false
+bckgrd_aug_dir: /pinknoise
+secondary_bckgrd_aug_dir: null

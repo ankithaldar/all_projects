@@ -1,0 +1,29 @@
+# The PyTorch Lightning backend. The TensorFlow/Keras backend is in
+# requirements-tf.txt; the two are installed into the same environment on
+# purpose, because the cross-backend parity tests import both.
+#
+#   pip install -r requirements.txt -r requirements-tf.txt
+#
+# torch, torchvision, tensorflow and keras are deliberately NOT pinned to
+# exact versions here: the lock file is the reproduction recipe, and these
+# ranges are the readable summary of it. Python must be 3.12 or 3.13 --
+# TensorFlow has no stable wheel for 3.14.
+
+numpy>=1.26,<2
+pydantic>=2.7
+pyyaml>=6
+pandas>=2
+scikit-learn>=1.3
+soundfile>=0.12
+tqdm>=4.35
+psutil>=5.6
+wandb>=0.16
+torch>=2.2
+torchvision>=0.17
+lightning>=2.2,<3
+torchmetrics>=1.0
+
+# The waveform augmentation stack. audiomentations 0.11.0 is pinned because
+# its AddGaussianSNR treats min_SNR/max_SNR as a linear amplitude ratio;
+# a different version changes the experiment.
+audiomentations==0.11.0
