@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The smoke test.
+# pylint: disable=import-outside-toplevel
+'''The smoke test.
 
 The suite's foundation, and the layer with the highest ratio of cost to value:
 import every module, instantiate every configuration component, and exercise one
@@ -21,7 +22,7 @@ proves the name resolves; construction proves every name the constructor reads
 was actually bound, which is the class of mistake an import cannot see.
 
 This module is that test.
-"""
+'''
 
 from __future__ import annotations
 
@@ -121,20 +122,20 @@ MODULES = [
 
 @pytest.mark.parametrize('module_name', MODULES)
 def test_module_imports(module_name: str) -> None:
-  """Every module must import cleanly.
+  '''Every module must import cleanly.
 
   Args:
     module_name: The dotted module path.
-  """
+  '''
   assert importlib.import_module(module_name) is not None
 
 
 def test_every_submodule_is_listed() -> None:
-  """No module may exist without appearing in the import list above.
+  '''No module may exist without appearing in the import list above.
 
   A routine added to the library and a test not added to the suite is exactly the
   drift this check exists to prevent.
-  """
+  '''
   # walk_packages prefixes intermediate packages too (e.g. "core" for
   # "core.metadata"), so each dotted part is stripped back to a bare name before
   # the full path is rebuilt -- otherwise every name is double-prefixed.
@@ -151,11 +152,11 @@ def test_every_submodule_is_listed() -> None:
 
 
 def test_every_routine_instantiates() -> None:
-  """Every routine must construct from empty configuration.
+  '''Every routine must construct from empty configuration.
 
   This is the check that catches a routine whose ``__init__`` references a name
   it never bound -- the issue class that made a whole transform unrunnable.
-  """
+  '''
   for name, routine in AVAILABLE_ROUTINES.items():
     instance = routine(global_params=None, params={})
     assert instance.name == name or instance.name, f'{name} did not set its display name'
@@ -169,11 +170,11 @@ def test_every_routine_instantiates() -> None:
 
 
 def test_every_routine_declares_cols() -> None:
-  """Every routine must declare the ``cols`` block its resolver reads.
+  '''Every routine must declare the ``cols`` block its resolver reads.
 
   Args:
     None.
-  """
+  '''
   for name, routine in AVAILABLE_ROUTINES.items():
     defaults = routine(global_params=None, params={}).get_default_dict()
     assert 'cols' in defaults, f'{name} does not declare a cols block'
@@ -181,12 +182,12 @@ def test_every_routine_declares_cols() -> None:
 
 
 def test_every_dataset_configures() -> None:
-  """Every dataset must validate its configuration without performing I/O.
+  '''Every dataset must validate its configuration without performing I/O.
 
   This is the check that catches an adapter that dereferences an attribute
   ``__init__`` never assigned -- the issue that made upsert mode fail on every
   attempt while being advertised as a supported write mode.
-  """
+  '''
   table = CustomSparkBQDataSet(table_name='t', database='p.d', write_mode='upsert')
   assert table._describe()['write_mode'] == 'upsert'
   assert table._parent_project is None
@@ -202,11 +203,11 @@ def test_every_dataset_configures() -> None:
   'write_mode', ['insert', 'upsert', 'overwrite', 'insert_overwrite', 'create_replace']
 )
 def test_every_write_mode_is_dispatchable(write_mode: str) -> None:
-  """Every advertised write mode must have an implementation.
+  '''Every advertised write mode must have an implementation.
 
   Args:
     write_mode: The mode under test.
-  """
+  '''
   dataset = CustomSparkBQDataSet(table_name='t', database='p.d', write_mode=write_mode)
   dispatch = {
     'insert': dataset._insert_save,
@@ -219,14 +220,14 @@ def test_every_write_mode_is_dispatchable(write_mode: str) -> None:
 
 
 def test_routine_catalogue_command_runs(capsys: Any) -> None:
-  """The catalogue command must construct every routine it lists.
+  '''The catalogue command must construct every routine it lists.
 
   Listing a routine the command cannot instantiate is worse than not listing it,
   so the command is exercised rather than merely imported.
 
   Args:
     capsys: pytest's output capture.
-  """
+  '''
   from forecasting_ml_framework.cli import routine_catalogue  # noqa: PLC0415
 
   routine_catalogue.callback()
@@ -237,11 +238,11 @@ def test_routine_catalogue_command_runs(capsys: Any) -> None:
 
 
 def test_pipeline_description_command_runs(capsys: Any) -> None:
-  """The graph-description command must render a registered topology.
+  '''The graph-description command must render a registered topology.
 
   Args:
     capsys: pytest's output capture.
-  """
+  '''
   from forecasting_ml_framework.cli import pipeline_description  # noqa: PLC0415
   from forecasting_ml_framework.pipelines.registry import PipelineTopology  # noqa: PLC0415
 
@@ -270,7 +271,7 @@ def test_invalid_write_mode_is_rejected() -> None:
 
 
 def test_spark_backed_dataset_refuses_pickling() -> None:
-  """A Spark-backed dataset must refuse serialisation with a legible error."""
+  '''A Spark-backed dataset must refuse serialisation with a legible error.'''
   import pickle  # noqa: PLC0415
 
   with pytest.raises(pickle.PicklingError):
@@ -278,13 +279,13 @@ def test_spark_backed_dataset_refuses_pickling() -> None:
 
 
 def test_optional_components_construct() -> None:
-  """The custom loader, the Spark-aware context and the transformer tier.
+  '''The custom loader, the Spark-aware context and the transformer tier.
 
   None of these sit on the default training path, so an undefined name in any of
   them is latent by construction -- the code parses, imports, and is never
   reached. Each is therefore instantiated here rather than merely imported, so
   the check is the one that would actually have failed.
-  """
+  '''
   assert RuntimeResolverConfigLoader is not None
   assert ForecastingSparkContext is not None
   # An absent environment must resolve to the managed defaults. This is the
@@ -306,12 +307,12 @@ def test_optional_components_construct() -> None:
 
 
 def test_config_loader_accepts_its_arguments() -> None:
-  """The config loader must read the arguments it was given.
+  '''The config loader must read the arguments it was given.
 
   reading ``self.env`` and ``self.config_patterns``, which
   its parent class never set, so it raised ``AttributeError`` the moment it was
   enabled.
-  """
+  '''
   loader = RuntimeResolverConfigLoader(
     conf_source='conf', base_env='base', default_run_env='local', config_patterns={'globals': ['globals.yml']}
   )

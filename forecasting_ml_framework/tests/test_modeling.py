@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Tests for the modelling tier: calibration, thresholds, metrics and the gate."""
+'''Tests for the modelling tier: calibration, thresholds, metrics and the gate.'''
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from forecasting_ml_framework.modeling.promotion import decide_promotion
 
 @pytest.fixture
 def labelled_scores() -> pd.DataFrame:
-  """Return a labelled frame with a strong, well-separated score.
+  '''Return a labelled frame with a strong, well-separated score.
 
   Returns:
     A pandas ``DataFrame`` with a label, a hard prediction and a score.

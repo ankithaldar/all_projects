@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The dataframe schema contract carried between nodes.
+'''The dataframe schema contract carried between nodes.
 
 ``Metadata`` is the single source of truth for the model feature vector. The
 ``feature_resolution`` method is the most consequential piece of the domain
 layer: every model resolves its features exactly once, during ``train``, and the
 result is baked into the pickled model handle. That is what makes the handle a
 self-describing, self-sufficient artefact.
-"""
+'''
 
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ LOGGER = get_logger(__name__)
 
 
 class Metadata:
-  """A mutable, serialisable description of the frame flowing between nodes.
+  '''A mutable, serialisable description of the frame flowing between nodes.
 
   The object carries the declared column roles, the derived imbalance statistics
   produced by the sampling stage, and the operating-point configuration mirrored
   by the trainer. It is passed by reference between routines, so the mutation
   discipline is deliberate and documented per member: routines that *write* new
   features take a defensive copy, routines that merely read do not.
-  """
+  '''
 
   #: Column-role attributes that :meth:`feature_resolution` can address by name.
   ROLE_ATTRIBUTES = (
@@ -50,7 +50,7 @@ class Metadata:
     id_cols: Sequence[str] | None = None,
     intermediate_file_path: str | None = None,
   ) -> None:
-    """Build the metadata object.
+    '''Build the metadata object.
 
     Args:
       target_col: The label column name.
@@ -63,7 +63,7 @@ class Metadata:
       id_cols: Identifier columns used for projection and join keys.
       intermediate_file_path: Root under which routines that cannot pickle their
         fitted state in place write external artefacts.
-    """
+    '''
     self.target_col = target_col
     self.feature_cols = list(feature_cols) if feature_cols else []
     self.numerical_cols = list(numerical_cols) if numerical_cols else []
@@ -92,18 +92,18 @@ class Metadata:
   # Introspection
   # ---------------------------------------------------------------------- #
   def copy(self) -> Metadata:
-    """Return a deep copy of this object.
+    '''Return a deep copy of this object.
 
     Routines that mutate the contract take a copy first, so a mutation cannot
     escape into the caller's frame unintentionally.
 
     Returns:
       A deep copy.
-    """
+    '''
     return copy_module.deepcopy(self)
 
   def clean_duplicates(self) -> None:
-    """Deduplicate every column list while preserving first-seen order."""
+    '''Deduplicate every column list while preserving first-seen order.'''
     for attribute in self.ROLE_ATTRIBUTES:
       seen: set[str] = set()
       ordered: list[str] = []
@@ -114,21 +114,21 @@ class Metadata:
       setattr(self, attribute, ordered)
 
   def __str__(self) -> str:
-    """Render the contract for the run log.
+    '''Render the contract for the run log.
 
     Returns:
       A comma-joined ``key: value`` string.
-    """
+    '''
     return ', '.join(
       f'{key}: {value}' for key, value in self.__dict__.items() if value not in (None, [], {})
     )
 
   def __repr__(self) -> str:
-    """Render a short, unambiguous representation.
+    '''Render a short, unambiguous representation.
 
     Returns:
       The representation string.
-    """
+    '''
     return (
       f'Metadata(target_col={self.target_col!r}, features={len(self.feature_cols)}, '
       f'numerical={len(self.numerical_cols)}, categorical={len(self.categorical_cols)}, '
@@ -144,7 +144,7 @@ class Metadata:
     feature_exclusions: Sequence[str] | None = None,
     feature_inclusions: Sequence[str] | None = None,
   ) -> list[str]:
-    """Resolve the ordered feature list for a routine or a trainer.
+    '''Resolve the ordered feature list for a routine or a trainer.
 
     The resolution is *double-gated*: a column must appear both in the requested
     role and in ``feature_cols``. The two failure modes this prevents are the
@@ -170,7 +170,7 @@ class Metadata:
 
     Returns:
       The resolved, ordered feature list.
-    """
+    '''
     candidates: list[str] = []
     for arg in args or ():
       if isinstance(arg, str):
@@ -191,7 +191,7 @@ class Metadata:
   # Mutation helpers used by the routine family
   # ---------------------------------------------------------------------- #
   def register_derived_feature(self, name: str, *, numerical: bool = True) -> None:
-    """Register a column emitted by a transform as a model feature.
+    '''Register a column emitted by a transform as a model feature.
 
     The double registration in ``feature_cols`` *and* ``numerical_cols`` is the
     established protocol of the routine family: it makes the new column visible
@@ -200,14 +200,14 @@ class Metadata:
     Args:
       name: The emitted column name.
       numerical: Whether the column should also enter ``numerical_cols``.
-    """
+    '''
     self.feature_cols.append(name)
     if numerical:
       self.numerical_cols.append(name)
     self.clean_duplicates()
 
   def replace_feature(self, old_name: str, new_name: str, *, numerical: bool = True) -> None:
-    """Replace a source column with an encoded derivative of it.
+    '''Replace a source column with an encoded derivative of it.
 
     The retired name is removed from *every* role list it appears in, not only from
     ``feature_cols``. Leaving it behind produced a contract describing columns the
@@ -219,7 +219,7 @@ class Metadata:
       old_name: The column to retire.
       new_name: The column that replaces it.
       numerical: Whether the new column should enter ``numerical_cols``.
-    """
+    '''
     self.feature_cols = [column for column in self.feature_cols if column != old_name]
     self.numerical_cols = [column for column in self.numerical_cols if column != old_name]
     self.categorical_cols = [column for column in self.categorical_cols if column != old_name]
@@ -229,21 +229,21 @@ class Metadata:
     self.clean_duplicates()
 
   def reclassify_as_numerical(self, names: Iterable[str]) -> None:
-    """Move columns from the categorical namespace to the numerical namespace.
+    '''Move columns from the categorical namespace to the numerical namespace.
 
     Used by target-supervised binning, whose output is a numeric bin index even
     when the input was a string category.
 
     Args:
       names: The columns to reclassify.
-    """
+    '''
     wanted = set(names)
     self.categorical_cols = [column for column in self.categorical_cols if column not in wanted]
     self.numerical_cols.extend(sorted(wanted))
     self.clean_duplicates()
 
   def detach_sequence_features(self) -> list[str]:
-    """Remove array columns from the feature list before they reach an estimator.
+    '''Remove array columns from the feature list before they reach an estimator.
 
     The sequence family registers its *summaries*, which are scalar and
     estimator-consumable, but the array column it read from is itself a member of
@@ -253,7 +253,7 @@ class Metadata:
 
     Returns:
       The array columns that were removed.
-    """
+    '''
     if not self.seq_cols:
       return []
     sequences = set(self.seq_cols)
@@ -269,14 +269,14 @@ class Metadata:
 
 
 def _dedupe(values: Iterable[str]) -> list[str]:
-  """Deduplicate an iterable while preserving first-seen order.
+  '''Deduplicate an iterable while preserving first-seen order.
 
   Args:
     values: The values to deduplicate.
 
   Returns:
     The ordered unique values.
-  """
+  '''
   seen: set[str] = set()
   ordered: list[str] = []
   for value in values:

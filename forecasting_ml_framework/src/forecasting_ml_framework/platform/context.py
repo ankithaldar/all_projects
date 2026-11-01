@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Programmatic pipeline execution and the Spark-aware Kedro context.
+'''Programmatic pipeline execution and the Spark-aware Kedro context.
 
 A Spark-aware context is what lets the framework be exercised outside a cluster:
 it constructs the session before any node runs and hands the run's parameters to
@@ -12,7 +12,7 @@ under the name the session builder binds, and the configuration loader reads
 only attributes its parent actually assigns -- a name that is read but never set
 is an ``AttributeError`` at first use, which is the worst possible moment to
 discover it.
-"""
+'''
 
 from __future__ import annotations
 
@@ -34,29 +34,29 @@ except Exception:  # noqa: BLE001 - allow import without kedro installed
 
 
 class ForecastingSparkContext(_CONTEXT_BASE):  # type: ignore[misc,valid-type]
-  """A Kedro context that constructs a Spark session with the BigQuery connector.
+  '''A Kedro context that constructs a Spark session with the BigQuery connector.
 
   The context delegates entirely to the single session builder in
   :mod:`forecasting_ml_framework.platform.spark`, so the connector coordinates
   and the credential refresh have exactly one definition regardless of which
   component created the session first.
-  """
+  '''
 
   def __init__(self, *args: Any, **kwargs: Any) -> None:
-    """Build the context.
+    '''Build the context.
 
     Args:
       *args: Positional arguments forwarded to the parent context.
       **kwargs: Keyword arguments forwarded to the parent context.
-    """
+    '''
     super().__init__(*args, **kwargs)
 
   def _get_spark_session(self) -> Any:
-    """Return the session, constructing it on first use.
+    '''Return the session, constructing it on first use.
 
     Returns:
       The live ``SparkSession``.
-    """
+    '''
     if getattr(self, '_spark', None) is not None:
       return self._spark
     params = dict(getattr(self, 'params', {}) or {})
@@ -71,14 +71,14 @@ class ForecastingSparkContext(_CONTEXT_BASE):  # type: ignore[misc,valid-type]
     return session
 
   def close(self) -> None:
-    """Release the Spark session held by this context."""
+    '''Release the Spark session held by this context.'''
     if getattr(self, '_spark', None) is not None:
       self._spark.stop()
       self._spark = None
 
 
 def init_spark_session(runtime_params: dict[str, Any] | None = None) -> Any:
-  """Construct the Spark session for a Kedro session.
+  '''Construct the Spark session for a Kedro session.
 
   This is a ``kedro_spark.init_spark_session`` shape, extended so the connector
   credential is configured from the resolved environment rather than being assumed.
@@ -93,7 +93,7 @@ def init_spark_session(runtime_params: dict[str, Any] | None = None) -> Any:
     SparkSessionError: If hosted mode is requested but no credential was obtained.
     A hosted run without a credential would otherwise fail at its first warehouse
     read, which points at the connector rather than at the missing credential.
-  """
+  '''
   session, _ = get_spark_session(params=runtime_params or {}, apply_tuning=True)
   configured = ACCESS_TOKEN_CONFIG_KEY in session.conf.getAll()
   environment = resolve_environment(runtime_params)

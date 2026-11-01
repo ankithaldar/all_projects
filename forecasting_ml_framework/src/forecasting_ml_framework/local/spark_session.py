@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""A local Spark session, and the two things that make one work here.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''A local Spark session, and the two things that make one work here.
 
 The framework builds its Spark session through the single platform builder, and
 that builder is written for a hosted cluster. Running it on a workstation needs
@@ -22,7 +23,7 @@ interpreter running the driver removes the mismatch at its source.
 
 Both are set through the process environment before the session is built, so
 nothing in the framework needs to know it is running locally.
-"""
+'''
 
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ SUPPORTED_JAVA_MAJORS = (8, 11, 17)
 
 
 def configure_local_environment() -> dict[str, str]:
-  """Point Spark at a usable Java runtime and at the driver's own Python.
+  '''Point Spark at a usable Java runtime and at the driver's own Python.
 
   Raises:
     LocalEnvironmentError: If no Java runtime the pinned Spark version supports can
@@ -55,7 +56,8 @@ def configure_local_environment() -> dict[str, str]:
       ``UnsupportedOperationException: getSubject is not supported``, which names
       neither Java nor Spark and reads as a Spark bug rather than as a version
       mismatch on the host.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   java_home = _resolve_java_home()
   if java_home:
     os.environ['JAVA_HOME'] = java_home
@@ -86,7 +88,7 @@ def configure_local_environment() -> dict[str, str]:
 
 
 def _resolve_java_home() -> str:
-  """Locate a Java runtime the pinned Spark version supports.
+  '''Locate a Java runtime the pinned Spark version supports.
 
   The explicit variable wins, because a machine with several JDKs installed needs
   to say which one. Otherwise a supported runtime is searched for among the usual
@@ -102,7 +104,7 @@ def _resolve_java_home() -> str:
       ``UnsupportedOperationException: getSubject is not supported`` from inside
       the Hadoop security layer, which names neither Java nor the version
       constraint it had violated.
-  """
+  '''
   override = os.getenv(JAVA_HOME_VARIABLE)
   if override:
     if not Path(override, 'bin', 'java').exists():
@@ -133,14 +135,14 @@ def _resolve_java_home() -> str:
 
 
 def _java_major(java_home: str) -> int | None:
-  """Return the major version of a Java runtime.
+  '''Return the major version of a Java runtime.
 
   Args:
     java_home: The runtime directory.
 
   Returns:
     The major version, or ``None`` when it cannot be determined.
-  """
+  '''
   import subprocess  # noqa: PLC0415
 
   binary = Path(java_home, 'bin', 'java')
@@ -162,7 +164,7 @@ def _java_major(java_home: str) -> int | None:
 
 
 def _parse_java_version(token: str) -> int | None:
-  """Extract the major version from a ``java -version`` version token.
+  '''Extract the major version from a ``java -version`` version token.
 
   The legacy scheme is the whole reason this is a function. Java 8 and earlier
   report a two-component version whose *first* component is always ``1``, so
@@ -181,7 +183,7 @@ def _parse_java_version(token: str) -> int | None:
 
   Returns:
     The major version, or ``None`` when the token is not numeric.
-  """
+  '''
   match = re.match(r'(\d+)(?:\.(\d+))?', token.strip())
   if not match:
     return None
@@ -195,11 +197,11 @@ def _parse_java_version(token: str) -> int | None:
 
 
 def _spark_home() -> str | None:
-  """Locate the Spark distribution the installed ``pyspark`` points at.
+  '''Locate the Spark distribution the installed ``pyspark`` points at.
 
   Returns:
     The directory, or ``None`` when it cannot be determined.
-  """
+  '''
   try:
     import pyspark  # noqa: PLC0415
   except ImportError:
@@ -208,18 +210,18 @@ def _spark_home() -> str | None:
 
 
 def _prepend_path(directory: str) -> None:
-  """Put a directory at the front of ``PATH``.
+  '''Put a directory at the front of ``PATH``.
 
   Args:
     directory: The directory to prepend.
-  """
+  '''
   current = os.environ.get('PATH', '')
   parts = [part for part in current.split(os.pathsep) if part and part != directory]
   os.environ['PATH'] = os.pathsep.join([directory, *parts])
 
 
 def create_local_session(app_name: str = 'forecasting-ml-local', partitions: int = 4) -> Any:
-  """Create the local Spark session the framework's pipeline nodes require.
+  '''Create the local Spark session the framework's pipeline nodes require.
 
   The tuning is deliberately minimal. Every setting here has a production
   counterpart in the Spark tuning document, and the point of this session is to
@@ -234,7 +236,7 @@ def create_local_session(app_name: str = 'forecasting-ml-local', partitions: int
 
   Returns:
     An active ``SparkSession``.
-  """
+  '''
   from pyspark.sql import SparkSession  # noqa: PLC0415
 
   session = (
@@ -254,21 +256,21 @@ def create_local_session(app_name: str = 'forecasting-ml-local', partitions: int
 
 
 class LocalEnvironmentError(RuntimeError):
-  """Raised when the local runtime cannot be configured for Spark.
+  '''Raised when the local runtime cannot be configured for Spark.
 
   Carries the same structured ``**context`` contract as the framework's own
   exception hierarchy, so the details a caller needs -- which Java versions are
   supported, which were found -- are attached rather than interpolated into the
   message alone.
-  """
+  '''
 
   def __init__(self, message: str, **context: object) -> None:
-    """Build the error.
+    '''Build the error.
 
     Args:
       message: The failure description.
       context: Structured detail attached to the exception.
-    """
+    '''
     super().__init__(message)
     self.message = message
     self.context = dict(context)

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Versioned parquet dataset over any ``fsspec`` filesystem.
+'''Versioned parquet dataset over any ``fsspec`` filesystem.
 
 This is the natural replacement when a versioned, partitioned
 on-object-storage layout is wanted, and it is a supported catalog ``type:``.
-"""
+'''
 
 from __future__ import annotations
 
@@ -19,12 +19,13 @@ LOGGER = get_logger(__name__)
 
 
 class ParquetDataSet(AbstractDataset):
-  """A pandas ``DataFrame`` stored as parquet, single-file or partitioned.
+  '''A pandas ``DataFrame`` stored as parquet, single-file or partitioned.
 
   Attributes:
     _version: An optional path segment, which is what makes a rerun reversible.
     _partitioned: Whether the path is a directory of parts rather than a file.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(
     self,
@@ -35,7 +36,7 @@ class ParquetDataSet(AbstractDataset):
     load_args: dict[str, Any] | None = None,
     save_args: dict[str, Any] | None = None,
   ) -> None:
-    """Validate the configuration eagerly; perform no I/O.
+    '''Validate the configuration eagerly; perform no I/O.
 
     Args:
       filepath: A ``fsspec`` path, with or without the parquet suffix.
@@ -47,7 +48,7 @@ class ParquetDataSet(AbstractDataset):
 
     Raises:
       DatasetError: If no filepath is supplied.
-    """
+    '''
     if not filepath:
       raise DatasetError("Missing required configuration 'filepath'")
     self._base_filepath = filepath
@@ -59,11 +60,11 @@ class ParquetDataSet(AbstractDataset):
     self._versioned_path = f'{filepath.rstrip("/")}/{version}' if version else filepath.rstrip('/')
 
   def _describe(self) -> dict[str, Any]:
-    """Return every configuration key.
+    '''Return every configuration key.
 
     Returns:
       A mapping suitable for the run log.
-    """
+    '''
     return {
       'filepath': self._versioned_path,
       'version': self._version,
@@ -71,14 +72,14 @@ class ParquetDataSet(AbstractDataset):
     }
 
   def _load(self) -> Any:
-    """Read the parquet payload.
+    '''Read the parquet payload.
 
     Returns:
       A pandas ``DataFrame``.
 
     Raises:
       DatasetError: If the payload is absent or unreadable.
-    """
+    '''
     import pandas as pd  # noqa: PLC0415
 
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
@@ -94,11 +95,11 @@ class ParquetDataSet(AbstractDataset):
       raise DatasetError(f'Unable to read the parquet payload at {path}', filepath=path, error=str(error)) from error
 
   def _save(self, data: Any) -> None:
-    """Write the parquet payload.
+    '''Write the parquet payload.
 
     Args:
       data: The pandas ``DataFrame`` to write.
-    """
+    '''
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
 
     path = self._resolve(exists_only=False)
@@ -111,7 +112,7 @@ class ParquetDataSet(AbstractDataset):
     LOGGER.info('Wrote parquet dataset', extra={'path': path, 'rows': len(data)})
 
   def _resolve(self, exists_only: bool) -> str:
-    """Resolve the concrete path for a payload.
+    '''Resolve the concrete path for a payload.
 
     The payload is a single columnar file whether or not ``partitioned`` is set.
     The flag is retained for catalogue compatibility and is reported by
@@ -125,6 +126,6 @@ class ParquetDataSet(AbstractDataset):
 
     Returns:
       The resolved path.
-    """
+    '''
     del exists_only
     return f'{self._versioned_path}.parquet'

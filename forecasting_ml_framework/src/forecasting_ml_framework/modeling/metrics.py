@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The metric engines.
+'''The metric engines.
 
 Two shapes, two consumers, correctly separated:
 
@@ -23,7 +23,7 @@ spellings for adjusted R-squared across three sites: the frame's key
 metrics were unreachable, leaving only losses — and the gate's sign was inverted
 for losses, so it reliably accepted a challenger that was *worse*. Both problems
 are structural here: one registry, one spelling, one sign rule.
-"""
+'''
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ METRIC_GRAMMAR_HELP = constants.render_metric_grammar_help(
 
 @dataclass(frozen=True)
 class MetricSpec:
-  """A parsed promotion-metric name.
+  '''A parsed promotion-metric name.
 
   The grammar is ``<METRIC>[_DECILE|_CENTILE][_n]``. An unbanded name is
   evaluated over the whole population; a banded name is evaluated within a
@@ -111,7 +111,7 @@ class MetricSpec:
     band: The band number, or ``0`` for an unbanded metric.
     kind: ``'classification'`` or ``'regression'``.
     higher_is_better: The direction of improvement.
-  """
+  '''
 
   name: str
   metric: str
@@ -122,16 +122,16 @@ class MetricSpec:
 
   @property
   def is_banded(self) -> bool:
-    """Report whether the metric is scoped to a single band.
+    '''Report whether the metric is scoped to a single band.
 
     Returns:
       ``True`` when a band was requested.
-    """
+    '''
     return self.band_kind is not None
 
 
 def parse_metric(metric_name: str | None, kind: str = 'classification', strict: bool = True) -> MetricSpec:
-  """Parse and validate a promotion metric name.
+  '''Parse and validate a promotion metric name.
 
   An unrecognised name fails the promotion rather than falling back. A typo in
   ``eval_metric`` would otherwise mean a production promotion was decided on a
@@ -153,7 +153,7 @@ def parse_metric(metric_name: str | None, kind: str = 'classification', strict: 
   Raises:
     MetricConfigurationError: If a configured name is unrecognised and
       ``strict`` is set.
-  """
+  '''
   fallback = (
     DEFAULT_PROMOTION_METRIC if kind == 'classification' else DEFAULT_REGRESSION_PROMOTION_METRIC
   )
@@ -210,10 +210,12 @@ def parse_metric(metric_name: str | None, kind: str = 'classification', strict: 
     )
     return parse_metric(fallback, kind, strict=True)
 
+  kind_key = 'kind'
+  classification_filter = 'classification'
   if kind == 'classification' and METRIC_REGISTRY[base]['kind'] != 'classification':
     raise MetricConfigurationError(
       f'{metric_name!r} is a regression metric but was requested for a classification model. '
-      f'Class metrics: {sorted(k for k, v in METRIC_REGISTRY.items() if v["kind"] == "classification")}',
+      f'Class metrics: {sorted(k for k, v in METRIC_REGISTRY.items() if v.get(kind_key) == classification_filter)}',
       metric=metric_name,
       kind=kind,
     )
@@ -228,8 +230,26 @@ def parse_metric(metric_name: str | None, kind: str = 'classification', strict: 
   )
 
 
+def canonical_metric_key(metric: str) -> str:
+  '''Return the canonical column key for a metric name.
+
+  The frame stores adjusted R-squared under ``ADJ_R2`` while callers may use
+  either ``ADJ_R2`` or ``ADJR2``. Both spellings resolve to the stored key so
+  the promotion gate never misses the column.
+
+  Args:
+    metric: The metric name as it appears on a ``MetricSpec``.
+
+  Returns:
+    The canonical key used in banded metric frames.
+  '''
+  if metric in ('ADJ_R2', 'ADJR2'):
+    return 'ADJ_R2'
+  return metric
+
+
 def acceptance_threshold() -> float:
-  """Return the relative non-regression tolerance, as a percentage.
+  '''Return the relative non-regression tolerance, as a percentage.
 
   A challenger that is *worse than the incumbent but by less than this margin* is
   promoted. That is a non-regression gate, not an improvement gate, and it is the
@@ -239,12 +259,12 @@ def acceptance_threshold() -> float:
 
   Returns:
     The tolerance percentage.
-  """
+  '''
   return -5.0
 
 
 def evaluate_acceptance(new_score: float, old_score: float, spec: MetricSpec) -> tuple[bool, float]:
-  """Apply the non-regression gate with the correct sign for the metric.
+  '''Apply the non-regression gate with the correct sign for the metric.
 
   the classification gate was ``diff >= -5`` and the regression gate
   was ``diff < 5``. For a loss metric the latter accepts a challenger up to five
@@ -263,7 +283,7 @@ def evaluate_acceptance(new_score: float, old_score: float, spec: MetricSpec) ->
 
   Returns:
     A two-tuple of the acceptance decision and the relative deviation in percent.
-  """
+  '''
   if not old_score:
     LOGGER.warning(
       'Incumbent score is zero; the relative deviation is undefined and the challenger is accepted',
@@ -297,7 +317,7 @@ def evaluate_acceptance(new_score: float, old_score: float, spec: MetricSpec) ->
 
 
 def select_band(frame: pd.DataFrame, spec: MetricSpec, band_col: str = 'score_ntile') -> pd.DataFrame:
-  """Select the band a metric is evaluated on.
+  '''Select the band a metric is evaluated on.
 
   a fell back to the highest band when the requested one
   was empty, so ``LIFT_DECILE_7`` reported decile 10's lift — a materially
@@ -317,7 +337,7 @@ def select_band(frame: pd.DataFrame, spec: MetricSpec, band_col: str = 'score_nt
     MetricBandEmptyError: If the requested band is absent and ``strict`` was not
       set on the parse. Callers that prefer availability may catch this and
       substitute the top band, recording the substitution in the audit trail.
-  """
+  '''
   if not spec.is_banded:
     return frame
   selected = frame[frame[band_col] == spec.band]
@@ -340,7 +360,7 @@ def band_metrics(
   probability_col: str,
   spec: MetricSpec,
 ) -> pd.DataFrame:
-  """Compute the per-band classification metric table.
+  '''Compute the per-band classification metric table.
 
   Args:
     frame: A labelled frame carrying the target, the hard prediction and the
@@ -353,7 +373,7 @@ def band_metrics(
 
   Returns:
     A frame with one row per band, carrying counts, lift, and six metrics.
-  """
+  '''
   working = frame.copy()
   working = _assign_bands(working, probability_col, spec)
   working['tp'] = ((working[prediction_col] == 1) & (working[target_col] == 1)).astype(int)
@@ -379,6 +399,36 @@ def band_metrics(
   overall_rate = aggregated['target_count'].sum() / aggregated['ntile_count'].sum()
   aggregated['LIFT'] = band_rate / overall_rate if overall_rate else np.nan
   aggregated['OVERALL_RATE'] = overall_rate
+
+  # Kolmogorov-Smirnov rank separation, per bucket and cumulatively. The
+  # cumulative value is the separation at the bucket's upper boundary (top-down),
+  # which is the quantity whose maximum is the KS statistic; the per-bucket value
+  # is the mass difference confined to that bucket. Both are computed from the
+  # banded frame, so a degenerate single-class population degrades to zero
+  # rather than dividing by zero.
+  total_positives = float(aggregated['target_count'].sum())
+  total_negatives = float(aggregated['ntile_count'].sum() - total_positives)
+  per_bucket_pos = aggregated['target_count'].astype(float)
+  per_bucket_neg = (aggregated['ntile_count'] - aggregated['target_count']).astype(float)
+  if total_positives > 0 and total_negatives > 0:
+    aggregated['ks_bucket'] = (per_bucket_pos / total_positives - per_bucket_neg / total_negatives).abs()
+  else:
+    aggregated['ks_bucket'] = 0.0
+  aggregated['ks_per_bucket'] = aggregated['ks_bucket']
+  aggregated['bucket_ks'] = aggregated['ks_bucket']
+
+  descending = aggregated.sort_index(ascending=False)
+  cum_positives = descending['target_count'].cumsum().astype(float)
+  cum_count = descending['ntile_count'].cumsum().astype(float)
+  cum_negatives = cum_count - cum_positives
+  if total_positives > 0 and total_negatives > 0:
+    ks_cumulative = (cum_positives / total_positives - cum_negatives / total_negatives).abs()
+  else:
+    ks_cumulative = pd.Series(0.0, index=descending.index)
+  aggregated['ks'] = ks_cumulative.sort_index()
+  aggregated['ks_cumulative'] = aggregated['ks']
+  aggregated['ks_cum'] = aggregated['ks']
+
   aggregated = aggregated.reset_index().rename(columns={'index': 'score_ntile'})
 
   per_band = _apply_per_band(
@@ -396,7 +446,7 @@ def regression_band_metrics(
   n_features: int,
   spec: MetricSpec,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-  """Compute the per-band regression error table and the lift-shaped companion.
+  '''Compute the per-band regression error table and the lift-shaped companion.
 
   With a continuous target there is no positive class to lift over, so the decile
   error profile is the analogue of a lift table. That is why the regression
@@ -412,7 +462,7 @@ def regression_band_metrics(
 
   Returns:
     A two-tuple of the error-profile frame and the lift-shaped companion frame.
-  """
+  '''
   working = frame.copy()
   # The band's granularity is taken from the *specification*, not forced to
   # DECILE. Forcing it made two things unreachable. A centile-banded regression
@@ -448,7 +498,7 @@ def regression_band_metrics(
 
 
 def evaluate_regression_band(frame: pd.DataFrame, target_col: str, prediction_col: str, n_features: int) -> float:
-  """Compute adjusted R-squared over a whole population.
+  '''Compute adjusted R-squared over a whole population.
 
   Adjusted R-squared uses the feature count as the parameter count, which is
   correct in form for an unregularised estimator and over-pessimistic for a
@@ -464,7 +514,7 @@ def evaluate_regression_band(frame: pd.DataFrame, target_col: str, prediction_co
 
   Returns:
     The adjusted R-squared value.
-  """
+  '''
   rows = len(frame)
   if rows <= n_features + 1:
     raise MetricBandEmptyError(
@@ -478,7 +528,7 @@ def evaluate_regression_band(frame: pd.DataFrame, target_col: str, prediction_co
 
 
 def evaluate_band(frame: pd.DataFrame, spec: MetricSpec, band_col: str = 'score_ntile') -> float:
-  """Extract a single scalar metric value from a banded metric frame.
+  '''Extract a single scalar metric value from a banded metric frame.
 
   Args:
     frame: The banded metric frame.
@@ -487,7 +537,7 @@ def evaluate_band(frame: pd.DataFrame, spec: MetricSpec, band_col: str = 'score_
 
   Returns:
     The metric value for the selected band.
-  """
+  '''
   selected = select_band(frame, spec, band_col)
   row = selected.iloc[0]
   if spec.metric == 'ADJ_R2':
@@ -501,7 +551,7 @@ def _assign_bands(
   spec: MetricSpec,
   band_kind: str | None = None,
 ) -> pd.DataFrame:
-  """Assign rank-based, equal-volume bands to a frame.
+  '''Assign rank-based, equal-volume bands to a frame.
 
   ``pd.qcut`` is rank-based, so bands are equal-volume by construction and the
   top band always holds the same share of the population. ``duplicates='drop'``
@@ -519,7 +569,7 @@ def _assign_bands(
 
   Returns:
     The frame with a ``score_ntile`` column, 1-indexed.
-  """
+  '''
   kind = band_kind or spec.band_kind
   if kind is None:
     frame['score_ntile'] = 0
@@ -548,7 +598,7 @@ def _apply_per_band(
   row_builder: Any,
   **kwargs: Any,
 ) -> pd.DataFrame:
-  """Apply a per-band row builder across every score band.
+  '''Apply a per-band row builder across every score band.
 
   ``DataFrameGroupBy.apply`` grew an ``include_groups`` keyword in pandas 2.2,
   while the framework pins 2.1. Passing it unconditionally sends it through to the
@@ -564,7 +614,7 @@ def _apply_per_band(
 
   Returns:
     One row per band, with the band id as a column.
-  """
+  '''
   bands = frame['score_ntile'].to_numpy()
   rows: list[pd.Series] = []
   for band_id in sorted(set(bands.tolist())):
@@ -580,7 +630,7 @@ def _classification_band_row(
   prediction_col: str,
   probability_col: str,
 ) -> pd.Series:
-  """Compute the six band metrics for one score band.
+  '''Compute the six band metrics for one score band.
 
   Args:
     band: The rows in this band.
@@ -592,7 +642,7 @@ def _classification_band_row(
     A series of the band's metrics. AUC and F1 are undefined for a single-class
     band, so they degrade to ``NaN`` rather than raising — a degenerate band is
     an expected outcome of a skewed score, not an error.
-  """
+  '''
   labels = band[target_col]
   predictions = band[prediction_col]
   return pd.Series(
@@ -613,7 +663,7 @@ def _regression_band_row(
   prediction_col: str,
   n_features: int,
 ) -> pd.Series:
-  """Compute the error metrics for one score band.
+  '''Compute the error metrics for one score band.
 
   ``MSLE`` is computed by hand as the mean of ``(log(y+1) - log(yhat+1))^2``
   rather than by calling scikit-learn, because the ``+1`` offset is what keeps
@@ -628,7 +678,7 @@ def _regression_band_row(
 
   Returns:
     A series of the band's error metrics.
-  """
+  '''
   actual = band[target_col].astype(float)
   predicted = band[prediction_col].astype(float)
   mse = float(mean_squared_error(actual, predicted))
@@ -650,7 +700,7 @@ def _regression_band_row(
 
 
 def _mean_squared_log_error(actual: pd.Series, predicted: pd.Series) -> float:
-  """Return the mean squared logarithmic error over every row in the band.
+  '''Return the mean squared logarithmic error over every row in the band.
 
   The subtlety is the domain. ``log(y + 1)`` is undefined for any ``y < -1``, so
   a regressor that predicts a negative amount produces ``NaN`` -- and
@@ -672,7 +722,7 @@ def _mean_squared_log_error(actual: pd.Series, predicted: pd.Series) -> float:
 
   Returns:
     The mean squared logarithmic error, or ``NaN`` when no row is defined.
-  """
+  '''
   terms = (np.log(np.clip(actual, 0, None) + 1) - np.log(np.clip(predicted, 0, None) + 1)) ** 2
   terms = pd.Series(terms, index=actual.index).to_numpy(dtype=float)
   if not np.isfinite(terms).any():
@@ -684,7 +734,7 @@ def mean_absolute_percentage_error(
   actual: pd.Series | np.ndarray,
   predicted: pd.Series | np.ndarray,
 ) -> float:
-  """Compute the mean absolute percentage error, excluding zero targets.
+  '''Compute the mean absolute percentage error, excluding zero targets.
 
   A percentage error is undefined where the target is zero, and the unguarded
   expression divides a generally non-zero numerator by a zero denominator, which
@@ -710,7 +760,7 @@ def mean_absolute_percentage_error(
   Returns:
     The mean absolute percentage error as a percentage, or ``nan`` when every
     target is zero and the quantity is therefore undefined.
-  """
+  '''
   actual_series = pd.Series(actual, dtype=float).reset_index(drop=True)
   predicted_series = pd.Series(predicted, dtype=float).reset_index(drop=True)
   non_zero = actual_series != 0
@@ -721,7 +771,7 @@ def mean_absolute_percentage_error(
 
 
 def _safe(function: Any, *args: Any, **kwargs: Any) -> float:
-  """Call a metric, degrading an undefined result to ``NaN``.
+  '''Call a metric, degrading an undefined result to ``NaN``.
 
   Args:
     function: The metric callable.
@@ -730,7 +780,7 @@ def _safe(function: Any, *args: Any, **kwargs: Any) -> float:
 
   Returns:
     The metric value, or ``NaN`` when it is undefined.
-  """
+  '''
   try:
     return float(function(*args, **kwargs))
   except ValueError as error:

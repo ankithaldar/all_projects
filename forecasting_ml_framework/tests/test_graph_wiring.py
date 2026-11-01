@@ -63,14 +63,14 @@ _POSITIONAL = (
 
 
 def _bound_names(function: object) -> list:
-  """Return the positional parameter names a node's inputs bind to.
+  '''Return the positional parameter names a node's inputs bind to.
 
   Args:
     function: The node function.
 
   Returns:
     The names of the parameters Kedro would fill from the input list.
-  """
+  '''
   signature = inspect.signature(function)
   return [
     name for name, parameter in signature.parameters.items() if parameter.kind in _POSITIONAL
@@ -78,11 +78,11 @@ def _bound_names(function: object) -> list:
 
 
 def _pipelines() -> list:
-  """Build every pipeline in every mode combination.
+  '''Build every pipeline in every mode combination.
 
   Returns:
     One pipeline per factory per topology variant.
-  """
+  '''
   variants = [
     PipelineTopology(suffix=SUFFIX, train_mode='train_only'),
     PipelineTopology(suffix=SUFFIX, run_mode='eval', split=True),
@@ -106,16 +106,16 @@ ALL_PIPELINES = _pipelines()
 
 
 def _all_nodes() -> list:
-  """Return every node across every built pipeline.
+  '''Return every node across every built pipeline.
 
   Returns:
     The nodes, in pipeline order.
-  """
+  '''
   return [item for pipeline in ALL_PIPELINES for item in pipeline.nodes]
 
 
 class TestGraphShape:
-  """The graph must be constructible in every mode combination."""
+  '''The graph must be constructible in every mode combination.'''
 
   def test_every_pipeline_builds(self) -> None:
     assert len(ALL_PIPELINES) == 35
@@ -127,7 +127,7 @@ class TestGraphShape:
 
 
 class TestInputArity:
-  """Every node's input count must cover the signature it binds to."""
+  '''Every node's input count must cover the signature it binds to.'''
 
   @pytest.mark.parametrize(
     'function',
@@ -135,14 +135,14 @@ class TestInputArity:
     ids=lambda item: item.__name__,
   )
   def test_the_signature_accepts_its_declared_arity(self, function: object) -> None:
-    """A node function must be callable with the arity the graph supplies.
+    '''A node function must be callable with the arity the graph supplies.
 
     Args:
       function: The node function under test.
 
     Raises:
       AssertionError: If the function is not a node function.
-    """
+    '''
     assert callable(function)
     assert _bound_names(function), (
       f'{function.__name__} declares no positional parameters, so it cannot be bound to by a '
@@ -154,12 +154,12 @@ class TestInputArity:
       assert _bound_names(item.func), f'{item.name} binds no positional parameter'
 
   def test_no_node_supplies_more_inputs_than_its_signature_accepts(self) -> None:
-    """The over-arity check that would have caught the mis-wired evaluation nodes.
+    '''The over-arity check that would have caught the mis-wired evaluation nodes.
 
     Kedro truncates or errors on surplus inputs rather than reporting which node
     supplied them, so the count is asserted here against the built graph in every
     mode combination.
-    """
+    '''
     for item in _all_nodes():
       accepted = len(_bound_names(item.func))
       assert len(item.inputs) <= accepted, (
@@ -167,7 +167,7 @@ class TestInputArity:
       )
 
   def test_no_node_declares_more_outputs_than_it_returns(self) -> None:
-    """A node returning a tuple must not declare fewer outputs than its arity."""
+    '''A node returning a tuple must not declare fewer outputs than its arity.'''
     for pipeline in ALL_PIPELINES:
       for item in pipeline.nodes:
         function = item.func
@@ -178,14 +178,14 @@ class TestInputArity:
 
 
 class TestEvaluationNodeWiring:
-  """The evaluation and lift nodes must receive a contract, not a config block.
+  '''The evaluation and lift nodes must receive a contract, not a config block.
 
   This is the specific wiring that was wrong. ``model_evaluation`` takes
   ``(frame, parameters, metadata, prediction_col, prediction_probability_col,
   data_type, multi_class, sequence_flag)``; the graph supplied the modelling
   parameter *block* where the contract belongs, so the slice label bound to the
   data-type argument and the sequencing token bound to the prediction column.
-  """
+  '''
 
   @staticmethod
   def _training_nodes():
@@ -219,12 +219,12 @@ class TestEvaluationNodeWiring:
       assert contract_inputs, f'{item.name} receives no metadata contract: {item.inputs}'
 
   def test_no_evaluation_node_binds_the_modelling_block_to_the_contract(self) -> None:
-    """The parameter block is a plain dict and has no ``target_col``.
+    '''The parameter block is a plain dict and has no ``target_col``.
 
     Kedro binds positionally, so passing the block where the contract belongs
     makes the first attribute access inside the node fail with a ``KeyError``
     naming ``target_col`` -- which points at the data rather than at the wiring.
-    """
+    '''
     for item in self._training_nodes():
       if 'evaluation' not in item.name and 'lift' not in item.name:
         continue
@@ -233,7 +233,7 @@ class TestEvaluationNodeWiring:
       )
 
   def test_the_multiclass_flag_is_passed_in_its_declared_position(self) -> None:
-    """``multi_class`` is the seventh parameter and must be filled by the flag entry.
+    '''``multi_class`` is the seventh parameter and must be filled by the flag entry.
 
     This asserts the *opposite* of what it used to. The flag is a ``params:``
     entry, so it is supplied in the input list and lands in the seventh slot --
@@ -248,7 +248,7 @@ class TestEvaluationNodeWiring:
     required parameter, so an omitted flag binds the sequencing token into it and
     fails at node construction -- and this test pins both the presence and the
     index.
-    """
+    '''
     names = [p for p in inspect.signature(model_nodes.model_evaluation).parameters]
     assert names.index('multi_class') == 6, f'multi_class moved to slot {names.index("multi_class")}'
 
@@ -269,7 +269,7 @@ class TestEvaluationNodeWiring:
 
 
 class TestSequencingTokens:
-  """A block that consumes a token must emit one, or the chain breaks."""
+  '''A block that consumes a token must emit one, or the chain breaks.'''
 
   def test_every_token_produced_is_consumed(self) -> None:
     for pipeline in ALL_PIPELINES:

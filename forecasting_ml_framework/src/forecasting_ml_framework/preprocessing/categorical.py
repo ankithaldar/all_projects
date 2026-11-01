@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Categorical and cardinality-control transforms.
+'''Categorical and cardinality-control transforms.
 
 These four routines are the ones that change a column's *type*, so they are the
 ones that must get the metadata protocol right. The protocol, stated once:
@@ -18,7 +18,7 @@ that appends to ``feature_cols`` without also appending to ``numerical_cols``
 registers a feature that every numeric-only routine downstream will not see.
 ``TargetEncoding`` therefore writes to both namespaces in the same call, and
 every other member of the family does the same.
-"""
+'''
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ LOGGER = get_logger(__name__)
 
 
 class CategoricalEncoding(SparkMlRoutine):
-  """Encode categorical columns with a Spark ML indexer and optional one-hot.
+  '''Encode categorical columns with a Spark ML indexer and optional one-hot.
 
   This is the most metadata-invasive routine in the library, and the one that
   gets the contract right. The output width is read from the *fitted artefact*
@@ -47,15 +47,16 @@ class CategoricalEncoding(SparkMlRoutine):
   the configuration happens to match the data — a ``StringIndexer`` with
   ``handleInvalid: 'keep'`` adds a bucket for unseen values, so the fitted width
   can legitimately exceed the observed cardinality.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'CategoricalEncoding'
@@ -69,11 +70,11 @@ class CategoricalEncoding(SparkMlRoutine):
     self.ohe_cat: list[str] = []
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'label_encode_handle': 'pyspark.ml.feature.StringIndexer',
@@ -85,18 +86,18 @@ class CategoricalEncoding(SparkMlRoutine):
     }
 
   def artefact_name(self) -> str:
-    """Return an artefact name that distinguishes the two encoding variants.
+    '''Return an artefact name that distinguishes the two encoding variants.
 
     Two registrations of this routine — one with one-hot and one without — must
     not overwrite each other's artefacts.
 
     Returns:
       A directory name.
-    """
+    '''
     return f'{type(self).__name__}{"1" if self.ohe_flag else "2"}'
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[CategoricalEncoding, Any, Metadata]:
-    """Fit the encoding pipeline and persist it.
+    '''Fit the encoding pipeline and persist it.
 
     Args:
       df: The input frame.
@@ -104,7 +105,7 @@ class CategoricalEncoding(SparkMlRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.categorical_cols
     )
@@ -132,7 +133,7 @@ class CategoricalEncoding(SparkMlRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Reload the encoder, project its output, and register it as features.
+    '''Reload the encoder, project its output, and register it as features.
 
     The string columns are *retained* in the frame but are no longer
     features. That is a small waste and is defensible: they remain available for
@@ -144,7 +145,7 @@ class CategoricalEncoding(SparkMlRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     metadata = metadata.copy()
     if not self.use_cols:
       return df, metadata
@@ -173,7 +174,7 @@ class CategoricalEncoding(SparkMlRoutine):
 
   @staticmethod
   def _fitted_width(encoded: Any, ohe_column: str) -> int:
-    """Read the fitted vector width from the encoded frame.
+    '''Read the fitted vector width from the encoded frame.
 
     Args:
       encoded: The transformed frame.
@@ -183,7 +184,7 @@ class CategoricalEncoding(SparkMlRoutine):
       The number of fitted categories, or ``0`` when the column is absent or
       null. Reading the width from the artefact rather than from configuration
       is what keeps the metadata and the encoder in agreement.
-    """
+    '''
     first = encoded.select(ohe_column).first()
     if first is None or first[0] is None:
       return 0
@@ -191,7 +192,7 @@ class CategoricalEncoding(SparkMlRoutine):
 
 
 class TargetEncoding(PreprocessRoutine):
-  """Replace a category with the mean of its target, using out-of-fold means.
+  '''Replace a category with the mean of its target, using out-of-fold means.
 
   Two properties make this transform correct rather than merely conventional:
 
@@ -219,15 +220,15 @@ class TargetEncoding(PreprocessRoutine):
     hash_map: The category-to-target-mean map per column, reduced from the
       out-of-fold row encodings.
     target_mean: The global target mean, used as the unseen-category fallback.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'TargetEncoding'
@@ -238,11 +239,11 @@ class TargetEncoding(PreprocessRoutine):
     self.target_mean: float = 0.0
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'handle': 'sklearn.preprocessing.TargetEncoder',
@@ -251,7 +252,7 @@ class TargetEncoding(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[TargetEncoding, Any, Metadata]:
-    """Fit the encoder and freeze its internal maps.
+    '''Fit the encoder and freeze its internal maps.
 
     Args:
       df: The input frame.
@@ -259,7 +260,7 @@ class TargetEncoding(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.categorical_cols
     )
@@ -286,7 +287,7 @@ class TargetEncoding(PreprocessRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Apply the frozen map as a stateless lookup.
+    '''Apply the frozen map as a stateless lookup.
 
     A defensive copy is taken, unlike a, which mutated the caller's
     ``feature_cols`` in place. Copying here is the correct choice because the
@@ -299,13 +300,13 @@ class TargetEncoding(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     from functools import partial  # noqa: PLC0415
 
     metadata = metadata.copy()
     for column in self.use_cols:
       def encode(category: Any, table: dict[Any, float], fallback: float) -> float:
-        """Look a category up in the frozen map.
+        '''Look a category up in the frozen map.
 
         Args:
           category: The category value.
@@ -314,7 +315,7 @@ class TargetEncoding(PreprocessRoutine):
 
         Returns:
           The encoded value.
-        """
+        '''
         try:
           return float(round(table.get(category, fallback), 4))
         except TypeError:
@@ -327,7 +328,7 @@ class TargetEncoding(PreprocessRoutine):
 
 
 class OptimalBinning(PreprocessRoutine):
-  """Replace a column with a target-supervised bin index.
+  '''Replace a column with a target-supervised bin index.
 
   The only target-supervised transform in the library, and it is fitted on the
   training frame only. The split edges therefore live in the persisted registry
@@ -337,15 +338,15 @@ class OptimalBinning(PreprocessRoutine):
   The null encoding is the detail worth noting: nulls are assigned
   ``len(splits) + 1``, one past the top bin. No numeric value can collide with
   it, so a null is never confused with the highest bin.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'OptimalBinning'
@@ -356,11 +357,11 @@ class OptimalBinning(PreprocessRoutine):
     self.opt_bin_map: dict[str, Any] = {}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'handle': 'optbinning.OptimalBinning',
@@ -370,7 +371,7 @@ class OptimalBinning(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[OptimalBinning, Any, Metadata]:
-    """Learn the split edges for each selected column.
+    '''Learn the split edges for each selected column.
 
     Args:
       df: The input frame.
@@ -378,7 +379,7 @@ class OptimalBinning(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -397,7 +398,7 @@ class OptimalBinning(PreprocessRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Assign each row to a learned bin.
+    '''Assign each row to a learned bin.
 
     Args:
       df: The input frame.
@@ -405,7 +406,7 @@ class OptimalBinning(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     from functools import partial  # noqa: PLC0415
 
     metadata = metadata.copy()
@@ -425,7 +426,7 @@ class OptimalBinning(PreprocessRoutine):
 
 
 class HighLabelBinning(PreprocessRoutine):
-  """Collapse low-frequency categories into a single bucket.
+  '''Collapse low-frequency categories into a single bucket.
 
   The standard defence against one-hot explosion on a long-tailed categorical.
   Values appearing at least ``val_count`` times keep their own level; rarer
@@ -434,15 +435,15 @@ class HighLabelBinning(PreprocessRoutine):
   The distinguishing design choice is ``bin_count_by_col``: a per-column
   threshold override, so the cut can be tuned per feature while keeping a single
   global default.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'HighLabelBinning'
@@ -453,11 +454,11 @@ class HighLabelBinning(PreprocessRoutine):
     self.bin_map: dict[str, dict[Any, str]] = {}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'val_count': 300,
@@ -467,7 +468,7 @@ class HighLabelBinning(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[HighLabelBinning, Any, Metadata]:
-    """Learn which values survive and which collapse.
+    '''Learn which values survive and which collapse.
 
     Args:
       df: The input frame.
@@ -475,7 +476,7 @@ class HighLabelBinning(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.categorical_cols
     )
@@ -504,7 +505,7 @@ class HighLabelBinning(PreprocessRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Collapse rare categories to the configured bucket value.
+    '''Collapse rare categories to the configured bucket value.
 
     Args:
       df: The input frame.
@@ -512,7 +513,7 @@ class HighLabelBinning(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     for column, survivors in self.bin_map.items():
       df = df.withColumn(
         column,
@@ -526,7 +527,7 @@ def _cross_fitted_maps(
   frame: Any,
   columns: list[str],
 ) -> dict[str, dict[Any, float]]:
-  """Reduce out-of-fold row encodings to the per-category map ``apply`` needs.
+  '''Reduce out-of-fold row encodings to the per-category map ``apply`` needs.
 
   ``fit_transform`` returns one *row* encoding per row, each computed from folds
   that excluded that row. The scoring path needs a *category* lookup, because a
@@ -547,7 +548,7 @@ def _cross_fitted_maps(
 
   Returns:
     A mapping of column to category-to-mean mapping.
-  """
+  '''
   import pandas as pd  # noqa: PLC0415
 
   encoded = pd.DataFrame(cross_fitted, columns=list(columns), index=frame.index)
@@ -559,7 +560,7 @@ def _cross_fitted_maps(
 
 
 def _assign_bin(value: Any, feature_type: str, splits: Any) -> float:
-  """Assign a value to a learned bin.
+  '''Assign a value to a learned bin.
 
   The numeric branch is a correct half-open-interval search over
   ``[-inf, s0), [s0, s1), ..., [s(n-1), +inf)``, with nulls assigned the sentinel
@@ -573,7 +574,7 @@ def _assign_bin(value: Any, feature_type: str, splits: Any) -> float:
 
   Returns:
     The bin index as a float.
-  """
+  '''
   if feature_type == 'numerical':
     edges = [float(edge) for edge in splits]
     if value is None:

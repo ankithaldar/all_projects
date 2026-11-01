@@ -15,9 +15,18 @@ import pandas as pd
 import pytest
 
 from forecasting_ml_framework import constants
+from forecasting_ml_framework.exceptions import MetricConfigurationError
 from forecasting_ml_framework.local.sql_translate import SqlTranslationError, to_sqlite
 from forecasting_ml_framework.modeling.calibration import MCC_ZOOM_GRIDS, select_threshold
-from forecasting_ml_framework.modeling.metrics import band_metrics, parse_metric
+from forecasting_ml_framework.modeling.metrics import (
+  DEFAULT_PROMOTION_METRIC,
+  HIGHER_IS_BETTER,
+  METRIC_GRAMMAR_HELP,
+  METRIC_REGISTRY,
+  MetricSpec,
+  band_metrics,
+  parse_metric,
+)
 
 
 class TestLiftIsLift:
@@ -126,14 +135,14 @@ class TestNestedDateAdd:
 
   @staticmethod
   def _evaluate(sql: str) -> list:
-    """Execute a translated statement against a small in-memory table.
+    '''Execute a translated statement against a small in-memory table.
 
     Args:
       sql: The translated statement.
 
     Returns:
       The rows it returned.
-    """
+    '''
     connection = sqlite3.connect(':memory:')
     connection.execute('CREATE TABLE t (rpt_dt TEXT, a INTEGER)')
     connection.execute("INSERT INTO t VALUES ('2024-01-01', 5)")
@@ -177,3 +186,29 @@ class TestArtefactAddressingIsSchemeAgnostic:
 
   def test_the_local_root_is_under_a_temporary_directory(self) -> None:
     assert constants.LOCAL_ARTEFACT_ROOT.startswith('/tmp/')
+
+
+class TestBrierScoreDefaults:
+  '''BRIER_SCORE resolves and the default metric names are documented.'''
+
+  def test_parse_metric_brier_score_is_lower_is_better(self) -> None:
+    spec = parse_metric('BRIER_SCORE')
+    assert isinstance(spec, MetricSpec)
+    assert spec.higher_is_better is False
+
+  def test_default_metric_name_is_documented(self) -> None:
+    assert DEFAULT_PROMOTION_METRIC in METRIC_GRAMMAR_HELP
+
+
+class TestKsiRegistryDecision:
+  '''KSI is a threshold criterion, not a reportable metric.'''
+
+  def test_ksi_is_not_in_higher_is_better(self) -> None:
+    assert 'KSI' not in HIGHER_IS_BETTER
+
+  def test_ksi_is_not_advertised_in_grammar_help(self) -> None:
+    assert 'KSI' not in METRIC_GRAMMAR_HELP
+
+  def test_parse_metric_ksi_raises(self) -> None:
+    with pytest.raises(MetricConfigurationError):
+      parse_metric('KSI')

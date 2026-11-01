@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Configuration loader with a ``runtime`` OmegaConf resolver.
+'''Configuration loader with a ``runtime`` OmegaConf resolver.
 
 It provides two things:
 
@@ -14,7 +14,7 @@ It provides two things:
 The bootstrap rewriter remains the mechanism for the three-tier precedence,
 because it decides *which channel* each key resolves from. This resolver is the
 convenience layer on top of it.
-"""
+'''
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ ENV_PREFIX = 'FORECASTING_ML_PARAM_'
 
 
 class RuntimeResolverConfigLoader(OmegaConfigLoader):
-  """An OmegaConf loader that exposes runtime parameters as ``${runtime:NAME}``.
+  '''An OmegaConf loader that exposes runtime parameters as ``${runtime:NAME}``.
 
   Args:
     *args: Positional arguments forwarded to the parent loader.
@@ -42,7 +42,8 @@ class RuntimeResolverConfigLoader(OmegaConfigLoader):
     default_run_env: The environment used when none is requested.
     config_patterns: The per-group glob patterns.
     **kwargs: Additional keyword arguments forwarded to the parent loader.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(
     self,
@@ -53,7 +54,7 @@ class RuntimeResolverConfigLoader(OmegaConfigLoader):
     config_patterns: dict[str, list[str]] | None = None,
     **kwargs: Any,
   ) -> None:
-    """Build the loader and register the resolver.
+    '''Build the loader and register the resolver.
 
     Args:
       *args: Positional arguments forwarded to the parent loader.
@@ -62,7 +63,7 @@ class RuntimeResolverConfigLoader(OmegaConfigLoader):
       default_run_env: The environment used when none is requested.
       config_patterns: The per-group glob patterns.
       **kwargs: Additional keyword arguments forwarded to the parent loader.
-    """
+    '''
     # Read from the arguments the loader was actually constructed with, and
     # store them under a private name. The base class does not define `env` or
     # `config_patterns`, so an attribute of that name would resolve to nothing and
@@ -87,16 +88,16 @@ class RuntimeResolverConfigLoader(OmegaConfigLoader):
 
 
 def _register_runtime_resolver() -> None:
-  """Register the ``runtime`` OmegaConf resolver exactly once.
+  '''Register the ``runtime`` OmegaConf resolver exactly once.
 
   Returns:
     Nothing. Registration is idempotent, so calling this more than once is safe.
-  """
+  '''
   if OmegaConf.has_resolver('runtime'):
     return
 
   def _resolve(name: str) -> Any:
-    """Resolve a name against the current process's runtime parameters.
+    '''Resolve a name against the current process's runtime parameters.
 
     The lookup consults, in order, the process environment and the runtime
     parameter store the bootstrap publishes. The environment variable alone was
@@ -118,7 +119,7 @@ def _register_runtime_resolver() -> None:
 
     Returns:
       The parameter value, or an empty string when it is not set.
-    """
+    '''
     import os  # noqa: PLC0415
 
     from forecasting_ml_framework.platform.bootstrap import runtime_parameter  # noqa: PLC0415

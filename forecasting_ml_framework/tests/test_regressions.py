@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel
 '''Regression tests for defects found against the architecture documentation.
 
 Every test in this file was written *after* the defect was reproduced, and each
@@ -1161,27 +1162,27 @@ class TestObservabilityIsNotSilentlyEmpty:
     logging.disable(logging.CRITICAL)
 
     class Exploding:
-      """A catalog whose only dataset cannot be materialised."""
+      '''A catalog whose only dataset cannot be materialised.'''
 
       @staticmethod
       def keys() -> list[str]:
-        """Return the declared dataset names.
+        '''Return the declared dataset names.
 
         Returns:
           One dataset name.
-        """
+        '''
         return ['broken']
 
       @staticmethod
       def get(_name: str) -> Any:
-        """Fail, as a missing artefact would.
+        '''Fail, as a missing artefact would.
 
         Args:
           _name: The dataset name.
 
         Raises:
           FileNotFoundError: Always.
-        """
+        '''
         raise FileNotFoundError('no such artefact')
 
     assert list(_iter_datasets(Exploding())) == []
@@ -1201,49 +1202,49 @@ class TestObservabilityIsNotSilentlyEmpty:
     logging.disable(logging.CRITICAL)
 
     class FakeNode:
-      """A node stub exposing only the attributes the hook reads."""
+      '''A node stub exposing only the attributes the hook reads.'''
 
       def __init__(self, name: str, inputs: list[str], outputs: list[str]) -> None:
-        """Record the node's identity and its datasets.
+        '''Record the node's identity and its datasets.
 
         Args:
           name: The node name.
           inputs: The node's input dataset names.
           outputs: The node's output dataset names.
-        """
+        '''
         self.name, self.inputs, self.outputs = name, inputs, outputs
 
     class FakeCatalog:
-      """A catalog stub resolving ``parameters`` and naming every artefact."""
+      '''A catalog stub resolving ``parameters`` and naming every artefact.'''
 
       def __init__(self, document: dict[str, Any]) -> None:
-        """Record the document the training node will expose.
+        '''Record the document the training node will expose.
 
         Args:
           document: The parameters document.
-        """
+        '''
         self.document = document
 
       def load(self, name: str) -> Any:
-        """Resolve a dataset name.
+        '''Resolve a dataset name.
 
         Args:
           name: The dataset name.
 
         Returns:
           The parameters document, or an artefact label.
-        """
+        '''
         return self.document if name == 'parameters' else f'ARTEFACT::{name}'
 
     class FakePipeline:
-      """A pipeline stub exposing only its nodes."""
+      '''A pipeline stub exposing only its nodes.'''
 
       def __init__(self, nodes: list[Any]) -> None:
-        """Record the pipeline's nodes.
+        '''Record the pipeline's nodes.
 
         Args:
           nodes: The nodes in the graph.
-        """
+        '''
         self.nodes = nodes
 
     nodes = [

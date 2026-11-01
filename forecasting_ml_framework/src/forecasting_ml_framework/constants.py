@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Centralised, framework-wide constants.
+'''Centralised, framework-wide constants.
 
 Every string that appears in more than one module lives here.
 
@@ -9,7 +9,7 @@ the SQL templates is three places to change when it changes, and nothing catches
 a miss. Centralising them makes a convention change a one-line edit, and puts
 the whole surface of a convention in view at once -- which is what makes it
 reviewable.
-"""
+'''
 
 from __future__ import annotations
 
@@ -191,14 +191,14 @@ MATURITY_WINDOW_DAYS = 88
 
 
 class RunMode(str, enum.Enum):
-  """Operational mode of a scoring run."""
+  '''Operational mode of a scoring run.'''
 
   PROD = 'prod'
   EVAL = 'eval'
 
 
 class TrainMode(str, enum.Enum):
-  """Champion/challenger promotion mode of a training run."""
+  '''Champion/challenger promotion mode of a training run.'''
 
   TRAIN_ONLY = 'train_only'
   UPDATE_METADATA = 'train_updateMETADATA'
@@ -207,7 +207,7 @@ class TrainMode(str, enum.Enum):
 
 
 class ModelType(str, enum.Enum):
-  """Modelling tier selected by ``global_params.model_type``."""
+  '''Modelling tier selected by ``global_params.model_type``.'''
 
   SKLEARN = 'sklearn'
   PYSPARK = 'pyspark'
@@ -226,14 +226,17 @@ STATUS_SUPERSEDED = 'o'
 #: vocabulary is a copy that will drift: ``KSI`` was listed here for a long time
 #: while the parser refused it, which made the error message recommend the name
 #: it was complaining about. Deriving the list makes that unrepresentable.
-METRIC_GRAMMAR_PREAMBLE = """
+METRIC_GRAMMAR_PREAMBLE = '''
 Supported metric names:
 {metric_names}
 Banded forms select a single band of the score distribution:
   LIFT_DECILE_10      -> lift within the top decile
   LIFT_CENTILE_100    -> lift within the top centile
 An unbanded name is evaluated over the whole population.
-""".strip()
+Defaults (used when no metric is configured):
+  classification: LIFT_DECILE_10
+  regression:     RMSE
+'''.strip()
 
 
 def render_metric_grammar_help(metric_names: list[str]) -> str:

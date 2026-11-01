@@ -59,11 +59,11 @@ _RUNTIME = {
 #: channel and whatever each environment's globals document declares, so adding a
 #: key to either document makes it routable without touching the test.
 def _known_keys() -> list:
-  """Collect every routable interpolation key.
+  '''Collect every routable interpolation key.
 
   Returns:
     The key names.
-  """
+  '''
   keys = set(_RUNTIME)
   for environment in ('base', 'local'):
     keys.update(OmegaConf.load(CONF_ROOT / environment / 'globals.yml').keys())
@@ -99,14 +99,14 @@ _UNQUOTED_FLOW_VALUE = re.compile(r':\s+\$\{[^}]*\}\s*[,}]')
 
 
 def _unquoted_flow_interpolations(path: pathlib.Path) -> list:
-  """Report lines whose flow mapping holds an unquoted interpolation.
+  '''Report lines whose flow mapping holds an unquoted interpolation.
 
   Args:
     path: The document to scan.
 
   Returns:
     A list of ``(line_number, text)`` pairs, one per offending line.
-  """
+  '''
   found = []
   for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), start=1):
     stripped = line.strip()
@@ -124,12 +124,12 @@ class TestInterpolationsAreQuoted:
 
   @pytest.mark.parametrize('path', DOCUMENTS, ids=lambda item: item.name)
   def test_no_unquoted_interpolation_sits_inside_a_flow_mapping(self, path: pathlib.Path) -> None:
-    """A bare ``${...}`` as a flow-mapping value is a parse error, not an interpolation.
+    '''A bare ``${...}`` as a flow-mapping value is a parse error, not an interpolation.
 
     Nineteen such sites made ``conf/base/parameters.yml`` unloadable by any loader
     in any environment, which no unit test would have caught because every test
     supplies its own parameters.
-    """
+    '''
     offenders = _unquoted_flow_interpolations(path)
     assert not offenders, f'{path} has unquoted interpolations in flow mappings: {offenders}'
 
@@ -143,7 +143,7 @@ class TestEnvironmentFlags:
     assert constants.ENV_IS_LOCAL in document
 
   def test_base_does_not_declare_the_legacy_flag(self) -> None:
-    """The legacy spelling must not be reintroduced as the declared value."""
+    '''The legacy spelling must not be reintroduced as the declared value.'''
     document = yaml.safe_load((CONF_ROOT / 'base' / 'parameters.yml').read_text())
     assert constants.ENV_IS_HOSTED_LEGACY not in document
 
@@ -161,14 +161,14 @@ class TestEnvironmentFlags:
     assert constants.ENV_IS_HOSTED_LEGACY not in anchor
 
   def test_local_environment_is_local_and_unhosted(self) -> None:
-    """The local environment is the embedded store with no credential path."""
+    '''The local environment is the embedded store with no credential path.'''
     environment = resolve_environment(yaml.safe_load((CONF_ROOT / 'local' / 'parameters.yml').read_text()))
     assert environment.is_local is True
     assert environment.db_backend == constants.BACKEND_EMBEDDED
     assert environment.uses_local_artefacts is True
 
   def test_the_local_output_root_is_a_bare_path(self) -> None:
-    """A local address carries no scheme."""
+    '''A local address carries no scheme.'''
     document = yaml.safe_load((CONF_ROOT / 'local' / 'parameters.yml').read_text())
     assert '://' not in str(document['output_gcs_location'])
 
@@ -214,7 +214,7 @@ class TestRoutineProgramIsResolvable:
       assert name in AVAILABLE_ROUTINES, f'{name} is configured but not registered'
 
   def test_every_block_declares_the_activation_key(self) -> None:
-    """A block that omits ``skip`` is silently excluded, so the key is load-bearing."""
+    '''A block that omits ``skip`` is silently excluded, so the key is load-bearing.'''
     document = yaml.safe_load((CONF_ROOT / 'base' / 'parameters.yml').read_text())
     for block in document['data_prep_params']:
       body = next(iter(block.values()))
@@ -226,7 +226,7 @@ class TestResolvedParameterDocument:
 
   @staticmethod
   def _route(environment: str) -> str:
-    """Apply the bind-and-rewrite the bootstrap performs before OmegaConf loads.
+    '''Apply the bind-and-rewrite the bootstrap performs before OmegaConf loads.
 
     The production loader prefixes every unbound key with its resolution scope, so
     ``${model_key}`` becomes ``${globals:model_key}`` when the globals document
@@ -240,7 +240,7 @@ class TestResolvedParameterDocument:
 
     Returns:
       The parameters document with every interpolation routed to a scope.
-    """
+    '''
     globals_ = OmegaConf.load(CONF_ROOT / environment / 'globals.yml')
     OmegaConf.register_new_resolver('globals', lambda name: globals_.get(name), replace=True)
     OmegaConf.register_new_resolver('runtime', lambda name: _RUNTIME.get(name, ''), replace=True)
@@ -254,7 +254,7 @@ class TestResolvedParameterDocument:
 
   @classmethod
   def _resolve(cls, environment: str, *, resolve: bool) -> dict:
-    """Load a routed parameters document.
+    '''Load a routed parameters document.
 
     Args:
       environment: The environment directory name.
@@ -262,7 +262,7 @@ class TestResolvedParameterDocument:
 
     Returns:
       The merged document.
-    """
+    '''
     globals_ = OmegaConf.load(CONF_ROOT / environment / 'globals.yml')
     routed = cls._route(environment)
     return OmegaConf.to_container(OmegaConf.merge(globals_, OmegaConf.create(routed)), resolve=resolve)
@@ -279,7 +279,7 @@ class TestResolvedParameterDocument:
       assert isinstance(document['data_prep_params'], list)
 
   def test_a_categorical_imputation_resolves_its_column_list(self) -> None:
-    """The interpolation must yield a list of column names, not the interpolation text."""
+    '''The interpolation must yield a list of column names, not the interpolation text.'''
     document = OmegaConf.to_container(OmegaConf.create(self._route('base')), resolve=True)
     block = document['data_prep_params'][0]['Imputations']['args']
     assert isinstance(block['cols']['include_cols'], list)
@@ -292,10 +292,10 @@ class TestResolvedParameterDocument:
     assert block['custom_bounds']
 
   def test_no_self_referential_interpolation_survives_routing(self) -> None:
-    """``model_key: ${model_key}`` must be rewritten before OmegaConf sees it.
+    '''``model_key: ${model_key}`` must be rewritten before OmegaConf sees it.
 
     Left unrewritten it is a self-reference, and OmegaConf reports a recursive
     interpolation -- an error that names neither the missing value nor the file.
-    """
+    '''
     document = OmegaConf.to_container(OmegaConf.create(self._route('base')), resolve=True)
     assert document['model_key'] == _RUNTIME['model_key']

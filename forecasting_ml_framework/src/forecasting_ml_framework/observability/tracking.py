@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Experiment-tracking integration.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,line-too-long
+'''Experiment-tracking integration.
 
 Experiment tracking follows the platform split: authentication is only available
 when the run executes on the hosted compute platform, so the integration is
@@ -17,7 +18,7 @@ Two properties make the integration safe to enable by default:
    minted only when a run identifier actually exists, so no caller can receive a
    JWT over a null identifier -- a token that verifies but identifies nothing is
    worse than no token, because it looks valid.
-"""
+'''
 
 from __future__ import annotations
 
@@ -40,20 +41,21 @@ DEFAULT_ARTIFACT_PATH = 'core-model'
 
 
 def tracking_is_configured() -> bool:
-  """Report whether an experiment-tracking server has been configured.
+  '''Report whether an experiment-tracking server has been configured.
 
   Returns:
     ``True`` when ``MLFLOW_TRACKING_URI`` is set, ``False`` otherwise.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   return bool(os.getenv(TRACKING_URI_ENV_VAR))
 
 
 def set_tracking_uri() -> str | None:
-  """Register the hosted-platform request headers with the tracking client.
+  '''Register the hosted-platform request headers with the tracking client.
 
   Returns:
     The tracking URI in use, or ``None`` when tracking is not configured.
-  """
+  '''
   uri = os.getenv(TRACKING_URI_ENV_VAR)
   if not uri:
     LOGGER.info('Experiment tracking is not configured; skipping registration')
@@ -67,12 +69,12 @@ def set_tracking_uri() -> str | None:
 
 
 def register_api_key_request_header_provider() -> bool:
-  """Register the user-level authentication header provider.
+  '''Register the user-level authentication header provider.
 
   Returns:
     ``True`` when the provider was registered, ``False`` when the API key is
     absent.
-  """
+  '''
   if not os.getenv(API_KEY_ENV_VAR):
     LOGGER.warning(
       'Hosted-platform API key is absent; tracking requests will be unauthenticated',
@@ -83,25 +85,25 @@ def register_api_key_request_header_provider() -> bool:
   from mlflow.tracking.request_header import registry  # noqa: PLC0415
 
   class HostedPlatformApiKeyRequestHeaderProvider(_BaseProvider):
-    """Provides the ``X-HostedPlatform-Api-Key`` request header."""
+    '''Provides the ``X-HostedPlatform-Api-Key`` request header.'''
 
     def __init__(self) -> None:
       self._api_key = os.getenv(API_KEY_ENV_VAR)
 
     def in_context(self) -> bool:
-      """Report whether the provider is active.
+      '''Report whether the provider is active.
 
       Returns:
         ``True`` when an API key is present.
-      """
+      '''
       return self._api_key is not None
 
     def request_headers(self) -> dict[str, str]:
-      """Build the request headers.
+      '''Build the request headers.
 
       Returns:
         A mapping of header name to value.
-      """
+      '''
       return {'X-HostedPlatform-Api-Key': self._api_key} if self._api_key else {}
 
   mlflow.tracking.request_header.registry.register_request_header_provider(
@@ -112,7 +114,7 @@ def register_api_key_request_header_provider() -> bool:
 
 
 def register_execution_request_header_provider() -> bool:
-  """Register the execution-attribution header provider.
+  '''Register the execution-attribution header provider.
 
   The claim is constructed **only** when a run identifier exists. A
   implementation built the token unconditionally, so ``in_context()`` returned
@@ -121,7 +123,7 @@ def register_execution_request_header_provider() -> bool:
   Returns:
     ``True`` when the provider was registered, ``False`` when the run identifier
     is absent.
-  """
+  '''
   run_id = os.getenv(RUN_ID_ENV_VAR)
   if not run_id:
     return False
@@ -129,7 +131,7 @@ def register_execution_request_header_provider() -> bool:
   import mlflow  # noqa: PLC0415
 
   class HostedPlatformExecutionRequestHeaderProvider(_BaseProvider):
-    """Provides the signed ``X-HostedPlatform-Execution`` request header."""
+    '''Provides the signed ``X-HostedPlatform-Execution`` request header.'''
 
     def __init__(self) -> None:
       # A signature over a claim nobody can influence is an attribution token,
@@ -137,19 +139,19 @@ def register_execution_request_header_provider() -> bool:
       self._execution = jwt.encode({'execution_id': run_id}, 'forecasting-ml-tracking', algorithm='HS256')
 
     def in_context(self) -> bool:
-      """Report whether the provider is active.
+      '''Report whether the provider is active.
 
       Returns:
         ``True`` when an execution token was constructed.
-      """
+      '''
       return self._execution is not None
 
     def request_headers(self) -> dict[str, str]:
-      """Build the request headers.
+      '''Build the request headers.
 
       Returns:
         A mapping of header name to value.
-      """
+      '''
       return {'X-HostedPlatform-Execution': self._execution} if self._execution else {}
 
   mlflow.tracking.request_header.registry.register_request_header_provider(
@@ -165,7 +167,7 @@ def register_model(
   model: Any,
   metrics: dict[str, float] | None,
 ) -> str | None:
-  """Log a trained model to the tracking server and register it.
+  '''Log a trained model to the tracking server and register it.
 
   One experiment and one registered model are created per ``model_key`` — the
   same identifier the framework uses for the metadata registry, the metrics path
@@ -183,7 +185,7 @@ def register_model(
 
   Returns:
     The registered model version, or ``None`` when registration was skipped.
-  """
+  '''
   if not tracking_is_configured():
     return None
   uri = set_tracking_uri()
@@ -219,7 +221,7 @@ def register_model(
 
 
 def end_active_runs(status: str | None = None) -> int:
-  """Close every active tracking run.
+  '''Close every active tracking run.
 
   The framework is invoked once per pipeline stage in a single process, so a
   leaked run would survive into the next stage. The loop is defensive because
@@ -230,7 +232,7 @@ def end_active_runs(status: str | None = None) -> int:
 
   Returns:
     The number of runs that were closed.
-  """
+  '''
   if not tracking_is_configured():
     return 0
   try:
@@ -245,7 +247,7 @@ def end_active_runs(status: str | None = None) -> int:
 
 
 def _resolve_experiment(mlflow: Any, view_type: Any, model_key: str) -> Any:
-  """Return the experiment for a model key, creating it when absent.
+  '''Return the experiment for a model key, creating it when absent.
 
   Args:
     mlflow: The imported ``mlflow`` module.
@@ -254,7 +256,7 @@ def _resolve_experiment(mlflow: Any, view_type: Any, model_key: str) -> Any:
 
   Returns:
     The experiment entity.
-  """
+  '''
   experiments = mlflow.search_experiments(view_type=view_type.ALL, filter_string=f"name = '{model_key}'")
   if experiments:
     return experiments[0]
@@ -263,13 +265,13 @@ def _resolve_experiment(mlflow: Any, view_type: Any, model_key: str) -> Any:
 
 
 def _log_model(mlflow: Any, model: Any, artifact_path: str) -> None:
-  """Log an estimator using the flavour that matches its type.
+  '''Log an estimator using the flavour that matches its type.
 
   Args:
     mlflow: The imported ``mlflow`` module.
     model: The fitted estimator.
     artifact_path: The artifact destination.
-  """
+  '''
   module_name = type(model).__module__.split('.')[0]
   flavours = {
     'xgboost': 'xgboost',
@@ -286,7 +288,7 @@ def _log_model(mlflow: Any, model: Any, artifact_path: str) -> None:
 
 
 def _flatten_params(params: dict[str, Any], prefix: str = '') -> dict[str, Any]:
-  """Flatten a nested parameter mapping into MLflow-compatible scalar values.
+  '''Flatten a nested parameter mapping into MLflow-compatible scalar values.
 
   Args:
     params: The nested mapping.
@@ -294,7 +296,7 @@ def _flatten_params(params: dict[str, Any], prefix: str = '') -> dict[str, Any]:
 
   Returns:
     A flat mapping of dotted key to scalar value.
-  """
+  '''
   flat: dict[str, Any] = {}
   for key, value in params.items():
     composed = f'{prefix}{key}'
@@ -315,20 +317,20 @@ try:  # pragma: no cover - exercised only when mlflow is installed
   )
 except Exception:  # noqa: BLE001 - mlflow layout differs across versions
   class _BaseProvider:  # type: ignore[no-redef]
-    """Minimal stand-in used when MLflow's provider base class is unavailable."""
+    '''Minimal stand-in used when MLflow's provider base class is unavailable.'''
 
     def in_context(self) -> bool:
-      """Report whether the provider is active.
+      '''Report whether the provider is active.
 
       Returns:
         ``False`` by default.
-      """
+      '''
       return False
 
     def request_headers(self) -> dict[str, str]:
-      """Build the request headers.
+      '''Build the request headers.
 
       Returns:
         An empty mapping.
-      """
+      '''
       return {}

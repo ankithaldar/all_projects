@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""BigQuery REST dataset adapters.
+'''BigQuery REST dataset adapters.
 
 Two adapters share this module:
 
@@ -18,7 +18,7 @@ framework's only interaction with BigQuery decorators. Writing a load job to
 ``table$20260929`` targets exactly one partition in a single atomic load, with no
 delete-then-insert window and no possibility of a partial write being observed.
 That is materially safer than the pattern the enterprise egress SQL uses.
-"""
+'''
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ DEFAULT_WRITE_DISPOSITION = 'WRITE_TRUNCATE'
 
 
 class BQTableDataSet(AbstractDataset):
-  """A pandas ``DataFrame`` bound to a BigQuery table.
+  '''A pandas ``DataFrame`` bound to a BigQuery table.
 
   Attributes:
     _project_id: The project that owns the table.
@@ -46,7 +46,8 @@ class BQTableDataSet(AbstractDataset):
     _table_name: The table name.
     _partition_field: An optional partition column.
     _partition_value: The partition value used for both reads and writes.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(
     self,
@@ -61,7 +62,7 @@ class BQTableDataSet(AbstractDataset):
     clustering_fields: list[str] | None = None,
     description: str | None = None,
   ) -> None:
-    """Validate the configuration eagerly; perform no I/O.
+    '''Validate the configuration eagerly; perform no I/O.
 
     Args:
       table_name: The destination table.
@@ -79,7 +80,7 @@ class BQTableDataSet(AbstractDataset):
 
     Raises:
       DatasetError: If mandatory configuration is absent.
-    """
+    '''
     for key, value in (('table_name', table_name), ('dataset', dataset), ('project_id', project_id)):
       if not value:
         raise DatasetError(f"Missing required configuration '{key}'")
@@ -95,11 +96,11 @@ class BQTableDataSet(AbstractDataset):
     self._description = description
 
   def _describe(self) -> dict[str, Any]:
-    """Return every configuration key.
+    '''Return every configuration key.
 
     Returns:
       A mapping suitable for the run log.
-    """
+    '''
     return {
       'table_name': self._table_name,
       'dataset': self._dataset,
@@ -112,7 +113,7 @@ class BQTableDataSet(AbstractDataset):
     }
 
   def _load(self) -> Any:
-    """Read the table, optionally filtered to a single partition.
+    '''Read the table, optionally filtered to a single partition.
 
     Returns:
       A pandas ``DataFrame``.
@@ -120,7 +121,7 @@ class BQTableDataSet(AbstractDataset):
     Raises:
       PartitionValueMissingError: If a partition field is configured without a
         partition value.
-    """
+    '''
     from google.cloud import bigquery  # noqa: PLC0415
 
     client = bigquery.Client(project=self._project_id, credentials=self._credentials)
@@ -138,14 +139,14 @@ class BQTableDataSet(AbstractDataset):
     return client.query(sql).to_dataframe()
 
   def _save(self, data: Any) -> None:
-    """Write the frame through the load-job API.
+    '''Write the frame through the load-job API.
 
     An empty frame is a no-op, which is what allows an empty evaluation slice to
     complete rather than fail.
 
     Args:
       data: The pandas ``DataFrame`` to write.
-    """
+    '''
     if data is None or getattr(data, 'empty', True):
       LOGGER.warning('Skipping save of an empty frame', extra={'table': self._table_name})
       return
@@ -171,7 +172,7 @@ class BQTableDataSet(AbstractDataset):
     client.load_table_from_dataframe(dataframe=data, destination=destination, job_config=job_config).result()
 
   def partition_decorator(self) -> str:
-    """Return the BigQuery partition decorator for the configured value.
+    '''Return the BigQuery partition decorator for the configured value.
 
     The decorator encodes the partition value in compact ``YYYYMMDD`` form, so
     an ISO ``run_date`` of ``2026-09-29`` becomes ``$20260929``.
@@ -182,7 +183,7 @@ class BQTableDataSet(AbstractDataset):
     Raises:
       PartitionValueMissingError: If a partition field is configured without a
         partition value.
-    """
+    '''
     if self._partition_field is None:
       return ''
     if self._partition_value is None:
@@ -193,21 +194,21 @@ class BQTableDataSet(AbstractDataset):
     return '$' + self._partition_value.replace('-', '')
 
   def _qualified_name(self) -> str:
-    """Return the fully-qualified table name.
+    '''Return the fully-qualified table name.
 
     Returns:
       ``project.dataset.table``.
-    """
+    '''
     return f'{self._project_id}.{self._dataset}.{self._table_name}'
 
 
 class BQQueryDataSet(AbstractDataset):
-  """A parameterised BigQuery query with ``{param}`` templating.
+  '''A parameterised BigQuery query with ``{param}`` templating.
 
   The template is resolved from a file on ``fsspec`` or from inline SQL, then
   rendered with the supplied parameters. This is the adapter to use when a
   dataset's shape is defined by a query rather than by a table schema.
-  """
+  '''
 
   _placeholder_pattern = re.compile(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}')
 
@@ -220,7 +221,7 @@ class BQQueryDataSet(AbstractDataset):
     credentials: dict[str, Any] | None = None,
     load_args: dict[str, Any] | None = None,
   ) -> None:
-    """Validate the configuration eagerly; perform no I/O.
+    '''Validate the configuration eagerly; perform no I/O.
 
     Args:
       sql: An inline query template.
@@ -233,7 +234,7 @@ class BQQueryDataSet(AbstractDataset):
 
     Raises:
       DatasetError: If neither a template nor a file path is supplied.
-    """
+    '''
     if not sql and not filepath:
       raise DatasetError("Provide either 'sql' or 'filepath'")
     self._sql = sql
@@ -244,12 +245,12 @@ class BQQueryDataSet(AbstractDataset):
     self._load_args = dict(load_args or {})
 
   def _describe(self) -> dict[str, Any]:
-    """Return every configuration key.
+    '''Return every configuration key.
 
     Returns:
       A mapping suitable for the run log. ``filepath`` is present even when
       unused, because the provenance hooks read it unconditionally.
-    """
+    '''
     return {
       'sql': '<inline sql>' if self._sql else None,
       'filepath': self._filepath,
@@ -258,11 +259,11 @@ class BQQueryDataSet(AbstractDataset):
     }
 
   def _load(self) -> Any:
-    """Render the template, execute it, and return the result.
+    '''Render the template, execute it, and return the result.
 
     Returns:
       A pandas ``DataFrame``.
-    """
+    '''
     from google.cloud import bigquery  # noqa: PLC0415
 
     template = self._read_template()
@@ -272,25 +273,25 @@ class BQQueryDataSet(AbstractDataset):
     return client.query(rendered).to_dataframe()
 
   def _save(self, data: Any) -> None:
-    """Refuse writes.
+    '''Refuse writes.
 
     Args:
       data: Ignored.
 
     Raises:
       DatasetError: Always. A query-backed dataset is read-only.
-    """
+    '''
     raise DatasetError('BQQueryDataSet is read-only; a query does not define a writable schema')
 
   def _read_template(self) -> str:
-    """Return the query template from its source.
+    '''Return the query template from its source.
 
     Returns:
       The template text.
 
     Raises:
       DatasetError: If the configured file cannot be read.
-    """
+    '''
     if self._sql:
       return self._sql
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415

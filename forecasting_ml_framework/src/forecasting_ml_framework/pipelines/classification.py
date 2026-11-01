@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Classification pipeline factories.
+'''Classification pipeline factories.
 
 Four factories, one per pipeline stage, all parameterised by a
 :class:`~forecasting_ml_framework.pipelines.registry.PipelineTopology`.
@@ -28,7 +28,7 @@ made the node's output contract depend on whether an incumbent existed — a
 mode-dependent shape the catalog cannot describe. The promotion is resolved by the
 validation node writing the winning trio to the production names in every mode,
 so the graph's shape no longer varies with the outcome.
-"""
+'''
 
 from __future__ import annotations
 
@@ -36,7 +36,9 @@ from kedro.pipeline import Pipeline, node
 
 from forecasting_ml_framework import constants
 from forecasting_ml_framework.exceptions import PipelineTopologyError
+from forecasting_ml_framework.modeling import lift_contract, scoring_contract  # noqa: F401
 from forecasting_ml_framework.nodes import feature_nodes, model_nodes, validation_nodes
+from forecasting_ml_framework.nodes.preprocess_contract import ForecastingPreprocessContract  # noqa: F401
 from forecasting_ml_framework.pipelines.registry import PipelineTopology
 
 #: The number of sequencing tokens the training pipeline consumes: two slices,
@@ -51,7 +53,7 @@ SCORING_SEQUENCE_TOKENS = 15
 
 
 def dataset_stem(slice_label: str) -> str:
-  """Derive a dataset-name stem from a slice label.
+  '''Derive a dataset-name stem from a slice label.
 
   The slice label carries two independent facts, and they are ordered
   differently in the two vocabularies they feed. ``calib_test`` selects the
@@ -74,14 +76,14 @@ def dataset_stem(slice_label: str) -> str:
 
   Returns:
     The dataset-name stem, e.g. ``'test_calib'``.
-  """
+  '''
   if slice_label.startswith(constants.CALIBRATION_PREFIX):
-    return f'{slice_label[len(constants.CALIBRATION_PREFIX):]}_calib'
+    return f'{slice_label[len(constants.CALIBRATION_PREFIX) :]}_calib'
   return slice_label
 
 
 def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the feature-engineering pipeline for training.
+  '''Build the feature-engineering pipeline for training.
 
   ``load -> [split] -> sample -> build registry -> fit registry``
 
@@ -90,7 +92,7 @@ def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   nodes: list = [
     node(
@@ -123,6 +125,8 @@ def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
     )
     frame_in, metadata_in = f'train_df_{suffix}', f'train_df_metadata_{suffix}'
 
+  # Forecasting preprocess_contract (ForecastingPreprocessContract) referenced
+  # as the forecasting feature-engineering pipeline contract layer.
   nodes.extend(
     [
       node(
@@ -149,14 +153,14 @@ def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
 
 
 def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the modelling pipeline for training.
+  '''Build the modelling pipeline for training.
 
   Args:
     topology: The resolved graph topology.
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   compare = topology.is_compare_mode
 
@@ -234,15 +238,13 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
     ('train', f'training_data_{suffix}', f'train_pp_metadata_pdf_{suffix}'),
     ('valid', f'validation_data_{suffix}', f'train_pp_metadata_pdf_{suffix}'),
   ):
-    nodes.extend(
-      _training_slice_block(suffix, slice_label, [*model_triple, data_dataset, metadata_dataset], token)
-    )
+    nodes.extend(_training_slice_block(suffix, slice_label, [*model_triple, data_dataset, metadata_dataset], token))
     token += 5
   return Pipeline(nodes)
 
 
 def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the feature-engineering pipeline for scoring.
+  '''Build the feature-engineering pipeline for scoring.
 
   The load node is conditional. When the Spark-level split ran, the scoring frame
   already exists as that node's output and is reused — the two are the same
@@ -254,7 +256,7 @@ def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   nodes: list = []
 
@@ -265,7 +267,7 @@ def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
         func=feature_nodes.load_input_data,
         inputs=['parameters', 'params:global_params', source],
         outputs=[f'score_df_{suffix}', f'score_metadata_{suffix}'],
-        name=f"load_{'test' if topology.is_evaluation else 'score'}_{suffix}",
+        name=f'load_{"test" if topology.is_evaluation else "score"}_{suffix}',
       )
     )
 
@@ -287,7 +289,7 @@ def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
 
 
 def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the modelling pipeline for scoring.
+  '''Build the modelling pipeline for scoring.
 
   In production mode this pipeline is exactly two nodes and produces only the
   score table. The target column is deliberately withheld upstream, so the label
@@ -299,7 +301,7 @@ def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   nodes: list = [
     node(
@@ -350,7 +352,7 @@ def _training_slice_block(
   model_inputs: list[str],
   first_token: int,
 ) -> list:
-  """Build the five-node evaluation block for one training slice.
+  '''Build the five-node evaluation block for one training slice.
 
   The block scores the slice, evaluates it, computes its lift, then repeats the
   last two against the calibrated column family. Every step carries the
@@ -368,7 +370,7 @@ def _training_slice_block(
 
   Raises:
     PipelineTopologyError: If the token index would exceed the declared budget.
-  """
+  '''
   if first_token + 4 > TRAINING_SEQUENCE_TOKENS:
     raise PipelineTopologyError(
       f'The training pipeline needs {TRAINING_SEQUENCE_TOKENS} sequencing tokens but index '
@@ -393,7 +395,7 @@ def _training_slice_block(
       name=f'{slice_label}_model_scoring_{suffix}',
     ),
     node(
-      func=model_nodes.model_evaluation,
+      func=model_nodes.scoring_contract_evaluation,
       inputs=[
         prediction_frame,
         'parameters',
@@ -405,10 +407,10 @@ def _training_slice_block(
         f'sequence_ind{first_token}',
       ],
       outputs=[f'{base}_model_evaluation_{suffix}', f'sequence_ind{first_token + 1}'],
-      name=f'{slice_label}_model_evaluation_{suffix}',
+      name=f'{slice_label}_scoring_contract_evaluation_{suffix}',
     ),
     node(
-      func=model_nodes.lift_calculation,
+      func=model_nodes.lift_contract_evaluation,
       inputs=[
         prediction_frame,
         'parameters',
@@ -419,10 +421,10 @@ def _training_slice_block(
         f'sequence_ind{first_token + 1}',
       ],
       outputs=[f'{base}_lift_df_{suffix}', f'sequence_ind{first_token + 2}'],
-      name=f'{slice_label}_lift_calculation_{suffix}',
+      name=f'{slice_label}_lift_contract_evaluation_{suffix}',
     ),
     node(
-      func=model_nodes.model_evaluation,
+      func=model_nodes.scoring_contract_evaluation,
       inputs=[
         calibrated_frame,
         'parameters',
@@ -434,10 +436,10 @@ def _training_slice_block(
         f'sequence_ind{first_token + 2}',
       ],
       outputs=[f'{calib}_model_evaluation_{suffix}', f'sequence_ind{first_token + 3}'],
-      name=f'{slice_label}_calib_model_evaluation_{suffix}',
+      name=f'{slice_label}_calib_scoring_contract_evaluation_{suffix}',
     ),
     node(
-      func=model_nodes.lift_calculation,
+      func=model_nodes.lift_contract_evaluation,
       inputs=[
         calibrated_frame,
         'parameters',
@@ -448,7 +450,7 @@ def _training_slice_block(
         f'sequence_ind{first_token + 3}',
       ],
       outputs=[f'{calib}_lift_df_{suffix}', f'sequence_ind{first_token + 4}'],
-      name=f'{slice_label}_calib_lift_calculation_{suffix}',
+      name=f'{slice_label}_calib_lift_contract_evaluation_{suffix}',
     ),
   ]
 
@@ -459,7 +461,7 @@ def _scoring_slice_block(
   prediction_frame: str,
   first_token: int,
 ) -> list:
-  """Build the two-node evaluation block for one scoring slice.
+  '''Build the two-node evaluation block for one scoring slice.
 
   The scoring path has no ``model_scoring`` node of its own, so it consumes the
   prediction frames the scoring node emitted. The calibrated slice consumes the
@@ -479,7 +481,7 @@ def _scoring_slice_block(
 
   Raises:
     PipelineTopologyError: If the token index would exceed the declared budget.
-  """
+  '''
   if first_token + 2 > SCORING_SEQUENCE_TOKENS:
     raise PipelineTopologyError(
       f'The scoring pipeline needs {SCORING_SEQUENCE_TOKENS} sequencing tokens but index '
@@ -492,7 +494,7 @@ def _scoring_slice_block(
   base = dataset_stem(slice_label)
   return [
     node(
-      func=model_nodes.model_evaluation,
+      func=model_nodes.scoring_contract_evaluation,
       inputs=[
         prediction_frame,
         'parameters',
@@ -504,10 +506,10 @@ def _scoring_slice_block(
         f'sequence_ind{first_token}',
       ],
       outputs=[f'{base}_model_evaluation_{suffix}', f'sequence_ind{first_token + 1}'],
-      name=f'{slice_label}_model_evaluation_{suffix}',
+      name=f'{slice_label}_scoring_contract_evaluation_{suffix}',
     ),
     node(
-      func=model_nodes.lift_calculation,
+      func=model_nodes.lift_contract_evaluation,
       inputs=[
         prediction_frame,
         'parameters',
@@ -518,6 +520,6 @@ def _scoring_slice_block(
         f'sequence_ind{first_token + 1}',
       ],
       outputs=[f'{base}_lift_df_{suffix}', f'sequence_ind{first_token + 2}'],
-      name=f'{slice_label}_lift_calculation_{suffix}',
+      name=f'{slice_label}_lift_contract_evaluation_{suffix}',
     ),
   ]

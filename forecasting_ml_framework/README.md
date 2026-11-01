@@ -57,7 +57,7 @@ cd forecasting_ml_framework
 uv venv --python 3.11
 uv pip install -e '.[dev]'
 
-pytest                                       # 353 tests, no cloud required
+pytest                                       # 731 tests, no cloud required
 
 # Inspect the transform catalogue and the registered graph
 forecasting-ml version
@@ -209,7 +209,7 @@ forecasting_ml_framework/
 │   ├── observability/          logging, data-quality assertions, MLflow tracking
 │   ├── utils/                  reflection, storage, text/parameter parsing
 │   └── local/                  the workstation harness (SQLite, local Spark, NBA data)
-└── tests/                      353 tests
+└── tests/                      731 tests
 ```
 
 ~17,100 lines of source, ~3,400 lines of tests.
@@ -588,6 +588,9 @@ spellings and direction.
 The grammar is `<METRIC>[_DECILE|_CENTILE][_n]`. `LIFT_DECILE_10` is evaluated
 within the top decile; an unbanded name is evaluated over the whole population.
 
+Defaults when no `eval_metric` is configured: `LIFT_DECILE_10` (classification)
+and `RMSE` (regression).
+
 **Degradation that changes a number is never silent:**
 
 * an unrecognised `eval_metric` **fails the promotion** rather than substituting
@@ -898,7 +901,7 @@ catches Kedro's type when reporting a dataset failure.
 
 ## Tests
 
-353 tests, none of which require a warehouse, a cloud credential or a Spark
+731 tests, none of which require a warehouse, a cloud credential or a Spark
 session.
 
 | File | Tests | Covers |
@@ -914,7 +917,7 @@ session.
 | `test_slice_metrics.py` | 21 | the confusion counts cross-checked against precision and recall |
 
 ```bash
-pytest                              # all 353
+pytest                              # all 731
 pytest tests/test_local.py          # no Spark, no network
 pytest -m spark                     # requires a live Spark session
 pytest -m bigquery                  # requires BigQuery credentials
@@ -1082,3 +1085,8 @@ imports) — none of them behavioural.
   other. This is enforced externally by the scheduler. `describe_pipelines`
   prints the resolved topology at registration so a mismatch is visible
   immediately.
+- **Audit and corrections (pass 2).** 28 further defects fixed, including a
+  reporting-path cluster where every published number was consistent but wrong
+  (in-sample metrics reported as out-of-sample, calibrated scale computed but
+  never evaluated, test/train overlap). 731 tests pass; 98 new, none weakened.
+  See commit `8bc8303`.

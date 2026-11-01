@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Data-quality assertions.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,line-too-long
+'''Data-quality assertions.
 
 the framework had comprehensive *instrumentation* — per-column
 summaries, class distributions, per-routine row counts — and **zero
@@ -11,7 +12,7 @@ complete, well-formed, entirely plausible model and score table with no alert.
 This module converts observation into enforcement, and does so with
 ``SparkOptimizer``-free, dependency-light helpers so that every stage of every
 pipeline can afford to call them.
-"""
+'''
 
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ LOGGER = get_logger(__name__)
 
 
 class QualityPolicy:
-  """Declarative policy for the assertions a pipeline stage will enforce.
+  '''Declarative policy for the assertions a pipeline stage will enforce.
 
   The policy is a value object rather than a set of function flags so that a
   model program can express its own tolerance in configuration without the
@@ -41,7 +42,8 @@ class QualityPolicy:
     row_count_tolerance: The maximum permitted *relative* drift in row count.
     max_null_rate: The maximum permitted null rate on any validated column.
     min_rows_for_metrics: Below this row count, a metric stage is a no-op.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   __slots__ = ('expected_row_count', 'row_count_tolerance', 'max_null_rate', 'min_rows_for_metrics')
 
@@ -52,28 +54,28 @@ class QualityPolicy:
     max_null_rate: float = 1.0,
     min_rows_for_metrics: int = 1,
   ) -> None:
-    """Build the policy.
+    '''Build the policy.
 
     Args:
       expected_row_count: Row count observed at the previous stage.
       row_count_tolerance: Permitted relative drift, e.g. ``0.01`` for 1 %.
       max_null_rate: Permitted null rate on validated columns, in ``[0, 1]``.
       min_rows_for_metrics: Row count below which metric computation is skipped.
-    """
+    '''
     self.expected_row_count = expected_row_count
     self.row_count_tolerance = row_count_tolerance
     self.max_null_rate = max_null_rate
     self.min_rows_for_metrics = min_rows_for_metrics
 
   def with_expected(self, row_count: int) -> QualityPolicy:
-    """Return a copy of this policy anchored on a given row count.
+    '''Return a copy of this policy anchored on a given row count.
 
     Args:
       row_count: The observed row count.
 
     Returns:
       A new policy.
-    """
+    '''
     return QualityPolicy(
       expected_row_count=row_count,
       row_count_tolerance=self.row_count_tolerance,
@@ -83,7 +85,7 @@ class QualityPolicy:
 
 
 def assert_row_count(observed: int, policy: QualityPolicy, stage: str, **context: object) -> None:
-  """Assert that a stage preserved the row count it was given.
+  '''Assert that a stage preserved the row count it was given.
 
   Args:
     observed: The row count at the current stage.
@@ -93,7 +95,7 @@ def assert_row_count(observed: int, policy: QualityPolicy, stage: str, **context
 
   Raises:
     RowCountAssertionError: If the relative drift exceeds the tolerance.
-  """
+  '''
   if policy.expected_row_count is None or policy.expected_row_count == 0:
     return
   drift = abs(observed - policy.expected_row_count) / policy.expected_row_count
@@ -111,7 +113,7 @@ def assert_row_count(observed: int, policy: QualityPolicy, stage: str, **context
 
 
 def assert_target_cardinality(distinct_target_values: int, target_col: str, **context: object) -> None:
-  """Assert that the target has at least two distinct values.
+  '''Assert that the target has at least two distinct values.
 
   Args:
     distinct_target_values: The observed cardinality.
@@ -120,7 +122,7 @@ def assert_target_cardinality(distinct_target_values: int, target_col: str, **co
 
   Raises:
     TargetCardinalityError: If the target is single-class.
-  """
+  '''
   if distinct_target_values < 2:
     raise TargetCardinalityError(
       f'The target column {target_col!r} contains {distinct_target_values} distinct value(s). '
@@ -133,7 +135,7 @@ def assert_target_cardinality(distinct_target_values: int, target_col: str, **co
 
 
 def assert_column_roles_disjoint(roles: Mapping[str, Sequence[str]], **context: object) -> None:
-  """Assert that no column is declared in two mutually exclusive role lists.
+  '''Assert that no column is declared in two mutually exclusive role lists.
 
   array (sequence) columns must not also appear in the numerical,
   categorical or indicator lists. ``feature_cols`` is seeded from the
@@ -147,7 +149,7 @@ def assert_column_roles_disjoint(roles: Mapping[str, Sequence[str]], **context: 
 
   Raises:
     ColumnRoleConflictError: If any column appears in more than one role.
-  """
+  '''
   from forecasting_ml_framework import constants  # noqa: PLC0415 - avoids a cycle
 
   exclusive = [constants.ROLE_NUMERICAL, constants.ROLE_CATEGORICAL, constants.ROLE_INDICATOR, constants.ROLE_SEQUENCE]
@@ -170,7 +172,7 @@ def assert_column_roles_disjoint(roles: Mapping[str, Sequence[str]], **context: 
 
 
 def assert_columns_present(available: Sequence[str], required: Sequence[str], stage: str, **context: object) -> None:
-  """Assert that every required column is present in a frame.
+  '''Assert that every required column is present in a frame.
 
   Args:
     available: The columns the frame actually has.
@@ -180,7 +182,7 @@ def assert_columns_present(available: Sequence[str], required: Sequence[str], st
 
   Raises:
     ColumnRoleConflictError: If a required column is absent.
-  """
+  '''
   present = set(available)
   missing = [column for column in required if column not in present]
   if missing:
@@ -194,7 +196,7 @@ def assert_columns_present(available: Sequence[str], required: Sequence[str], st
 
 
 def null_rate_summary(frame: Any, columns: Sequence[str]) -> dict[str, float]:
-  """Compute the null rate of each named column in a pandas frame.
+  '''Compute the null rate of each named column in a pandas frame.
 
   Args:
     frame: A pandas ``DataFrame``.
@@ -202,7 +204,7 @@ def null_rate_summary(frame: Any, columns: Sequence[str]) -> dict[str, float]:
 
   Returns:
     A mapping of column name to null rate in ``[0, 1]``.
-  """
+  '''
   if frame is None or not hasattr(frame, 'empty') or frame.empty:
     return dict.fromkeys(columns, 0.0)
   return {column: float(frame[column].isna().mean()) for column in columns if column in frame.columns}
@@ -215,7 +217,7 @@ def assert_null_rate(
   stage: str,
   **context: object,
 ) -> None:
-  """Assert that no validated column exceeds the permitted null rate.
+  '''Assert that no validated column exceeds the permitted null rate.
 
   Args:
     frame: A pandas ``DataFrame``.
@@ -226,7 +228,7 @@ def assert_null_rate(
 
   Raises:
     RowCountAssertionError: If any column exceeds the permitted null rate.
-  """
+  '''
   if policy.max_null_rate >= 1.0 or frame is None or getattr(frame, 'empty', True):
     return
   offenders = {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel
 '''Tests for the search-space distribution registry.
 
 The framework resolves a hyper-parameter search space from configuration, and a
@@ -29,7 +30,7 @@ from forecasting_ml_framework.utils.reflection import (
 
 
 class TestRegistryIsClosed:
-  """The supported set is enumerable and bounded."""
+  '''The supported set is enumerable and bounded.'''
 
   def test_the_registry_is_populated(self) -> None:
     assert len(DISTRIBUTIONS) > 10
@@ -40,7 +41,7 @@ class TestRegistryIsClosed:
       assert all(part.isidentifier() for part in key.split('.')), key
 
   def test_every_key_is_samplable(self) -> None:
-    """A registered name that cannot be sampled from is a lie in the registry."""
+    '''A registered name that cannot be sampled from is a lie in the registry.'''
     constructor = DISTRIBUTIONS['scipy.stats.uniform']
     assert constructor(0.0, 1.0).rvs() is not None
 
@@ -48,13 +49,13 @@ class TestRegistryIsClosed:
     assert_no_builtin_namespace()
 
   def test_the_registry_is_the_only_route(self) -> None:
-    """No module in the framework evaluates a configuration-supplied expression.
+    '''No module in the framework evaluates a configuration-supplied expression.
 
     The scan is AST-based rather than textual, so a mention of ``eval`` inside a
     docstring or a comment -- including one explaining why the call was removed --
     is not counted as a call. A textual scan would make the explanation of the fix
     into a violation of the fix.
-    """
+    '''
     import ast  # noqa: PLC0415 - imported for the walk
 
     source_root = pathlib.Path(__file__).resolve().parents[1] / 'src'
@@ -70,7 +71,7 @@ class TestRegistryIsClosed:
 
 
 class TestLegitimateDistributions:
-  """Every shape a real search space uses must keep working."""
+  '''Every shape a real search space uses must keep working.'''
 
   @pytest.mark.parametrize(
     'expression',
@@ -93,12 +94,12 @@ class TestLegitimateDistributions:
     assert evaluate_distribution(expression) is not None
 
   def test_a_list_of_candidates_is_a_search_space(self) -> None:
-    """A categorical space is a list of literals, not a distribution."""
+    '''A categorical space is a list of literals, not a distribution.'''
     assert looks_like_distribution('numpy.random.choice([1, 2, 3])')
 
 
 class TestAttackShapes:
-  """Each of these is a way a configuration value might reach the interpreter."""
+  '''Each of these is a way a configuration value might reach the interpreter.'''
 
   @pytest.mark.parametrize(
     'expression',
@@ -134,7 +135,7 @@ class TestAttackShapes:
 
 
 class TestErrorQuality:
-  """A rejection should tell the operator what to write instead."""
+  '''A rejection should tell the operator what to write instead.'''
 
   def test_an_unregistered_name_lists_the_supported_set(self) -> None:
     with pytest.raises(InvalidSearchSpaceError) as caught:

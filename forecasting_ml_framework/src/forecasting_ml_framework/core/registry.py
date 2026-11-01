@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The ordered, composable, serialisable transform chain.
+'''The ordered, composable, serialisable transform chain.
 
 The registry is the framework's central train/serve-parity mechanism. It is
 serialised to object storage during the feature-engineering stage and reloaded
@@ -14,7 +14,7 @@ routine's ``fit`` receives the previous routine's ``apply`` output. That is what
 makes chained transforms (impute -> cap -> encode -> bin) well-defined. The cost
 is that fitted state cannot be inspected without materialising data through the
 entire chain.
-"""
+'''
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ LOGGER = get_logger(__name__)
 
 
 class Registry:
-  """An ordered chain of :class:`PreprocessRoutine` instances.
+  '''An ordered chain of :class:`PreprocessRoutine` instances.
 
   The registry object **is** the fitted-preprocessing artefact. Two state
   persistence strategies coexist inside it, and both are required for the round
@@ -41,53 +41,54 @@ class Registry:
   * state written to a separate external artefact under
     ``metadata.intermediate_file_path``, for Spark ML pipelines and large
     estimators that are not reliably picklable.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(self, routines: Sequence[PreprocessRoutine] | None = None) -> None:
-    """Build an empty or pre-populated registry.
+    '''Build an empty or pre-populated registry.
 
     Args:
       routines: An initial ordered chain.
-    """
+    '''
     self.routines: list[PreprocessRoutine] = list(routines or [])
 
   # ---------------------------------------------------------------------- #
   # Chain construction
   # ---------------------------------------------------------------------- #
   def append(self, routine: PreprocessRoutine) -> None:
-    """Append a routine to the end of the chain.
+    '''Append a routine to the end of the chain.
 
     Args:
       routine: The routine to append.
-    """
+    '''
     self.routines.append(routine)
 
   def get_routines(self) -> list[PreprocessRoutine]:
-    """Return the ordered chain.
+    '''Return the ordered chain.
 
     Returns:
       The live list of routines.
-    """
+    '''
     return self.routines
 
   def __len__(self) -> int:
-    """Return the chain length.
+    '''Return the chain length.
 
     Returns:
       The number of routines.
-    """
+    '''
     return len(self.routines)
 
   def __iter__(self) -> Any:
-    """Iterate over the chain in execution order.
+    '''Iterate over the chain in execution order.
 
     Returns:
       An iterator over the routines.
-    """
+    '''
     return iter(self.routines)
 
   def __add__(self, other: Registry) -> Registry:
-    """Concatenate two chains into a new registry.
+    '''Concatenate two chains into a new registry.
 
     The routines are **copied**, not shared. Sharing was the defect: the new list
     is new but the routine objects in it are the same instances, so fitting the
@@ -104,12 +105,12 @@ class Registry:
     Returns:
       A new registry with copies of the concatenated routines. Neither operand
         is mutated, and neither shares routine state with the result.
-    """
+    '''
     return Registry([routine.copy() for routine in self.routines + other.routines])
 
   @classmethod
   def merge(cls, *registries: Registry) -> Registry:
-    """Concatenate any number of registries into a new one.
+    '''Concatenate any number of registries into a new one.
 
     As with :meth:`__add__`, the routines are copied rather than shared, for the
     same reason and with the same consequence.
@@ -119,7 +120,7 @@ class Registry:
 
     Returns:
       A new registry holding copies of every routine.
-    """
+    '''
     routines: list[PreprocessRoutine] = []
     for registry in registries:
       routines.extend(registry.routines)
@@ -129,7 +130,7 @@ class Registry:
   # Execution
   # ---------------------------------------------------------------------- #
   def fit(self, df: Any, metadata: Metadata, params: dict[str, Any] | None = None) -> tuple[Registry, Any, Metadata]:
-    """Fit and apply the whole chain, interleaved per routine.
+    '''Fit and apply the whole chain, interleaved per routine.
 
     A single Spark session is acquired before the loop rather than once per
     routine. The accessor refreshes a cloud credential, so calling it per routine
@@ -149,7 +150,7 @@ class Registry:
 
     Returns:
       A three-tuple of the registry, the frame and the contract.
-    """
+    '''
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415 - platform layer
 
     get_spark_session(params=params)
@@ -165,7 +166,7 @@ class Registry:
     return self, df, metadata
 
   def _protect_identifiers(self, metadata: Metadata) -> None:
-    """Hand every routine the identifier columns it must not transform.
+    '''Hand every routine the identifier columns it must not transform.
 
     ``PreprocessRoutine.get_selected_columns`` subtracts ``key_cols_list`` from
     whatever it resolves, and that subtraction is the mechanism behind the
@@ -183,7 +184,7 @@ class Registry:
 
     Args:
       metadata: The schema contract, whose identifier and target roles are read.
-    """
+    '''
     protected = [*(metadata.id_cols or []), *(metadata.seq_cols or [])]
     if metadata.target_col:
       protected.append(metadata.target_col)
@@ -191,7 +192,7 @@ class Registry:
       routine.key_cols_list = list(protected)
 
   def apply(self, df: Any, metadata: Metadata, data_type: str | None = None) -> tuple[Any, Metadata]:
-    """Apply the fitted chain without refitting.
+    '''Apply the fitted chain without refitting.
 
     Args:
       df: The input frame.
@@ -202,7 +203,7 @@ class Registry:
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     LOGGER.info('Applying fitted feature registry', extra={'slice': data_type, 'routines': len(self.routines)})
     for index, routine in enumerate(self.routines, start=1):
       LOGGER.debug('=== apply %d/%d start: %s ===', index, len(self.routines), routine.name)
@@ -216,7 +217,7 @@ class Registry:
     params: dict[str, Any] | None = None,
     apply_only: bool = False,
   ) -> tuple[Any, Metadata]:
-    """Fit-and-apply in a single call, optionally skipping the fit.
+    '''Fit-and-apply in a single call, optionally skipping the fit.
 
     This is a convenience entry point for notebooks and one-shot runs. The
     production pipelines use :meth:`fit` and :meth:`apply` as two distinct stages,
@@ -231,7 +232,7 @@ class Registry:
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     if apply_only:
       return self.apply(df, metadata)
     _, df, metadata = self.fit(df, metadata, params)
@@ -241,25 +242,25 @@ class Registry:
   # Serialisation
   # ---------------------------------------------------------------------- #
   def copy(self) -> Registry:
-    """Return a deep copy of the registry and its fitted state.
+    '''Return a deep copy of the registry and its fitted state.
 
     Returns:
       A deep copy.
-    """
+    '''
     return Registry([routine.copy() for routine in self.routines])
 
   def __str__(self) -> str:
-    """Render the chain for the run log.
+    '''Render the chain for the run log.
 
     Returns:
       A comma-joined list of routine names.
-    """
+    '''
     return ', '.join(routine.name for routine in self.routines)
 
   def __repr__(self) -> str:
-    """Render a short representation.
+    '''Render a short representation.
 
     Returns:
       The representation string.
-    """
+    '''
     return f'Registry({len(self.routines)} routines: {self})'

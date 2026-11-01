@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Project lifecycle hooks.
+# pylint: disable=import-outside-toplevel,broad-exception-caught
+'''Project lifecycle hooks.
 
 The hook manager is the mechanism that makes the pipeline graph
 environment-driven: it reads the run's runtime parameters once the Kedro context
@@ -20,7 +21,7 @@ a iterated ``catalog._datasets``, a private attribute of the
 catalog class, which is a version-coupling risk that could break the hooks
 silently on a Kedro upgrade. A public accessor is preferred, and the private
 access is retained only as a fallback for older catalog implementations.
-"""
+'''
 
 from __future__ import annotations
 
@@ -39,15 +40,16 @@ LOGGER = get_logger(__name__)
 
 
 class ModelTrackingHooks:
-  """The project's single hook manager.
+  '''The project's single hook manager.
 
   Kedro executes hooks last-in-first-out within a manager, so the post-pipeline
   hook below runs after the per-node hooks.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   @hook_impl
   def after_context_created(self, context: Any) -> None:
-    """Publish the run's specialisation axes into the process environment.
+    '''Publish the run's specialisation axes into the process environment.
 
     This must fire before the pipeline registry resolves the graph. Kedro's lazy
     pipeline resolution makes that ordering hold, but it is implicit in Kedro
@@ -57,7 +59,7 @@ class ModelTrackingHooks:
 
     Args:
       context: The Kedro context.
-    """
+    '''
     params = dict(getattr(context, 'params', {}) or {})
     # The boolean axes are coerced rather than passed through. A YAML document can
     # legitimately carry `is_regression: "False"` as a quoted string, and a
@@ -95,7 +97,7 @@ class ModelTrackingHooks:
 
   @hook_impl
   def before_node_run(self, node: Any, catalog: Any, inputs: dict[str, Any], is_async: bool, run_id: str) -> None:
-    """Log the node and the provenance of its pickle-backed inputs.
+    '''Log the node and the provenance of its pickle-backed inputs.
 
     Args:
       node: The node about to run.
@@ -103,7 +105,7 @@ class ModelTrackingHooks:
       inputs: The resolved inputs.
       is_async: Whether the node runs asynchronously.
       run_id: The run identifier.
-    """
+    '''
     LOGGER.info('Node starting', extra={'node': node.name, 'async': is_async, 'run_id': run_id})
     for name, dataset in _iter_datasets(catalog):
       if name in inputs:
@@ -111,14 +113,14 @@ class ModelTrackingHooks:
 
   @hook_impl
   def after_node_run(self, node: Any, catalog: Any, inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
-    """Log the node and the provenance of its pickle-backed outputs.
+    '''Log the node and the provenance of its pickle-backed outputs.
 
     Args:
       node: The node that ran.
       catalog: The data catalog.
       inputs: The resolved inputs.
       outputs: The resolved outputs.
-    """
+    '''
     del inputs
     LOGGER.info('Node complete', extra={'node': node.name, 'outputs': sorted(outputs)})
     for name, dataset in _iter_datasets(catalog):
@@ -127,7 +129,7 @@ class ModelTrackingHooks:
 
   @hook_impl
   def after_pipeline_run(self, run_params: dict[str, Any], run_result: Any, pipeline: Any, catalog: Any) -> None:
-    """Register the promoted model with the tracking server, then close runs.
+    '''Register the promoted model with the tracking server, then close runs.
 
     The promotion-aware branch is the point of this hook: in comparison mode the
     winning model is the validation node's output, so that is what is registered.
@@ -142,7 +144,7 @@ class ModelTrackingHooks:
       run_result: The run's result.
       pipeline: The pipeline that ran.
       catalog: The data catalog.
-    """
+    '''
     del run_result
     LOGGER.info(
       'Pipeline complete',
@@ -172,14 +174,14 @@ class ModelTrackingHooks:
 
   @hook_impl
   def on_pipeline_error(self, error: Exception, run_params: dict[str, Any], pipeline: Any, catalog: Any) -> None:
-    """Close any active tracking run and record the failure.
+    '''Close any active tracking run and record the failure.
 
     Args:
       error: The raised exception.
       run_params: The run's parameters.
       pipeline: The pipeline that failed.
       catalog: The data catalog.
-    """
+    '''
     del run_params, pipeline, catalog
     LOGGER.error('Pipeline failed', extra={'error': str(error), 'type': type(error).__name__}, exc_info=True)
     end_active_runs('FAILED')
@@ -188,7 +190,7 @@ class ModelTrackingHooks:
 def _collect_registration_payload(
   pipeline: Any, catalog: Any, document: dict[str, Any] | None
 ) -> tuple[Any, dict[str, Any] | None, dict[str, float] | None]:
-  """Gather the estimator, its parameters and its metric row for registration.
+  '''Gather the estimator, its parameters and its metric row for registration.
 
   The metric frame carries a date and a timestamp, which are not valid metric
   values, so the frame is restricted to numeric columns before it is read. The
@@ -210,7 +212,7 @@ def _collect_registration_payload(
 
   Returns:
     A three-tuple of the estimator, the parameter block and the metric row.
-  """
+  '''
   import pandas as pd  # noqa: PLC0415
 
   document = document or {}
@@ -253,7 +255,7 @@ def _collect_registration_payload(
 
 
 def _load_parameters_document(pipeline: Any, catalog: Any) -> dict[str, Any] | None:
-  """Return the run's parameters document, as the graph sees it.
+  '''Return the run's parameters document, as the graph sees it.
 
   Any node that declares ``parameters`` as an input carries the resolved
   document, so the training node is used as the locator. Reading it from the
@@ -266,7 +268,7 @@ def _load_parameters_document(pipeline: Any, catalog: Any) -> dict[str, Any] | N
 
   Returns:
     The parameters document, or ``None`` when it cannot be read.
-  """
+  '''
   for pipeline_node in getattr(pipeline, 'nodes', []):
     if not pipeline_node.name.startswith('model_training') or not pipeline_node.inputs:
       continue
@@ -280,7 +282,7 @@ def _load_parameters_document(pipeline: Any, catalog: Any) -> dict[str, Any] | N
 
 
 def _read_axis(document: dict[str, Any], key: str, default: str) -> str:
-  """Read one specialisation axis from the parameters document.
+  '''Read one specialisation axis from the parameters document.
 
   Args:
     document: The parameters document.
@@ -289,13 +291,13 @@ def _read_axis(document: dict[str, Any], key: str, default: str) -> str:
 
   Returns:
     The axis value as a string.
-  """
+  '''
   value = document.get(key, default)
   return str(value)
 
 
 def _modelling_block(document: dict[str, Any], is_regression: bool) -> dict[str, Any]:
-  """Return the modelling block matching the run's task family.
+  '''Return the modelling block matching the run's task family.
 
   Both blocks are present in the shipped document -- ``modeling_params`` and
   ``modeling_reg_params`` -- and the previous code took whichever carried a
@@ -311,7 +313,7 @@ def _modelling_block(document: dict[str, Any], is_regression: bool) -> dict[str,
 
   Returns:
     The matching block, or an empty mapping when none is present.
-  """
+  '''
   from forecasting_ml_framework.nodes.validation_nodes import _modelling_block as resolve_block  # noqa: PLC0415
 
   try:
@@ -325,7 +327,7 @@ def _modelling_block(document: dict[str, Any], is_regression: bool) -> dict[str,
 
 
 def _iter_datasets(catalog: Any) -> Any:
-  """Iterate every dataset the catalog declares, through its public interface.
+  '''Iterate every dataset the catalog declares, through its public interface.
 
   ``keys()`` and ``get()`` are used because they are the only accessors that are
   both public and complete. Kedro 1.0 holds datasets in *two* private mappings
@@ -342,7 +344,7 @@ def _iter_datasets(catalog: Any) -> Any:
 
   Yields:
     ``(name, dataset)`` pairs for every declared dataset that materialises.
-  """
+  '''
   getter = getattr(catalog, 'get', None)
   for name in list(getattr(catalog, 'keys', list)()):
     try:
@@ -362,7 +364,7 @@ def _iter_datasets(catalog: Any) -> Any:
 
 
 def _log_provenance(name: str, dataset: Any, action: str, node_name: str = '') -> None:
-  """Log the resolved path of a serialisation-backed dataset.
+  '''Log the resolved path of a serialisation-backed dataset.
 
   Only pickle-backed datasets are reported: they are the model handles, the
   fitted registries and the metadata objects, whose provenance is what an
@@ -374,7 +376,7 @@ def _log_provenance(name: str, dataset: Any, action: str, node_name: str = '') -
     dataset: The dataset instance.
     action: The action being performed.
     node_name: The node the action belongs to, when known.
-  """
+  '''
   # A hook must never fail a run, so the description is best-effort. ``_describe``
   # is Kedro's dataset contract method and has no public accessor, which is why the
   # access is not a protected-member violation in spirit: there is no alternative.
@@ -397,7 +399,7 @@ def _log_provenance(name: str, dataset: Any, action: str, node_name: str = '') -
 
 
 def write_run_name(runtime_params: dict[str, Any], env: str = 'local') -> str:
-  """Compute a run identifier and export it for correlation.
+  '''Compute a run identifier and export it for correlation.
 
   A computed a well-formed run name and exported it as an environment
   variable, and no framework code reads it. It is read by the logging filter,
@@ -409,7 +411,7 @@ def write_run_name(runtime_params: dict[str, Any], env: str = 'local') -> str:
 
   Returns:
     The run identifier.
-  """
+  '''
   from datetime import datetime  # noqa: PLC0415
 
   from forecasting_ml_framework.observability.logging import RUN_NAME_ENV_VAR  # noqa: PLC0415

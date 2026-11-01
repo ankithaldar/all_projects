@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Trainer classes: the estimator lifecycle.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''Trainer classes: the estimator lifecycle.
 
 Three trainers behind one informal interface, dispatched by a single
 configuration string. Dispatch lives in the node layer; each trainer owns its own
@@ -24,7 +25,7 @@ lifecycle.
   The sequence tier, over parquet directories on object storage. It requires the
   optional deep-learning extra, so it is opt-in through configuration and the
   framework runs without it until the tier is enabled.
-"""
+'''
 
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ from forecasting_ml_framework.modeling.scoring import (
 )
 from forecasting_ml_framework.observability.logging import get_logger
 from forecasting_ml_framework.utils.reflection import coerce_search_space, resolve
-from forecasting_ml_framework.utils.storage import save_pickle
+from forecasting_ml_framework.utils.storage import save_pickle, _resolve_filepath
 
 LOGGER = get_logger(__name__)
 
@@ -82,7 +83,7 @@ CONTINUOUS_TARGET_DISTINCT_LIMIT = 10
 
 
 def _is_continuous_target(handle: Any) -> bool:
-  """Report whether a resolved model handle denotes a regressor.
+  '''Report whether a resolved model handle denotes a regressor.
 
   The question is answered by scikit-learn's own predicate rather than by a
   name convention, because "does this class predict a continuous quantity" is a
@@ -100,7 +101,8 @@ def _is_continuous_target(handle: Any) -> bool:
 
   Returns:
     ``True`` when the handle denotes a regressor.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   if handle is None:
     return False
   try:
@@ -117,7 +119,7 @@ def _is_continuous_target(handle: Any) -> bool:
 
 
 def _suggest(trial: Any, name: str, value: Any) -> Any:
-  """Resolve one search-space value for a trial.
+  '''Resolve one search-space value for a trial.
 
   The three forms are distinguished explicitly rather than by a nested conditional
   expression: a distribution object is *sampled* (which is what makes it a search
@@ -131,7 +133,7 @@ def _suggest(trial: Any, name: str, value: Any) -> Any:
 
   Returns:
     The value to fit with.
-  """
+  '''
   if hasattr(value, 'rvs'):
     return value.rvs()
   if isinstance(value, (list, tuple)):
@@ -140,7 +142,7 @@ def _suggest(trial: Any, name: str, value: Any) -> Any:
 
 
 def _score(scorer: Any, labels: Any, predictions: Any) -> float:
-  """Score a fitted model with a scikit-learn scorer.
+  '''Score a fitted model with a scikit-learn scorer.
 
   ``_score_func`` is the scorer's own scoring callable. A ``_PredictScorer`` wraps a
   metric with the estimator's prediction method, so the metric is invoked through the
@@ -154,7 +156,7 @@ def _score(scorer: Any, labels: Any, predictions: Any) -> float:
 
   Returns:
     The score.
-  """
+  '''
   metric = getattr(scorer, '_score_func', None)
   if callable(metric):
     return float(metric(labels, predictions))
@@ -162,7 +164,7 @@ def _score(scorer: Any, labels: Any, predictions: Any) -> float:
 
 
 def _accepts(searcher_class: Any, argument: str) -> bool:
-  """Report whether a searcher class declares a constructor argument.
+  '''Report whether a searcher class declares a constructor argument.
 
   Args:
     searcher_class: The resolved searcher class.
@@ -173,7 +175,7 @@ def _accepts(searcher_class: Any, argument: str) -> bool:
     signature cannot be inspected is assumed to accept the argument, which keeps an
     exotic searcher usable at the cost of a possible ``TypeError`` from the searcher
     itself -- a clearer error than one this function would have to invent.
-  """
+  '''
   try:
     parameters = inspect.signature(searcher_class).parameters
   except (TypeError, ValueError):
@@ -184,7 +186,7 @@ def _accepts(searcher_class: Any, argument: str) -> bool:
 
 
 def _bind_search_space(searcher_class: Any, tuning_params: dict[str, Any]) -> dict[str, Any]:
-  """Bind the configured search space to the spelling the searcher accepts.
+  '''Bind the configured search space to the spelling the searcher accepts.
 
   The configuration vocabulary is deliberately forgiving -- ``param_grid`` and
   ``param_distributions`` are interchangeable there -- but the searcher classes
@@ -201,7 +203,7 @@ def _bind_search_space(searcher_class: Any, tuning_params: dict[str, Any]) -> di
   Returns:
     A new parameter mapping carrying the coerced search space under the accepted
     name, with the other spelling removed.
-  """
+  '''
   declared = next((name for name in _SEARCH_SPACE_ARGUMENTS if name in tuning_params), None)
   if declared is None:
     return dict(tuning_params)
@@ -217,7 +219,7 @@ def _bind_search_space(searcher_class: Any, tuning_params: dict[str, Any]) -> di
 
 
 class ModelTraining:
-  """Fit, calibrate, threshold and score with a pandas-native estimator.
+  '''Fit, calibrate, threshold and score with a pandas-native estimator.
 
   Attributes:
     features_to_use: The exact, ordered model feature vector, resolved once
@@ -235,7 +237,7 @@ class ModelTraining:
       discarded — meaning production calibration silently used a different method
       from the one the configuration named, and the published score and the
       calibrated threshold were derived from different curves.
-  """
+  '''
 
   def __init__(
     self,
@@ -262,7 +264,7 @@ class ModelTraining:
     save_model_path: str | None = None,
     save_calib_model_path: str | None = None,
   ) -> None:
-    """Resolve every string handle and normalise every optional parameter.
+    '''Resolve every string handle and normalise every optional parameter.
 
     Args:
       model_handle: A dotted path to the estimator class, or the class itself.
@@ -296,7 +298,7 @@ class ModelTraining:
       prediction_probability_col: The probability column name.
       save_model_path: Where to persist the fitted estimator.
       save_calib_model_path: Where to persist the fitted calibrator.
-    """
+    '''
     self.model_handle = resolve(model_handle)
     self.model_params = dict(model_params or {})
     self.model_initial_params = dict(model_initial_params or self.model_params)
@@ -361,7 +363,7 @@ class ModelTraining:
   def train(
     self, frame: pd.DataFrame, metadata: Metadata
   ) -> tuple[ModelTraining, Any, Any, pd.DataFrame, pd.DataFrame]:
-    """Fit the model, calibrate it, and select the operating point.
+    '''Fit the model, calibrate it, and select the operating point.
 
     Args:
       frame: The preprocessed training frame.
@@ -374,7 +376,7 @@ class ModelTraining:
     Raises:
       HoldoutRequiredError: If a holdout-requiring path was requested without
         one.
-    """
+    '''
     frame = self._resolve_features(frame, metadata)
     train_frame, holdout_frame = self._split(frame, metadata)
 
@@ -412,7 +414,7 @@ class ModelTraining:
     return self, fitted, self.calibrated_model or {}, train_frame, holdout_frame
 
   def _resolve_features(self, frame: pd.DataFrame, metadata: Metadata) -> pd.DataFrame:
-    """Resolve the feature vector and coerce the target to float.
+    '''Resolve the feature vector and coerce the target to float.
 
     The trainer always requests the full feature list, narrowed by
     ``exclude_cols`` (regular expressions) and ``include_cols`` (a literal
@@ -426,7 +428,7 @@ class ModelTraining:
 
     Returns:
       The frame with a float target.
-    """
+    '''
     self.target_col = metadata.target_col
     self.features_to_use = metadata.feature_resolution(
       args=('feature_cols',), feature_exclusions=self.exclude_cols, feature_inclusions=self.include_cols
@@ -441,7 +443,7 @@ class ModelTraining:
     return frame
 
   def _split(self, frame: pd.DataFrame, metadata: Metadata) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Create the in-memory holdout.
+    '''Create the in-memory holdout.
 
     Args:
       frame: The preprocessed training frame.
@@ -451,7 +453,7 @@ class ModelTraining:
       A two-tuple of the training frame and the holdout. With ``eval_size`` at
       zero the holdout is an empty frame and the model is fitted on everything,
       which makes every reported threshold optimistic.
-    """
+    '''
     LOGGER.info(
       'Training frame received',
       extra={'shape': frame.shape, 'target_distribution': frame[metadata.target_col].value_counts().to_dict()},
@@ -491,7 +493,7 @@ class ModelTraining:
     return train_frame, holdout_frame
 
   def _inject_imbalance_weight(self, train_frame: pd.DataFrame, metadata: Metadata) -> None:
-    """Inject the estimator's imbalance parameter.
+    '''Inject the estimator's imbalance parameter.
 
     Two different mechanisms are selected by the estimator's class: a per-class
     weight vector for the gradient-boosting libraries that take one, and a
@@ -503,7 +505,7 @@ class ModelTraining:
     Args:
       train_frame: The training frame.
       metadata: The schema contract, which carries the sampling stage's weights.
-    """
+    '''
     if not self.balance_class_weight:
       return
     labels = train_frame[self.target_col]
@@ -534,7 +536,7 @@ class ModelTraining:
     self.model_initial_params[weight_key] = weight_value
 
   def _search(self, x_train: pd.DataFrame, y_train: pd.Series, holdout: pd.DataFrame) -> Any:
-    """Run the configured hyperparameter search and return the fitted estimator.
+    '''Run the configured hyperparameter search and return the fitted estimator.
 
     The searcher is invoked as ``tuning_handle(**tuning_params)`` with
     ``estimator`` injected, so anything honouring that constructor contract
@@ -551,7 +553,7 @@ class ModelTraining:
 
     Raises:
       HoldoutRequiredError: If the Optuna path is configured without a holdout.
-    """
+    '''
     LOGGER.info('Running hyperparameter search', extra={'searcher': getattr(self.tuning_handle, '__name__', None)})
 
     if getattr(self.tuning_handle, '__name__', '') == 'optuna.study':
@@ -595,7 +597,7 @@ class ModelTraining:
     x_holdout: pd.DataFrame,
     y_holdout: pd.Series,
   ) -> Any:
-    """Run an Optuna study and return a refitted estimator.
+    '''Run an Optuna study and return a refitted estimator.
 
     The tuning handle is used as a *module*: the reflective resolver imports
     ``optuna.study`` and ``create_study`` is called on it, so the framework never
@@ -616,7 +618,7 @@ class ModelTraining:
 
     Returns:
       The refitted estimator.
-    """
+    '''
     import optuna  # noqa: PLC0415 - resolved through the module handle, imported here for typing
 
     del optuna
@@ -632,14 +634,14 @@ class ModelTraining:
     scorers = [get_scorer(name) for name in scorer_names]
 
     def objective(trial: Any) -> tuple[float, ...]:
-      """Score one trial.
+      '''Score one trial.
 
       Args:
         trial: The Optuna trial.
 
       Returns:
         A tuple of scores, one per configured metric.
-      """
+      '''
       params = {name: _suggest(trial, name, value) for name, value in space.items()}
       model = self.model_handle(**self.model_initial_params, **params)
       model.fit(x_train, y_train, **self.fit_params)
@@ -676,7 +678,7 @@ class ModelTraining:
     return fitted
 
   def _build_optional(self, handle: Any, params: Any) -> Any:
-    """Build an optional Optuna component.
+    '''Build an optional Optuna component.
 
     Args:
       handle: A dotted path, or ``None``.
@@ -684,14 +686,14 @@ class ModelTraining:
 
     Returns:
       The constructed component, or ``None``.
-    """
+    '''
     if not handle:
       return None
     factory = resolve(handle)
     return factory(**params) if params else factory()
 
   def _direct_fit(self, x_train: pd.DataFrame, y_train: pd.Series, holdout: pd.DataFrame) -> Any:
-    """Fit the estimator directly, optionally with a library-native eval slot.
+    '''Fit the estimator directly, optionally with a library-native eval slot.
 
     Routing the holdout into ``val_set_col`` gives early stopping and
     per-iteration logging without the framework knowing anything about the
@@ -708,7 +710,7 @@ class ModelTraining:
 
     Raises:
       HoldoutRequiredError: If cross-validation was requested without a holdout.
-    """
+    '''
     fit_params = dict(self.fit_params)
     if self.validation_flag:
       if holdout.empty:
@@ -726,7 +728,7 @@ class ModelTraining:
     return fitted
 
   def _record_rates(self, train_frame: pd.DataFrame, metadata: Metadata) -> None:
-    """Record the population and training positive rates.
+    '''Record the population and training positive rates.
 
     The two rates are the sole inputs to prior-shift calibration, and their
     ratio is the exact factor needed to undo the training-time reweighting. The
@@ -736,7 +738,7 @@ class ModelTraining:
     Args:
       train_frame: The training frame.
       metadata: The schema contract.
-    """
+    '''
     labels = train_frame[self.target_col]
     positives = int((labels == 1).sum())
     negatives = int((labels == 0).sum())
@@ -760,7 +762,7 @@ class ModelTraining:
     LOGGER.info('Recorded the class rates', extra={'real_rate': self.real_rate, 'sample_rate': self.sample_rate})
 
   def _record_fill_stats(self, frame: pd.DataFrame) -> None:
-    """Record per-feature fill statistics from the training partition.
+    '''Record per-feature fill statistics from the training partition.
 
     Recorded during training so that the promotion gate can fill a feature the
     current pipeline no longer produces with the *incumbent's own* training
@@ -773,7 +775,7 @@ class ModelTraining:
 
     Args:
       frame: The training frame.
-    """
+    '''
     stats: dict[str, dict[str, float]] = {}
     for column in self.features_to_use:
       if column not in frame.columns:
@@ -800,7 +802,7 @@ class ModelTraining:
     train_frame: pd.DataFrame,
     holdout: pd.DataFrame,
   ) -> Any:
-    """Fit the configured calibrator and compute the calibrated operating column.
+    '''Fit the configured calibrator and compute the calibrated operating column.
 
     Five strategies, distinguished by input signature: a wrapper calibrator
     consumes the feature matrix, the other three consume the scalar score, and
@@ -821,7 +823,7 @@ class ModelTraining:
 
     Returns:
       The fitted calibrator, or ``None`` when prior-shift correction is used.
-    """
+    '''
     # The calibrator is fitted on the TRAINING partition, never on the holdout.
     # The holdout is the only slice the operating point is selected on, and a
     # calibrator fitted on it would make the selected threshold an in-sample
@@ -839,6 +841,7 @@ class ModelTraining:
     raw = pd.Series(positive_probability(fitted, x_score), index=working.index, name='raw_score')
 
     if not self.calibration_handle:
+      self.calibrated_model = None
       return None
 
     name = self.calibration_handle.__name__
@@ -857,12 +860,14 @@ class ModelTraining:
           'supported': ['CalibratedClassifierCV', 'LogisticRegression', 'BetaCalibration', 'IsotonicRegression'],
         },
       )
+      self.calibrated_model = None
       return None
+    self.calibrated_model = calibrator
     LOGGER.info('Fitted the probability calibrator', extra={'handle': name, 'rows': len(working)})
     return calibrator
 
   def _detect_continuous(self, frame: pd.DataFrame) -> bool:
-    """Decide whether the target is continuous rather than categorical.
+    '''Decide whether the target is continuous rather than categorical.
 
     The decision is made once, during training, from the target's own cardinality
     against a fixed limit. Deciding it per call site is what let the classification
@@ -883,7 +888,7 @@ class ModelTraining:
 
     Returns:
       Whether the target is continuous.
-    """
+    '''
     distinct = int(frame[self.target_col].nunique())
     continuous = distinct > CONTINUOUS_TARGET_DISTINCT_LIMIT
     LOGGER.info(
@@ -893,11 +898,11 @@ class ModelTraining:
     return continuous
 
   def _is_continuous(self) -> bool:
-    """Return the recorded target classification.
+    '''Return the recorded target classification.
 
     Returns:
       Whether the target is continuous, defaulting to false before training runs.
-    """
+    '''
     return bool(getattr(self, '_is_continuous_flag', False))
 
   def _select_thresholds(
@@ -906,7 +911,7 @@ class ModelTraining:
     train_frame: pd.DataFrame,
     holdout: pd.DataFrame,
   ) -> None:
-    """Select both decision thresholds, on the configured criterion.
+    '''Select both decision thresholds, on the configured criterion.
 
     Two thresholds are always both computed: one gates the raw score and one
     gates the calibrated score. They are stored on the trainer, which is what
@@ -924,7 +929,7 @@ class ModelTraining:
       fitted: The fitted estimator.
       train_frame: The training frame.
       holdout: The holdout frame.
-    """
+    '''
     if self.is_continuous_target:
       LOGGER.info(
         'Threshold selection skipped: a continuous target has no decision to threshold. The '
@@ -1005,7 +1010,7 @@ class ModelTraining:
     )
 
   def _align_estimator_threshold(self, fitted: Any) -> None:
-    """Align an estimator's own internal decision cut-off with the framework's.
+    '''Align an estimator's own internal decision cut-off with the framework's.
 
     CatBoost carries a private ``predict`` cut-off (``set_probability_threshold``)
     which defaults to 0.5. Leaving it there makes the persisted estimator disagree
@@ -1026,7 +1031,7 @@ class ModelTraining:
 
     Args:
       fitted: The fitted estimator.
-    """
+    '''
     setter = getattr(fitted, 'set_probability_threshold', None)
     if not callable(setter):
       return
@@ -1037,7 +1042,7 @@ class ModelTraining:
     )
 
   def _calibrated_column(self, raw: pd.Series) -> pd.Series:
-    """Produce the calibrated score for a raw score series.
+    '''Produce the calibrated score for a raw score series.
 
     The calibrated column must be produced by *exactly* the transform that
     scoring time will apply to it, because the calibrated decision threshold is
@@ -1063,7 +1068,7 @@ class ModelTraining:
 
     Returns:
       The calibrated score, on the same scale the scoring path will produce.
-    """
+    '''
     if self.calibrated_model is not None:
       name = type(self.calibrated_model).__name__
       reshaped = raw.to_numpy().reshape(-1, 1)
@@ -1091,7 +1096,7 @@ class ModelTraining:
     return calibrate_probability(raw, self.real_rate, self.sample_rate)
 
   def _record_importance(self, fitted: Any) -> None:
-    """Log feature importance without failing when the estimator has none.
+    '''Log feature importance without failing when the estimator has none.
 
     reading ``fitted_model.feature_importances_``
     unconditionally *after* fitting, so any estimator without the attribute —
@@ -1100,7 +1105,7 @@ class ModelTraining:
     cosmetic feature. That excluded the entire non-ensemble estimator family for
     no benefit. The attribute is read defensively, with a coefficient
     fallback, and its absence is logged rather than raised.
-    """
+    '''
     importance = getattr(fitted, 'feature_importances_', None)
     source = 'feature_importances_'
     if importance is None:
@@ -1121,7 +1126,7 @@ class ModelTraining:
     )
 
   def _persist(self, fitted: Any) -> None:
-    """Persist the fitted estimator and the fitted calibrator.
+    '''Persist the fitted estimator and the fitted calibrator.
 
     What is written is the **fitted object**, not a description of how to build
     one. The previous version wrote ``{'estimator': <class name>, 'params': <ctor
@@ -1135,7 +1140,7 @@ class ModelTraining:
 
     Args:
       fitted: The fitted estimator.
-    """
+    '''
     if self.save_model_path:
       save_pickle(fitted, self.save_model_path)
     if self.save_calib_model_path and self.calibrated_model is not None:
@@ -1152,7 +1157,7 @@ class ModelTraining:
     metadata: Metadata,
     data_type: str = 'score',
   ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Score a frame and return the uncalibrated and calibrated projections.
+    '''Score a frame and return the uncalibrated and calibrated projections.
 
     Args:
       fitted: The fitted estimator.
@@ -1163,7 +1168,7 @@ class ModelTraining:
 
     Returns:
       A two-tuple of the raw-scored frame and the calibrated-scored frame.
-    """
+    '''
     LOGGER.info('Scoring a frame', extra={'slice': data_type, 'shape': frame.shape, 'ids': metadata.id_cols})
     if not (hasattr(fitted, 'predict_proba') or hasattr(fitted, 'decision_function')):
       # Dispatch on the estimator's capability rather than on a configured flag.
@@ -1219,24 +1224,24 @@ class ModelTraining:
     return raw, calibrated_projection
 
   def _finalise_labels(self, train_frame: pd.DataFrame) -> None:
-    """Record the label set and the multiclass flag from the training frame.
+    '''Record the label set and the multiclass flag from the training frame.
 
     Args:
       train_frame: The training frame.
-    """
+    '''
     self.unique_label = sorted(train_frame[self.target_col].unique().tolist())
     self.multi_class_flag = len(self.unique_label) > 2
     LOGGER.info('Recorded the label set', extra={'labels': self.unique_label, 'multiclass': self.multi_class_flag})
 
 
 class SparkModelTraining:
-  """Fit and score with a Spark ML pipeline.
+  '''Fit and score with a Spark ML pipeline.
 
   a's ``train`` returned a one-tuple while the node unpacked a
   five-tuple, so the Spark tier was dispatched to but unreachable — a runtime
   failure waiting for anyone who sets ``model_type: pyspark``. It returns the
   same five-tuple as the pandas trainer, so both tiers are interchangeable.
-  """
+  '''
 
   def __init__(
     self,
@@ -1249,7 +1254,7 @@ class SparkModelTraining:
     prediction_col: str | None = None,
     save_model_path: str | None = None,
   ) -> None:
-    """Resolve handles and normalise parameters.
+    '''Resolve handles and normalise parameters.
 
     Args:
       model_handle: A dotted path to the estimator class.
@@ -1260,7 +1265,7 @@ class SparkModelTraining:
       evaluator_params: The evaluator's kwargs, including a ``labelCol``.
       prediction_col: The prediction column name.
       save_model_path: Where to persist the fitted pipeline.
-    """
+    '''
     self.model_handle = resolve(model_handle)
     self.model_params = dict(model_params or {})
     self.tuning_handle = resolve(tuning_handle) if tuning_handle else None
@@ -1275,7 +1280,7 @@ class SparkModelTraining:
   def train(
     self, frame: Any, metadata: Metadata
   ) -> tuple[SparkModelTraining, Any, dict[str, Any], Any, Any]:
-    """Fit a Spark ML pipeline, optionally through a cross-validator.
+    '''Fit a Spark ML pipeline, optionally through a cross-validator.
 
     Args:
       frame: The preprocessed Spark training frame.
@@ -1283,7 +1288,7 @@ class SparkModelTraining:
 
     Returns:
       The five-tuple, matching :class:`ModelTraining`.
-    """
+    '''
     from pyspark.ml import Pipeline  # noqa: PLC0415
     from pyspark.ml.feature import VectorAssembler  # noqa: PLC0415
 
@@ -1331,7 +1336,7 @@ class SparkModelTraining:
     metadata: Metadata,  # noqa: ARG001 - part of the scoring contract shared with the other tiers
     data_type: str = 'score',
   ) -> tuple[Any, Any]:
-    """Score a Spark frame.
+    '''Score a Spark frame.
 
     Args:
       fitted: The fitted pipeline model.
@@ -1343,7 +1348,7 @@ class SparkModelTraining:
     Returns:
       A two-tuple of the scored frame and itself, mirroring the pandas trainer's
       two-projection contract.
-    """
+    '''
     del calibrated
     scored = fitted.transform(frame).withColumn(
       constants.ORIG_SCORE_VALUE,
@@ -1354,7 +1359,7 @@ class SparkModelTraining:
 
 
 class TransformerTraining:
-  """Train a transformer over behavioural sequences.
+  '''Train a transformer over behavioural sequences.
 
   Opt-in: fully implemented, referenced by no registered pipeline, and gated on
   the optional deep-learning extra. The model checkpoint is a *complete*
@@ -1372,22 +1377,22 @@ class TransformerTraining:
 
   The tier remains opt-in: ``torch`` and ``pytorch-lightning`` are an optional
   dependency and are imported lazily, so the framework runs without them.
-  """
+  '''
 
   def __init__(self, config: dict[str, Any] | None = None) -> None:
-    """Build the trainer from a configuration block.
+    '''Build the trainer from a configuration block.
 
     Args:
       config: The transformer configuration. Torch and Lightning are imported
         here, so constructing this trainer is the point at which the optional
         dependency becomes required.
-    """
+    '''
     self.config = dict(config or {})
     self.max_value_dict: dict[str, int] = {}
     self.model: Any = None
 
   def train_and_score(self, metadata: Metadata) -> TransformerTraining:
-    """Train over a sequence parquet directory and write predictions.
+    '''Train over a sequence parquet directory and write predictions.
 
     Args:
       metadata: The schema contract, whose sequence and identifier columns and
@@ -1395,7 +1400,7 @@ class TransformerTraining:
 
     Returns:
       ``self``, mirroring the other trainers' return arity at the node layer.
-    """
+    '''
     from forecasting_ml_framework.modeling.transformer import (  # noqa: PLC0415
       CustomWriter,
       PositionalEncoding,
@@ -1416,13 +1421,13 @@ class TransformerTraining:
       params=params,
     )
     runner.run(
-      train_dir=f'{root}/train',
-      test_dir=f'{root}/test',
-      output_dir=f'{root}/predictions',
+      train_dir=_resolve_filepath(f'{root}/train'),
+      test_dir=_resolve_filepath(f'{root}/test'),
+      output_dir=_resolve_filepath(f'{root}/predictions'),
       label_col=label_col,
       key_cols=key_cols,
       sequence_cols=sequence_cols,
-      model_save_path=f'{root}/transformer.pt',
+      model_save_path=_resolve_filepath(f'{root}/transformer.pt'),
     )
     self.model = runner.model
     self.max_value_dict = runner.max_value_dict
@@ -1430,7 +1435,7 @@ class TransformerTraining:
 
 
 def _probability_column(fitted: Any, prediction_col: str) -> Any:
-  """Build an expression extracting the positive-class probability from a Spark
+  '''Build an expression extracting the positive-class probability from a Spark
   prediction vector.
 
   The Spark ML estimators name their probability column after the prediction column
@@ -1446,7 +1451,7 @@ def _probability_column(fitted: Any, prediction_col: str) -> Any:
 
   Returns:
     A Spark column expression.
-  """
+  '''
   from pyspark.ml.functions import vector_to_array  # noqa: PLC0415
   from pyspark.sql import functions as sf  # noqa: PLC0415
 
@@ -1455,7 +1460,7 @@ def _probability_column(fitted: Any, prediction_col: str) -> Any:
 
 
 def _takes_class_weights(estimator_class: type) -> bool:
-  """Report whether an estimator takes a per-class weight vector.
+  '''Report whether an estimator takes a per-class weight vector.
 
   Detection is by the class's method-resolution order rather than by comparing
   ``__name__`` to a literal, so a subclass is handled the same way as its base —
@@ -1466,12 +1471,12 @@ def _takes_class_weights(estimator_class: type) -> bool:
 
   Returns:
     ``True`` when the estimator expects ``class_weights``.
-  """
+  '''
   return any(base.__name__ in _CLASS_WEIGHT_ESTIMATORS for base in estimator_class.__mro__)
 
 
 def _safe_rate(numerator: float, denominator: float) -> float:
-  """Compute a rate, recovering precision when the rate rounds to zero.
+  '''Compute a rate, recovering precision when the rate rounds to zero.
 
   A rare-event rate of 0.00043 rounds to ``0.0`` at two decimal places, which
   would silently disable calibration through the degenerate branch. The
@@ -1484,7 +1489,7 @@ def _safe_rate(numerator: float, denominator: float) -> float:
 
   Returns:
     The rate, rounded to two places, or to four when the rate is below 0.1.
-  """
+  '''
   if not denominator:
     return 0.0
   rate = float(np.round(numerator / denominator, 2))

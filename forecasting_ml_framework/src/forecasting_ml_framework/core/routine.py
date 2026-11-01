@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The two-phase feature-transform contract.
+'''The two-phase feature-transform contract.
 
 Every feature transform implements two methods::
 
@@ -29,7 +29,7 @@ overrides neither and simply inherits. Four mechanisms live in this small class:
 ``fit`` / ``apply``
   The template. The registry interleaves them per routine, so routine *n*'s
   ``fit`` sees routine *n-1*'s output.
-"""
+'''
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ LOGGER = get_logger(__name__)
 
 
 class PreprocessRoutine:
-  """Base class for every feature transform.
+  '''Base class for every feature transform.
 
   The class is deliberately small: the leverage comes from how many routines,
   estimators and pipelines attach to it.
@@ -57,10 +57,10 @@ class PreprocessRoutine:
     name: The routine's display name, used in the run log.
     transform_cols: The columns resolved by the most recent
       :meth:`get_selected_columns` call, cached as a side effect.
-  """
+  '''
 
   def __init__(self) -> None:
-    """Install the declared defaults onto the instance."""
+    '''Install the declared defaults onto the instance.'''
     self.skip = False
     self.key_cols_list: list[str] = []
     self.name = type(self).__name__
@@ -73,7 +73,7 @@ class PreprocessRoutine:
   # ---------------------------------------------------------------------- #
   @classmethod
   def get_param_handle(cls) -> str:
-    """Return the configuration key that registers this routine.
+    '''Return the configuration key that registers this routine.
 
     A class method rather than an instance method: the handle is a property of
     the *type*, since it is what identifies the routine in configuration, and it
@@ -83,15 +83,15 @@ class PreprocessRoutine:
 
     Returns:
       The routine's configuration key.
-    """
+    '''
     return cls.__name__
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the routine's complete parameter surface.
+    '''Declare the routine's complete parameter surface.
 
     Returns:
       A mapping of configuration key to default value. Always includes ``skip``.
-    """
+    '''
     return {'skip': False}
 
   # ---------------------------------------------------------------------- #
@@ -102,7 +102,7 @@ class PreprocessRoutine:
     global_params: Mapping[str, Any] | None,
     params: Mapping[str, Any] | None,
   ) -> PreprocessRoutine:
-    """Apply routine-specific then shared parameters onto this instance.
+    '''Apply routine-specific then shared parameters onto this instance.
 
     Both arguments are normalised before either is read, so
     ``load_params(globals, None)`` behaves identically to
@@ -117,7 +117,7 @@ class PreprocessRoutine:
 
     Returns:
       ``self``, so construction can be written as a single expression.
-    """
+    '''
     local = dict(params or {})
     shared = dict(global_params or {})
     for key, value in local.items():
@@ -136,7 +136,7 @@ class PreprocessRoutine:
     include_cols: Sequence[str] | None,
     cols_all: Sequence[str],
   ) -> list[str]:
-    """Resolve which columns this routine should act on.
+    '''Resolve which columns this routine should act on.
 
     The *third* argument is the semantically meaningful choice: it is the role
     list the routine is scoped to.
@@ -149,7 +149,7 @@ class PreprocessRoutine:
 
     Returns:
       The resolved column list, also cached on ``self.transform_cols``.
-    """
+    '''
     self.transform_cols = list(include_cols) if include_cols else list(cols_all)
     if exclude_cols:
       excluded = set(exclude_cols)
@@ -163,7 +163,7 @@ class PreprocessRoutine:
   # The template
   # ---------------------------------------------------------------------- #
   def fit(self, df: Any, metadata: Metadata) -> tuple[PreprocessRoutine, Any, Metadata]:
-    """Learn state, then return the routine for serialisation.
+    '''Learn state, then return the routine for serialisation.
 
     The default implementation delegates to :meth:`apply`, which is exactly
     right for a stateless transform.
@@ -174,12 +174,12 @@ class PreprocessRoutine:
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     df, metadata = self.apply(df, metadata)
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Transform the frame using learned state.
+    '''Transform the frame using learned state.
 
     The default implementation is a no-op.
 
@@ -189,22 +189,22 @@ class PreprocessRoutine:
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     return df, metadata
 
   # ---------------------------------------------------------------------- #
   # Serialisation contract
   # ---------------------------------------------------------------------- #
   def __str__(self) -> str:
-    """Render the routine's effective configuration for the run log.
+    '''Render the routine's effective configuration for the run log.
 
     Returns:
       A comma-joined attribute dump.
-    """
+    '''
     return ', '.join(f'{key}: {value}' for key, value in self.__dict__.items() if value not in (None, [], {}, ''))
 
   def copy(self) -> PreprocessRoutine:
-    """Return a deep copy of the routine.
+    '''Return a deep copy of the routine.
 
     A routine library re-declared this identically in ten classes and
     omitted it from the rest; declaring it once here removes roughly nine hundred
@@ -212,13 +212,13 @@ class PreprocessRoutine:
 
     Returns:
       A deep copy.
-    """
+    '''
     return copy_module.deepcopy(self)
 
   def __repr__(self) -> str:
-    """Render a short representation.
+    '''Render a short representation.
 
     Returns:
       The representation string.
-    """
+    '''
     return f'{type(self).__name__}(name={self.name!r}, skip={self.skip!r})'

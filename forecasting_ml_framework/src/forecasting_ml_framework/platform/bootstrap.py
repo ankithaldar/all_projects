@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Bootstrap: make runtime parameters resolvable *before* the orchestrator starts.
+'''Bootstrap: make runtime parameters resolvable *before* the orchestrator starts.
 
 This is the least conventional part of the system, so it is worth stating
 precisely. The orchestrator resolves ``${namespace:key}`` references against
@@ -32,7 +32,7 @@ repointed at the *actual* suffix, so the graph and the catalog agree.
 run against partially-rewritten configuration and surfaced minutes later as an
 unresolvable interpolation error, separated from its cause by the whole startup
 sequence. The rewrite now fails fast, before the orchestrator starts.
-"""
+'''
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ CATALOG_PREFIX = 'catalog'
 
 @dataclass(frozen=True)
 class RewritePlan:
-  """The resolved decisions for one configuration rewrite.
+  '''The resolved decisions for one configuration rewrite.
 
   Attributes:
     conf_dir: The configuration directory being rewritten.
@@ -64,7 +64,8 @@ class RewritePlan:
     runtime_keys: Top-level keys supplied as runtime parameters.
     globals_keys: Top-level keys declared by the globals document.
     touched: The files that were modified, for the run log.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   conf_dir: Path
   suffix: str
@@ -73,7 +74,7 @@ class RewritePlan:
   touched: tuple[str, ...] = ()
 
   def route(self, key: str) -> str | None:
-    """Return the namespace a key should be routed to.
+    '''Return the namespace a key should be routed to.
 
     Args:
       key: The bare configuration key.
@@ -81,7 +82,7 @@ class RewritePlan:
     Returns:
       The namespace to bind, or ``None`` when the key is not a framework
       channel key and must be left alone.
-    """
+    '''
     if key in self.runtime_keys:
       return 'runtime_params'
     if key in self.globals_keys:
@@ -95,7 +96,7 @@ def resolve_workspace_path(
   mount_root: str = '/mnt',
   tmp_root: str = '/tmp',
 ) -> str:
-  """Choose the workspace root for the current platform.
+  '''Choose the workspace root for the current platform.
 
   Args:
     model_repo: The repository directory name.
@@ -106,13 +107,13 @@ def resolve_workspace_path(
 
   Returns:
     The absolute workspace path.
-  """
+  '''
   root = mount_root if is_hosted_platform else tmp_root
   return str(Path(root) / model_repo)
 
 
 def load_globals_keys(conf_dir: Path) -> dict[str, Any]:
-  """Read the globals document and return its top-level keys and values.
+  '''Read the globals document and return its top-level keys and values.
 
   Args:
     conf_dir: The configuration directory.
@@ -120,7 +121,7 @@ def load_globals_keys(conf_dir: Path) -> dict[str, Any]:
   Returns:
     The globals document as a mapping. An absent document yields an empty
     mapping, which simply disables the middle precedence tier.
-  """
+  '''
   import yaml  # noqa: PLC0415
 
   path = conf_dir / GLOBALS_FILENAME
@@ -138,7 +139,7 @@ def load_globals_keys(conf_dir: Path) -> dict[str, Any]:
 
 
 def build_plan(conf_dir: Path, suffix: str, runtime_params: dict[str, Any]) -> RewritePlan:
-  """Build the rewrite plan for a run.
+  '''Build the rewrite plan for a run.
 
   Args:
     conf_dir: The configuration directory.
@@ -147,7 +148,7 @@ def build_plan(conf_dir: Path, suffix: str, runtime_params: dict[str, Any]) -> R
 
   Returns:
     The plan.
-  """
+  '''
   globals_document = load_globals_keys(conf_dir)
   return RewritePlan(
     conf_dir=conf_dir,
@@ -158,7 +159,7 @@ def build_plan(conf_dir: Path, suffix: str, runtime_params: dict[str, Any]) -> R
 
 
 def rewrite_parameters(plan: RewritePlan) -> Path | None:
-  """Rewrite the parameters document.
+  '''Rewrite the parameters document.
 
   Two transformations apply. The suffix namespace is resolved to the **default**
   token, so the node layer can address configuration blocks by a stable name
@@ -173,7 +174,7 @@ def rewrite_parameters(plan: RewritePlan) -> Path | None:
 
   Raises:
     ConfigurationRewriteError: If the document is missing or unreadable.
-  """
+  '''
   from forecasting_ml_framework.constants import DEFAULT_SUFFIX  # noqa: PLC0415
 
   path = plan.conf_dir / PARAMETERS_FILENAME
@@ -192,7 +193,7 @@ def rewrite_parameters(plan: RewritePlan) -> Path | None:
 
 
 def rewrite_catalogs(plan: RewritePlan) -> list[Path]:
-  """Rewrite every catalog document in the configuration directory.
+  '''Rewrite every catalog document in the configuration directory.
 
   Three transformations apply: the suffix namespace is resolved to the
   **actual** token so the graph and the catalog agree; bare channel keys not
@@ -204,7 +205,7 @@ def rewrite_catalogs(plan: RewritePlan) -> list[Path]:
 
   Returns:
     The paths that were written.
-  """
+  '''
   written: list[Path] = []
   for path in sorted(plan.conf_dir.glob(f'{CATALOG_PREFIX}*.yml')):
     text = _read(path)
@@ -216,7 +217,7 @@ def rewrite_catalogs(plan: RewritePlan) -> list[Path]:
 
 
 def apply_rewrite(plan: RewritePlan) -> tuple[RewritePlan, list[Path]]:
-  """Execute the full rewrite and return the plan plus the files touched.
+  '''Execute the full rewrite and return the plan plus the files touched.
 
   Args:
     plan: The rewrite plan.
@@ -229,7 +230,7 @@ def apply_rewrite(plan: RewritePlan) -> tuple[RewritePlan, list[Path]]:
     ConfigurationRewriteError: If any step fails. The error is raised rather
       than logged so the run never starts against partially-rewritten
       configuration.
-  """
+  '''
   try:
     written = [p for p in (rewrite_parameters(plan), *rewrite_catalogs(plan)) if p is not None]
   except ConfigurationRewriteError:
@@ -265,7 +266,7 @@ def prepare_workspace(
   model_root: str | Path | None = None,
   model_conf_dir: str = 'conf',
 ) -> tuple[Path, RewritePlan, list[Path]]:
-  """Prepare the workspace and apply the configuration rewrite.
+  '''Prepare the workspace and apply the configuration rewrite.
 
   Args:
     model_repo: The repository directory name under the platform mount root.
@@ -284,7 +285,7 @@ def prepare_workspace(
   Raises:
     ConfigurationRewriteError: If the configuration directory does not exist or
       the rewrite fails.
-  """
+  '''
   root = Path(model_root) if model_root else Path(resolve_workspace_path(model_repo, is_hosted_platform))
   conf_dir = root / model_conf_dir / conf_env if conf_env else root / model_conf_dir / 'base'
   if not conf_dir.is_dir():
@@ -314,7 +315,7 @@ _RUNTIME_PARAMETERS: dict[str, Any] = {}
 
 
 def publish_runtime_parameters(runtime_params: dict[str, Any]) -> None:
-  """Record the run's runtime parameters for the ``${runtime:NAME}`` resolver.
+  '''Record the run's runtime parameters for the ``${runtime:NAME}`` resolver.
 
   Published at the same moment as the configuration rewrite, because that is the
   point at which the run's parameters are known to be final: they have been
@@ -323,20 +324,20 @@ def publish_runtime_parameters(runtime_params: dict[str, Any]) -> None:
 
   Args:
     runtime_params: The parsed runtime parameters.
-  """
+  '''
   _RUNTIME_PARAMETERS.clear()
   _RUNTIME_PARAMETERS.update(runtime_params or {})
 
 
 def runtime_parameter(name: str) -> Any:
-  """Return one published runtime parameter.
+  '''Return one published runtime parameter.
 
   Args:
     name: The parameter name.
 
   Returns:
     The value, or ``None`` when the parameter was not supplied for this run.
-  """
+  '''
   return _RUNTIME_PARAMETERS.get(name)
 
 
@@ -347,7 +348,7 @@ def bootstrap(
   argv: list[str] | None = None,
   model_root: str | Path | None = None,
 ) -> None:
-  """Entry point executed as the Spark driver's main file.
+  '''Entry point executed as the Spark driver's main file.
 
   The scheduler invokes this as::
 
@@ -365,7 +366,7 @@ def bootstrap(
       there; locally it is the checkout, and passing it is what stops the
       workspace from being resolved a second time against a platform mount that
       does not exist.
-  """
+  '''
   from kedro.framework.cli import main as kedro_main  # noqa: PLC0415
 
   from forecasting_ml_framework.utils.text import split_params  # noqa: PLC0415
@@ -392,7 +393,7 @@ def bootstrap(
 
 
 def _write_telemetry_opt_in(root: Path) -> None:
-  """Record the telemetry opt-in, where the root allows it.
+  '''Record the telemetry opt-in, where the root allows it.
 
   A workspace mounts the repository read-only, so an unguarded write here raised
   ``PermissionError`` and killed the run before the orchestrator was even entered
@@ -402,7 +403,7 @@ def _write_telemetry_opt_in(root: Path) -> None:
 
   Args:
     root: The workspace root.
-  """
+  '''
   try:
     Path(root / '.telemetry').write_text('allow\n', encoding='utf-8')
   except OSError as error:
@@ -414,14 +415,14 @@ def _write_telemetry_opt_in(root: Path) -> None:
 
 
 def _extract_raw_params(arguments: list[str]) -> dict[str, Any]:
-  """Parse a ``--params=`` argument out of the raw argument vector.
+  '''Parse a ``--params=`` argument out of the raw argument vector.
 
   Args:
     arguments: The raw argument vector.
 
   Returns:
     The parsed parameter mapping, or an empty mapping.
-  """
+  '''
   from forecasting_ml_framework.utils.text import split_params  # noqa: PLC0415
 
   for argument in arguments:
@@ -438,7 +439,7 @@ def _rebuild_arguments(
   conf_env: str,
   runtime_params: dict[str, Any],
 ) -> list[str]:
-  """Re-emit the orchestrator arguments with an explicit environment.
+  '''Re-emit the orchestrator arguments with an explicit environment.
 
   Args:
     arguments: The raw argument vector.
@@ -448,7 +449,7 @@ def _rebuild_arguments(
 
   Returns:
     The rewritten argument vector.
-  """
+  '''
   rebuilt: list[str] = []
   seen_env = False
   for argument in arguments:
@@ -465,7 +466,7 @@ def _rebuild_arguments(
 
 
 def _route_keys(text: str, plan: RewritePlan) -> str:
-  """Rewrite bare channel keys to their precedence namespace.
+  '''Rewrite bare channel keys to their precedence namespace.
 
   Substitution is applied longest-key-first so that a key which is a prefix of
   another (``suffix`` and ``suffix_prefix``) cannot partially match.
@@ -476,7 +477,7 @@ def _route_keys(text: str, plan: RewritePlan) -> str:
 
   Returns:
     The rewritten text.
-  """
+  '''
   keys = sorted(plan.globals_keys | plan.runtime_keys, key=len, reverse=True)
   for key in keys:
     namespace = plan.route(key)
@@ -487,14 +488,14 @@ def _route_keys(text: str, plan: RewritePlan) -> str:
 
 
 def _read(path: Path) -> str:
-  """Read a configuration document.
+  '''Read a configuration document.
 
   Args:
     path: The document path.
 
   Returns:
     The document text.
-  """
+  '''
   try:
     return path.read_text(encoding='utf-8')
   except OSError as error:
@@ -502,7 +503,7 @@ def _read(path: Path) -> str:
 
 
 def _write(path: Path, text: str) -> None:
-  """Write a configuration document.
+  '''Write a configuration document.
 
   Args:
     path: The document path.
@@ -510,7 +511,7 @@ def _write(path: Path, text: str) -> None:
 
   Raises:
     ConfigurationRewriteError: If the write fails.
-  """
+  '''
   try:
     path.write_text(text, encoding='utf-8')
   except OSError as error:

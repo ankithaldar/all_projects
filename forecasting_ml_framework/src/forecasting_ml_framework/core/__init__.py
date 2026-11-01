@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Framework core: the domain layer every other layer depends on."""
+'''Framework core: the domain layer every other layer depends on.'''
 
 from forecasting_ml_framework.core.metadata import Metadata
 from forecasting_ml_framework.core.registry import Registry

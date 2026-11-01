@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Champion/challenger validation.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,line-too-long
+'''Champion/challenger validation.
 
 This is the most consequential business logic in the framework: it decides
 whether a retrained model may replace the one serving production traffic. Two
@@ -34,7 +35,7 @@ reported the top band's value under a different band's metric name. That changes
 a *reported number*, not merely whether a task runs, so it is never silent: the
 substitution is either rejected or, where an operator explicitly opts in,
 recorded in the audit trail.
-"""
+'''
 
 from __future__ import annotations
 
@@ -48,6 +49,8 @@ from forecasting_ml_framework import constants
 from forecasting_ml_framework.exceptions import MetricBandEmptyError, RegistryEntryMissingError
 from forecasting_ml_framework.modeling.metrics import (
   band_metrics,
+  acceptance_threshold,
+  canonical_metric_key,
   evaluate_acceptance,
   parse_metric,
   regression_band_metrics,
@@ -77,7 +80,7 @@ def validate_and_promote(
   strict_metric: bool = True,
   allow_band_fallback: bool = False,
 ) -> tuple[Any, Any, Any]:
-  """Score the challenger, compare it to the incumbent, and promote if accepted.
+  '''Score the challenger, compare it to the incumbent, and promote if accepted.
 
   Args:
     challenger: The challenger's trainer instance.
@@ -101,7 +104,8 @@ def validate_and_promote(
 
   Raises:
     ValueError: If no holdout exists.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   if holdout.empty:
     raise ValueError(
       'Model validation requires a held-out slice. Set eval_size (for example eval_size: 0.2) under '
@@ -157,7 +161,7 @@ def validate_and_promote_regression(
   strict_metric: bool = True,
   allow_band_fallback: bool = False,
 ) -> tuple[Any, Any, Any]:
-  """Score and compare a continuous-target challenger.
+  '''Score and compare a continuous-target challenger.
 
   The sign of the acceptance rule is derived from the metric's declared
   direction, so it is correct for losses as well as for scores. This is the
@@ -183,7 +187,7 @@ def validate_and_promote_regression(
   Returns:
     The winning triple. With no incumbent the challenger wins by default, so the
     node's arity is the three declared outputs in every mode.
-  """
+  '''
   if holdout.empty:
     raise ValueError(
       'Model validation requires a held-out slice. Set eval_size under the modeling_reg block in '
@@ -225,7 +229,7 @@ def promote_without_comparison(
   holdout: pd.DataFrame,
   parameters: dict[str, Any],
 ) -> tuple[Any, Any, Any]:
-  """Promote a freshly trained model without comparing it to an incumbent.
+  '''Promote a freshly trained model without comparing it to an incumbent.
 
   This node exists so that the production-named model datasets are written by
   exactly one node in every training mode. Without it, the graph would have to
@@ -255,7 +259,7 @@ def promote_without_comparison(
 
   Returns:
     The promoted triple, which is always the challenger.
-  """
+  '''
   del holdout
   train_mode = str(parameters.get(constants.ENV_TRAIN_MODE, 'train_only'))
   if train_mode == constants.TrainMode.UPDATE_METADATA.value:
@@ -283,7 +287,7 @@ def promote_without_comparison(
 
 
 def decide_promotion_from_parameters(parameters: dict[str, Any]) -> PromotionDecision:
-  """Derive the promotion decision from the temporal gate alone.
+  '''Derive the promotion decision from the temporal gate alone.
 
   A **first training** has no incumbent, so there is no incumbent window to be
   behind. Reading the registry to compare against a row that does not exist would
@@ -298,7 +302,7 @@ def decide_promotion_from_parameters(parameters: dict[str, Any]) -> PromotionDec
 
   Returns:
     The decision.
-  """
+  '''
   from datetime import date  # noqa: PLC0415
 
   from forecasting_ml_framework.modeling.promotion import read_current_entry  # noqa: PLC0415
@@ -330,7 +334,7 @@ def _score_model(
   spec: Any,
   allow_band_fallback: bool,
 ) -> tuple[pd.DataFrame, float, int | None]:
-  """Score one model on the holdout at its own operating point.
+  '''Score one model on the holdout at its own operating point.
 
   The challenger's score is measured at *its own* threshold, using *its own*
   feature list, on the holdout it was split from — which is the correct
@@ -346,7 +350,7 @@ def _score_model(
   Returns:
     A three-tuple of the scored frame, the scalar metric and the band actually
     read.
-  """
+  '''
   working = holdout.reset_index(drop=True)
   features = list(trainer.features_to_use)
   target = trainer.target_col
@@ -376,7 +380,7 @@ def _score_regression_model(
   spec: Any,
   allow_band_fallback: bool,
 ) -> tuple[tuple[float, int | None], pd.DataFrame]:
-  """Score one continuous-target model on the holdout.
+  '''Score one continuous-target model on the holdout.
 
   Returns the scored frame alongside the metric. The frame is the only available
   source for a non-zero drift fill, so the promotion path needs it: returning a
@@ -392,7 +396,7 @@ def _score_regression_model(
 
   Returns:
     A two-tuple of the metric pair and the scored frame.
-  """
+  '''
   working = holdout.reset_index(drop=True)
   features = list(trainer.features_to_use)
   target = trainer.target_col
@@ -420,7 +424,7 @@ def _gate(
   band_used: int | None,
   temporal: PromotionDecision,
 ) -> PromotionDecision:
-  """Compose the acceptance gate and the temporal gate into one decision.
+  '''Compose the acceptance gate and the temporal gate into one decision.
 
   The framework applies two independent gates, and both must pass for a
   promotion. ``accepted`` is the **acceptance** gate: the challenger scored no
@@ -449,7 +453,7 @@ def _gate(
 
   Returns:
     The composed decision, carrying whichever gate's rationale explains it.
-  """
+  '''
   direction = 'higher-is-better' if spec.higher_is_better else 'lower-is-better'
   if not accepted:
     return PromotionDecision(
@@ -461,7 +465,7 @@ def _gate(
   if temporal.action == 'PROMOTE':
     return PromotionDecision(
       'PROMOTE',
-      f'{spec.name} deviation {deviation:.2f}% is within the {abs(-5.0)}% non-regression tolerance for a '
+      f'{spec.name} deviation {deviation:.2f}% is within the {abs(acceptance_threshold())}% non-regression tolerance for a '
       f'{direction} metric, and {temporal.rationale}',
       band_used=band_used,
     )
@@ -474,7 +478,7 @@ def _gate(
 
 
 def _read_metric(bands: pd.DataFrame, spec: Any, allow_band_fallback: bool) -> tuple[float, int | None]:
-  """Read a single metric from a banded frame, with an audited fallback.
+  '''Read a single metric from a banded frame, with an audited fallback.
 
   Args:
     bands: The banded metric frame.
@@ -486,16 +490,16 @@ def _read_metric(bands: pd.DataFrame, spec: Any, allow_band_fallback: bool) -> t
 
   Raises:
     MetricBandEmptyError: If the band is empty and the fallback is not permitted.
-  """
+  '''
   try:
     selected = select_band(bands, spec)
-    key = 'ADJ_R2' if spec.metric == 'ADJ_R2' else spec.metric
+    key = canonical_metric_key(spec.metric)
     return float(selected.iloc[0][key]), int(selected.iloc[0]['score_ntile'])
   except MetricBandEmptyError:
     if not allow_band_fallback:
       raise
     top = bands[bands['score_ntile'] == bands['score_ntile'].max()]
-    key = 'ADJ_R2' if spec.metric == 'ADJ_R2' else spec.metric
+    key = canonical_metric_key(spec.metric)
     band_used = int(top.iloc[0]['score_ntile'])
     LOGGER.warning(
       'Falling back to the top band. The substitution is recorded in the promotion audit log, '
@@ -509,7 +513,7 @@ def _read_metric(bands: pd.DataFrame, spec: Any, allow_band_fallback: bool) -> t
 def _reconcile_features(
   holdout: pd.DataFrame, incumbent: Any, challenger_frame: pd.DataFrame | None
 ) -> pd.DataFrame:
-  """Reconcile the incumbent's feature vector with the current frame.
+  '''Reconcile the incumbent's feature vector with the current frame.
 
   The incumbent may have been trained on features the current pipeline no longer
   produces, because the column list was edited between training and now, or a
@@ -533,7 +537,7 @@ def _reconcile_features(
 
   Returns:
     The reconciled frame.
-  """
+  '''
   required = set(incumbent.features_to_use)
   missing = sorted(required - set(holdout.columns))
   if not missing:
@@ -578,7 +582,7 @@ def _fill_value(
   reference: Any,
   column: str,
 ) -> float | None:
-  """Compute a single feature's fill value, or ``None`` when none is usable.
+  '''Compute a single feature's fill value, or ``None`` when none is usable.
 
   The incumbent's recorded statistic is preferred because it describes the
   distribution the incumbent was actually fitted on. The reference frame is a
@@ -595,7 +599,7 @@ def _fill_value(
   Returns:
     A finite float, or ``None`` when the strategy does not apply or no finite
     statistic is available.
-  """
+  '''
   if strategy not in ('mean', 'median'):
     return None
   if recorded and strategy in recorded:
@@ -611,7 +615,7 @@ def _fill_value(
 
 
 def _modelling_block(parameters: dict[str, Any], regression: bool = False) -> dict[str, Any]:
-  """Locate the modelling configuration block.
+  '''Locate the modelling configuration block.
 
   A thin, typed wrapper over
   :func:`~forecasting_ml_framework.nodes.model_nodes._resolve_model_block`, which
@@ -629,7 +633,7 @@ def _modelling_block(parameters: dict[str, Any], regression: bool = False) -> di
 
   Raises:
     DataContractError: If no block, or more than one block, matches.
-  """
+  '''
   from forecasting_ml_framework.nodes.model_nodes import (  # noqa: PLC0415
     CLASSIFICATION_BLOCK_TEMPLATE,
     REGRESSION_BLOCK_TEMPLATE,
@@ -645,14 +649,14 @@ def _modelling_block(parameters: dict[str, Any], regression: bool = False) -> di
 
 
 def _parse_date(value: Any) -> Any:
-  """Parse a configuration date.
+  '''Parse a configuration date.
 
   Args:
     value: The raw value.
 
   Returns:
     A ``date``, or ``None`` when the value is absent.
-  """
+  '''
   from datetime import datetime  # noqa: PLC0415
 
   if value is None or value == '':

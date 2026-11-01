@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Modelling layer: trainers, scoring, calibration, metrics and promotion.
+'''Modelling layer: trainers, scoring, calibration, metrics and promotion.
 
 The dependency discipline is strictly one-way: nothing here imports a node, a
 pipeline or a configuration module.
-"""
+'''
 
 from forecasting_ml_framework.modeling.calibration import calibrate_probability, select_threshold
 from forecasting_ml_framework.modeling.metrics import (

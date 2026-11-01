@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Translation of warehouse SQL into the SQLite dialect.
+'''Translation of warehouse SQL into the SQLite dialect.
 
 The catalog's queries are written once, for the production warehouse. A local
 run must execute *those* queries rather than a parallel set written for the
@@ -37,7 +37,7 @@ constructs this catalog uses and refuses anything it does not recognise, so a
 query using an untranslated dialect feature fails loudly at translation time
 instead of reaching SQLite and producing a wrong answer. Failing loudly is the
 whole point: a silently mistranslated query returns plausible numbers.
-"""
+'''
 
 from __future__ import annotations
 
@@ -104,11 +104,11 @@ _UNIT_MULTIPLIER = {'QUARTER': 3, 'WEEK': 7}
 
 
 class SqlTranslationError(ValueError):
-  """Raised when a query uses a construct the translator will not guess at."""
+  '''Raised when a query uses a construct the translator will not guess at.'''
 
 
 def to_sqlite(sql: str) -> str:
-  """Translate a warehouse query into the SQLite dialect.
+  '''Translate a warehouse query into the SQLite dialect.
 
   Args:
     sql: The query as written for the production warehouse.
@@ -120,7 +120,7 @@ def to_sqlite(sql: str) -> str:
     SqlTranslationError: If the query uses a construct that has no exact
       translation. The error names the construct so the query can be rewritten
       rather than silently mis-executed.
-  """
+  '''
   upper = sql.upper()
   for construct in _UNSUPPORTED:
     if construct in upper:
@@ -140,7 +140,7 @@ def to_sqlite(sql: str) -> str:
 
 
 def _split_call(sql: str, open_index: int) -> tuple[str, re.Match[str], int]:
-  """Split a ``DATE_ADD`` call into its inner expression and its interval tail.
+  '''Split a ``DATE_ADD`` call into its inner expression and its interval tail.
 
   The call is delimited by counting brackets rather than by pattern, because the
   inner expression may contain arbitrarily nested parentheses -- including another
@@ -159,7 +159,7 @@ def _split_call(sql: str, open_index: int) -> tuple[str, re.Match[str], int]:
     SqlTranslationError: If the brackets never balance, or the interval does not
       parse. Both mean the expression is shaped in a way this translator does not
       understand, and guessing at it is what this module exists to avoid.
-  """
+  '''
   depth = 0
   separator: int | None = None
   position = open_index
@@ -194,7 +194,7 @@ def _split_call(sql: str, open_index: int) -> tuple[str, re.Match[str], int]:
 
 
 def _translate_date_adds(sql: str) -> str:
-  """Rewrite every ``DATE_ADD`` call, innermost first.
+  '''Rewrite every ``DATE_ADD`` call, innermost first.
 
   Each pass rewrites exactly one call -- the last opening in the string, which is
   the innermost when the calls nest -- and repeats until none remain. Rewriting
@@ -210,7 +210,7 @@ def _translate_date_adds(sql: str) -> str:
   Raises:
     SqlTranslationError: If a ``DATE_ADD`` call cannot be parsed, which means the
       expression is shaped in a way this translator does not understand.
-  """
+  '''
   translated = sql
   while True:
     opening = None
@@ -225,7 +225,7 @@ def _translate_date_adds(sql: str) -> str:
 
 
 def _date_add_replacement(inner: str, tail: re.Match[str]) -> str:
-  """Build the SQLite form of one ``DATE_ADD`` call.
+  '''Build the SQLite form of one ``DATE_ADD`` call.
 
   Args:
     inner: The call's inner expression.
@@ -236,7 +236,7 @@ def _date_add_replacement(inner: str, tail: re.Match[str]) -> str:
 
   Raises:
     SqlTranslationError: If the interval unit has no SQLite modifier.
-  """
+  '''
   unit = tail.group('unit').upper()
   count = int(tail.group('count')) * _UNIT_MULTIPLIER.get(unit, 1)
   if unit not in _UNIT_SUFFIX:
@@ -249,21 +249,21 @@ def _date_add_replacement(inner: str, tail: re.Match[str]) -> str:
 
 
 def _identifier(quoted: str) -> str:
-  """Convert a backtick-quoted warehouse path into a SQLite identifier.
+  '''Convert a backtick-quoted warehouse path into a SQLite identifier.
 
   Args:
     quoted: A backtick-quoted reference, possibly dot-separated.
 
   Returns:
     A double-quoted bare table name, with any embedded double quote doubled.
-  """
+  '''
   path = quoted.strip('`')
   table = path.rsplit('.', 1)[-1]
   return '"' + table.replace('"', '""') + '"'
 
 
 def resolve_parameters(sql: str, parameters: dict[str, Any], globals_: dict[str, Any]) -> str:
-  """Expand ``${section:key}`` and ``${globals:key}`` references in a query.
+  '''Expand ``${section:key}`` and ``${globals:key}`` references in a query.
 
   The production catalog uses OmegaConf interpolation. A local run resolves the
   same references from plain dictionaries, so a query that is missing a
@@ -280,7 +280,7 @@ def resolve_parameters(sql: str, parameters: dict[str, Any], globals_: dict[str,
 
   Raises:
     KeyError: If a reference names a key that is absent from its document.
-  """
+  '''
   def expand(match: re.Match[str]) -> str:
     section, _, key = match.group(1).partition(':')
     document = globals_ if section == 'globals' else parameters.get(section, {})

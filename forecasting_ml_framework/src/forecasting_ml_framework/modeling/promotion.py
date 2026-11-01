@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Bitemporal model registry and the champion/challenger promotion protocol.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''Bitemporal model registry and the champion/challenger promotion protocol.
 
 The registry is the most sophisticated design element in the framework, and it
 is under-recognised as such. Three properties make it strong:
@@ -37,7 +38,7 @@ Two properties make the write path safe:
 Replay safety comes from the temporal gate: a challenger evaluated against an
 already-recorded window is a no-op, so re-running a day cannot create a duplicate
 promotion or a duplicate audit row.
-"""
+'''
 
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ LOGGER = get_logger(__name__)
 #:
 #: The length bound is a separate concern and is retained: a rationale is prose,
 #: not a payload.
-_SAFE_LITERAL = re.compile(r"^[A-Za-z0-9 _.,;:!?()\[\]+%/=<>@#$&*|~^-]{1,256}$")
+_SAFE_LITERAL = re.compile(r'^[A-Za-z0-9 _.,;:!?()\[\]+%/=<>@#$&*|~^-]{1,256}$')
 
 #: The registry's temporal columns.
 COLUMN_BASE_DATE = 'base_date'
@@ -96,7 +97,7 @@ PROMOTION_LOG_TABLE = '<model_promotion_log_table>'
 
 @dataclass(frozen=True)
 class PromotionDecision:
-  """The outcome of a promotion evaluation.
+  '''The outcome of a promotion evaluation.
 
   Attributes:
     action: One of ``'PROMOTE'``, ``'NO_OP'`` or ``'RECORD_ONLY'``.
@@ -105,7 +106,8 @@ class PromotionDecision:
     band_used: The band whose metric was actually read, when a substitution
       occurred. a silent band substitution changes a reported number,
       so it is recorded.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   action: str
   rationale: str
@@ -113,7 +115,7 @@ class PromotionDecision:
 
 
 def decide_promotion(new_evidence_date: date, incumbent_evidence_date: date) -> PromotionDecision:
-  """Decide what to do with a challenger, gated on temporal validity.
+  '''Decide what to do with a challenger, gated on temporal validity.
 
   Args:
     new_evidence_date: The observation window through which the challenger's
@@ -122,7 +124,7 @@ def decide_promotion(new_evidence_date: date, incumbent_evidence_date: date) -> 
 
   Returns:
     The decision.
-  """
+  '''
   if new_evidence_date > incumbent_evidence_date:
     return PromotionDecision(
       'PROMOTE',
@@ -150,7 +152,7 @@ def apply_promotion(
   old_score: float = 0.0,
   new_base_date: date | None = None,
 ) -> bool:
-  """Mutate the registry for a promotion decision, atomically.
+  '''Mutate the registry for a promotion decision, atomically.
 
   Three writes are required for a promotion: the audit row recording the
   decision, the demotion of the incumbent, and the append of the challenger. They
@@ -175,7 +177,7 @@ def apply_promotion(
     RegistryEntryMissingError: If no current row exists for the model key.
     MissingParameterError: If a mandatory coordinate is absent.
     PromotionError: If the transaction fails.
-  """
+  '''
   from google.cloud import bigquery  # noqa: PLC0415
 
   model_key = require(params, 'model_key', stage='apply_promotion')
@@ -224,7 +226,7 @@ def apply_promotion(
 
 
 def read_current_entry(params: dict[str, Any]) -> dict[str, Any]:
-  """Read the current registry row for the model key.
+  '''Read the current registry row for the model key.
 
   Args:
     params: The run parameters.
@@ -234,7 +236,7 @@ def read_current_entry(params: dict[str, Any]) -> dict[str, Any]:
 
   Raises:
     RegistryEntryMissingError: If no current row exists.
-  """
+  '''
   from google.cloud import bigquery  # noqa: PLC0415
 
   model_key = require(params, 'model_key', stage='read_current_entry')
@@ -252,7 +254,7 @@ def _read_incumbent(
   table: str,
   model_key: str,
 ) -> dict[str, Any]:
-  """Read the current registry row and the superseded history for a model.
+  '''Read the current registry row and the superseded history for a model.
 
   The framework cannot bootstrap its own registry: onboarding a new
   ``model_key`` requires an out-of-band insert. That dependency was implicit in a
@@ -271,7 +273,7 @@ def _read_incumbent(
 
   Raises:
     RegistryEntryMissingError: If no row exists at all for the model key.
-  """
+  '''
   sql = (
     f'SELECT * FROM {project}.{dataset}.{table} WHERE model_key = {_sql_literal(model_key)}'
   )
@@ -318,7 +320,7 @@ def _build_promote_statements(
   run_date: str,
   report_period: date,
 ) -> list[str]:
-  """Build the statements of the atomic promotion transaction.
+  '''Build the statements of the atomic promotion transaction.
 
   Args:
     project: The project that owns the tables.
@@ -339,12 +341,12 @@ def _build_promote_statements(
   Returns:
     The statements, in execution order. BigQuery runs a multi-statement script in
     a single transaction, so the whole promotion either lands or does not.
-  """
+  '''
   qualified_registry = f'{project}.{metrics_dataset}.{registry_table}'
   qualified_log = f'{project}.{metrics_dataset}.{log_table}'
   key = _sql_literal(model_key)
 
-  audit = """
+  audit = '''
     INSERT INTO {qualified_log}
       (model_key, retrain_dt, metric_compared, prod_base_dt, prod_metric_value,
        new_metric_value, trained_model_replaced_flag, promotion_action, decision_rationale,
@@ -368,7 +370,7 @@ def _build_promote_statements(
         AND new_metric_value = {new_score}
         AND DATE(insert_ts) = PARSE_DATE('%Y-%m-%d', {run_date})
     );
-  """
+  '''
   # The audit's incumbent score is read from the row the caller actually retrieved
   # rather than from the `old_score` argument, which the caller supplies as 0.0 on
   # the first promotion. The first promotion is precisely the case where there is
@@ -402,14 +404,14 @@ def _build_promote_statements(
     'COLUMN_EVIDENCE_DATE': COLUMN_EVIDENCE_DATE,
   }
 
-  demote = """
+  demote = '''
     UPDATE {qualified_registry}
     SET {COLUMN_STATUS} = {superseded},
         {COLUMN_RECORD_TIME} = CURRENT_TIMESTAMP()
     WHERE model_key = {key} AND {COLUMN_STATUS} = {current};
-  """
+  '''
 
-  insert = """
+  insert = '''
     INSERT INTO {qualified_registry}
       (model_key, {COLUMN_BASE_DATE}, {COLUMN_EVIDENCE_DATE}, {COLUMN_RECORD_TIME}, {COLUMN_STATUS})
     SELECT {key},
@@ -418,7 +420,7 @@ def _build_promote_statements(
       CURRENT_TIMESTAMP(),
       {current}
     ;
-  """
+  '''
   return [
     _render(audit, params),
     _render(demote, params),
@@ -442,7 +444,7 @@ def _record_only(
   run_date: str,  # noqa: ARG001 - likewise
   report_period: date,  # noqa: ARG001 - likewise
 ) -> None:
-  """Record a challenger evaluated against an older window, without promoting.
+  '''Record a challenger evaluated against an older window, without promoting.
 
   The parameters this function does not consume are retained deliberately. It and
   :func:`_build_promote_statements` are the two halves of one decision -- record
@@ -475,7 +477,7 @@ def _record_only(
 
   Raises:
     PromotionError: If the write fails.
-  """
+  '''
   qualified = f'{project}.{dataset}.{table}'
   key = _sql_literal(model_key)
   # A first promotion has no incumbent, so this path must tolerate a missing row
@@ -488,14 +490,14 @@ def _record_only(
       extra={'model_key': model_key, 'evidence_date': evidence_date.isoformat()},
     )
     return
-  sql = """
+  sql = '''
     INSERT INTO {qualified} (model_key, {COLUMN_BASE_DATE}, {COLUMN_EVIDENCE_DATE}, {COLUMN_RECORD_TIME}, {COLUMN_STATUS})
     SELECT {key},
       PARSE_DATE('%Y-%m-%d', {base_date}),
       PARSE_DATE('%Y-%m-%d', {evidence_date}),
       CURRENT_TIMESTAMP(),
       {superseded}
-  """
+  '''
   params = {
     'qualified': qualified,
     'key': key,
@@ -515,7 +517,7 @@ def _record_only(
 
 
 def _render(template: str, params: dict[str, Any]) -> str:
-  """Render one SQL template.
+  '''Render one SQL template.
 
   The statements are assembled as templates and rendered in exactly one place, so
   a placeholder that is declared but not bound is a rendering error rather than a
@@ -527,12 +529,12 @@ def _render(template: str, params: dict[str, Any]) -> str:
 
   Returns:
     The rendered statement.
-  """
+  '''
   return template.format(**params)
 
 
 def _float_or_default(row: dict[str, Any] | None, default: float) -> float:
-  """Read a numeric field from a registry row, falling back to a default.
+  '''Read a numeric field from a registry row, falling back to a default.
 
   Args:
     row: The registry row, or ``None`` when there is no incumbent.
@@ -540,7 +542,7 @@ def _float_or_default(row: dict[str, Any] | None, default: float) -> float:
 
   Returns:
     The field's value as a float, or the default.
-  """
+  '''
   if not row:
     return float(default)
   for field in ('metric_value', 'prod_metric_value', 'new_metric_value'):
@@ -551,7 +553,7 @@ def _float_or_default(row: dict[str, Any] | None, default: float) -> float:
 
 
 def _execute_transaction(client: Any, statements: list[str], model_key: str) -> None:
-  """Execute the promotion statements as one atomic transaction.
+  '''Execute the promotion statements as one atomic transaction.
 
   Args:
     client: A BigQuery client.
@@ -560,7 +562,7 @@ def _execute_transaction(client: Any, statements: list[str], model_key: str) -> 
 
   Raises:
     PromotionError: If the transaction fails. The registry is left untouched.
-  """
+  '''
   job = client.query('\n'.join(statements))
   job.result()
   LOGGER.info(
@@ -570,7 +572,7 @@ def _execute_transaction(client: Any, statements: list[str], model_key: str) -> 
 
 
 def _sql_literal(value: Any) -> str:
-  """Render a configuration value as a safe SQL literal.
+  '''Render a configuration value as a safe SQL literal.
   dates and the scores directly into f-strings, so a configuration value
   containing a quote breaks the query. Values are validated against a strict
   character class and rejected outright if they fall outside it. Rejecting is
@@ -587,7 +589,7 @@ def _sql_literal(value: Any) -> str:
   Raises:
     PromotionError: If the value contains a character that could terminate or
       alter the literal.
-  """
+  '''
   text = str(value)
   if not _SAFE_LITERAL.match(text):
     raise PromotionError(
@@ -604,7 +606,7 @@ def _sql_literal(value: Any) -> str:
 
 
 def _parse_date(value: Any, field_name: str) -> date:
-  """Parse a date from configuration.
+  '''Parse a date from configuration.
 
   Args:
     value: The raw value.
@@ -615,7 +617,7 @@ def _parse_date(value: Any, field_name: str) -> date:
 
   Raises:
     MissingParameterError: If the value cannot be parsed.
-  """
+  '''
   if isinstance(value, datetime):
     return value.date()
   if isinstance(value, date):
@@ -631,14 +633,14 @@ def _parse_date(value: Any, field_name: str) -> date:
 
 
 def _as_date(value: Any) -> date:
-  """Coerce a registry column value to a date.
+  '''Coerce a registry column value to a date.
 
   Args:
     value: The raw column value.
 
   Returns:
     The date, or the epoch when the value is absent.
-  """
+  '''
   try:
     return _parse_date(value, 'registry_value')
   except MissingParameterError:

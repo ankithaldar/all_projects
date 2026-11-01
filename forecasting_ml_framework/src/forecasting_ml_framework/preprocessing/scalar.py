@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Scalar and row-wise feature transforms.
+'''Scalar and row-wise feature transforms.
 
 Eleven transforms that operate on scalar columns. The shared members of the
 template live on the base classes in :mod:`preprocessing.bases`; what remains
@@ -26,7 +26,7 @@ Four decisions in this family are load-bearing and easy to get wrong:
   values are assembled, scaled, and exploded back into their named columns. The
   assembler keeps partially-null rows rather than skipping them, so a single
   null cannot null out an entire feature block.
-"""
+'''
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ _SCOPE_NUMERICAL = 'numerical_cols'
 
 
 class Imputations(PreprocessRoutine):
-  """Fill missing values from a learned or configured bound.
+  '''Fill missing values from a learned or configured bound.
 
   One aggregation pass computes every column's bound regardless of how many
   columns are selected, which is a deliberate avoidance of the per-column
@@ -62,15 +62,16 @@ class Imputations(PreprocessRoutine):
   Attributes:
     bounds: The learned fill value per column. It is small and picklable, so it
       travels inside the persisted registry.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'Imputations'
@@ -78,11 +79,11 @@ class Imputations(PreprocessRoutine):
     self.bounds: dict[str, Any] = {}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'strategy': 'median',
@@ -91,7 +92,7 @@ class Imputations(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[Imputations, Any, Metadata]:
-    """Learn the fill bound for each selected column.
+    '''Learn the fill bound for each selected column.
 
     Args:
       df: The input frame.
@@ -99,7 +100,7 @@ class Imputations(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -126,7 +127,7 @@ class Imputations(PreprocessRoutine):
     return self, df, metadata
 
   def _learn_bounds(self, df: Any, columns: list[str]) -> dict[str, Any]:
-    """Compute the fill bound for each column.
+    '''Compute the fill bound for each column.
 
     Args:
       df: The input frame.
@@ -138,7 +139,7 @@ class Imputations(PreprocessRoutine):
         ``custom_bounds`` is still applied, because that is the documented way
         to give individual columns a business-meaningful fill while leaving the
         rest of the selection alone.
-    """
+    '''
     strategy = (self.strategy or 'median').lower()
     if strategy == 'none':
       #
@@ -167,7 +168,7 @@ class Imputations(PreprocessRoutine):
 
   @staticmethod
   def _learn_mode(df: Any, column: str) -> Any:
-    """Return the most frequent value of a column, deterministically.
+    '''Return the most frequent value of a column, deterministically.
 
     a self-joined the count frame against its own maximum,
     which yields one row per tied value and then took ``[0][col]``. For a binary
@@ -183,12 +184,12 @@ class Imputations(PreprocessRoutine):
     Returns:
       The most frequent value, with ties broken by ascending value for
         determinism.
-    """
+    '''
     row = df.groupBy(sf.col(column).alias(column)).count().orderBy(sf.desc('count'), sf.col(column).asc()).limit(1)
     return row.collect()[0][column] if row.count() else None
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Fill nulls using the learned or configured bounds.
+    '''Fill nulls using the learned or configured bounds.
 
     Args:
       df: The input frame.
@@ -196,7 +197,7 @@ class Imputations(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     if not self.bounds:
       LOGGER.info('Imputation is a no-op for this registration', extra={'routine': self.name})
       return df, metadata
@@ -205,7 +206,7 @@ class Imputations(PreprocessRoutine):
 
 
 class KNNImputation(SparkMlRoutine):
-  """Impute missing values with a scikit-learn nearest-neighbour model.
+  '''Impute missing values with a scikit-learn nearest-neighbour model.
 
   The fitted estimator is persisted externally rather than in the registry,
   because a ``KNNImputer`` holds the whole training matrix and is not
@@ -221,15 +222,15 @@ class KNNImputation(SparkMlRoutine):
     fitted_columns: The exact columns the model was fitted on. It equals
       ``use_cols``; the UDF input width must match the fit width, so it is
       stored explicitly rather than assumed.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'KNNImputation'
@@ -239,11 +240,11 @@ class KNNImputation(SparkMlRoutine):
     self.params: dict[str, Any] = {'n_neighbors': 5}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'handle': 'sklearn.impute.KNNImputer',
@@ -252,7 +253,7 @@ class KNNImputation(SparkMlRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[KNNImputation, Any, Metadata]:
-    """Fit the imputer on the driver and persist it.
+    '''Fit the imputer on the driver and persist it.
 
     Args:
       df: The input frame.
@@ -260,7 +261,7 @@ class KNNImputation(SparkMlRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.numerical_cols
     )
@@ -297,7 +298,7 @@ class KNNImputation(SparkMlRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Reload the imputer and apply it inside Spark.
+    '''Reload the imputer and apply it inside Spark.
 
     Args:
       df: The input frame.
@@ -305,7 +306,7 @@ class KNNImputation(SparkMlRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     from functools import partial  # noqa: PLC0415
 
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
@@ -317,7 +318,7 @@ class KNNImputation(SparkMlRoutine):
     model = load_pickle(self.save_model_path)
 
     def impute_partition(partition: Any, use_cols: list[str], fitted_columns: list[str]) -> Any:
-      """Apply the fitted imputer to one Arrow batch.
+      '''Apply the fitted imputer to one Arrow batch.
 
       Args:
         partition: The batch as a pandas frame.
@@ -326,7 +327,7 @@ class KNNImputation(SparkMlRoutine):
 
       Returns:
         The imputed columns.
-      """
+      '''
       imputed = model.transform(partition[fitted_columns])
       return imputed[use_cols]
 
@@ -342,7 +343,7 @@ class KNNImputation(SparkMlRoutine):
 
 
 class TreeImputation(PreprocessRoutine):
-  """Impute each column from a predictive model fitted on the observed rows.
+  '''Impute each column from a predictive model fitted on the observed rows.
 
   For each selected column a *separate* model reconstructs that column from all
   the others, trained only on rows where the column is observed. This is the most
@@ -355,15 +356,15 @@ class TreeImputation(PreprocessRoutine):
     save_imp_model_path: Per-column ``SimpleImputer`` paths.
     save_enc_model_path: Per-column ``OrdinalEncoder`` paths, for categoricals.
     save_model_path: Per-column estimator paths.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'TreeImputation'
@@ -379,11 +380,11 @@ class TreeImputation(PreprocessRoutine):
     }
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'params': {
@@ -395,7 +396,7 @@ class TreeImputation(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[TreeImputation, Any, Metadata]:
-    """Fit the per-column reconstruction models.
+    '''Fit the per-column reconstruction models.
 
     Args:
       df: The input frame.
@@ -403,7 +404,7 @@ class TreeImputation(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -440,20 +441,20 @@ class TreeImputation(PreprocessRoutine):
     return self, df, metadata
 
   def _root(self, metadata: Metadata) -> str:
-    """Return the artefact root for this routine.
+    '''Return the artefact root for this routine.
 
     Args:
       metadata: The schema contract.
 
     Returns:
       The artefact directory.
-    """
+    '''
     if not metadata.intermediate_file_path:
       raise ValueError('TreeImputation requires metadata.intermediate_file_path to persist its artefacts')
     return f'{metadata.intermediate_file_path.rstrip("/")}/TreeImputation'
 
   def _bootstrap(self, frame: Any, metadata: Metadata) -> None:
-    """Fill and ordinal-encode the frame so every column is numeric.
+    '''Fill and ordinal-encode the frame so every column is numeric.
 
     Args:
       frame: The driver-side feature frame, mutated in place.
@@ -462,7 +463,7 @@ class TreeImputation(PreprocessRoutine):
 
     Raises:
       ValueError: If the artefact root is not configured.
-    """
+    '''
     from sklearn.impute import SimpleImputer  # noqa: PLC0415
     from sklearn.preprocessing import OrdinalEncoder  # noqa: PLC0415
 
@@ -487,7 +488,7 @@ class TreeImputation(PreprocessRoutine):
       self.save_imp_model_path[column] = path
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Reload the models, broadcast them, and reconstruct in one UDF pass.
+    '''Reload the models, broadcast them, and reconstruct in one UDF pass.
 
     Args:
       df: The input frame.
@@ -495,7 +496,7 @@ class TreeImputation(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     from functools import partial  # noqa: PLC0415
 
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
@@ -524,7 +525,7 @@ class TreeImputation(PreprocessRoutine):
       encoder_models: dict[str, Any],
       tree_models: dict[str, Any],
     ) -> Any:
-      """Reconstruct the selected columns for one Arrow batch.
+      '''Reconstruct the selected columns for one Arrow batch.
 
       Args:
         partition: The batch as a pandas frame.
@@ -535,7 +536,7 @@ class TreeImputation(PreprocessRoutine):
 
       Returns:
         The reconstructed columns, with categoricals decoded back to strings.
-      """
+      '''
       missing = {column: partition.index[partition[column].isna()] for column in use_cols}
       for column, model in imputer_models.items():
         partition[column] = model.transform(partition[[column]])
@@ -577,7 +578,7 @@ class TreeImputation(PreprocessRoutine):
 
 
 class CapOutliers(PreprocessRoutine):
-  """Clamp numeric columns to a learned fence.
+  '''Clamp numeric columns to a learned fence.
 
   The transform *winsorises* rather than filters: values are clamped to the
   bounds and the row count is preserved. That matters because the identifiers
@@ -588,15 +589,15 @@ class CapOutliers(PreprocessRoutine):
 
   Attributes:
     bounds: The learned ``[lower, upper]`` fence per column.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'CapOutliers'
@@ -604,11 +605,11 @@ class CapOutliers(PreprocessRoutine):
     self.bounds: dict[str, list[float]] = {}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'method': 'iqr',
@@ -619,7 +620,7 @@ class CapOutliers(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[CapOutliers, Any, Metadata]:
-    """Learn the fence for each selected column in a single aggregation pass.
+    '''Learn the fence for each selected column in a single aggregation pass.
 
     Args:
       df: The input frame.
@@ -627,7 +628,7 @@ class CapOutliers(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -655,7 +656,7 @@ class CapOutliers(PreprocessRoutine):
 
   @staticmethod
   def _iqr_bounds(df: Any, columns: list[str]) -> dict[str, list[float]]:
-    """Compute the classical Tukey fence.
+    '''Compute the classical Tukey fence.
 
     Args:
       df: The input frame.
@@ -663,7 +664,7 @@ class CapOutliers(PreprocessRoutine):
 
     Returns:
       A mapping of column to ``[lower, upper]``.
-    """
+    '''
     row = df.agg(*[sf.percentile_approx(sf.col(c), [0.25, 0.75]).alias(c) for c in columns]).collect()[0]
     return {
       column: [float(row[column][0]) - 1.5 * (float(row[column][1]) - float(row[column][0])),
@@ -673,7 +674,7 @@ class CapOutliers(PreprocessRoutine):
 
   @staticmethod
   def _quantile_bounds(df: Any, columns: list[str], lower_pct: float, upper_pct: float) -> dict[str, list[float]]:
-    """Compute an arbitrary quantile fence.
+    '''Compute an arbitrary quantile fence.
 
     Robust, because a percentile fence does not move when the values it is meant
     to constrain move. This is the strategy the configured model program uses.
@@ -686,12 +687,12 @@ class CapOutliers(PreprocessRoutine):
 
     Returns:
       A mapping of column to ``[lower, upper]``.
-    """
+    '''
     row = df.agg(*[sf.percentile_approx(sf.col(c), [lower_pct, upper_pct]).alias(c) for c in columns]).collect()[0]
     return {column: [float(row[column][0]), float(row[column][1])] for column in columns}
 
   def _std_bounds(self, df: Any, columns: list[str]) -> dict[str, list[float]]:
-    """Compute a mean-plus/minus-standard-deviation fence.
+    '''Compute a mean-plus/minus-standard-deviation fence.
 
     Not robust: the outliers the fence is meant to cap are themselves part of the
     mean and standard deviation, so a heavy tail drags the fence outward. It is
@@ -704,7 +705,7 @@ class CapOutliers(PreprocessRoutine):
 
     Returns:
       A mapping of column to ``[lower, upper]``.
-    """
+    '''
     projections: list[Any] = []
     for column in columns:
       projections.append(sf.mean(sf.col(column)).alias(f'{column}__mean'))
@@ -721,7 +722,7 @@ class CapOutliers(PreprocessRoutine):
     }
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Clamp each selected column to its fence.
+    '''Clamp each selected column to its fence.
 
     Args:
       df: The input frame.
@@ -729,7 +730,7 @@ class CapOutliers(PreprocessRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     for column, fence in self.bounds.items():
       if not fence:
         continue
@@ -752,20 +753,20 @@ class CapOutliers(PreprocessRoutine):
 
 
 class Normalizations(SparkMlRoutine):
-  """Scale numeric columns with a Spark ML vector assembler and scaler.
+  '''Scale numeric columns with a Spark ML vector assembler and scaler.
 
   The scaler operates on a ``Vector``, so the routine assembles, scales, and
   then explodes the vector back into named columns. The round trip is the only
   way to restore a wide, named schema from a vectorised transform.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'Normalizations'
@@ -775,11 +776,11 @@ class Normalizations(SparkMlRoutine):
     self.round_off = 6
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'handle': 'pyspark.ml.feature.MinMaxScaler',
@@ -789,7 +790,7 @@ class Normalizations(SparkMlRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[Normalizations, Any, Metadata]:
-    """Fit the scaling pipeline and persist it.
+    '''Fit the scaling pipeline and persist it.
 
     Args:
       df: The input frame.
@@ -797,7 +798,7 @@ class Normalizations(SparkMlRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -816,7 +817,7 @@ class Normalizations(SparkMlRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Reload the scaler and write the scaled values back in place.
+    '''Reload the scaler and write the scaled values back in place.
 
     Args:
       df: The input frame.
@@ -824,21 +825,21 @@ class Normalizations(SparkMlRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     if not self.use_cols:
       return df, metadata
     other_columns = [column for column in df.columns if column not in self.use_cols]
     scaled = self._load_pipeline().transform(df)
 
     def to_array(vector: Any) -> list[float]:
-      """Explode a scaled vector back into an array of doubles.
+      '''Explode a scaled vector back into an array of doubles.
 
       Args:
         vector: The scaled vector.
 
       Returns:
         The vector's elements.
-      """
+      '''
       return None if vector is None else vector.toArray().tolist()
 
     scaled = scaled.withColumn('__norm_scaled', sf.udf(to_array, st.ArrayType(st.DoubleType()))('__norm_scaled'))
@@ -850,7 +851,7 @@ class Normalizations(SparkMlRoutine):
 
 
 class QuantileDiscretizer(SparkMlRoutine):
-  """Discretise numeric columns into quantile buckets.
+  '''Discretise numeric columns into quantile buckets.
 
   Registering the output is the whole difficulty, and it is silent when it goes
   wrong. The transform writes to ``col + '_qd'``, so unless that new name is also
@@ -862,15 +863,15 @@ class QuantileDiscretizer(SparkMlRoutine):
   replaces the source in the feature list: a bucket index is an order, and
   keeping the continuous column alongside it would present the estimator with two
   representations of the same ordering.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'QuantileDiscretizer'
@@ -879,11 +880,11 @@ class QuantileDiscretizer(SparkMlRoutine):
     self.params: dict[str, Any] = {'numBuckets': 10}
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'handle': 'pyspark.ml.feature.QuantileDiscretizer',
@@ -892,15 +893,15 @@ class QuantileDiscretizer(SparkMlRoutine):
     }
 
   def artefact_name(self) -> str:
-    """Return an artefact name that varies with the bucket count.
+    '''Return an artefact name that varies with the bucket count.
 
     Returns:
       A directory name such as ``QuantileDiscretizer10``.
-    """
+    '''
     return f'{type(self).__name__}{self.params.get("numBuckets", 10)}'
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[QuantileDiscretizer, Any, Metadata]:
-    """Fit one discretiser per selected column.
+    '''Fit one discretiser per selected column.
 
     Args:
       df: The input frame.
@@ -913,7 +914,7 @@ class QuantileDiscretizer(SparkMlRoutine):
       ValueError: If a selected column is constant. The discretiser itself would
         fail with a far less clear message, so the guard trades an expensive
         per-column distinct count for a legible failure.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.numerical_cols
     )
@@ -935,7 +936,7 @@ class QuantileDiscretizer(SparkMlRoutine):
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Reload the discretisers and register their output as features.
+    '''Reload the discretisers and register their output as features.
 
     Args:
       df: The input frame.
@@ -943,7 +944,7 @@ class QuantileDiscretizer(SparkMlRoutine):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     metadata = metadata.copy()
     if not self.use_cols:
       return df, metadata
@@ -957,7 +958,7 @@ class QuantileDiscretizer(SparkMlRoutine):
 
 
 class DomainNormalizations(PreprocessRoutine):
-  """Divide numeric columns by a reference column, so the feature is a rate.
+  '''Divide numeric columns by a reference column, so the feature is a rate.
 
   The telecom motivation is immediate: usage normalised by tenure, spend
   normalised by plan count. The result measures a *rate* rather than a *level*,
@@ -967,15 +968,15 @@ class DomainNormalizations(PreprocessRoutine):
   and it emits no null-handling branch, so a null in either operand yields null.
   Both are acceptable for a domain-specific transform and are documented here so
   they are not discovered by surprise.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     self.load_params(global_params, params)
     self.name = 'DomainNormalizations'
@@ -984,11 +985,11 @@ class DomainNormalizations(PreprocessRoutine):
     self.round_off = 4
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'normalize_by_col': '',
@@ -997,7 +998,7 @@ class DomainNormalizations(PreprocessRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[DomainNormalizations, Any, Metadata]:
-    """Resolve the target columns. No state is learned.
+    '''Resolve the target columns. No state is learned.
 
     Args:
       df: The input frame.
@@ -1005,14 +1006,14 @@ class DomainNormalizations(PreprocessRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
     return self, df, metadata
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Divide each selected column by the reference column.
+    '''Divide each selected column by the reference column.
 
     Args:
       df: The input frame.
@@ -1023,7 +1024,7 @@ class DomainNormalizations(PreprocessRoutine):
 
     Raises:
       ValueError: If no reference column is configured.
-    """
+    '''
     if not self.normalize_by_col:
       raise ValueError(
         f'{self.name} requires normalize_by_col to be set; it is the reference column each '
@@ -1036,31 +1037,31 @@ class DomainNormalizations(PreprocessRoutine):
 
 
 def _summarise(bounds: dict[str, Any]) -> dict[str, Any]:
-  """Render a bounds dictionary compactly for the run log.
+  '''Render a bounds dictionary compactly for the run log.
 
   Args:
     bounds: The learned bounds.
 
   Returns:
     A mapping of column to its bound, unchanged.
-  """
+  '''
   return bounds
 
 
 def pd_is_numeric(series: Any) -> bool:
-  """Report whether a pandas series holds a numeric dtype.
+  '''Report whether a pandas series holds a numeric dtype.
 
   Args:
     series: The series to inspect.
 
   Returns:
     ``True`` for a numeric dtype.
-  """
+  '''
   return str(series.dtype).startswith(('int', 'uint', 'float'))
 
 
 def pd_series(values: Any, index: Any) -> Any:
-  """Construct a pandas series with an explicit index.
+  '''Construct a pandas series with an explicit index.
 
   Args:
     values: The values.
@@ -1068,7 +1069,7 @@ def pd_series(values: Any, index: Any) -> Any:
 
   Returns:
     A pandas ``Series``.
-  """
+  '''
   import pandas as pd  # noqa: PLC0415
 
   return pd.Series(values, index=index)

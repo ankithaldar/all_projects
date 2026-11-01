@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Shared utility exports.
+'''Shared utility exports.
 
 Importing from this package keeps call sites free of deep module paths and makes
 the layer boundary explicit: nothing in ``utils`` may import a higher layer.
-"""
+'''
 
 from forecasting_ml_framework.utils.reflection import (
   coerce_search_space,

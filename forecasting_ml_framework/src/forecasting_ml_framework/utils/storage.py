@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Object-storage persistence helpers.
+'''Object-storage persistence helpers.
 
 The framework round-trips two kinds of artefact through cloud object storage:
 the fitted feature registry and the live trainer instance. Both are pickled,
 which is the framework's central packaging decision and also its single largest
 reproducibility risk . These helpers centralise that access so
 a version stamp can be attached in one place.
-"""
+'''
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ ARTEFACT_FORMAT_VERSION = '1.0.0'
 
 
 def get_file_system(path: str | None = None, project: str | None = None) -> Any:
-  """Return a filesystem handle chosen by the address, not by what is installed.
+  '''Return a filesystem handle chosen by the address, not by what is installed.
 
   The implementation is *derived from the path*. The previous version tried the
   cloud filesystem first and unconditionally, so on any machine with it installed
@@ -52,7 +52,7 @@ def get_file_system(path: str | None = None, project: str | None = None) -> Any:
 
   Raises:
     FrameworkError: If no supported filesystem implementation is importable.
-  """
+  '''
   import fsspec  # noqa: PLC0415 - deferred so the core imports without fsspec
 
   scheme = urlparse(str(path or '')).scheme
@@ -72,7 +72,7 @@ def get_file_system(path: str | None = None, project: str | None = None) -> Any:
 
 
 def save_pickle(obj: Any, path: str) -> str:
-  """Serialise an object to object storage with a format stamp.
+  '''Serialise an object to object storage with a format stamp.
 
   Args:
     obj: The object to persist. It must be picklable.
@@ -83,7 +83,7 @@ def save_pickle(obj: Any, path: str) -> str:
 
   Raises:
     FrameworkError: If the object cannot be serialised.
-  """
+  '''
   payload = {'__format_version__': ARTEFACT_FORMAT_VERSION, 'payload': obj}
   target = _resolve_filepath(path)
   filesystem = get_file_system(target)
@@ -103,7 +103,7 @@ def save_pickle(obj: Any, path: str) -> str:
 
 
 def load_pickle(path: str) -> Any:
-  """Deserialise an object previously written by :func:`save_pickle`.
+  '''Deserialise an object previously written by :func:`save_pickle`.
 
   Args:
     path: The path to read.
@@ -114,7 +114,7 @@ def load_pickle(path: str) -> Any:
   Raises:
     FrameworkError: If the artefact is missing or unreadable.
     FrameworkError: If the stored format version is incompatible.
-  """
+  '''
   target = _resolve_filepath(path)
   filesystem = get_file_system(target)
   try:
@@ -143,14 +143,14 @@ def load_pickle(path: str) -> Any:
 
 
 def _resolve_filepath(path: str) -> str:
-  """Normalise a destination path to a concrete object path.
+  '''Normalise a destination path to a concrete object path.
 
   Args:
     path: A file path or a directory path.
 
   Returns:
     A path ending in a filename.
-  """
+  '''
   if path.endswith('.pkl') or path.endswith('.pkt'):
     return path
   return f'{path.rstrip("/")}/artefact.pkl'

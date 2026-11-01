@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Developer entry point.
+'''Developer entry point.
 
 Exposes the framework's registration and inspection helpers without a cluster.
-"""
+'''
 
 from __future__ import annotations
 
@@ -12,14 +12,15 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-  """Run one of the developer utilities.
+  '''Run one of the developer utilities.
 
   Args:
     argv: The argument vector.
 
   Returns:
     A process exit code.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   from forecasting_ml_framework.cli import commands  # noqa: PLC0415
 
   parser = argparse.ArgumentParser(

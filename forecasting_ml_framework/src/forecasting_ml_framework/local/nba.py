@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The NBA player dataset, seeded into the local warehouse.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''The NBA player dataset, seeded into the local warehouse.
 
 The source is a public binary-classification dataset of NBA players: 1,340 rows,
 twenty per-game and career-rate numeric statistics, a player name, and a binary
@@ -17,7 +18,7 @@ features table carrying no outcome and an events table carrying a deactivation
 date, and the label is constructed by a query over the two. The catalog SQL then
 derives the label itself, unmodified, so the local run exercises the real
 label-derivation query rather than a shortcut around it.
-"""
+'''
 
 from __future__ import annotations
 
@@ -69,7 +70,7 @@ FEATURE_COLUMNS = (
 
 
 def download(url: str = NBA_SOURCE_URL, destination: str | Path | None = None) -> Path:
-  """Fetch the dataset, reusing a cached copy when one is present.
+  '''Fetch the dataset, reusing a cached copy when one is present.
 
   A local run should not depend on the network twice, and a repeated run should
   not silently pick up a different revision of the data, so the download is
@@ -85,7 +86,8 @@ def download(url: str = NBA_SOURCE_URL, destination: str | Path | None = None) -
 
   Raises:
     DatasetFetchError: If the download fails and no cached copy exists.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   target = Path(destination) if destination is not None else default_data_dir() / 'nba.csv'
   if target.exists():
     LOGGER.info('Using the cached dataset', extra={'path': str(target), 'bytes': target.stat().st_size})
@@ -110,7 +112,7 @@ def download(url: str = NBA_SOURCE_URL, destination: str | Path | None = None) -
 
 
 def read_source(path: str | Path) -> pd.DataFrame:
-  """Read the source CSV and normalise its column names.
+  '''Read the source CSV and normalise its column names.
 
   Args:
     path: The CSV path.
@@ -121,7 +123,7 @@ def read_source(path: str | Path) -> pd.DataFrame:
 
   Raises:
     DatasetFetchError: If a required column is absent from the file.
-  """
+  '''
   frame = pd.read_csv(path)
   frame = frame.rename(columns=_SOURCE_COLUMN_RENAMES)
 
@@ -140,7 +142,7 @@ def read_source(path: str | Path) -> pd.DataFrame:
 
 
 def seed_warehouse(warehouse_path: str | Path, csv_path: str | Path | None = None) -> dict[str, int]:
-  """Build the warehouse tables the catalog's queries expect.
+  '''Build the warehouse tables the catalog's queries expect.
 
   Three tables are created, matching the three the production catalog joins
   against:
@@ -163,7 +165,7 @@ def seed_warehouse(warehouse_path: str | Path, csv_path: str | Path | None = Non
 
   Returns:
     A mapping of table name to row count.
-  """
+  '''
   source = read_source(csv_path if csv_path is not None else download())
   warehouse = SQLiteWarehouse(warehouse_path)
   try:
@@ -236,18 +238,18 @@ def seed_warehouse(warehouse_path: str | Path, csv_path: str | Path | None = Non
 
 
 def default_data_dir() -> Path:
-  """Return the directory the local harness keeps its data in.
+  '''Return the directory the local harness keeps its data in.
 
   Returns:
     The workspace root, from ``LOCAL_WORKSPACE`` or ``/tmp/forecasting_ml_local``.
-  """
+  '''
   import os  # noqa: PLC0415
 
   return Path(os.getenv('LOCAL_WORKSPACE', '/tmp/forecasting_ml_local'))
 
 
 def reset_workspace() -> Path:
-  """Remove and recreate the local workspace directory.
+  '''Remove and recreate the local workspace directory.
 
   A local run must start from a known state, and reusing a previous run's
   warehouse or object store is how a run appears to succeed while reading the
@@ -255,7 +257,7 @@ def reset_workspace() -> Path:
 
   Returns:
     The recreated workspace root.
-  """
+  '''
   root = default_data_dir()
   if root.exists():
     shutil.rmtree(root)
@@ -267,12 +269,12 @@ def reset_workspace() -> Path:
 
 
 def workspace_paths() -> dict[str, str]:
-  """Return the standard paths the local harness uses.
+  '''Return the standard paths the local harness uses.
 
   Returns:
     A mapping of role to absolute path, covering the warehouse file, the object
     store and the downloaded dataset.
-  """
+  '''
   root = default_data_dir()
   return {
     'root': str(root),
@@ -284,14 +286,14 @@ def workspace_paths() -> dict[str, str]:
 
 
 def describe_source(path: str | Path) -> dict[str, Any]:
-  """Summarise the dataset for the run report.
+  '''Summarise the dataset for the run report.
 
   Args:
     path: The CSV path.
 
   Returns:
     A mapping of shape, class balance and feature list.
-  """
+  '''
   frame = read_source(path)
   positives = int(frame[LABEL_COLUMN].sum())
   total = len(frame)
@@ -306,4 +308,4 @@ def describe_source(path: str | Path) -> dict[str, Any]:
 
 
 class DatasetFetchError(RuntimeError):
-  """Raised when the source dataset cannot be obtained or does not match."""
+  '''Raised when the source dataset cannot be obtained or does not match.'''

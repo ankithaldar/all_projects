@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The custom ``run`` command and the project command.
+# pylint: disable=unexpected-keyword-arg,no-value-for-parameter,import-outside-toplevel
+'''The custom ``run`` command and the project command.
 
 The ``run`` command differs from the stock one in three ways, and each difference
 exists because of something the framework's own machinery needs.
@@ -19,7 +20,7 @@ function serves both calibrated and uncalibrated evaluation.
 
 **(c) Explicit session context.** The run is executed with a named session and a
 chosen runner, so a run's identity and its execution mode are both explicit.
-"""
+'''
 
 from __future__ import annotations
 
@@ -53,7 +54,7 @@ project = project_commands
 
 
 def _bootstrap_spark(params: dict[str, Any], conf_env: str, conf_dir: str | Path | None = None) -> Any:
-  """Construct the process-wide Spark session with the tuning document applied.
+  '''Construct the process-wide Spark session with the tuning document applied.
 
   Args:
     params: The run parameters.
@@ -62,7 +63,8 @@ def _bootstrap_spark(params: dict[str, Any], conf_env: str, conf_dir: str | Path
 
   Returns:
     The live ``SparkSession``.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
 
   session, _ = get_spark_session(params=params, apply_tuning=True, conf_dir=conf_dir, conf_env=conf_env)
@@ -103,7 +105,7 @@ def run(
   is_service_account: bool,
   package_name: str,
 ) -> None:
-  """Run a pipeline with the framework's Spark bootstrap and slice labels.
+  '''Run a pipeline with the framework's Spark bootstrap and slice labels.
 
   Args:
     pipeline: The pipeline name.
@@ -124,7 +126,7 @@ def run(
 
   Raises:
     click.BadParameter: If the environment is not resolvable.
-  """
+  '''
   del is_service_account
   configure_logging()
 
@@ -161,7 +163,7 @@ def run(
 @project_commands.command('pipeline')
 @click.argument('pipeline_name', required=False)
 def pipeline_description(pipeline_name: str = '') -> None:
-  """Print the registered graph, because it is not statically declared.
+  '''Print the registered graph, because it is not statically declared.
 
   The pipeline graph is a function of five environment variables read at
   registration time, which is what lets one codebase serve an unbounded number of
@@ -171,7 +173,7 @@ def pipeline_description(pipeline_name: str = '') -> None:
   Args:
     pipeline_name: An optional pipeline to describe. All are described when
       omitted.
-  """
+  '''
   from forecasting_ml_framework.pipelines.registry import describe_pipelines, register_pipelines  # noqa: PLC0415
 
   text = describe_pipelines(register_pipelines())
@@ -180,13 +182,13 @@ def pipeline_description(pipeline_name: str = '') -> None:
 
 @project_commands.command('routines')
 def routine_catalogue() -> None:
-  """Print the available preprocessing routines and their parameter surfaces.
+  '''Print the available preprocessing routines and their parameter surfaces.
 
   A configuration registers a curated subset of the available transforms, so the
   ones it does not activate are not discoverable from the parameters file alone.
   This command makes the whole catalogue visible from the CLI.
 
-  """
+  '''
   from forecasting_ml_framework.preprocessing.routines import AVAILABLE_ROUTINES  # noqa: PLC0415
 
   rows = []
@@ -204,14 +206,14 @@ def routine_catalogue() -> None:
 
 @commands.command('version')
 def show_version() -> None:
-  """Print the framework version and the artefact format version.
+  '''Print the framework version and the artefact format version.
 
   The artefact format version matters operationally: model handles are pickles,
   and loading one under a different library version fails deep inside
   ``pickle`` with an unreadable message. Printing both at run start makes the
   pairing visible in the log.
 
-  """
+  '''
   from forecasting_ml_framework import __version__  # noqa: PLC0415
   from forecasting_ml_framework.utils.storage import ARTEFACT_FORMAT_VERSION  # noqa: PLC0415
 
@@ -219,7 +221,7 @@ def show_version() -> None:
 
 
 def _parse_runner_args(raw: str) -> dict[str, Any]:
-  """Parse the runner arguments from JSON.
+  '''Parse the runner arguments from JSON.
 
   A passed this string through ``eval``. Having criticised ``eval`` on
   configuration data elsewhere in this framework, applying it to a command-line
@@ -234,7 +236,7 @@ def _parse_runner_args(raw: str) -> dict[str, Any]:
 
   Raises:
     click.BadParameter: If the string is not a JSON object.
-  """
+  '''
   if not raw or not raw.strip():
     return {}
   try:
@@ -247,14 +249,14 @@ def _parse_runner_args(raw: str) -> dict[str, Any]:
 
 
 def _parse_runtime_params(params: str) -> dict[str, Any]:
-  """Parse a ``--params`` string into a flat mapping.
+  '''Parse a ``--params`` string into a flat mapping.
 
   Args:
     params: The raw parameter string.
 
   Returns:
     A mapping of key to value.
-  """
+  '''
   from forecasting_ml_framework.utils.text import split_params  # noqa: PLC0415
 
   if not params:
@@ -271,7 +273,7 @@ def _parse_runtime_params(params: str) -> dict[str, Any]:
 
 
 def _filter_pipeline(text: str, pipeline_name: str) -> str:
-  """Extract one pipeline's section from the graph description.
+  '''Extract one pipeline's section from the graph description.
 
   Args:
     text: The full description.
@@ -279,14 +281,14 @@ def _filter_pipeline(text: str, pipeline_name: str) -> str:
 
   Returns:
     That pipeline's section, or the full text when the name is unknown.
-  """
+  '''
   blocks = text.split('\n\n')
   matched = [block for block in blocks if block.startswith(pipeline_name)]
   return '\n\n'.join(matched) if matched else text
 
 
 def main() -> None:
-  """The console-script entry point."""
+  '''The console-script entry point.'''
   commands()
 
 

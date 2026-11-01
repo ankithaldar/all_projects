@@ -47,7 +47,7 @@ class TestSearchSpaceArgument:
 
   def test_a_variadic_searcher_accepts_either(self) -> None:
     class Searcher:
-      """A searcher taking arbitrary keyword arguments."""
+      '''A searcher taking arbitrary keyword arguments.'''
 
       def __init__(self, **kwargs: object) -> None:
         del kwargs
@@ -57,7 +57,7 @@ class TestSearchSpaceArgument:
 
   def test_an_unintrospectable_class_is_assumed_to_accept(self) -> None:
     class Opaque:
-      """A class whose constructor cannot be inspected."""
+      '''A class whose constructor cannot be inspected.'''
 
       __init__ = None
 
@@ -75,19 +75,19 @@ class TestBinding:
     assert bound['n_jobs'] == -1
 
   def test_a_grid_searcher_accepts_the_distribution_spelling_too(self) -> None:
-    """The configuration vocabulary is forgiving in both directions."""
+    '''The configuration vocabulary is forgiving in both directions.'''
     bound = _bind_search_space(GridSearchCV, {'param_distributions': {'max_depth': [1, 2]}})
     assert 'param_grid' in bound
     assert 'param_distributions' not in bound
 
   def test_a_randomised_searcher_is_given_param_distributions(self) -> None:
-    """The defect: every searcher received ``param_grid``, so this raised."""
+    '''The defect: every searcher received ``param_grid``, so this raised.'''
     bound = _bind_search_space(RandomizedSearchCV, {'param_grid': {'max_depth': [1, 2]}})
     assert 'param_distributions' in bound
     assert 'param_grid' not in bound
 
   def test_the_bound_space_is_accepted_by_the_constructor(self) -> None:
-    """The end-to-end property: the result must actually construct."""
+    '''The end-to-end property: the result must actually construct.'''
     bound = _bind_search_space(RandomizedSearchCV, {'param_grid': {'max_depth': [1, 2]}})
     searcher = RandomizedSearchCV(estimator=RandomForestClassifier(), **bound)
     assert searcher.param_distributions is not None
@@ -106,12 +106,12 @@ class TestHalvingEnablement:
   '''The opt-in import must fire for the halving searchers.'''
 
   def test_the_class_is_importable_after_the_opt_in(self) -> None:
-    """Without the opt-in, the attribute does not exist at all.
+    '''Without the opt-in, the attribute does not exist at all.
 
     The defect compared ``__name__`` against ``'sklearn.model_selection.
     HalvingGridSearchCV'``. A class's ``__name__`` is the bare name, so the
     comparison was never true and the import never ran.
-    """
+    '''
     assert HalvingGridSearchCV.__name__ == 'HalvingGridSearchCV'
     assert GridSearchCV.__name__ == 'GridSearchCV'
 

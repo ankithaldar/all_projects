@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Scoring: the dual-score contract and the output projection.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''Scoring: the dual-score contract and the output projection.
 
 Two score columns are produced simultaneously:
 
@@ -40,7 +41,7 @@ Three further properties:
   ``duplicates='drop'`` behaviour would otherwise leave gaps in the label sequence
   on a score carrying many ties, so a consumer asking for a particular band could
   find no rows. See :func:`_rank_bands`.
-"""
+'''
 
 from __future__ import annotations
 
@@ -91,7 +92,7 @@ def score_frame(
   sample_rate: float = 0.0,
   run_date: str | None = None,
 ) -> pd.DataFrame:
-  """Produce the fully-scored frame from a fitted model and a labelled or
+  '''Produce the fully-scored frame from a fitted model and a labelled or
   unlabelled input.
 
   Args:
@@ -119,7 +120,8 @@ def score_frame(
 
   Raises:
     KeyError: If a required feature is absent from the frame.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   working = frame.reset_index(drop=True)
   missing = [column for column in features_to_use if column not in working.columns]
   if missing:
@@ -210,7 +212,7 @@ def score_frame(
 
 
 def positive_probability(model: Any, features: Any) -> np.ndarray:
-  """Return the positive-class score for a feature matrix.
+  '''Return the positive-class score for a feature matrix.
 
   For a classifier the positive class is the **last** entry of the estimator's own
   ``classes_``, following the scikit-learn convention that the attribute is
@@ -253,7 +255,7 @@ def positive_probability(model: Any, features: Any) -> np.ndarray:
   Raises:
     ModelError: If the estimator exposes neither a probability nor a decision
       function, or if the returned array does not match its declared classes.
-  """
+  '''
   # `classes_` is a numpy array on most estimators, and `array or []` raises
   # "truth value of an array with more than one element is ambiguous" -- so the
   # emptiness test is made explicitly rather than through truthiness.
@@ -296,7 +298,7 @@ def score_regression_frame(
   prediction_col: str,
   run_date: Any = None,
 ) -> pd.DataFrame:
-  """Score a frame with a regressor and project it onto the score-table contract.
+  '''Score a frame with a regressor and project it onto the score-table contract.
 
   A continuous target has no probability column and no positive class, so
   :func:`score_frame` cannot serve it: that function requires ``predict_proba``,
@@ -327,7 +329,7 @@ def score_regression_frame(
 
   Raises:
     KeyError: If a required feature is absent from the frame.
-  """
+  '''
   working = frame.reset_index(drop=True)
   missing = [column for column in features_to_use if column not in working.columns]
   if missing:
@@ -369,7 +371,7 @@ def project_score_frame(
   model_key: str | None,
   calibrated: bool,
 ) -> pd.DataFrame:
-  """Project a scored frame down to the score-table contract.
+  '''Project a scored frame down to the score-table contract.
 
   The uncalibrated variant carries the raw banding; the calibrated variant
   carries the calibrated banding. Both are produced from one column
@@ -389,7 +391,7 @@ def project_score_frame(
 
   Returns:
     The projected frame.
-  """
+  '''
   columns = list(id_cols)
   if model_key:
     columns.append(constants.MODEL_KEY)
@@ -424,7 +426,7 @@ def _calibrated_score(
   sample_rate: float,
   features_to_use: list[str] | None = None,
 ) -> pd.Series:
-  """Compute the calibrated score, dispatching on the calibrator's type.
+  '''Compute the calibrated score, dispatching on the calibrator's type.
 
   Type-based dispatch is the extension mechanism here, and ``isinstance`` is
   preferred over a class-name comparison because it survives subclassing. An
@@ -439,7 +441,7 @@ def _calibrated_score(
 
   Returns:
     The calibrated probability.
-  """
+  '''
   from sklearn.calibration import CalibratedClassifierCV  # noqa: PLC0415
   from sklearn.isotonic import IsotonicRegression  # noqa: PLC0415
   from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
@@ -474,7 +476,7 @@ def _calibrated_score(
 
 
 def _assign_bands(working: pd.DataFrame) -> None:
-  """Add the decile, centile and calibrated banding columns.
+  '''Add the decile, centile and calibrated banding columns.
 
   ``pd.qcut`` is rank-based, so bands are equal-volume by construction and the
   top band is always the same share of the population regardless of the score
@@ -486,7 +488,7 @@ def _assign_bands(working: pd.DataFrame) -> None:
 
   Args:
     working: The scored frame, mutated in place.
-  """
+  '''
   for source, decile, centile in (
     (constants.ORIG_SCORE_VALUE, constants.SCORE_DECILE, constants.SCORE_CENTILE),
     (constants.SCORE_VALUE, constants.CALIB_DECILE, constants.CALIB_CENTILE),
@@ -496,7 +498,7 @@ def _assign_bands(working: pd.DataFrame) -> None:
 
 
 def _rank_bands(scores: pd.Series, band_count: int) -> pd.Series:
-  """Assign contiguous, 1-indexed, equal-volume bands to a score.
+  '''Assign contiguous, 1-indexed, equal-volume bands to a score.
 
   ``pd.qcut`` is rank-based, so bands are equal-volume by construction and the
   top band always holds the same share of the population. The ``+ 1`` makes bands
@@ -517,7 +519,7 @@ def _rank_bands(scores: pd.Series, band_count: int) -> pd.Series:
 
   Returns:
     The band labels, contiguous from 1.
-  """
+  '''
   # The degeneracy checks come *before* `qcut`. `qcut` on an all-NaN column
   # reaches into numpy's internals and raises `IndexError: index -1 is out of
   # bounds`, so a guard written after the call is a guard that never runs on the
@@ -536,7 +538,7 @@ def _rank_bands(scores: pd.Series, band_count: int) -> pd.Series:
 
 
 def _top_half_floor(bands: pd.Series) -> int:
-  """Return the band label at which the upper half of a banding begins.
+  '''Return the band label at which the upper half of a banding begins.
 
   The boundary is derived from the bands actually produced rather than fixed,
   because a fixed boundary is wrong in two independent ways: bands run 1..10, so
@@ -555,7 +557,7 @@ def _top_half_floor(bands: pd.Series) -> int:
 
   Returns:
     The inclusive lower bound of the upper half, at least 1.
-  """
+  '''
   observed = bands.dropna()
   if observed.empty:
     return 1
@@ -575,7 +577,7 @@ def _report_in_band_diagnostics(
   probability: np.ndarray | None = None,
   model_threshold: float = 0.5,
 ) -> None:
-  """Emit accuracy and proper-scoring-rule diagnostics when labels are present.
+  '''Emit accuracy and proper-scoring-rule diagnostics when labels are present.
 
   The positive label is taken from the estimator's own class list rather than
   assumed, because ``brier_score_loss`` needs the label the target actually uses
@@ -583,7 +585,7 @@ def _report_in_band_diagnostics(
   probability is passed straight from the ``predict_proba`` already computed
   rather than re-derived, since recomputing predictions for values that are only
   logged would triple the scoring cost.
-  """
+  '''
   if not target_col or target_col not in working.columns:
     return
   if probability is None:
@@ -629,7 +631,7 @@ def _infer_feature_columns(
   calibrated_model: Any,
   features_to_use: list[str] | None = None,
 ) -> list[str]:
-  """Recover the feature columns a wrapped calibrator was fitted on.
+  '''Recover the feature columns a wrapped calibrator was fitted on.
 
   A ``CalibratedClassifierCV`` scores from the *feature matrix*, so the columns
   must be supplied in the order the wrapper was fitted on. The framework already
@@ -652,7 +654,7 @@ def _infer_feature_columns(
 
   Returns:
     The feature column names, in the order the wrapper was fitted on.
-  """
+  '''
   if features_to_use:
     return list(features_to_use)
   declared = getattr(calibrated_model, 'feature_names_in_', None)

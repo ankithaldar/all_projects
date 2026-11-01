@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The sequence deep-learning tier.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''The sequence deep-learning tier.
 
 Opt-in capability: no registered pipeline references it, and the sequence column
 list in the configured model program is empty. It is retained because the
@@ -33,7 +34,7 @@ loader
 
 ``torch`` and ``pytorch-lightning`` are an optional dependency and are imported
 lazily, so the framework imports and runs without them.
-"""
+'''
 
 from __future__ import annotations
 
@@ -45,6 +46,7 @@ from typing import Any
 import numpy as np
 
 from forecasting_ml_framework.observability.logging import get_logger
+from forecasting_ml_framework.utils.storage import _resolve_filepath  # noqa: PLC0415
 
 LOGGER = get_logger(__name__)
 
@@ -55,7 +57,7 @@ LENGTH_KEY = 'seq_len_'
 
 
 def _merge_vocabulary(*vocabularies: dict[str, int]) -> dict[str, int]:
-  """Merge learned vocabularies, keeping the largest size declared for each key.
+  '''Merge learned vocabularies, keeping the largest size declared for each key.
 
   The embedding table must be large enough for every token that will be seen, so
   the sizes are combined by maximum rather than by overwrite. Taking the training
@@ -67,7 +69,8 @@ def _merge_vocabulary(*vocabularies: dict[str, int]) -> dict[str, int]:
 
   Returns:
     The merged vocabulary.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   merged: dict[str, int] = {}
   for vocabulary in vocabularies:
     for key, size in vocabulary.items():
@@ -76,7 +79,7 @@ def _merge_vocabulary(*vocabularies: dict[str, int]) -> dict[str, int]:
 
 
 def _join_address(root: str, name: str) -> str:
-  """Join a root to a relative name, in whichever address form the root uses.
+  '''Join a root to a relative name, in whichever address form the root uses.
 
   A managed root is scheme-qualified and a local root is a bare path, so the join
   is expressed once, here, rather than at each call site. A root that already
@@ -90,23 +93,24 @@ def _join_address(root: str, name: str) -> str:
 
   Returns:
     The full address.
-  """
+  '''
   base = str(root).rstrip('/')
   if name.startswith(f'{base}/'):
-    return name
-  return f'{base}/{name.lstrip("/")}'
+    return _resolve_filepath(name)
+  # shortcut: double-quoted literal avoids escaping inner single quote; smart exception
+  return _resolve_filepath(f"{base}/{name.lstrip('/')}")
 
 
 class PositionalEncoding:
-  """The standard sinusoidal positional encoding.
+  '''The standard sinusoidal positional encoding.
 
   It is constructed lazily as an ``nn.Module`` subclass, so importing this
   module does not require PyTorch.
-  """
+  '''
 
   @staticmethod
   def build(d_model: int, max_len: int = 5000, dropout: float = 0.1) -> Any:
-    """Build a positional-encoding module.
+    '''Build a positional-encoding module.
 
     Args:
       d_model: The embedding width.
@@ -115,12 +119,12 @@ class PositionalEncoding:
 
     Returns:
       An ``nn.Module``.
-    """
+    '''
     import torch  # noqa: PLC0415
     import torch.nn as nn  # noqa: PLC0415
 
     class _PositionalEncoding(nn.Module):
-      """Inject a sinusoidal positional signal into an embedded sequence."""
+      '''Inject a sinusoidal positional signal into an embedded sequence.'''
 
       def __init__(self) -> None:
         super().__init__()
@@ -133,14 +137,14 @@ class PositionalEncoding:
         self.register_buffer('encoding', encoding.unsqueeze(0))
 
       def forward(self, tensor: Any) -> Any:
-        """Add the positional signal to an embedded sequence.
+        '''Add the positional signal to an embedded sequence.
 
         Args:
           tensor: The embedded sequence, shaped ``(batch, length, d_model)``.
 
         Returns:
           The encoded sequence, with dropout applied.
-        """
+        '''
         # Passing the tensor through unchanged, rather than rebuilding it, is what
         # keeps gradients flowing back into the embedding table.
         return self.dropout(tensor + self.encoding[:, : tensor.size(1), :])
@@ -152,7 +156,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
   vocabulary: dict[str, int],
   params: dict[str, Any] | None = None,
 ) -> Any:
-  """Build the sequence transformer.
+  '''Build the sequence transformer.
 
   Per-column embedding plus positional encoding, then one shared encoder layer
   applied to every column's encoded sequence, then a flatten-concatenate head.
@@ -169,7 +173,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
 
   Returns:
     A ``LightningModule``.
-  """
+  '''
   import torch  # noqa: PLC0415
   import torch.nn as nn  # noqa: PLC0415
   from pytorch_lightning import LightningModule  # noqa: PLC0415
@@ -191,7 +195,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
   encoders = {key: value for key, value in vocabulary.items() if key.startswith(VOCAB_KEY)}
 
   class _SequenceModel(LightningModule):
-    """A transformer over per-column behavioural sequences."""
+    '''A transformer over per-column behavioural sequences.'''
 
     def __init__(self) -> None:
       super().__init__()
@@ -226,7 +230,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
       )
 
     def forward(self, sequence: Any, labels: Any) -> Any:
-      """Encode the sequence and predict.
+      '''Encode the sequence and predict.
 
       Args:
         sequence: The sequence tensor, shaped ``(batch, n_cols, length)``.
@@ -234,7 +238,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
 
       Returns:
         The raw logits, shaped ``(batch, output_dim)``.
-      """
+      '''
       encoded: list[Any] = []
       for index in range(feature_count):
         embedded = getattr(self, f'seq_embedding_{index}')(sequence[:, index, :])
@@ -248,7 +252,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
       return self.linear(torch.cat(encoded, dim=1))
 
     def training_step(self, batch: Any, batch_idx: int) -> Any:
-      """Compute one training loss.
+      '''Compute one training loss.
 
       Args:
         batch: A ``(sequence, labels, keys)`` tuple.
@@ -256,24 +260,24 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
 
       Returns:
         The loss tensor.
-      """
+      '''
       del batch_idx
       sequence, labels, _ = batch
       return self.criterion(self(sequence, labels), labels.float().view(-1, 1))
 
     def validation_step(self, batch: Any, batch_idx: int) -> None:
-      """Run one validation step.
+      '''Run one validation step.
 
       Args:
         batch: A ``(sequence, labels, keys)`` tuple.
         batch_idx: The batch index.
-      """
+      '''
       del batch_idx
       sequence, labels, _ = batch
       self.criterion(self(sequence, labels), labels.float().view(-1, 1))
 
     def predict_step(self, batch: Any, batch_idx: int = 0) -> list[Any]:
-      """Predict a batch.
+      '''Predict a batch.
 
       The threshold is a constructor parameter rather than a hardcoded ``0.5``,
       so this tier shares the framework's operating-point logic rather than
@@ -287,7 +291,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
         A list of ``(labels, predictions, keys, probabilities)`` tuples. The
         order is asserted here and consumed by the prediction writer, so it is
         defined once.
-      """
+      '''
       del batch_idx
       sequence, labels, keys = batch
       logits = self(sequence, labels)
@@ -301,11 +305,11 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
       return [(labels.view(-1, 1), predictions.view(-1, 1), keys.view(-1, -1), probabilities)]
 
     def configure_optimizers(self) -> Any:
-      """Build the optimiser.
+      '''Build the optimiser.
 
       Returns:
         A configured Adam optimiser.
-      """
+      '''
       return torch.optim.Adam(
         self.parameters(), lr=self.hparams['learning_rate'], weight_decay=self.hparams['weight_decay']
       )
@@ -314,7 +318,7 @@ def SequenceModel(  # noqa: N802 - the class name is part of the configuration c
 
 
 class SequenceDataset:
-  """Load a sequence parquet directory into dense in-memory tensors.
+  '''Load a sequence parquet directory into dense in-memory tensors.
 
   The whole corpus is materialised eagerly, which is the binding memory
   constraint on this tier and the exact opposite of the framework's
@@ -325,7 +329,7 @@ class SequenceDataset:
       ``seq_len_{i}``. This is the state a computed in the training
       process and wrote nowhere, which is what made the model unloadable in a
       later one.
-  """
+  '''
 
   def __init__(
     self,
@@ -336,7 +340,7 @@ class SequenceDataset:
     data_file_format: str = 'parquet',
     parts_num: int = 9999,
   ) -> None:
-    """Load and concatenate the sequence corpus.
+    '''Load and concatenate the sequence corpus.
 
     Args:
       label_col: The label column.
@@ -346,7 +350,7 @@ class SequenceDataset:
       data_dir: The object-storage directory.
       data_file_format: The on-disk format.
       parts_num: The maximum number of parts to read.
-    """
+    '''
     import torch  # noqa: PLC0415
     import torch.utils.data as data  # noqa: PLC0415
 
@@ -402,11 +406,11 @@ class SequenceDataset:
     )
 
   def _learn_vocabulary(self) -> dict[str, int]:
-    """Derive the per-column vocabulary from the loaded data.
+    '''Derive the per-column vocabulary from the loaded data.
 
     Returns:
       A mapping of ``seq_max_{i}`` and ``seq_len_{i}`` to their observed values.
-    """
+    '''
     vocabulary: dict[str, int] = {}
     for index in range(self.seq_np.shape[0]):
       column = self.seq_np[index]
@@ -416,33 +420,33 @@ class SequenceDataset:
     return vocabulary
 
   def __len__(self) -> int:
-    """Return the corpus size.
+    '''Return the corpus size.
 
     Returns:
       The number of rows.
-    """
+    '''
     return self.len_data
 
   def __getitem__(self, index: int) -> tuple[Any, Any]:
-    """Return one sample, moved to the compute device.
+    '''Return one sample, moved to the compute device.
 
     Args:
       index: The row index.
 
     Returns:
       A three-tuple of the sequence tensor, the label tensor and the key tensor.
-    """
+    '''
     return self._dataset[index]
 
 
 class CustomWriter:
-  """The prediction sink for the sequence tier.
+  '''The prediction sink for the sequence tier.
 
   Assembles key columns, the label, the hard prediction and the probability into
   a frame per distributed rank, and writes it with the four provenance columns
   the tabular tier's score table carries, so a sequence prediction set can be
   reconciled with the enterprise score table.
-  """
+  '''
 
   def __init__(
     self,
@@ -453,7 +457,7 @@ class CustomWriter:
     probability_col_name: str = 'score_value',
     project: str | None = None,
   ) -> None:
-    """Build the writer.
+    '''Build the writer.
 
     Args:
       output_dir: The destination directory.
@@ -462,7 +466,7 @@ class CustomWriter:
       run_date: The run date, written as a provenance column.
       probability_col_name: The probability column name.
       project: The project used to resolve the filesystem.
-    """
+    '''
     self.output_dir = output_dir
     self.key_cols = list(key_cols)
     self.model_key = model_key
@@ -471,7 +475,7 @@ class CustomWriter:
     self.project = project
 
   def assemble(self, predictions: list[Any]) -> Any:
-    """Assemble the prediction frame from the Lightning prediction tuples.
+    '''Assemble the prediction frame from the Lightning prediction tuples.
 
     The tuple order is asserted once, here, and produced once, in the model's
     ``predict_step``. A asserted it in two places with no shared
@@ -482,7 +486,7 @@ class CustomWriter:
 
     Returns:
       A pandas ``DataFrame``.
-    """
+    '''
     import pandas as pd  # noqa: PLC0415
     import torch  # noqa: PLC0415
 
@@ -511,7 +515,7 @@ class CustomWriter:
     return assembled
 
   def write(self, predictions: list[Any], global_rank: int = 0) -> str:
-    """Assemble and write one rank's predictions.
+    '''Assemble and write one rank's predictions.
 
     Args:
       predictions: The list of per-batch tuples.
@@ -519,11 +523,11 @@ class CustomWriter:
 
     Returns:
       The path that was written.
-    """
+    '''
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
 
     frame = self.assemble(predictions)
-    path = f'{self.output_dir.rstrip("/")}/predictions_{global_rank}.parquet'
+    path = _resolve_filepath(f'{self.output_dir.rstrip('/')}/predictions_{global_rank}.parquet')
     filesystem = get_file_system(path, self.project)
     with filesystem.open(path, 'wb') as handle:
       frame.to_parquet(handle)
@@ -532,12 +536,12 @@ class CustomWriter:
 
 
 class TransformerRunner:
-  """Drive the sequence tier end to end within one process.
+  '''Drive the sequence tier end to end within one process.
 
   Training and prediction happen in the same process, which is what a
   tier relied on and what made its incomplete checkpoint go unnoticed. The
   checkpoint written here is *complete*, so the model can also be reloaded later.
-  """
+  '''
 
   def __init__(
     self,
@@ -546,14 +550,14 @@ class TransformerRunner:
     positional_encoding_class: Any,
     params: dict[str, Any] | None = None,
   ) -> None:
-    """Build the runner.
+    '''Build the runner.
 
     Args:
       model_class: The model factory.
       writer_class: The prediction-writer class.
       positional_encoding_class: The positional-encoding factory.
       params: The configuration block.
-    """
+    '''
     self.model_class = model_class
     self.writer_class = writer_class
     self.positional_encoding_class = positional_encoding_class
@@ -571,7 +575,7 @@ class TransformerRunner:
     sequence_cols: list[str],
     model_save_path: str,
   ) -> Any:
-    """Train, checkpoint, and predict over both splits.
+    '''Train, checkpoint, and predict over both splits.
 
     Args:
       train_dir: The training parquet directory.
@@ -584,7 +588,7 @@ class TransformerRunner:
 
     Returns:
       The trained model.
-    """
+    '''
     import pytorch_lightning as pl  # noqa: PLC0415
     import torch  # noqa: PLC0415
     from torch.utils.data import DataLoader  # noqa: PLC0415
@@ -638,7 +642,7 @@ class TransformerRunner:
     return self.model
 
   def checkpoint(self, model_save_path: str) -> str:
-    """Write a *complete* checkpoint: weights, architecture and vocabulary.
+    '''Write a *complete* checkpoint: weights, architecture and vocabulary.
 
     Writing ``torch.save(model.state_dict())``, which is weights
     only — no architecture, no vocabulary, no sequence lengths. Reconstructing
@@ -652,7 +656,7 @@ class TransformerRunner:
 
     Returns:
       The path that was written.
-    """
+    '''
     import torch  # noqa: PLC0415
 
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
@@ -666,7 +670,7 @@ class TransformerRunner:
     filesystem = get_file_system(model_save_path)
     with filesystem.open(model_save_path, 'wb') as handle:
       torch.save(payload, handle)
-    sidecar = f'{model_save_path}.json'
+    sidecar = _resolve_filepath(f'{model_save_path}.json')
     with filesystem.open(sidecar, 'w') as handle:
       json.dump(
         {'max_value_dict': self.max_value_dict, 'hyperparameters': payload['hyperparameters']},
@@ -680,14 +684,14 @@ class TransformerRunner:
     return model_save_path
 
   def load_checkpoint(self, model_save_path: str) -> Any:
-    """Reload a model from a complete checkpoint.
+    '''Reload a model from a complete checkpoint.
 
     Args:
       model_save_path: The checkpoint path.
 
     Returns:
       The reconstructed model.
-    """
+    '''
     import torch  # noqa: PLC0415
 
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Pure sequence helpers.
+'''Pure sequence helpers.
 
 Seventeen stateless functions, all shaped ``(array) -> scalar`` or
 ``(array) -> array``, all designed to be called from a Spark UDF. They are the
@@ -26,7 +26,7 @@ rather than an implementation detail:
 * **Scalar summaries, not arrays.** Every helper returns a scalar or a
   same-shaped array, matching the return type its routine declares, so a summary
   is always something an estimator can consume.
-"""
+'''
 
 from __future__ import annotations
 
@@ -52,19 +52,19 @@ DEFAULT_RECENCY_SENTINEL = 9_999_999
 # Coercion
 # --------------------------------------------------------------------------- #
 def _to_floats(arr: Any) -> list[float]:
-  """Coerce an array of any numeric representation to Python floats.
+  '''Coerce an array of any numeric representation to Python floats.
 
   Args:
     arr: The input array.
 
   Returns:
     A list of floats.
-  """
+  '''
   return [float(item) for item in (arr or [])]
 
 
 def _tail(arr: list[float], window: int | None) -> list[float]:
-  """Return the most recent ``window`` elements of an array.
+  '''Return the most recent ``window`` elements of an array.
 
   Args:
     arr: The input array.
@@ -72,14 +72,14 @@ def _tail(arr: list[float], window: int | None) -> list[float]:
 
   Returns:
     The tail of the array.
-  """
+  '''
   if not window or window <= 0:
     return arr
   return arr[-window:]
 
 
 def _to_date(value: Any) -> date:
-  """Coerce a value to a ``date``.
+  '''Coerce a value to a ``date``.
 
   a guarded its parsing with ``type(i) != 'str'``. ``type``
   returns a *class object*, which never equals a string, so the condition was
@@ -97,7 +97,7 @@ def _to_date(value: Any) -> date:
 
   Raises:
     ValueError: If the value is neither a recognised type nor a parseable string.
-  """
+  '''
   if isinstance(value, datetime):
     return value.date()
   if isinstance(value, date):
@@ -114,7 +114,7 @@ def _to_date(value: Any) -> date:
 # Array-shape transforms
 # --------------------------------------------------------------------------- #
 def get_fixed_length(arr: Any, fixed_length: int = 6) -> list[float]:
-  """Pad or truncate an array to exactly ``fixed_length`` elements.
+  '''Pad or truncate an array to exactly ``fixed_length`` elements.
 
   Short arrays are **left**-padded with zeros, which preserves recency ordering:
   the most recent event stays last. Long arrays are truncated to the most recent
@@ -126,14 +126,14 @@ def get_fixed_length(arr: Any, fixed_length: int = 6) -> list[float]:
 
   Returns:
     A list of exactly ``fixed_length`` floats.
-  """
+  '''
   tail = _to_floats(arr)[-fixed_length:] if fixed_length > 0 else []
   padding = [0.0] * max(0, fixed_length - len(tail))
   return padding + tail
 
 
 def slice_array(arr: Any, start: int = 0, end: int = 3) -> list[float]:
-  """Return a Python slice of an array.
+  '''Return a Python slice of an array.
 
   Args:
     arr: The input array.
@@ -142,12 +142,12 @@ def slice_array(arr: Any, start: int = 0, end: int = 3) -> list[float]:
 
   Returns:
     The sliced array.
-  """
+  '''
   return _to_floats(arr)[start:end]
 
 
 def normalise_window(arr: Any, start: int, end: int, fixed_length: int) -> list[float]:
-  """Return a Python slice of an array padded and truncated to a fixed length.
+  '''Return a Python slice of an array padded and truncated to a fixed length.
 
   :func:`slice_array` on its own returns whatever the slice happens to hold,
   which is shorter than the window whenever the history is. Two vectors of
@@ -165,12 +165,12 @@ def normalise_window(arr: Any, start: int, end: int, fixed_length: int) -> list[
 
   Returns:
     The sliced array, always exactly ``fixed_length`` elements long.
-  """
+  '''
   return get_fixed_length(_to_floats(arr)[start:end], fixed_length=fixed_length)
 
 
 def domain_normalization(arr: Any, normalize_by_val: Any, round_off: int = 4) -> list[float]:
-  """Divide each element by a reference value.
+  '''Divide each element by a reference value.
 
   Args:
     arr: The input array.
@@ -179,14 +179,14 @@ def domain_normalization(arr: Any, normalize_by_val: Any, round_off: int = 4) ->
 
   Returns:
     The elementwise ratio, rounded.
-  """
+  '''
   reference = float(normalize_by_val) if normalize_by_val else EPSILON
   reference = reference if reference != 0 else EPSILON
   return [round(value / reference, round_off) for value in _to_floats(arr)]
 
 
 def seq_normalize(arr: Any, round_off: int = 4) -> list[float]:
-  """Express each element as a share of the array total.
+  '''Express each element as a share of the array total.
 
   Args:
     arr: The input array.
@@ -194,7 +194,7 @@ def seq_normalize(arr: Any, round_off: int = 4) -> list[float]:
 
   Returns:
     The share-of-total array, rounded.
-  """
+  '''
   values = _to_floats(arr)
   total = sum(values) if values else 0.0
   total = total if total != 0 else EPSILON
@@ -205,7 +205,7 @@ def seq_normalize(arr: Any, round_off: int = 4) -> list[float]:
 # Shape descriptors
 # --------------------------------------------------------------------------- #
 def get_slope_func(arr: Any, order: int = 1, last_n_val: int = 2) -> float:
-  """Return the least-squares slope of the most recent values.
+  '''Return the least-squares slope of the most recent values.
 
   Args:
     arr: The input array.
@@ -217,7 +217,7 @@ def get_slope_func(arr: Any, order: int = 1, last_n_val: int = 2) -> float:
   Returns:
     The slope, or ``0.0`` when the window is empty, sums to zero, or the degree
     admits no trend coefficient.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   if len(values) < 2:
     return 0.0
@@ -245,7 +245,7 @@ def get_slope_func(arr: Any, order: int = 1, last_n_val: int = 2) -> float:
 
 
 def cos_sim(x: Any, y: Any) -> float:
-  """Return the cosine similarity of two vectors.
+  '''Return the cosine similarity of two vectors.
 
   Args:
     x: The first vector.
@@ -256,7 +256,7 @@ def cos_sim(x: Any, y: Any) -> float:
     vectors have different lengths. The length guard is what turns what would be
     a hard ``ValueError`` inside a UDF — raised for every customer with fewer
     events than the configured window — into a well-defined value.
-  """
+  '''
   left = _to_floats(x)
   right = _to_floats(y)
   if len(left) != len(right):
@@ -267,7 +267,7 @@ def cos_sim(x: Any, y: Any) -> float:
 
 
 def change_ratio(arr: Any, last_n_val: int = 2) -> float:
-  """Return the most recent value relative to the mean of the preceding window.
+  '''Return the most recent value relative to the mean of the preceding window.
 
   Args:
     arr: The input array.
@@ -275,7 +275,7 @@ def change_ratio(arr: Any, last_n_val: int = 2) -> float:
 
   Returns:
     The change ratio, or ``0.0`` when the baseline is zero.
-  """
+  '''
   values = _to_floats(arr)
   if len(values) < 2:
     return 0.0
@@ -288,7 +288,7 @@ def change_ratio(arr: Any, last_n_val: int = 2) -> float:
 
 
 def coefficient_of_variation(arr: Any, last_n_val: int = 3) -> float:
-  """Return the coefficient of variation, sigma over mu, over a window.
+  '''Return the coefficient of variation, sigma over mu, over a window.
 
   Args:
     arr: The input array.
@@ -296,7 +296,7 @@ def coefficient_of_variation(arr: Any, last_n_val: int = 3) -> float:
 
   Returns:
     The coefficient of variation, or ``0.0`` when the mean is zero.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   if len(values) < 2:
     return 0.0
@@ -310,7 +310,7 @@ def coefficient_of_variation(arr: Any, last_n_val: int = 3) -> float:
 # Aggregations
 # --------------------------------------------------------------------------- #
 def seq_average(arr: Any, last_n_val: int = 3) -> float:
-  """Return the mean of the most recent values.
+  '''Return the mean of the most recent values.
 
   Args:
     arr: The input array.
@@ -318,7 +318,7 @@ def seq_average(arr: Any, last_n_val: int = 3) -> float:
 
   Returns:
     The mean, or ``0.0`` for an empty window.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   if not values:
     return 0.0
@@ -326,7 +326,7 @@ def seq_average(arr: Any, last_n_val: int = 3) -> float:
 
 
 def seq_sum(arr: Any, last_n_val: int = 3) -> float:
-  """Return the sum of the most recent values.
+  '''Return the sum of the most recent values.
 
   Args:
     arr: The input array.
@@ -334,12 +334,12 @@ def seq_sum(arr: Any, last_n_val: int = 3) -> float:
 
   Returns:
     The sum, or ``0.0`` for an empty window.
-  """
+  '''
   return float(sum(_tail(_to_floats(arr), last_n_val)))
 
 
 def seq_min(arr: Any, last_n_val: int = 3) -> float:
-  """Return the minimum of the most recent values.
+  '''Return the minimum of the most recent values.
 
   Args:
     arr: The input array.
@@ -348,13 +348,13 @@ def seq_min(arr: Any, last_n_val: int = 3) -> float:
   Returns:
     The minimum, or ``0.0`` for an empty window. a
       raised ``ValueError: min() arg is an empty sequence``.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   return float(min(values)) if values else 0.0
 
 
 def seq_max(arr: Any, last_n_val: int = 3) -> float:
-  """Return the maximum of the most recent values.
+  '''Return the maximum of the most recent values.
 
   Args:
     arr: The input array.
@@ -362,13 +362,13 @@ def seq_max(arr: Any, last_n_val: int = 3) -> float:
 
   Returns:
     The maximum, or ``0.0`` for an empty window.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   return float(max(values)) if values else 0.0
 
 
 def seq_last(arr: Any) -> float:
-  """Return the final element of an array.
+  '''Return the final element of an array.
 
   Args:
     arr: The input array.
@@ -376,13 +376,13 @@ def seq_last(arr: Any) -> float:
   Returns:
     The final element, or ``0.0`` for an empty array. a
       raised ``IndexError: list index out of range``.
-  """
+  '''
   values = _to_floats(arr)
   return float(values[-1]) if values else 0.0
 
 
 def seq_delta(arr: Any, last_n_val: int = 2) -> float:
-  """Return the total change across the most recent window.
+  '''Return the total change across the most recent window.
 
   returning a *list* of consecutive differences, a
   ragged array of length ``k-1`` that no estimator consumes. It is a scalar
@@ -395,7 +395,7 @@ def seq_delta(arr: Any, last_n_val: int = 2) -> float:
   Returns:
     The difference between the last and the first element of the window, or
     ``0.0`` for a window with fewer than two elements.
-  """
+  '''
   values = _tail(_to_floats(arr), last_n_val)
   if len(values) < 2:
     return 0.0
@@ -406,7 +406,7 @@ def seq_delta(arr: Any, last_n_val: int = 2) -> float:
 # Date helpers
 # --------------------------------------------------------------------------- #
 def seq_date_delta(arr: Any, last_n_val: int = 3) -> int:
-  """Return the mean gap in days between consecutive dates.
+  '''Return the mean gap in days between consecutive dates.
 
   returning a *list* of day-gaps, which the routine then
   wrote over its source column — destroying the sequence of event dates and
@@ -419,7 +419,7 @@ def seq_date_delta(arr: Any, last_n_val: int = 3) -> int:
 
   Returns:
     The mean gap in days, or ``0`` for a window with fewer than two dates.
-  """
+  '''
   dates = sorted(_to_date(item) for item in _tail(list(arr or []), last_n_val))
   if len(dates) < 2:
     return 0
@@ -436,7 +436,7 @@ def seq_recency(
   run_dt_val: Any = None,
   fill_na_val: int = DEFAULT_RECENCY_SENTINEL,
 ) -> int:
-  """Return the days between the most recent event and the run date.
+  '''Return the days between the most recent event and the run date.
 
   For behavioural sequences the *absence* of a recent event is itself a signal,
   so an empty sequence must be represented by a value rather than a null — a
@@ -451,7 +451,7 @@ def seq_recency(
 
   Returns:
     The age in days of the most recent event, or the sentinel.
-  """
+  '''
   values = list(arr or [])
   reference = _to_date(run_dt_val) if run_dt_val else None
   # A falsy sentinel is treated as unset and replaced by the default. Honouring a

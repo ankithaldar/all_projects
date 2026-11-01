@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The routine library: every concrete transform, re-exported under one module.
+'''The routine library: every concrete transform, re-exported under one module.
 
 The registry resolves routines by short name from this module. Keeping one
 aggregate module means the fallback chain in
@@ -16,9 +16,9 @@ Every routine here is authored against one of three shapes:
   transforms whose fitted state is a Spark ML pipeline model;
 * :class:`~forecasting_ml_framework.preprocessing.bases.UdfRoutine` for
   transforms that delegate their arithmetic to a pure helper.
-"""
+'''
 
-from forecasting_ml_framework.preprocessing.bases import (  # noqa: F401 - re-exported in __all__
+from forecasting_ml_framework.preprocessing.bases import (  # pylint: disable=unused-import; re-exported in __all__
   SparkMlRoutine,
   UdfRoutine,
 )

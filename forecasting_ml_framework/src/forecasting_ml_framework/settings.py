@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Project settings: how the framework's own project is wired.
+'''Project settings: how the framework's own project is wired.
 
 The ``globals`` configuration group is a framework-specific invention — stock
 Kedro has no such namespace. It provides a second, higher-priority parameter
@@ -9,7 +9,7 @@ per-model parameters document. Resolution is achieved not by the loader but by
 the bootstrap entry point rewriting ``${KEY`` into ``${globals:KEY`` on disk
 before Kedro reads the file, so the ``globals`` pattern here is a genuine
 ``${globals:...}`` resolver target rather than a merged namespace.
-"""
+'''
 
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ CONFIG_LOADER_ARGS: dict = {
   },
 }
 
-CONFIG_LOADER_CLASS = OmegaConfigLoader
+CONFIG_LOADER_CLASS = OmegaConfigLoader  # pylint: disable=invalid-name
 
-CONTEXT_CLASS = ForecastingSparkContext
+CONTEXT_CLASS = ForecastingSparkContext  # pylint: disable=invalid-name
 
 # Paths — useful for the configuration rewriter and for deployment scripts.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

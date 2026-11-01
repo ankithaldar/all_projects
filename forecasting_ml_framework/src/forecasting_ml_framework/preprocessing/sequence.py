@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Sequence and behavioural-array transforms.
+'''Sequence and behavioural-array transforms.
 
 The family splits into two groups, and the split determines correctness.
 
@@ -30,7 +30,7 @@ make the family composable:
   the same array normalises both first. Below that, the arithmetic raises -- and
   it raises hardest on low-activity customers, who are exactly the population a
   retention model most needs to score.
-"""
+'''
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ LOGGER = get_logger(__name__)
 
 
 class SequenceTransform(UdfRoutine):
-  """Base for the sequence family: array in, scalar summary out.
+  '''Base for the sequence family: array in, scalar summary out.
 
   Attributes:
     use_cols: The selected array columns. Sequence routines scope themselves to
@@ -77,15 +77,16 @@ class SequenceTransform(UdfRoutine):
       most recent ``k`` elements: recent behaviour is more predictive than
       lifetime behaviour, and truncating to ``k`` makes the summary robust to
       array-length variation across customers.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__()
     # `use_cols` is resolved state, not configuration, so it is initialised
     # before the load. Every other attribute this family declares arrives from
@@ -98,11 +99,11 @@ class SequenceTransform(UdfRoutine):
     self.load_params(global_params, params)
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'last_n_val': 3,
@@ -110,7 +111,7 @@ class SequenceTransform(UdfRoutine):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[SequenceTransform, Any, Metadata]:
-    """Resolve the target array columns. No state is learned.
+    '''Resolve the target array columns. No state is learned.
 
     Args:
       df: The input frame.
@@ -118,7 +119,7 @@ class SequenceTransform(UdfRoutine):
 
     Returns:
       A three-tuple of the routine, the frame and the contract.
-    """
+    '''
     self.use_cols = self.get_selected_columns(
       self.cols.get('exclude_cols', []), self.cols.get('include_cols', []), metadata.feature_cols
     )
@@ -128,27 +129,27 @@ class SequenceTransform(UdfRoutine):
     return self, df, metadata
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the recency window bound into the helper.
+    '''Return the recency window bound into the helper.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'last_n_val': self.last_n_val}
 
 
 class SequenceInPlace(SequenceTransform):
-  """Base for the four routines that rewrite an array in place.
+  '''Base for the four routines that rewrite an array in place.
 
   No metadata action is needed: the shape is preserved, so the column remains an
   ``array<float>`` in both the frame and the sequence namespace.
-  """
+  '''
 
   output_suffix = None
   return_type: Any = None
 
 
 class FixedLength(SequenceInPlace):
-  """Pad or truncate an array to a fixed length.
+  '''Pad or truncate an array to a fixed length.
 
   It pads *and* slices, because a rectangular array is the entire purpose: the
   downstream tensor is dense and the model reshapes to a fixed width, so a batch
@@ -156,15 +157,15 @@ class FixedLength(SequenceInPlace):
   customers -- the highest-value ones -- producing the ragged batch that fails
   the job. Left-padding preserves recency ordering with the newest event last, and
   truncation therefore takes from the front.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'FixedLength'
     # `fixed_length` is a configuration key declared in `get_default_dict`; it
@@ -173,24 +174,24 @@ class FixedLength(SequenceInPlace):
     self.helper = get_fixed_length
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {'skip': True, 'fixed_length': 6, 'cols': {'exclude_cols': [], 'include_cols': []}}
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the target length bound into the helper.
+    '''Return the target length bound into the helper.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'fixed_length': self.fixed_length}
 
 
 class SequenceFillNa(SequenceInPlace):
-  """Replace a null array with a fixed-length zero array.
+  '''Replace a null array with a fixed-length zero array.
 
   The most efficient routine in the library and the best template for writing
   new ones: if a sequence transform can be expressed with Spark's array
@@ -200,36 +201,36 @@ class SequenceFillNa(SequenceInPlace):
   It pairs with :class:`FixedLength`: this one manufactures a fixed-length array
   for customers with no history, and that one normalises everyone else to the
   same length. Together they give a dense, rectangular sequence matrix.
-  """
+  '''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceFillNa'
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {'skip': True, 'fixed_length': 6, 'cols': {'exclude_cols': [], 'include_cols': []}}
 
   def helper(self) -> Any:  # type: ignore[override]
-    """No helper is used; the transform is pure Spark.
+    '''No helper is used; the transform is pure Spark.
 
     Raises:
       NotImplementedError: Always. The base class's UDF path is bypassed.
-    """
+    '''
     raise NotImplementedError('SequenceFillNa is expressed with native Spark array functions')
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Replace null arrays with zeros, entirely in the JVM.
+    '''Replace null arrays with zeros, entirely in the JVM.
 
     Args:
       df: The input frame.
@@ -237,7 +238,7 @@ class SequenceFillNa(SequenceInPlace):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     null_value = sf.array(*([sf.lit(0.0)] * int(self.fixed_length)))
     for column in self.use_cols:
       df = df.withColumn(column, sf.when(sf.col(column).isNull(), null_value).otherwise(sf.col(column)))
@@ -245,58 +246,58 @@ class SequenceFillNa(SequenceInPlace):
 
 
 class SequenceNormalize(SequenceInPlace):
-  """Express each element as a share of the array total."""
+  '''Express each element as a share of the array total.'''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceNormalize'
     self.return_type = st.ArrayType(st.FloatType())
     self.helper = seq_normalize
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {'skip': True, 'round_off': 4, 'cols': {'exclude_cols': [], 'include_cols': []}}
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the rounding bound into the helper.
+    '''Return the rounding bound into the helper.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'round_off': self.round_off}
 
 
 class SequenceDomainNormalizations(SequenceInPlace):
-  """Divide each element of an array by a reference value."""
+  '''Divide each element of an array by a reference value.'''
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceDomainNormalizations'
     self.return_type = st.ArrayType(st.FloatType())
     self.helper = domain_normalization
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'normalize_by_val': 1.0,
@@ -305,163 +306,163 @@ class SequenceDomainNormalizations(SequenceInPlace):
     }
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the reference value bound into the helper.
+    '''Return the reference value bound into the helper.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'normalize_by_val': self.normalize_by_val, 'round_off': self.round_off}
 
 
 class SequenceAverage(SequenceTransform):
-  """Summarise an array as the mean of its most recent values."""
+  '''Summarise an array as the mean of its most recent values.'''
 
   output_suffix = '_avg'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceAverage'
     self.helper = seq_average
 
 
 class SequenceSum(SequenceTransform):
-  """Summarise an array as the sum of its most recent values."""
+  '''Summarise an array as the sum of its most recent values.'''
 
   output_suffix = '_sum'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceSum'
     self.helper = seq_sum
 
 
 class SequenceMin(SequenceTransform):
-  """Summarise an array as the minimum of its most recent values."""
+  '''Summarise an array as the minimum of its most recent values.'''
 
   output_suffix = '_min'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceMin'
     self.helper = seq_min
 
 
 class SequenceMax(SequenceTransform):
-  """Summarise an array as the maximum of its most recent values."""
+  '''Summarise an array as the maximum of its most recent values.'''
 
   output_suffix = '_max'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceMax'
     self.helper = seq_max
 
 
 class SequenceLast(SequenceTransform):
-  """Summarise an array as its final element."""
+  '''Summarise an array as its final element.'''
 
   output_suffix = '_last'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceLast'
     self.helper = seq_last
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """This helper takes no window.
+    '''This helper takes no window.
 
     Returns:
       An empty mapping.
-    """
+    '''
     return {}
 
 
 class SequenceDelta(SequenceTransform):
-  """Summarise an array as its total change across the recency window.
+  '''Summarise an array as its total change across the recency window.
 
   a helper returned a *list* of consecutive differences,
   a ragged array of length ``k-1`` that no estimator consumes, and the routine
   registered nothing, so the transform is modelling-inert. The helper is a
   scalar and the routine registers it like its siblings.
-  """
+  '''
 
   output_suffix = '_delta'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceDelta'
     self.helper = seq_delta
 
 
 class SequenceDateDelta(SequenceTransform):
-  """Summarise a date array as its mean inter-event gap, in days.
+  '''Summarise a date array as its mean inter-event gap, in days.
 
   a overwrote the source column with a list of day-gaps
   and registered nothing, destroying the event dates and producing a feature no
   estimator accepts. It writes a suffixed scalar
   column and registers it.
-  """
+  '''
 
   output_suffix = '_date_delta'
   return_type = st.IntegerType()
   output_is_numerical = True
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceDateDelta'
     self.helper = seq_date_delta
 
 
 class SequenceRecency(SequenceTransform):
-  """Summarise a date array as its age in days at the run date.
+  '''Summarise a date array as its age in days at the run date.
 
   The *absence* of a recent event is itself a signal, so an empty sequence must
   be represented by a value rather than a null: a null would propagate into
@@ -474,28 +475,28 @@ class SequenceRecency(SequenceTransform):
   ``run_dt_val`` stayed ``None``, the reference test failed, and the routine
   emitted the sentinel for **every** row -- a registered numerical feature that
   was constant, and therefore invisible in every aggregate metric.
-  """
+  '''
 
   output_suffix = '_recency'
   return_type = st.IntegerType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'SequenceRecency'
     self.helper = seq_recency
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'run_date_col': 'run_date',
@@ -504,7 +505,7 @@ class SequenceRecency(SequenceTransform):
     }
 
   def fit(self, df: Any, metadata: Metadata) -> tuple[SequenceTransform, Any, Metadata]:
-    """Resolve the array columns and assert the reference date is present.
+    '''Resolve the array columns and assert the reference date is present.
 
     Args:
       df: The input frame.
@@ -517,7 +518,7 @@ class SequenceRecency(SequenceTransform):
       DataContractError: If the configured reference-date column is absent. The
         reference is load-bearing, and a missing column would otherwise surface
         as a frame of sentinels rather than as an error.
-    """
+    '''
     # `self` is rebound by the base class's contract, so the local is named
     # `routine` rather than shadowing the instance -- an assignment to `self`
     # inside a method silently discards the object the method belongs to.
@@ -528,89 +529,89 @@ class SequenceRecency(SequenceTransform):
     return routine, frame, contract
 
   def extra_udf_columns(self, column: str) -> list[Any]:
-    """Return the reference-date column as the helper's second argument.
+    '''Return the reference-date column as the helper's second argument.
 
     Args:
       column: The array column being summarised. Unused.
 
     Returns:
       A single-element list holding the reference-date column expression.
-    """
+    '''
     del column
     return [sf.col(self.run_date_col)]
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the sentinel bound into the helper. No window is used.
+    '''Return the sentinel bound into the helper. No window is used.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'fill_na_val': self.fill_na_val}
 
 
 class ChangeRatio(SequenceTransform):
-  """Summarise an array as the most recent value relative to its baseline."""
+  '''Summarise an array as the most recent value relative to its baseline.'''
 
   output_suffix = '_cr'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'ChangeRatio'
     self.helper = change_ratio
 
 
 class CoefficientOfVariation(SequenceTransform):
-  """Summarise an array as sigma over mu over the recency window."""
+  '''Summarise an array as sigma over mu over the recency window.'''
 
   output_suffix = '_cv'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'CoefficientOfVariation'
     self.helper = coefficient_of_variation
 
 
 class Slope(SequenceTransform):
-  """Summarise an array as the least-squares slope of its recent values.
+  '''Summarise an array as the least-squares slope of its recent values.
 
   The configurable ``suffix`` is the cleanest use of a configuration key in the
   library: it lets an ``order: 1`` and an ``order: 2`` slope of the same column
   coexist, both be registered, and both reach the model.
-  """
+  '''
 
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'Slope'
     self.helper = get_slope_func
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'order': 1,
@@ -621,35 +622,35 @@ class Slope(SequenceTransform):
 
   @property
   def output_suffix(self) -> str:  # type: ignore[override]
-    """Return the configured output suffix.
+    '''Return the configured output suffix.
 
     Returns:
       The suffix appended to the source column name.
-    """
+    '''
     return f'_{self.suffix}'
 
   def derived_name(self, column: str) -> str:
-    """Return the derived column name.
+    '''Return the derived column name.
 
     Args:
       column: The source column name.
 
     Returns:
       ``{column}_{suffix}``.
-    """
+    '''
     return f'{column}_{self.suffix}'
 
   def helper_kwargs(self) -> dict[str, Any]:
-    """Return the polynomial order and window bound into the helper.
+    '''Return the polynomial order and window bound into the helper.
 
     Returns:
       A mapping of helper keyword argument to value.
-    """
+    '''
     return {'order': int(self.order), 'last_n_val': self.last_n_val}
 
 
 class Similarity(SequenceTransform):
-  """Score how closely a behavioural profile matches a reference archetype.
+  '''Score how closely a behavioural profile matches a reference archetype.
 
   A *reference-pattern* feature: "how much does this customer's usage shape
   resemble the archetype of a high-value user, or of an at-risk one?" The
@@ -664,28 +665,28 @@ class Similarity(SequenceTransform):
   that path, so the affected population was every customer with fewer than
   ``2k`` events — precisely the low-activity customers a retention model most
   needs to score. Both windows are normalised to the same length.
-  """
+  '''
 
   output_suffix = '_similarity'
   return_type = st.FloatType()
 
   def __init__(self, global_params: dict[str, Any] | None, params: dict[str, Any] | None) -> None:
-    """Build the routine from configuration.
+    '''Build the routine from configuration.
 
     Args:
       global_params: The shared parameter bag.
       params: The routine's own configuration block.
-    """
+    '''
     super().__init__(global_params, params)
     self.name = 'Similarity'
     self.helper = cos_sim
 
   def get_default_dict(self) -> dict[str, Any]:
-    """Declare the parameter surface.
+    '''Declare the parameter surface.
 
     Returns:
       The default configuration.
-    """
+    '''
     return {
       'skip': True,
       'rational_vector_map': {},
@@ -694,7 +695,7 @@ class Similarity(SequenceTransform):
     }
 
   def apply(self, df: Any, metadata: Metadata) -> tuple[Any, Metadata]:
-    """Compute the cosine similarity against each column's archetype.
+    '''Compute the cosine similarity against each column's archetype.
 
     Args:
       df: The input frame.
@@ -702,7 +703,7 @@ class Similarity(SequenceTransform):
 
     Returns:
       A two-tuple of the frame and the contract.
-    """
+    '''
     from functools import partial  # noqa: PLC0415
 
     metadata = metadata.copy()

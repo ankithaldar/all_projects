@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel
 '''Tests for the two-gate promotion decision.
 
 The promotion gate is where the framework makes a governance decision, so its two
@@ -18,20 +19,20 @@ from datetime import date
 import pytest
 
 from forecasting_ml_framework.exceptions import MetricConfigurationError
-from forecasting_ml_framework.modeling.metrics import parse_metric
+from forecasting_ml_framework.modeling.metrics import MetricSpec, evaluate_acceptance, parse_metric
 from forecasting_ml_framework.modeling.promotion import PromotionDecision, decide_promotion
-from forecasting_ml_framework.nodes.validation_nodes import _gate
+from forecasting_ml_framework.nodes.validation_nodes import _gate, _read_metric
 
 BLOCK = 'modeling_demo'
 SPEC = parse_metric('LIFT_DECILE_10', kind='classification')
 
 
 def _parameters() -> dict:
-  """Build a minimal parameters document carrying one modelling block.
+  '''Build a minimal parameters document carrying one modelling block.
 
   Returns:
     The document.
-  """
+  '''
   return {
     'model_key': 'demo',
     BLOCK: {'model_handle': 'sklearn.dummy.DummyClassifier', 'eval_metric': 'LIFT_DECILE_10'},
@@ -39,34 +40,34 @@ def _parameters() -> dict:
 
 
 class TestTemporalGate:
-  """The temporal verdict alone decides when only it is consulted."""
+  '''The temporal verdict alone decides when only it is consulted.'''
 
   def test_a_later_window_promotes(self) -> None:
     assert decide_promotion(date(2024, 3, 1), date(2024, 2, 1)).action == 'PROMOTE'
 
   def test_the_same_window_is_a_no_op(self) -> None:
-    """Idempotent replay protection."""
+    '''Idempotent replay protection.'''
     assert decide_promotion(date(2024, 2, 1), date(2024, 2, 1)).action == 'NO_OP'
 
   def test_an_older_window_is_recorded_only(self) -> None:
-    """A model evaluated against stale data cannot supersede a better-informed one."""
+    '''A model evaluated against stale data cannot supersede a better-informed one.'''
     assert decide_promotion(date(2024, 1, 1), date(2024, 2, 1)).action == 'RECORD_ONLY'
 
 
 class TestGateComposition:
-  """Both gates must pass, and the narrower failure must be reported."""
+  '''Both gates must pass, and the narrower failure must be reported.'''
 
   def test_both_gates_pass_promotes(self) -> None:
     temporal = PromotionDecision('PROMOTE', 'later window')
     assert _gate(True, 0.5, SPEC, 10, temporal).action == 'PROMOTE'
 
   def test_acceptance_failure_is_recorded_only(self) -> None:
-    """A better-informed but worse model is still a worse model."""
+    '''A better-informed but worse model is still a worse model.'''
     temporal = PromotionDecision('PROMOTE', 'later window')
     assert _gate(False, 12.0, SPEC, 10, temporal).action == 'RECORD_ONLY'
 
   def test_temporal_failure_blocks_an_accepted_challenger(self) -> None:
-    """The defect: this returned PROMOTE because the temporal verdict was discarded."""
+    '''The defect: this returned PROMOTE because the temporal verdict was discarded.'''
     temporal = PromotionDecision('RECORD_ONLY', 'older window')
     decision = _gate(True, 0.1, SPEC, 10, temporal)
     assert decision.action == 'RECORD_ONLY'
@@ -87,7 +88,7 @@ class TestGateComposition:
 
 
 class TestMetricConfiguration:
-  """An unrecognised metric fails the promotion rather than substituting one."""
+  '''An unrecognised metric fails the promotion rather than substituting one.'''
 
   def test_a_typo_raises(self) -> None:
     with pytest.raises(MetricConfigurationError):
@@ -99,7 +100,7 @@ class TestMetricConfiguration:
 
 
 class TestRegressionGateDirection:
-  """The acceptance sign follows the metric's declared direction."""
+  '''The acceptance sign follows the metric's declared direction.'''
 
   def test_a_loss_metric_is_lower_is_better(self) -> None:
     spec = parse_metric('RMSE', kind='regression')
@@ -110,3 +111,43 @@ class TestRegressionGateDirection:
     spec = parse_metric('R2', kind='regression')
     assert spec.higher_is_better is True
     assert 'higher-is-better' in _gate(True, 1.0, spec, 0, PromotionDecision('PROMOTE', 'ok')).rationale
+
+
+def test_read_metric_resolves_adjr2_under_canonical_key() -> None:
+  import pandas as pd
+
+  bands = pd.DataFrame({'ADJ_R2': [0.42], 'score_ntile': [1]})
+
+  spec = parse_metric('ADJ_R2', kind='regression')
+  value, band = _read_metric(bands, spec, False)
+  assert value == 0.42
+  assert band == 1
+
+  # ADJR2 is not a registered parse_metric name, but a MetricSpec carrying it must
+  # still resolve to the canonical frame key.
+  adjr2_spec = MetricSpec(
+    name='ADJR2', metric='ADJR2', band_kind=None, band=0, kind='regression', higher_is_better=True
+  )
+  value, band = _read_metric(bands, adjr2_spec, False)
+  assert value == 0.42
+  assert band == 1
+
+
+class TestAcceptanceDirection:
+  '''The gate sign follows the metric direction.'''
+
+  def test_higher_is_better_accepts_better_and_rejects_much_worse(self) -> None:
+    spec = parse_metric('LIFT_DECILE_10')
+    assert evaluate_acceptance(1.03, 1.0, spec)[0] is True
+    assert evaluate_acceptance(0.80, 1.0, spec)[0] is False
+
+  def test_lower_is_better_brier_accepts_better_and_rejects_much_worse(self) -> None:
+    spec = parse_metric('BRIER_SCORE', kind='classification')
+    assert evaluate_acceptance(0.04, 0.05, spec)[0] is True
+    assert evaluate_acceptance(0.06, 0.05, spec)[0] is False
+
+  def test_zero_incumbent_accepts(self) -> None:
+    spec = parse_metric('BRIER_SCORE', kind='classification')
+    accepted, deviation = evaluate_acceptance(0.04, 0.0, spec)
+    assert accepted is True
+    assert deviation == 0.0

@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Text and parameter parsing helpers.
+'''Text and parameter parsing helpers.
 
 The two SQL-rendering helpers live here rather than in the dataset adapters
 because the property they provide is a property of *text*, not of any one
 back end: a name and a literal are rendered the same way whichever engine will
 parse them, so the behaviour cannot diverge between the two.
-"""
+'''
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ QUOTE_CHARACTER = "'"
 
 
 def quote_identifier(name: str) -> str:
-  """Render a SQL identifier, refusing anything outside the safe set.
+  '''Render a SQL identifier, refusing anything outside the safe set.
 
   Args:
     name: The bare identifier.
@@ -49,7 +49,7 @@ def quote_identifier(name: str) -> str:
       name, a column name or a partition field carrying anything else -- a dot, a
       space, a quote, a semicolon -- is a configuration error that must be
       visible rather than interpolated.
-  """
+  '''
   if not _IDENTIFIER_PATTERN.match(str(name)):
     raise InvalidWriteModeError(
       f'{name!r} is not a plain SQL identifier. Identifiers must match '
@@ -61,7 +61,7 @@ def quote_identifier(name: str) -> str:
 
 
 def quote_literal(value: Any) -> str:
-  """Render a SQL literal from a Python value.
+  '''Render a SQL literal from a Python value.
 
   A value is quoted, never escaped: the doubled-quote convention is implemented
   by *doubling* the quote character, which is the standard SQL literal form, and
@@ -77,7 +77,7 @@ def quote_literal(value: Any) -> str:
   Raises:
     InvalidWriteModeError: If the value is of a type that cannot be rendered
       unambiguously, or is a string containing a backslash.
-  """
+  '''
   if value is None:
     return 'NULL'
   if isinstance(value, bool):
@@ -106,7 +106,7 @@ def quote_literal(value: Any) -> str:
 
 
 def match_any(patterns: list[str] | None, value: str) -> bool:
-  """Report whether any pattern matches a value.
+  '''Report whether any pattern matches a value.
 
   Patterns are regular expressions anchored at the *start* of the value, which
   is the behaviour the whole framework's feature-exclusion configuration depends
@@ -119,14 +119,14 @@ def match_any(patterns: list[str] | None, value: str) -> bool:
 
   Returns:
     ``True`` if at least one pattern matches, ``False`` otherwise.
-  """
+  '''
   if not patterns:
     return False
   return any(re.match(pattern, value) for pattern in patterns)
 
 
 def require(params: dict[str, Any], key: str, **context: object) -> Any:
-  """Fetch a mandatory parameter or raise a descriptive error.
+  '''Fetch a mandatory parameter or raise a descriptive error.
 
   Bare ``params['key']`` indexing was the framework's primary validation
   mechanism and its principal source of unhelpful tracebacks: the ``KeyError``
@@ -143,7 +143,7 @@ def require(params: dict[str, Any], key: str, **context: object) -> Any:
 
   Raises:
     MissingParameterError: If the key is absent.
-  """
+  '''
   if key not in params:
     available = ', '.join(sorted(str(name) for name in params)[:25])
     raise MissingParameterError(
@@ -156,7 +156,7 @@ def require(params: dict[str, Any], key: str, **context: object) -> Any:
 
 
 def split_params(raw: str) -> dict[str, Any]:
-  """Parse a ``key:value,key.subkey:value`` string into a nested dictionary.
+  '''Parse a ``key:value,key.subkey:value`` string into a nested dictionary.
 
   This is the framework's standalone command-line parameter parser. It is used
   by the bootstrap entry point, which must build a nested parameter structure
@@ -173,7 +173,7 @@ def split_params(raw: str) -> dict[str, Any]:
 
   Raises:
     ValueError: If a segment does not contain a colon.
-  """
+  '''
   result: dict[str, Any] = {}
   for segment in _split_top_level(raw):
     segment = segment.strip()
@@ -190,7 +190,7 @@ def split_params(raw: str) -> dict[str, Any]:
 
 
 def _split_top_level(raw: str) -> list[str]:
-  """Split on commas that are not inside quotes or brackets.
+  '''Split on commas that are not inside quotes or brackets.
 
   Unbalanced grouping is **refused** rather than tolerated. A closing bracket with
   no opener, an unterminated quote, or a leftover opener all meant the splitter
@@ -207,7 +207,7 @@ def _split_top_level(raw: str) -> list[str]:
 
   Raises:
     ValueError: If a quote is unterminated or the brackets do not balance.
-  """
+  '''
   segments: list[str] = []
   depth = 0
   quote: str | None = None
@@ -252,13 +252,13 @@ def _split_top_level(raw: str) -> list[str]:
 
 
 def _assign_nested(target: dict[str, Any], keys: list[str], value: Any) -> None:
-  """Assign a value into a nested dictionary, creating intermediate levels.
+  '''Assign a value into a nested dictionary, creating intermediate levels.
 
   Args:
     target: The dictionary to mutate.
     keys: The dotted key path.
     value: The value to assign.
-  """
+  '''
   cursor = target
   for part in keys[:-1]:
     nxt = cursor.get(part)
@@ -270,14 +270,14 @@ def _assign_nested(target: dict[str, Any], keys: list[str], value: Any) -> None:
 
 
 def _try_convert(value: str) -> Any:
-  """Convert a raw string to a number or boolean where unambiguous.
+  '''Convert a raw string to a number or boolean where unambiguous.
 
   Args:
     value: The raw string.
 
   Returns:
     The converted value, or a string.
-  """
+  '''
   lowered = value.lower()
   if lowered in ('true', 'false'):
     return lowered == 'true'

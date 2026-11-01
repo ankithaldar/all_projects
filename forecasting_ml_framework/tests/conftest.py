@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Shared test fixtures."""
+'''Shared test fixtures.'''
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from forecasting_ml_framework.core.metadata import Metadata
 
 @pytest.fixture(autouse=True)
 def _reset_framework_logger() -> Any:
-  """Restore the framework logger's level after each test.
+  '''Restore the framework logger's level after each test.
 
   Several tests assert on the framework's own log records -- the operating point,
   the resolved feature list, the importance source, the degradation warnings --

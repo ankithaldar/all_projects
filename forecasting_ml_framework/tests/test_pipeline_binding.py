@@ -36,14 +36,14 @@ IDENTIFIER = 'cust_id'
 
 
 def _frame(rows: int = ROWS) -> pd.DataFrame:
-  """Build a deterministic labelled feature frame.
+  '''Build a deterministic labelled feature frame.
 
   Args:
     rows: The number of rows to build.
 
   Returns:
     The frame.
-  """
+  '''
   generator = pd.Series(range(rows), dtype='float64')
   signal = ((generator * 37) % 11 < 2).astype('int64')
   return pd.DataFrame(
@@ -59,14 +59,14 @@ def _frame(rows: int = ROWS) -> pd.DataFrame:
 
 
 def _metadata(rows: int = ROWS) -> Metadata:
-  """Build the schema contract describing the frame.
+  '''Build the schema contract describing the frame.
 
   Args:
     rows: The number of rows the contract describes.
 
   Returns:
     The contract.
-  """
+  '''
   return Metadata(
     target_col=TARGET,
     feature_cols=list(FEATURES),
@@ -78,11 +78,11 @@ def _metadata(rows: int = ROWS) -> Metadata:
 
 
 def _parameters() -> dict:
-  """Build a parameters document sufficient for the modelling nodes.
+  '''Build a parameters document sufficient for the modelling nodes.
 
   Returns:
     The document.
-  """
+  '''
   return {
     'model_key': 'graph_test',
     'modeling_params': {
@@ -102,12 +102,12 @@ class TestTrainAndScoreNodes:
   @pytest.fixture(scope='class')
   @classmethod
   def trained(cls) -> tuple:
-    """Train a model on the synthetic frame.
+    '''Train a model on the synthetic frame.
 
     Returns:
       A five-tuple of the trainer, the fitted model, the calibrator and the two
       slices, exactly as the training node returns it.
-    """
+    '''
     from forecasting_ml_framework.nodes.model_nodes import model_training  # noqa: PLC0415
 
     frame = _frame()
@@ -117,7 +117,7 @@ class TestTrainAndScoreNodes:
     assert len(trained) == 5
 
   def test_the_holdout_is_disjoint_from_the_training_slice(self, trained: tuple) -> None:
-    """An overlapping holdout would inflate every reported metric."""
+    '''An overlapping holdout would inflate every reported metric.'''
     train_frame, holdout_frame = trained[3], trained[4]
     assert not holdout_frame.empty
     assert set(train_frame[IDENTIFIER]).isdisjoint(set(holdout_frame[IDENTIFIER]))
@@ -136,7 +136,7 @@ class TestTrainAndScoreNodes:
     assert trainer.target_col == TARGET
 
   def test_the_population_rate_is_recorded(self, trained: tuple) -> None:
-    """Prior-shift calibration is meaningless without the pre-resampling rate."""
+    '''Prior-shift calibration is meaningless without the pre-resampling rate.'''
     trainer = trained[0]
     assert trainer.real_rate and 0.0 < trainer.real_rate < 1.0
 
@@ -153,7 +153,7 @@ class TestTrainAndScoreNodes:
     assert 'orig_score_value' in raw.columns
 
   def test_the_identifier_survives_scoring(self, trained: tuple) -> None:
-    """A score row without its key cannot be joined to anything."""
+    '''A score row without its key cannot be joined to anything.'''
     from forecasting_ml_framework.nodes.model_nodes import model_scoring  # noqa: PLC0415
 
     trainer, fitted, calibrated, unused_train, holdout = trained
@@ -165,7 +165,7 @@ class TestTrainAndScoreNodes:
     assert IDENTIFIER in raw.columns
 
   def test_the_score_projection_is_narrow(self, trained: tuple) -> None:
-    """A narrow, stable schema is what lets many models share one score table."""
+    '''A narrow, stable schema is what lets many models share one score table.'''
     from forecasting_ml_framework.modeling.scoring import (  # noqa: PLC0415
       project_score_frame,
     )
@@ -190,11 +190,11 @@ class TestEvaluationNodes:
   @pytest.fixture(scope='class')
   @classmethod
   def scored(cls) -> pd.DataFrame:
-    """Train, then score the holdout.
+    '''Train, then score the holdout.
 
     Returns:
       The scored frame.
-    """
+    '''
     from forecasting_ml_framework.nodes.model_nodes import model_scoring, model_training  # noqa: PLC0415
 
     trainer, fitted, calibrated, unused_train, holdout = model_training(_parameters(), _frame(), _metadata())
@@ -243,7 +243,7 @@ class TestEvaluationNodes:
     assert token is True
 
   def test_the_lift_is_a_ratio_against_the_base_rate(self, scored: pd.DataFrame) -> None:
-    """A lift table in which every band reports the same value is not a lift table."""
+    '''A lift table in which every band reports the same value is not a lift table.'''
     from forecasting_ml_framework.nodes.model_nodes import lift_calculation  # noqa: PLC0415
 
     lift, unused_token = lift_calculation(
@@ -259,11 +259,11 @@ class TestRegressionNodes:
   @pytest.fixture(scope='class')
   @classmethod
   def continuous(cls) -> pd.DataFrame:
-    """Build a continuous-target frame.
+    '''Build a continuous-target frame.
 
     Returns:
       The frame.
-    """
+    '''
     frame = _frame()
     frame['spend'] = frame[FEATURES[0]] * 100.0 + frame[FEATURES[3]] * 50.0
     return frame
@@ -328,7 +328,7 @@ class TestRegressionNodes:
   def test_the_regression_projection_carries_an_empty_high_score_flag(
     self, continuous: pd.DataFrame
   ) -> None:
-    """The flag is retained purely so the score-table schema stays stable."""
+    '''The flag is retained purely so the score-table schema stays stable.'''
     from forecasting_ml_framework import constants  # noqa: PLC0415
     from forecasting_ml_framework.nodes.model_nodes import (  # noqa: PLC0415
       model_scoring_regression,
@@ -363,7 +363,7 @@ class TestRegressionNodes:
 
 
 class TestPositiveClassResolution:
-  """The positive class must be resolved from the estimator, not assumed."""
+  '''The positive class must be resolved from the estimator, not assumed.'''
 
   def test_a_classifier_yields_a_probability(self) -> None:
     from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
@@ -377,7 +377,7 @@ class TestPositiveClassResolution:
     assert ((score >= 0.0) & (score <= 1.0)).all()
 
   def test_a_non_binary_target_selects_the_highest_class(self) -> None:
-    """A hard-coded column index would make class 2 positive by accident."""
+    '''A hard-coded column index would make class 2 positive by accident.'''
     from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
 
     from forecasting_ml_framework.modeling.scoring import positive_probability  # noqa: PLC0415
@@ -390,12 +390,12 @@ class TestPositiveClassResolution:
     assert score == pytest.approx(model.predict_proba(frame)[:, 1])
 
   def test_a_regressor_score_is_the_prediction_itself(self) -> None:
-    """The defect: ``predict_proba`` was called unconditionally.
+    '''The defect: ``predict_proba`` was called unconditionally.
 
     The score is returned unscaled, because a regression metric compares the
     prediction to the target on the target's own scale. Rescaling onto ``(0, 1)``
     would make the score depend on the other rows in the batch.
-    """
+    '''
     from sklearn.tree import DecisionTreeRegressor  # noqa: PLC0415
 
     from forecasting_ml_framework.modeling.scoring import positive_probability  # noqa: PLC0415
@@ -406,7 +406,7 @@ class TestPositiveClassResolution:
     assert score == pytest.approx(model.predict(frame))
 
   def test_a_regressor_score_does_not_depend_on_the_batch(self) -> None:
-    """Two runs over different populations must produce comparable scores."""
+    '''Two runs over different populations must produce comparable scores.'''
     from sklearn.tree import DecisionTreeRegressor  # noqa: PLC0415
 
     from forecasting_ml_framework.modeling.scoring import positive_probability  # noqa: PLC0415
@@ -432,7 +432,7 @@ class TestPositiveClassResolution:
     from forecasting_ml_framework.modeling.scoring import positive_probability  # noqa: PLC0415
 
     class Useless:
-      """An estimator offering no way to produce a score."""
+      '''An estimator offering no way to produce a score.'''
 
     with pytest.raises(ModelError):
       positive_probability(Useless(), pd.DataFrame({'x': [1.0]}))
@@ -451,7 +451,7 @@ class TestWarehouseRoundTrip:
       assert reloaded[TARGET].sum() == original[TARGET].sum()
 
   def test_a_second_write_replaces_rather_than_appends(self, tmp_path: pathlib.Path) -> None:
-    """Idempotency: a re-run for a date must not duplicate the rows."""
+    '''Idempotency: a re-run for a date must not duplicate the rows.'''
     with SQLiteWarehouse(str(tmp_path / 'local.db')) as warehouse:
       warehouse.write(_frame(50), 'features')
       warehouse.write(_frame(30), 'features')
@@ -496,7 +496,7 @@ class TestArtefactRoundTrip:
       load_pickle(str(tmp_path / 'absent.pkl'))
 
   def test_a_local_root_is_not_routed_through_the_cloud(self, tmp_path: pathlib.Path) -> None:
-    """The address-form invariant: a bare path reaches the host filesystem."""
+    '''The address-form invariant: a bare path reaches the host filesystem.'''
     from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
 
     filesystem = get_file_system(str(tmp_path / 'x'))
@@ -509,17 +509,17 @@ class TestCatalogueCoverage:
   @pytest.fixture(scope='class')
   @classmethod
   def catalog(cls) -> dict:
-    """Load the base catalogue.
+    '''Load the base catalogue.
 
     Returns:
       The parsed document.
-    """
+    '''
     import yaml  # noqa: PLC0415
 
     return yaml.safe_load((CONF_ROOT / 'base' / 'catalog.yml').read_text(encoding='utf-8'))
 
   def test_every_named_entry_exists_or_is_a_transient(self, catalog: dict) -> None:
-    """A transient dataset needs no entry; a persistent one missing is a load-time error."""
+    '''A transient dataset needs no entry; a persistent one missing is a load-time error.'''
     from forecasting_ml_framework.pipelines import classification, regression  # noqa: PLC0415
     from forecasting_ml_framework.pipelines.registry import PipelineTopology  # noqa: PLC0415
 
@@ -546,6 +546,6 @@ class TestCatalogueCoverage:
     assert not absent, f'pipeline datasets absent from the catalogue: {absent}'
 
   def test_the_catalogue_is_valid_json_ignorable(self, catalog: dict) -> None:
-    """Anchors resolve to real entries, so a broken alias fails loudly at load."""
+    '''Anchors resolve to real entries, so a broken alias fails loudly at load.'''
     assert catalog['_spark_bq_data']['type'].endswith('CustomSparkBQDataSet')
     json.dumps(catalog['_spark_bq_data'])

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Structured logging.
+'''Structured logging.
 
 the framework's de facto logging was ``print``, used at several
 hundred call sites, and the ``dictConfig`` that would have replaced it required
@@ -16,7 +16,7 @@ This module provides a small logging facade that:
   correlated with a scheduler run;
 * supports a verbosity switch, so the genuinely valuable distribution reports
   survive while routine debug output is suppressed in production.
-"""
+'''
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ _CONFIGURED = False
 
 
 def configure_logging(level: int | None = None) -> None:
-  """Install the framework's logging configuration.
+  '''Install the framework's logging configuration.
 
   The configuration is idempotent: calling it repeatedly does not add duplicate
   handlers.
@@ -45,7 +45,7 @@ def configure_logging(level: int | None = None) -> None:
     level: An explicit level. When omitted the level is read from the
       ``FORECASTING_ML_LOG_LEVEL`` environment variable and defaults to
       ``INFO``.
-  """
+  '''
   global _CONFIGURED  # noqa: PLW0603 - module-level singleton guard
   if _CONFIGURED:
     return
@@ -70,46 +70,46 @@ def configure_logging(level: int | None = None) -> None:
 
 
 def _level_from_env() -> int:
-  """Resolve the configured verbosity from the environment.
+  '''Resolve the configured verbosity from the environment.
 
   Returns:
     A standard-library logging level.
-  """
+  '''
   raw = os.getenv(VERBOSITY_ENV_VAR, 'INFO').upper()
   return getattr(logging, raw, logging.INFO) if raw.isalpha() else logging.INFO
 
 
 class _RunContextFilter(logging.Filter):
-  """Prefix every record with the scheduler run identifier when one is known."""
+  '''Prefix every record with the scheduler run identifier when one is known.'''
 
   def filter(self, record: logging.LogRecord) -> bool:
-    """Attach the run name to a record.
+    '''Attach the run name to a record.
 
     Args:
       record: The record being emitted.
 
     Returns:
       ``True``, so the record is always emitted.
-    """
+    '''
     record.run_name = os.getenv(RUN_NAME_ENV_VAR, 'local')  # type: ignore[attr-defined]
     return True
 
 
 def get_logger(name: str) -> logging.Logger:
-  """Return a framework logger.
+  '''Return a framework logger.
 
   Args:
     name: Usually ``__name__``.
 
   Returns:
     A configured logger.
-  """
+  '''
   configure_logging()
   return logging.getLogger(name)
 
 
 def log_distribution(logger: logging.Logger, label: str, values: dict[str, Any]) -> None:
-  """Emit a structured distribution report.
+  '''Emit a structured distribution report.
 
   The distribution reports are the framework's most valuable observability
   artefact: a per-column five-number summary bracketing each stateful transform
@@ -120,7 +120,7 @@ def log_distribution(logger: logging.Logger, label: str, values: dict[str, Any])
     logger: The emitting logger.
     label: A human-readable stage label.
     values: A mapping of column name to summary statistic.
-  """
+  '''
   if not logger.isEnabledFor(logging.INFO):
     return
   rendered = ', '.join(f'{key}={value}' for key, value in sorted(values.items()))

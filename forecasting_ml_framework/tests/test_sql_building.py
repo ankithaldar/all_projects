@@ -29,7 +29,7 @@ DECISION = PromotionDecision('PROMOTE', 'within tolerance', band_used=10)
 
 
 def _statements(incumbent: dict | None = None, old_score: float = 4.25) -> list:
-  """Render the promotion transaction's statements.
+  '''Render the promotion transaction's statements.
 
   Args:
     incumbent: The registry row, or ``None`` for a first promotion.
@@ -38,7 +38,7 @@ def _statements(incumbent: dict | None = None, old_score: float = 4.25) -> list:
 
   Returns:
     The three rendered statements.
-  """
+  '''
   return _build_promote_statements(
     project='project',
     metrics_dataset='metrics',
@@ -89,13 +89,13 @@ class TestAuditContent:
   '''The audit row must carry what the decision was made on.'''
 
   def test_the_incumbent_score_is_the_incumbents(self) -> None:
-    """The defect: the audit read ``old_score``, which is 0.0 on a first promotion."""
+    '''The defect: the audit read ``old_score``, which is 0.0 on a first promotion.'''
     audit = _statements({'metric_value': 4.25, 'history': {}})[0]
     assert '4.25 AS prod_metric_value' in audit
     assert '0.0 AS prod_metric_value' not in audit
 
   def test_a_first_promotion_records_a_zero_incumbent_score(self) -> None:
-    """A first promotion has no incumbent, and the caller supplies 0.0 for one."""
+    '''A first promotion has no incumbent, and the caller supplies 0.0 for one.'''
     assert '0.0 AS prod_metric_value' in _statements(None, old_score=0.0)[0]
 
   def test_the_band_is_recorded(self) -> None:
@@ -112,7 +112,7 @@ class TestAuditContent:
     assert 'NULL AS metric_band_used' in statements[0]
 
   def test_the_audit_is_replay_safe(self) -> None:
-    """Re-running the same promotion must not duplicate the audit row."""
+    '''Re-running the same promotion must not duplicate the audit row.'''
     assert 'WHERE NOT EXISTS' in _statements({'metric_value': 1.0, 'history': {}})[0]
 
 
@@ -121,25 +121,25 @@ class TestRecordOnlyRendering:
 
   def test_it_renders_without_an_incumbent(self) -> None:
     class RecordingClient:
-      """A client that captures the statement instead of executing it."""
+      '''A client that captures the statement instead of executing it.'''
 
       def __init__(self) -> None:
         self.statements: list = []
 
       def query(self, sql: str) -> 'RecordingClient':
-        """Record a statement.
+        '''Record a statement.
 
         Args:
           sql: The statement.
 
         Returns:
           This client.
-        """
+        '''
         self.statements.append(sql)
         return self
 
       def result(self) -> None:
-        """No-op."""
+        '''No-op.'''
         return
 
     client = RecordingClient()
@@ -153,25 +153,25 @@ class TestRecordOnlyRendering:
 
   def test_a_duplicate_history_row_is_not_re_recorded(self) -> None:
     class RecordingClient:
-      """A client that would record any statement it is given."""
+      '''A client that would record any statement it is given.'''
 
       def __init__(self) -> None:
         self.statements: list = []
 
       def query(self, sql: str) -> 'RecordingClient':
-        """Record a statement.
+        '''Record a statement.
 
         Args:
           sql: The statement.
 
         Returns:
           This client.
-        """
+        '''
         self.statements.append(sql)
         return self
 
       def result(self) -> None:
-        """No-op."""
+        '''No-op.'''
         return
 
     client = RecordingClient()
@@ -190,9 +190,9 @@ class TestSqlLiteralSafety:
   def test_an_ordinary_value_is_quoted(self) -> None:
     assert _sql_literal('demo') == "'demo'"
 
-  @pytest.mark.parametrize('hostile', ["a'b", 'a"; DROP TABLE t; --', 'a\nb', "a\\b"])
+  @pytest.mark.parametrize('hostile', ["a'b", 'a"; DROP TABLE t; --', 'a\nb', 'a\\b'])
   def test_a_hostile_value_is_rejected(self, hostile: str) -> None:
-    """Rejecting is correct: no legitimate model key or rationale contains a quote."""
+    '''Rejecting is correct: no legitimate model key or rationale contains a quote.'''
     with pytest.raises(Exception):
       _sql_literal(hostile)
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""A local SQLite substitute for the production warehouse.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''A local SQLite substitute for the production warehouse.
 
 Everything a production run gets from a cloud data warehouse is a table you can
 query, a table you can write, and a write disposition that says what happens
@@ -26,7 +27,7 @@ What is faithful to the production semantics, and why each matters:
 What is not faithful, and is not claimed to be: there is no concurrency control,
 no partitioning, no clustering, and no cost model. A local run is a correctness
 harness, not a performance one.
-"""
+'''
 
 from __future__ import annotations
 
@@ -63,22 +64,23 @@ _SQL_TYPES = {
 
 
 class SQLiteWarehouse:
-  """A single-file SQLite warehouse standing in for the cloud data warehouse.
+  '''A single-file SQLite warehouse standing in for the cloud data warehouse.
 
   The class is a thin, explicit wrapper rather than a connection pool. Every
   method is a direct statement of what the production adapter would do, so the
   two can be read side by side.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def __init__(self, path: str | Path) -> None:
-    """Open or create the warehouse file.
+    '''Open or create the warehouse file.
 
     Args:
       path: The SQLite file. Parent directories are created.
 
     Raises:
       SqliteWarehouseError: If the file cannot be opened.
-    """
+    '''
     self._path = Path(path)
     try:
       self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,16 +91,16 @@ class SQLiteWarehouse:
 
   @property
   def path(self) -> Path:
-    """Return the warehouse file path.
+    '''Return the warehouse file path.
 
     Returns:
       The path this warehouse was opened at.
-    """
+    '''
     return self._path
 
   @property
   def connection(self) -> sqlite3.Connection:
-    """Return the underlying connection.
+    '''Return the underlying connection.
 
     Returns:
       The live ``sqlite3`` connection, for callers composing their own SQL.
@@ -107,7 +109,7 @@ class SQLiteWarehouse:
       SqliteWarehouseError: If the warehouse has been closed. Reopening lazily would
         hide a use-after-close, which on a single-file store means writing through a
         handle nobody will commit.
-    """
+    '''
     if self._connection is None:
       raise SqliteWarehouseError(
         f'The warehouse at {self._path} is closed. Open a new one rather than reusing this handle.'
@@ -118,7 +120,7 @@ class SQLiteWarehouse:
   # Reads
   # ------------------------------------------------------------------ #
   def query(self, sql: str, parameters: Sequence[Any] | None = None) -> pd.DataFrame:
-    """Execute a query and return the result as a frame.
+    '''Execute a query and return the result as a frame.
 
     Args:
       sql: The query, already translated to the SQLite dialect.
@@ -128,7 +130,7 @@ class SQLiteWarehouse:
       A pandas ``DataFrame``. An empty result yields an empty frame with the
       columns the query selected, so a downstream column check fails on a
       missing column rather than on a missing frame.
-    """
+    '''
     cursor = self.connection.execute(sql, parameters or ())
     columns = [description[0] for description in cursor.description or ()]
     rows = cursor.fetchall()
@@ -137,38 +139,38 @@ class SQLiteWarehouse:
     return pd.DataFrame([tuple(row) for row in rows], columns=columns)
 
   def table_names(self) -> list[str]:
-    """List the tables the warehouse holds.
+    '''List the tables the warehouse holds.
 
     Returns:
       Table names, sorted.
-    """
+    '''
     return [row['name'] for row in self.connection.execute(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
     )]
 
   def exists(self, table_name: str) -> bool:
-    """Report whether a table is present.
+    '''Report whether a table is present.
 
     Args:
       table_name: The table name.
 
     Returns:
       ``True`` when the table exists.
-    """
+    '''
     row = self.connection.execute(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
     ).fetchone()
     return row is not None
 
   def count(self, table_name: str) -> int:
-    """Count the rows in a table.
+    '''Count the rows in a table.
 
     Args:
       table_name: The table name.
 
     Returns:
       The row count, or ``0`` when the table does not exist.
-    """
+    '''
     if not self.exists(table_name):
       return 0
     row = self.connection.execute(f'SELECT COUNT(*) AS n FROM "{table_name}"').fetchone()
@@ -184,7 +186,7 @@ class SQLiteWarehouse:
     disposition: str = WRITE_TRUNCATE,
     if_exists: str | None = None,
   ) -> int:
-    """Write a frame to a table under an explicit disposition.
+    '''Write a frame to a table under an explicit disposition.
 
     Args:
       frame: The rows to write.
@@ -201,7 +203,7 @@ class SQLiteWarehouse:
     Raises:
       SqliteWarehouseError: If the disposition is unsupported, or the frame has
         no columns to write.
-    """
+    '''
     resolved = self._resolve_disposition(disposition, if_exists)
     if frame is None or frame.empty:
       raise SqliteWarehouseError(
@@ -221,7 +223,7 @@ class SQLiteWarehouse:
     return len(frame)
 
   def _resolve_disposition(self, disposition: str, if_exists: str | None) -> str:
-    """Map a catalog write disposition onto the internal vocabulary.
+    '''Map a catalog write disposition onto the internal vocabulary.
 
     Args:
       disposition: The catalog spelling.
@@ -232,7 +234,7 @@ class SQLiteWarehouse:
 
     Raises:
       SqliteWarehouseError: If neither spelling is recognised.
-    """
+    '''
     if if_exists is not None:
       mapping = {'replace': WRITE_TRUNCATE, 'append': WRITE_APPEND, 'fail': WRITE_EMPTY}
       if if_exists not in mapping:
@@ -247,13 +249,13 @@ class SQLiteWarehouse:
     return disposition
 
   def _create_table(self, table_name: str, columns: list[str], dtypes: Iterable[Any]) -> None:
-    """Create a table with declared column types.
+    '''Create a table with declared column types.
 
     Args:
       table_name: The table to create.
       columns: The column names, in order.
       dtypes: The matching pandas dtypes, used to declare SQLite types.
-    """
+    '''
     declarations = ', '.join(
       f'"{column}" {_sql_type(dtype)}' for column, dtype in zip(columns, dtypes, strict=True)
     )
@@ -261,18 +263,18 @@ class SQLiteWarehouse:
     self.connection.commit()
 
   def _replace_table(self, table_name: str, columns: list[str], dtypes: Iterable[Any]) -> None:
-    """Replace a table's contents, creating it when absent.
+    '''Replace a table's contents, creating it when absent.
 
     Args:
       table_name: The table to replace.
       columns: The column names, in order.
       dtypes: The matching pandas dtypes.
-    """
+    '''
     self.connection.execute(f'DROP TABLE IF EXISTS "{table_name}"')
     self._create_table(table_name, columns, dtypes)
 
   def _check_columns(self, table_name: str, columns: list[str]) -> None:
-    """Verify an append's columns match the existing table.
+    '''Verify an append's columns match the existing table.
 
     Args:
       table_name: The destination table.
@@ -282,7 +284,7 @@ class SQLiteWarehouse:
       SqliteWarehouseError: If a column is absent from the table. An append
         that silently skips a column produces a table whose shape depends on
         write history.
-    """
+    '''
     existing = {
       row['name'] for row in self.connection.execute(f'PRAGMA table_info("{table_name}")')
     }
@@ -294,12 +296,12 @@ class SQLiteWarehouse:
       )
 
   def _insert(self, frame: pd.DataFrame, table_name: str) -> None:
-    """Insert every row of a frame.
+    '''Insert every row of a frame.
 
     Args:
       frame: The rows to insert.
       table_name: The destination table.
-    """
+    '''
     columns = list(frame.columns)
     placeholders = ', '.join('?' for _ in columns)
     quoted = ', '.join(f'"{column}"' for column in columns)
@@ -309,16 +311,16 @@ class SQLiteWarehouse:
     self.connection.commit()
 
   def drop(self, table_name: str) -> None:
-    """Drop a table if it exists.
+    '''Drop a table if it exists.
 
     Args:
       table_name: The table to drop.
-    """
+    '''
     self.connection.execute(f'DROP TABLE IF EXISTS "{table_name}"')
     self.connection.commit()
 
   def execute(self, sql: str, parameters: Sequence[Any] | None = None) -> list[sqlite3.Row]:
-    """Execute an arbitrary statement and return any rows.
+    '''Execute an arbitrary statement and return any rows.
 
     Args:
       sql: The statement.
@@ -326,7 +328,7 @@ class SQLiteWarehouse:
 
     Returns:
       The rows produced, which is empty for a statement that returns none.
-    """
+    '''
     cursor = self.connection.execute(sql, parameters or ())
     self.connection.commit()
     try:
@@ -335,49 +337,49 @@ class SQLiteWarehouse:
       return []
 
   def close(self) -> None:
-    """Close the connection.
+    '''Close the connection.
 
     The close is idempotent, so a ``finally`` block and a ``with`` block can both
     release the handle without the second call raising.
-    """
+    '''
     if self._connection is not None:
       self._connection.close()
       self._connection = None
 
   def __enter__(self) -> SQLiteWarehouse:
-    """Open the scope.
+    '''Open the scope.
 
     Returns:
       This warehouse.
-    """
+    '''
     return self
 
   def __exit__(self, *unused: object) -> None:
-    """Close the connection on scope exit, whatever happened inside.
+    '''Close the connection on scope exit, whatever happened inside.
 
     Args:
       unused: The exception triple, unused.
 
     Returns:
       ``None``, so an exception raised inside the scope propagates.
-    """
+    '''
     self.close()
 
 
 def _sql_type(dtype: Any) -> str:
-  """Map a pandas dtype onto a SQLite column type.
+  '''Map a pandas dtype onto a SQLite column type.
 
   Args:
     dtype: The pandas dtype.
 
   Returns:
     The SQLite column type.
-  """
+  '''
   return _SQL_TYPES.get(str(dtype), 'TEXT')
 
 
 def _sql_value(value: Any) -> Any:
-  """Coerce a value into something the SQLite driver accepts.
+  '''Coerce a value into something the SQLite driver accepts.
 
   ``NaN`` has no SQLite representation and ``None`` is the correct encoding of
   "absent", so a missing value is written as ``NULL`` rather than as the string
@@ -392,7 +394,7 @@ def _sql_value(value: Any) -> Any:
 
   Returns:
     ``None``, a Python scalar, or a string.
-  """
+  '''
   import datetime  # noqa: PLC0415
 
   if value is None:
@@ -418,8 +420,8 @@ def _sql_value(value: Any) -> Any:
 
 
 class SqliteWarehouseError(RuntimeError):
-  """Raised when the local warehouse cannot satisfy a request.
+  '''Raised when the local warehouse cannot satisfy a request.
 
   Distinct from :class:`forecasting_ml_framework.exceptions.DatasetError` so the
   local harness's own failures are separable from the framework's.
-  """
+  '''

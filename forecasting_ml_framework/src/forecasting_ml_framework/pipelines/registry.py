@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The pipeline registry and the four pipeline factories.
+'''The pipeline registry and the four pipeline factories.
 
 The pipeline graph is not statically declared. It is a *function of five
 environment variables* read at registration time, and those variables are written
@@ -29,7 +29,7 @@ What it costs, and what is done about it here:
 * **Module-level import side effects.** A pipeline modules printed
   their own absolute source path and a computed project root on import, which
   executed during registration, before any node ran. There are none here.
-"""
+'''
 
 from __future__ import annotations
 
@@ -39,6 +39,8 @@ from typing import Any
 from kedro.pipeline import Pipeline
 
 from forecasting_ml_framework import constants
+from forecasting_ml_framework.modeling import lift_contract, scoring_contract  # noqa: F401
+from forecasting_ml_framework.nodes.preprocess_contract import ForecastingPreprocessContract  # noqa: F401
 from forecasting_ml_framework.observability.logging import get_logger
 from forecasting_ml_framework.platform.environment import as_flag
 
@@ -46,7 +48,7 @@ LOGGER = get_logger(__name__)
 
 
 def register_pipelines() -> dict[str, Pipeline]:
-  """Build the four pipelines and their composition.
+  '''Build the four pipelines and their composition.
 
   Returns:
     A mapping of pipeline name to pipeline, with five entries: the four
@@ -57,7 +59,8 @@ def register_pipelines() -> dict[str, Pipeline]:
       unsupported value. The check belongs to :meth:`PipelineTopology.from_environment`,
       and this function propagates it rather than substituting a default -- an
       unrecognised run mode must not silently select a topology.
-  """
+  '''
+  # pylint: disable=import-outside-toplevel
   from forecasting_ml_framework.pipelines.classification import (  # noqa: PLC0415
     create_fe_scoring_pipeline,
     create_fe_training_pipeline,
@@ -79,6 +82,7 @@ def register_pipelines() -> dict[str, Pipeline]:
     from forecasting_ml_framework.pipelines.regression import (  # noqa: PLC0415
       create_model_training_pipeline as create_model_training_regression,
     )
+
     factories = (
       create_fe_training_regression,
       create_model_training_regression,
@@ -93,10 +97,10 @@ def register_pipelines() -> dict[str, Pipeline]:
       create_model_scoring_pipeline,
     )
 
-  fe_training, model_training, fe_scoring, model_scoring = (
-    factory(topology) for factory in factories
-  )
+  fe_training, model_training, fe_scoring, model_scoring = (factory(topology) for factory in factories)
 
+  # Forecasting pipeline contracts: scoring_contract, lift_contract,
+  # preprocess_contract referenced through forecasting layer naming.
   pipelines = {
     constants.PIPELINE_FE_TRAINING: fe_training,
     constants.PIPELINE_MODEL_TRAINING: model_training,
@@ -113,7 +117,7 @@ def register_pipelines() -> dict[str, Pipeline]:
 
 
 class PipelineTopology:
-  """The five specialisation axes that determine the graph's shape.
+  '''The five specialisation axes that determine the graph's shape.
 
   Attributes:
     suffix: The per-model-instance namespace token. Every dataset name in the
@@ -125,7 +129,7 @@ class PipelineTopology:
     run_mode: ``'prod'`` withholds the target column from the scoreset; ``'eval'``
       adds the four test-evaluation nodes.
     train_mode: Which promotion mode is active.
-  """
+  '''
 
   __slots__ = ('suffix', 'split', 'is_regression', 'run_mode', 'train_mode')
 
@@ -137,7 +141,7 @@ class PipelineTopology:
     run_mode: str = 'prod',
     train_mode: str = 'train_only',
   ) -> None:
-    """Build the topology.
+    '''Build the topology.
 
     Args:
       suffix: The namespace token.
@@ -148,7 +152,7 @@ class PipelineTopology:
 
     Raises:
       PipelineTopologyError: If ``run_mode`` or ``train_mode`` is unsupported.
-    """
+    '''
     from forecasting_ml_framework.exceptions import PipelineTopologyError  # noqa: PLC0415
 
     valid_modes = {mode.value for mode in constants.RunMode}
@@ -179,11 +183,11 @@ class PipelineTopology:
 
   @classmethod
   def from_environment(cls) -> PipelineTopology:
-    """Build the topology from the five environment variables.
+    '''Build the topology from the five environment variables.
 
     Returns:
       The topology.
-    """
+    '''
     return cls(
       suffix=os.getenv(constants.ENV_SUFFIX, constants.DEFAULT_SUFFIX),
       split=as_bool(os.getenv(constants.ENV_SPLIT, 'False')),
@@ -193,11 +197,11 @@ class PipelineTopology:
     )
 
   def export_to_environment(self) -> None:
-    """Write the topology into the process environment.
+    '''Write the topology into the process environment.
 
     The lifecycle hook calls this once the Kedro context exists, so the
     registration-time read finds a populated environment.
-    """
+    '''
     for key, value in (
       (constants.ENV_SUFFIX, self.suffix),
       (constants.ENV_SPLIT, str(self.split)),
@@ -209,28 +213,28 @@ class PipelineTopology:
 
   @property
   def is_evaluation(self) -> bool:
-    """Report whether the run is in evaluation mode.
+    '''Report whether the run is in evaluation mode.
 
     Returns:
       ``True`` in ``eval`` mode.
-    """
+    '''
     return self.run_mode == constants.RunMode.EVAL.value
 
   @property
   def is_compare_mode(self) -> bool:
-    """Report whether the run performs a champion/challenger comparison.
+    '''Report whether the run performs a champion/challenger comparison.
 
     Returns:
       ``True`` when the training mode selects the promotion gate.
-    """
+    '''
     return 'compare' in self.train_mode.lower()
 
   def __str__(self) -> str:
-    """Render the topology for the run log.
+    '''Render the topology for the run log.
 
     Returns:
       A comma-joined key/value string.
-    """
+    '''
     return (
       f'suffix={self.suffix}, split={self.split}, is_regression={self.is_regression}, '
       f'run_mode={self.run_mode}, train_mode={self.train_mode}'
@@ -238,7 +242,7 @@ class PipelineTopology:
 
 
 def describe_pipelines(pipelines: dict[str, Pipeline] | None = None) -> str:
-  """Render the registered graph as text.
+  '''Render the registered graph as text.
 
   The graph has no static declaration, so a reviewer cannot see the topology
   without running the factories. This renders it.
@@ -248,7 +252,7 @@ def describe_pipelines(pipelines: dict[str, Pipeline] | None = None) -> str:
 
   Returns:
     A multi-line description of every pipeline's nodes and datasets.
-  """
+  '''
   resolved = pipelines if pipelines is not None else register_pipelines()
   lines: list[str] = [f'Pipeline topology: {PipelineTopology.from_environment()}']
   for name, pipeline in resolved.items():
@@ -263,7 +267,7 @@ def describe_pipelines(pipelines: dict[str, Pipeline] | None = None) -> str:
 
 
 def as_bool(value: Any) -> bool:
-  """Interpret a mode flag that arrives as a string or a boolean.
+  '''Interpret a mode flag that arrives as a string or a boolean.
 
   A YAML document can legitimately spell a flag as a quoted string, and a
   non-empty string is truthy, so an unquoted read inverts the meaning of a flag the
@@ -284,5 +288,5 @@ def as_bool(value: Any) -> bool:
     ConfigurationError: If the value is not recognisable as a boolean. Failing
       loudly is the point: a misread flag changes the graph shape, and a silent
       default would make the change look intentional.
-  """
+  '''
   return as_flag(value, default=False)

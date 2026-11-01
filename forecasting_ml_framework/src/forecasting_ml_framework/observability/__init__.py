@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Observability layer: logging, data-quality assertions and experiment tracking."""
+'''Observability layer: logging, data-quality assertions and experiment tracking.'''
 
 from forecasting_ml_framework.observability.logging import (
   get_logger,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Local execution: the same framework, a SQLite warehouse and a local disk.
+'''Local execution: the same framework, a SQLite warehouse and a local disk.
 
 This package is the counterpart the production code does not have. The framework
 targets a cloud warehouse and object storage; a developer, a test or a review
@@ -23,7 +23,7 @@ What lives here, and why each piece is a substitution rather than a rewrite:
 Nothing in the framework's own layers imports this package. The dependency runs
 one way, from here into the framework, which is what keeps a local harness from
 becoming a second implementation of the thing it is testing.
-"""
+'''
 
 from __future__ import annotations
 

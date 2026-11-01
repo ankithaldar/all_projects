@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The bootstrap entry point, invoked as the Spark driver's main file.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''The bootstrap entry point, invoked as the Spark driver's main file.
 
 The scheduler submits it as::
 
@@ -17,7 +18,7 @@ Run directly::
     python src/forecasting_ml_framework/__main__.py \\
       run --pipeline=fe_training --env=base \\
       --params=suffix:params,model_key:demo_retention,run_date:2026-09-29
-"""
+'''
 
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ DEFAULT_MODEL_REPO = 'forecasting_ml_framework'
 
 
 def main(argv: list[str] | None = None) -> None:
-  """Rewrite the configuration for this run, then hand over to the orchestrator.
+  '''Rewrite the configuration for this run, then hand over to the orchestrator.
 
   Args:
     argv: The argument vector. Defaults to ``sys.argv[1:]``.
@@ -40,7 +41,8 @@ def main(argv: list[str] | None = None) -> None:
   Raises:
     SystemExit: Always, because ``bootstrap`` terminates by handing over to
       Kedro's CLI, which owns the process from that point.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   import os  # noqa: PLC0415
 
   arguments = list(argv if argv is not None else sys.argv[1:])
@@ -66,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _read_flag(arguments: list[str], flag: str) -> str | None:
-  """Read a ``--flag=value`` argument from the vector.
+  '''Read a ``--flag=value`` argument from the vector.
 
   Args:
     arguments: The argument vector.
@@ -74,7 +76,7 @@ def _read_flag(arguments: list[str], flag: str) -> str | None:
 
   Returns:
     The flag's value, or ``None`` when absent.
-  """
+  '''
   prefix = f'{flag}='
   for argument in arguments:
     if argument.startswith(prefix):

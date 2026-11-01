@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""End-to-end integration test of the modelling tier.
+'''End-to-end integration test of the modelling tier.
 
 The smoke test proves the code imports; this proves it *works*.
 
@@ -12,7 +12,7 @@ train, calibrate, score and evaluate end to end rather than asserting on mocks.
 
 Everything here runs on pandas with a scikit-learn estimator, so it needs neither
 a warehouse, nor a cloud credential, nor a Spark session.
-"""
+'''
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from forecasting_ml_framework.observability.quality import QualityPolicy, assert
 
 @pytest.fixture
 def numeric_metadata(metadata: Metadata) -> Metadata:
-  """Return a contract whose features are all numeric.
+  '''Return a contract whose features are all numeric.
 
   Categorical columns are string-typed until ``CategoricalEncoding`` runs in
   Spark, so by the time a frame reaches the pandas boundary they have become
@@ -37,7 +37,7 @@ def numeric_metadata(metadata: Metadata) -> Metadata:
   string categoricals at the boundary is a real contract violation, and the
   trainer correctly refuses to fit an estimator on it -- so the modelling tests
   use a contract that reflects the post-boundary state.
-  """
+  '''
   encoded = metadata.copy()
   encoded.categorical_cols = []
   encoded.feature_cols = [c for c in encoded.feature_cols if c not in ('plan_tier', 'region_code')]
@@ -45,16 +45,16 @@ def numeric_metadata(metadata: Metadata) -> Metadata:
 
 
 class TestTrainAndScore:
-  """The primary abstraction, exercised end to end."""
+  '''The primary abstraction, exercised end to end.'''
 
   def test_train_returns_the_five_tuple(self, labelled_frame, numeric_metadata, minimal_trainer_kwargs) -> None:
-    """``train`` returns the trainer, the model, the calibrator and both slices.
+    '''``train`` returns the trainer, the model, the calibrator and both slices.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     trainer_obj, fitted, calibrator, train_slice, holdout = trainer.train(labelled_frame, numeric_metadata)
 
@@ -65,7 +65,7 @@ class TestTrainAndScore:
     assert 0 < len(holdout) < len(labelled_frame)
 
   def test_handle_is_self_describing(self, labelled_frame, numeric_metadata, minimal_trainer_kwargs) -> None:
-    """Loading the handle must be sufficient to score, with no external state.
+    '''Loading the handle must be sufficient to score, with no external state.
 
     Every attribute below travels with the artefact. That is the framework's
     central packaging decision, and it is what removes the external feature list,
@@ -75,7 +75,7 @@ class TestTrainAndScore:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     trainer.train(labelled_frame, numeric_metadata)
 
@@ -91,14 +91,14 @@ class TestTrainAndScore:
   def test_handle_survives_a_pickle_round_trip(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs, tmp_object_store
   ) -> None:
-    """A persisted handle must reload with its contract intact.
+    '''A persisted handle must reload with its contract intact.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
       tmp_object_store: A writable object-store root.
-    """
+    '''
     import pickle  # noqa: PLC0415
 
     trainer = ModelTraining(**minimal_trainer_kwargs)
@@ -113,13 +113,13 @@ class TestTrainAndScore:
   def test_exclude_and_include_scope_the_feature_vector(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """Feature scoping is applied at resolve time and baked into the handle.
+    '''Feature scoping is applied at resolve time and baked into the handle.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs, exclude_cols=['^usage_'])
     trainer.train(labelled_frame, numeric_metadata)
     assert not [c for c in trainer.features_to_use if c.startswith('usage_')]
@@ -135,14 +135,14 @@ class TestTrainAndScore:
   def test_zero_eval_size_warns_but_completes(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs, caplog
   ) -> None:
-    """Training on everything must still work, with the optimism recorded.
+    '''Training on everything must still work, with the optimism recorded.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
       caplog: pytest's log capture.
-    """
+    '''
     trainer = ModelTraining(**{**minimal_trainer_kwargs, 'eval_size': 0.0})
     with caplog.at_level('WARNING'):
       _, _, _, train_slice, holdout = trainer.train(labelled_frame, numeric_metadata)
@@ -153,13 +153,13 @@ class TestTrainAndScore:
   def test_score_projects_the_documented_contract(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """The score frame must carry the dual-score columns the enterprise table needs.
+    '''The score frame must carry the dual-score columns the enterprise table needs.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     numeric_metadata.model_key = 'forecast_demo_retention'
     trainer = ModelTraining(**minimal_trainer_kwargs)
     _, fitted, calibrator, train_slice, _ = trainer.train(labelled_frame, numeric_metadata)
@@ -185,13 +185,13 @@ class TestTrainAndScore:
   def test_banding_is_equal_volume_and_ordered(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """Bands are rank-based, so the top band is the smallest and has the best lift.
+    '''Bands are rank-based, so the top band is the smallest and has the best lift.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     _, fitted, calibrator, train_slice, _ = trainer.train(labelled_frame, numeric_metadata)
     raw, _ = trainer.score(fitted, calibrator, train_slice, numeric_metadata, 'train_data')
@@ -210,13 +210,13 @@ class TestTrainAndScore:
   def test_missing_feature_at_scoring_time_is_an_explicit_error(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """A schema change between training and scoring must be named, not silently tolerated.
+    '''A schema change between training and scoring must be named, not silently tolerated.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     _, fitted, calibrator, train_slice, _ = trainer.train(labelled_frame, numeric_metadata)
     truncated = train_slice.drop(columns=['tenure_days'])
@@ -226,7 +226,7 @@ class TestTrainAndScore:
   def test_empty_frame_passes_through_untouched(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """An empty slice must produce an empty output, not a failure.
+    '''An empty slice must produce an empty output, not a failure.
 
     This is load-bearing: it is what lets ``eval_size: 0.0`` or a degenerate
     sample complete the pipeline with empty metric tables.
@@ -235,7 +235,7 @@ class TestTrainAndScore:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     from forecasting_ml_framework.nodes.model_nodes import model_scoring  # noqa: PLC0415
 
     trainer = ModelTraining(**minimal_trainer_kwargs)
@@ -248,7 +248,7 @@ class TestTrainAndScore:
 
 
 def _ensemble_params(handle: str) -> dict:
-  """Return valid constructor kwargs for a named ensemble estimator.
+  '''Return valid constructor kwargs for a named ensemble estimator.
 
   Args:
     handle: The estimator's dotted path.
@@ -256,14 +256,14 @@ def _ensemble_params(handle: str) -> dict:
   Returns:
     A parameter mapping. ``n_estimators`` is only valid for the bagging
     ensembles, so the tree is given a depth instead.
-  """
+  '''
   if 'tree.' in handle:
     return {'max_depth': 4, 'random_state': 42}
   return {'n_estimators': 10, 'random_state': 42}
 
 
 def _importance_source(caplog) -> str | None:
-  """Read the importance source out of the captured log records.
+  '''Read the importance source out of the captured log records.
 
   The source is carried in ``extra`` rather than in the rendered message, which
   is the right shape: a structured field a host can route or alert on, rather
@@ -275,7 +275,7 @@ def _importance_source(caplog) -> str | None:
   Returns:
     ``'feature_importances_'``, ``'coef_'``, or ``None`` when the estimator
     exposed neither.
-  """
+  '''
   for record in caplog.records:
     if record.getMessage() == 'Feature importance':
       return getattr(record, 'source', None)
@@ -283,17 +283,17 @@ def _importance_source(caplog) -> str | None:
 
 
 class TestImbalanceAndCalibration:
-  """The two rates that make prior-shift calibration possible."""
+  '''The two rates that make prior-shift calibration possible.'''
 
   def test_weights_are_injected_for_a_gradient_booster(
     self, labelled_frame, numeric_metadata
   ) -> None:
-    """``balance_class_weight`` must reach the estimator's own parameter.
+    '''``balance_class_weight`` must reach the estimator's own parameter.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
-    """
+    '''
     numeric_metadata.real_rate = 0.04
     numeric_metadata.scale_pos_weight = 24.0
     trainer = ModelTraining(
@@ -315,13 +315,13 @@ class TestImbalanceAndCalibration:
   def test_rates_bracket_the_population_rate(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """With no reweighting configured, the two rates must agree.
+    '''With no reweighting configured, the two rates must agree.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     trainer.train(labelled_frame, numeric_metadata)
     assert trainer.real_rate == pytest.approx(trainer.sample_rate, abs=0.01)
@@ -329,13 +329,13 @@ class TestImbalanceAndCalibration:
   def test_rare_event_rate_is_not_rounded_to_zero(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """A rate of ~0.4 % must keep four decimals, or calibration silently disables.
+    '''A rate of ~0.4 % must keep four decimals, or calibration silently disables.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     frame = labelled_frame.copy()
     frame['label'] = 0
     frame.loc[frame.index[:2], 'label'] = 1  # 2 positives in 400 rows = 0.5%
@@ -346,12 +346,12 @@ class TestImbalanceAndCalibration:
 
 
 class TestCalibratorLifecycle:
-  """the configured calibrator must actually reach production."""
+  '''the configured calibrator must actually reach production.'''
 
   def test_configured_calibrator_is_returned_not_discarded(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """A configured Platt calibrator must be fitted, returned and persisted.
+    '''A configured Platt calibrator must be fitted, returned and persisted.
 
     A fitted the calibrator into a function-local variable and
     returned an empty dict, so production calibration silently used a different
@@ -361,7 +361,7 @@ class TestCalibratorLifecycle:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(
       **minimal_trainer_kwargs,
       calibration_handle='sklearn.linear_model.LogisticRegression',
@@ -375,13 +375,13 @@ class TestCalibratorLifecycle:
   def test_unconfigured_calibrator_uses_prior_shift(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs
   ) -> None:
-    """No configured calibrator means the framework's own correction.
+    '''No configured calibrator means the framework's own correction.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
-    """
+    '''
     trainer = ModelTraining(**minimal_trainer_kwargs)
     _, _, calibrator, _, _ = trainer.train(labelled_frame, numeric_metadata)
     assert calibrator == {}
@@ -390,14 +390,14 @@ class TestCalibratorLifecycle:
   def test_unknown_calibrator_handle_degrades_with_a_warning(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs, caplog
   ) -> None:
-    """An unrecognised handle falls back, but says so.
+    '''An unrecognised handle falls back, but says so.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
       caplog: pytest's log capture.
-    """
+    '''
     trainer = ModelTraining(
       **minimal_trainer_kwargs, calibration_handle='sklearn.linear_model.RidgeClassifier'
     )
@@ -408,7 +408,7 @@ class TestCalibratorLifecycle:
 
 
 class TestEstimatorBreadth:
-  """importance must be optional, not a post-fit tax."""
+  '''importance must be optional, not a post-fit tax.'''
 
   @pytest.mark.parametrize(
     'handle', ['sklearn.tree.DecisionTreeClassifier', 'sklearn.ensemble.RandomForestClassifier']
@@ -416,14 +416,14 @@ class TestEstimatorBreadth:
   def test_ensemble_estimators_expose_importance(
     self, labelled_frame, numeric_metadata, minimal_trainer_kwargs, handle: str
   ) -> None:
-    """An ensemble reports importance and logs it.
+    '''An ensemble reports importance and logs it.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       minimal_trainer_kwargs: The trainer configuration.
       handle: The estimator dotted path.
-    """
+    '''
     trainer = ModelTraining(
       model_handle=handle, model_params=_ensemble_params(handle), eval_size=0.2
     )
@@ -432,7 +432,7 @@ class TestEstimatorBreadth:
   def test_linear_model_without_feature_importances_still_trains(
     self, labelled_frame, numeric_metadata, caplog
   ) -> None:
-    """A raised ``AttributeError`` after fitting, discarding the model.
+    '''A raised ``AttributeError`` after fitting, discarding the model.
 
     Reading ``feature_importances_`` unconditionally excluded every non-ensemble
     estimator from the framework for no benefit, since the value was only
@@ -442,7 +442,7 @@ class TestEstimatorBreadth:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       caplog: pytest's log capture.
-    """
+    '''
     trainer = ModelTraining(
       model_handle='sklearn.linear_model.LogisticRegression',
       model_params={'max_iter': 300},
@@ -456,13 +456,13 @@ class TestEstimatorBreadth:
   def test_estimator_with_neither_attribute_does_not_fail(
     self, labelled_frame, numeric_metadata, caplog
   ) -> None:
-    """An SVC exposes neither, and must train to completion regardless.
+    '''An SVC exposes neither, and must train to completion regardless.
 
     Args:
       labelled_frame: The labelled fixture.
       metadata: The contract fixture.
       caplog: pytest's log capture.
-    """
+    '''
     trainer = ModelTraining(
       model_handle='sklearn.svm.SVC',
       model_params={'probability': True, 'random_state': 42},
@@ -475,14 +475,14 @@ class TestEstimatorBreadth:
 
 
 class TestDataQualityEnforcement:
-  """observation is not enforcement."""
+  '''observation is not enforcement.'''
 
   def test_row_count_assertion_catches_a_dropped_frame(self) -> None:
-    """A transform that loses rows must be caught, not silently accepted.
+    '''A transform that loses rows must be caught, not silently accepted.
 
     A routine that dropped 40 % of a frame produced a complete, plausible and
     entirely wrong model with no alert anywhere.
-    """
+    '''
     policy = QualityPolicy(row_count_tolerance=0.0).with_expected(1000)
     with pytest.raises(Exception, match='row count'):
       from forecasting_ml_framework.observability.quality import assert_row_count  # noqa: PLC0415
@@ -490,11 +490,11 @@ class TestDataQualityEnforcement:
       assert_row_count(600, policy, 'fit_registry')
 
   def test_null_rate_is_measured(self, labelled_frame) -> None:
-    """A frame with a sparse null column reports the rate that feeds the policy.
+    '''A frame with a sparse null column reports the rate that feeds the policy.
 
     Args:
       labelled_frame: The labelled fixture.
-    """
+    '''
     frame = labelled_frame.copy()
     frame.loc[frame.index[:10], 'usage_01'] = np.nan
     summary = null_rate_summary(frame, ['usage_01', 'tenure_days'])
@@ -502,11 +502,11 @@ class TestDataQualityEnforcement:
     assert summary['tenure_days'] == 0.0
 
   def test_null_rate_policy_rejects_a_broken_imputation(self, labelled_frame) -> None:
-    """An imputation that did not cover its columns must fail the stage.
+    '''An imputation that did not cover its columns must fail the stage.
 
     Args:
       labelled_frame: The labelled fixture.
-    """
+    '''
     frame = labelled_frame.copy()
     frame.loc[frame.index[:100], 'usage_01'] = np.nan
     policy = QualityPolicy(max_null_rate=0.05)
@@ -515,16 +515,16 @@ class TestDataQualityEnforcement:
 
 
 class TestParameterContract:
-  """Direct indexing was the framework's primary validation, and its main
+  '''Direct indexing was the framework's primary validation, and its main
   failure mode: a ``KeyError`` that named the key but no configuration context.
-  """
+  '''
 
   def test_missing_parameter_names_the_context(self) -> None:
-    """A missing key must say which stage wanted it and how to supply it.
+    '''A missing key must say which stage wanted it and how to supply it.
 
     Args:
       None.
-    """
+    '''
     from forecasting_ml_framework.utils.text import require  # noqa: PLC0415
 
     with pytest.raises(MissingParameterError) as excinfo:
@@ -536,14 +536,14 @@ class TestParameterContract:
 
 
 class _ScaleAwareStub:
-  """A stand-in estimator used to prove the imbalance parameter is injected."""
+  '''A stand-in estimator used to prove the imbalance parameter is injected.'''
 
   def __init__(self, **kwargs) -> None:
     self.kwargs = kwargs
     self.classes_ = np.array([0, 1])
 
   def fit(self, x, y, **kwargs):  # noqa: ANN001
-    """Accept a fit and return self.
+    '''Accept a fit and return self.
 
     Args:
       x: The feature matrix.
@@ -552,28 +552,28 @@ class _ScaleAwareStub:
 
     Returns:
       ``self``.
-    """
+    '''
     del x, y, kwargs
     return self
 
   def predict_proba(self, x):  # noqa: ANN001
-    """Return a constant probability.
+    '''Return a constant probability.
 
     Args:
       x: The feature matrix.
 
     Returns:
       A two-column probability array.
-    """
+    '''
     return np.tile([[0.9, 0.1]], (len(x), 1))
 
   def predict(self, x):  # noqa: ANN001
-    """Return a constant prediction.
+    '''Return a constant prediction.
 
     Args:
       x: The feature matrix.
 
     Returns:
       A prediction array.
-    """
+    '''
     return np.zeros(len(x))

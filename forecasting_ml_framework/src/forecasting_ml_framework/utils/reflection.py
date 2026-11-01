@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Reflective resolution of dotted paths.
+'''Reflective resolution of dotted paths.
 
 The reflective resolver is the single mechanism behind the framework's entire
 extensibility surface. It is used for estimators, hyperparameter searchers,
@@ -14,7 +14,7 @@ everywhere:
    an already-resolved object. The ``isinstance`` guard is a testable seam.
 2. Resolution is deferred to first use, so the framework does not need XGBoost
    installed to run a logistic-regression model.
-"""
+'''
 
 from __future__ import annotations
 
@@ -179,7 +179,7 @@ DISTRIBUTIONS.update(
 
 
 def resolve(path: str | Callable[..., Any]) -> Any:
-  """Import and return the object named by a dotted path.
+  '''Import and return the object named by a dotted path.
 
   Args:
     path: A dotted path such as ``'xgboost.XGBClassifier'``. Callables are
@@ -193,7 +193,7 @@ def resolve(path: str | Callable[..., Any]) -> Any:
     ConfigurationError: If the path names a package outside
       :data:`_ALLOWED_RESOLUTION_ROOTS`.
     AttributeError: If the module does not expose the requested attribute.
-  """
+  '''
   if not isinstance(path, str):
     return path
   parts = path.split('.')
@@ -215,7 +215,7 @@ def resolve(path: str | Callable[..., Any]) -> Any:
 
 
 def _assert_resolution_allowed(root: str, path: str) -> None:
-  """Refuse to resolve a dotted path outside the allow-list.
+  '''Refuse to resolve a dotted path outside the allow-list.
 
   Args:
     root: The path's top-level package.
@@ -225,7 +225,7 @@ def _assert_resolution_allowed(root: str, path: str) -> None:
     ConfigurationError: If the package is not allow-listed. The message names both
       the offending path and the permitted set, so the fix for an operator is
       visible in the failure rather than requiring them to find this module.
-  """
+  '''
   if root in _ALLOWED_RESOLUTION_ROOTS:
     return
   raise ConfigurationError(
@@ -241,7 +241,7 @@ def _assert_resolution_allowed(root: str, path: str) -> None:
 
 
 def _walk(current: Any, component: str, partial: str) -> Any:
-  """Resolve one component of a dotted path.
+  '''Resolve one component of a dotted path.
 
   Two failure modes are handled here, and both are real:
 
@@ -263,7 +263,7 @@ def _walk(current: Any, component: str, partial: str) -> Any:
 
   Raises:
     AttributeError: If the component cannot be resolved either way.
-  """
+  '''
   try:
     found = getattr(current, component)
   except AttributeError:
@@ -288,7 +288,7 @@ def _walk(current: Any, component: str, partial: str) -> Any:
 
 
 def try_resolve(path: str) -> tuple[Any, Exception | None]:
-  """Attempt to resolve a dotted path without raising.
+  '''Attempt to resolve a dotted path without raising.
 
   A rejected path is a *resolution failure*, not a crash, so the allow-list
   rejection is caught here alongside the ordinary import and attribute errors.
@@ -302,7 +302,7 @@ def try_resolve(path: str) -> tuple[Any, Exception | None]:
   Returns:
     A two-tuple of the resolved object and the exception that occurred, where
     the object is ``None`` on failure.
-  """
+  '''
   try:
     return resolve(path), None
   except (ImportError, AttributeError, ValueError, ConfigurationError) as error:
@@ -310,7 +310,7 @@ def try_resolve(path: str) -> tuple[Any, Exception | None]:
 
 
 def resolve_routine(short_name: str, extra_modules: list[str] | None = None) -> type:
-  """Resolve a preprocessing routine class by its short configuration name.
+  '''Resolve a preprocessing routine class by its short configuration name.
 
   A single hard-coded module prefix would close the extension point to new
   modules. The prefix is instead the first candidate in a fallback chain, so a
@@ -327,7 +327,7 @@ def resolve_routine(short_name: str, extra_modules: list[str] | None = None) -> 
     RoutineNotFoundError: If the routine cannot be resolved from any candidate
       module. The error carries the routine name and every path searched, so the
       message a caller sees is the same diagnostic a test can assert on.
-  """
+  '''
   candidates = [f'{constants.ROUTINES_MODULE}.{short_name}']
   candidates.extend(f'{module}.{short_name}' for module in extra_modules or [])
 
@@ -348,7 +348,7 @@ def resolve_routine(short_name: str, extra_modules: list[str] | None = None) -> 
 
 
 def looks_like_distribution(value: object) -> bool:
-  """Report whether a configuration value must be evaluated as an expression.
+  '''Report whether a configuration value must be evaluated as an expression.
 
   Args:
     value: A raw configuration value.
@@ -356,12 +356,12 @@ def looks_like_distribution(value: object) -> bool:
   Returns:
     ``True`` when the value is a string that looks like a distribution
     expression, ``False`` otherwise.
-  """
+  '''
   return isinstance(value, str) and value.startswith(_DISTRIBUTION_PREFIXES)
 
 
 def evaluate_distribution(expression: str) -> Any:
-  """Construct a search-space distribution by resolving its name in a registry.
+  '''Construct a search-space distribution by resolving its name in a registry.
 
   The expression is *parsed*, never executed. The callee's dotted name is looked up
   in :data:`DISTRIBUTIONS` and called with literal arguments, so the only code that
@@ -390,7 +390,7 @@ def evaluate_distribution(expression: str) -> Any:
   Raises:
     InvalidSearchSpaceError: If the expression is not a single registered call with
       literal arguments.
-  """
+  '''
   try:
     tree = ast.parse(expression, mode='eval')
   except SyntaxError as error:
@@ -456,7 +456,7 @@ def evaluate_distribution(expression: str) -> Any:
 
 
 def _is_literal(node: ast.AST) -> bool:
-  """Report whether a node is a literal, or a literal container of literals.
+  '''Report whether a node is a literal, or a literal container of literals.
 
   A configuration value has to be able to express a *list of candidates* -- that is
   what a categorical search space is -- so a list or tuple of literals is accepted
@@ -469,7 +469,7 @@ def _is_literal(node: ast.AST) -> bool:
 
   Returns:
     Whether the node is a literal.
-  """
+  '''
   if isinstance(node, ast.Constant):
     return True
   if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
@@ -478,14 +478,14 @@ def _is_literal(node: ast.AST) -> bool:
 
 
 def _dotted_name(node: ast.Attribute) -> str | None:
-  """Return the dotted name of an attribute chain, or ``None`` if not pure.
+  '''Return the dotted name of an attribute chain, or ``None`` if not pure.
 
   Args:
     node: The AST node to flatten.
 
   Returns:
     The dotted name, or ``None`` when the chain contains a call or subscript.
-  """
+  '''
   parts: list[str] = []
   current: ast.AST = node
   while isinstance(current, ast.Attribute):
@@ -498,7 +498,7 @@ def _dotted_name(node: ast.Attribute) -> str | None:
 
 
 def coerce_search_space(param_grid: dict[str, Any] | None) -> dict[str, Any]:
-  """Coerce distribution strings inside a search space to real objects.
+  '''Coerce distribution strings inside a search space to real objects.
 
   Args:
     param_grid: A mapping of hyper-parameter name to candidate value(s). Values
@@ -510,21 +510,21 @@ def coerce_search_space(param_grid: dict[str, Any] | None) -> dict[str, Any]:
   Returns:
     A new mapping with expressions evaluated. Non-dict input is returned
     unchanged.
-  """
+  '''
   if not isinstance(param_grid, dict):
     return param_grid
   return {key: _coerce_search_value(value) for key, value in param_grid.items()}
 
 
 def _coerce_search_value(value: Any) -> Any:
-  """Coerce a single search-space value.
+  '''Coerce a single search-space value.
 
   Args:
     value: A raw configuration value.
 
   Returns:
     The coerced value.
-  """
+  '''
   if looks_like_distribution(value):
     return evaluate_distribution(value)  # type: ignore[arg-type]
   if isinstance(value, list) and len(value) == 1 and looks_like_distribution(value[0]):
@@ -533,7 +533,7 @@ def _coerce_search_value(value: Any) -> Any:
 
 
 def assert_no_builtin_namespace() -> None:
-  """Assert that the search-space registry cannot name a Python builtin.
+  '''Assert that the search-space registry cannot name a Python builtin.
 
   The registry replaced an interpreter, so the question this asked changed. It is
   no longer "does the evaluation namespace expose a dangerous builtin" -- there is
@@ -547,7 +547,7 @@ def assert_no_builtin_namespace() -> None:
 
   Raises:
     InvalidSearchSpaceError: If the registry names a builtin or a dunder.
-  """
+  '''
   offenders = sorted(
     key
     for key, constructor in DISTRIBUTIONS.items()

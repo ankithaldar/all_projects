@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Forecasting Framework with ML.
+'''Forecasting Framework with ML.
 
 A configuration-driven propensity and value-segment modelling framework.
 
@@ -31,7 +31,7 @@ L2 core          Metadata, the routine contract, the routine library, the
 L1 platform      Spark session lifecycle, Kedro runner utilities, the bootstrap
                  rewriter, the dataset adapters.
 ===============  =============================================================
-"""
+'''
 
 from __future__ import annotations
 

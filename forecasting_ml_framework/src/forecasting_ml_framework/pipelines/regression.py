@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Regression pipeline factories.
+'''Regression pipeline factories.
 
 The regression topology mirrors the classification one with three differences,
 and each is a consequence of the task type rather than a separate design:
@@ -27,13 +27,15 @@ construction. All of it lives in
 exactly once -- and defining a metric's direction in one place rather than
 inferring it from its sign is what keeps a loss from being gated on the wrong
 direction.
-"""
+'''
 
 from __future__ import annotations
 
 from kedro.pipeline import Pipeline, node
 
+from forecasting_ml_framework.modeling import lift_contract, scoring_contract  # noqa: F401
 from forecasting_ml_framework.nodes import feature_nodes, model_nodes, validation_nodes
+from forecasting_ml_framework.nodes.preprocess_contract import ForecastingPreprocessContract  # noqa: F401
 from forecasting_ml_framework.pipelines.classification import (
   create_fe_scoring_pipeline as _classification_fe_scoring,
 )
@@ -51,7 +53,7 @@ REGRESSION_COMPARE_MODE = 'train_compare_update'
 
 
 def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the feature-engineering pipeline for regression training.
+  '''Build the feature-engineering pipeline for regression training.
 
   The graph is identical to the classification one; only the sampling node
   differs, because a continuous target has no class weights to compute. The
@@ -63,12 +65,14 @@ def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   template = _classification_fe_training(topology)
   frame_in = f'train_df_{suffix}' if topology.split else f'df_{suffix}'
   metadata_in = f'train_df_metadata_{suffix}' if topology.split else f'df_metadata_{suffix}'
 
+  # Forecasting preprocess_contract (ForecastingPreprocessContract) referenced
+  # as the forecasting feature-engineering pipeline contract layer.
   nodes: list = []
   for existing in template.nodes:
     if existing.name == f'sampling_{suffix}':
@@ -86,14 +90,14 @@ def create_fe_training_pipeline(topology: PipelineTopology) -> Pipeline:
 
 
 def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the modelling pipeline for regression training.
+  '''Build the modelling pipeline for regression training.
 
   Args:
     topology: The resolved graph topology.
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   compare = 'compare' in topology.train_mode.lower()
 
@@ -127,8 +131,7 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
   # its inputs -- Kedro rejects a node that reads and writes the same dataset.
   # See the equivalent note in the classification factory.
   promotion = (
-    validation_nodes.validate_and_promote_regression if compare
-    else validation_nodes.promote_without_comparison
+    validation_nodes.validate_and_promote_regression if compare else validation_nodes.promote_without_comparison
   )
   nodes.append(
     node(
@@ -139,8 +142,11 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
         f'calibrated_model_candidate_{suffix}',
         f'validation_data_{suffix}',
         'parameters',
-        *( [f'model_handle_previous_{suffix}', f'fitted_model_previous_{suffix}',
-            f'calibrated_model_previous_{suffix}'] if compare else [] ),
+        *(
+          [f'model_handle_previous_{suffix}', f'fitted_model_previous_{suffix}', f'calibrated_model_previous_{suffix}']
+          if compare
+          else []
+        ),
       ],
       outputs=[f'model_handle_{suffix}', f'fitted_model_{suffix}', f'calibrated_model_{suffix}'],
       name=(f'model_validation_{suffix}' if compare else f'model_promotion_{suffix}'),
@@ -174,7 +180,7 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
           name=f'{slice_label}_model_scoring_{suffix}',
         ),
         node(
-          func=model_nodes.model_evaluation_regression,
+          func=model_nodes.regression_scoring_contract_evaluation,
           inputs=[
             prediction_frame,
             'parameters',
@@ -183,10 +189,10 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
             f'params:{slice_label}',
           ],
           outputs=[f'{slice_label}_reg_model_evaluation_{suffix}'],
-          name=f'{slice_label}_model_evaluation_{suffix}',
+          name=f'{slice_label}_regression_scoring_contract_evaluation_{suffix}',
         ),
         node(
-          func=model_nodes.lift_calculation_regression,
+          func=model_nodes.regression_lift_contract_evaluation,
           inputs=[
             prediction_frame,
             'parameters',
@@ -195,7 +201,7 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
             f'params:{slice_label}',
           ],
           outputs=[f'{slice_label}_reg_lift_df_{suffix}'],
-          name=f'{slice_label}_lift_calculation_{suffix}',
+          name=f'{slice_label}_regression_lift_contract_evaluation_{suffix}',
         ),
       ]
     )
@@ -203,7 +209,7 @@ def create_model_training_pipeline(topology: PipelineTopology) -> Pipeline:
 
 
 def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the feature-engineering pipeline for regression scoring.
+  '''Build the feature-engineering pipeline for regression scoring.
 
   The graph is identical to the classification one; the preprocessed scoreset is
   consumed by a different trainer, not by a different feature pipeline.
@@ -213,19 +219,19 @@ def create_fe_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
 
   Returns:
     The pipeline.
-  """
+  '''
   return _classification_fe_scoring(topology)
 
 
 def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
-  """Build the modelling pipeline for regression scoring.
+  '''Build the modelling pipeline for regression scoring.
 
   Args:
     topology: The resolved graph topology.
 
   Returns:
     The pipeline.
-  """
+  '''
   suffix = topology.suffix
   nodes: list = [
     node(
@@ -264,7 +270,7 @@ def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
       nodes.extend(
         [
           node(
-            func=model_nodes.model_evaluation_regression,
+            func=model_nodes.regression_scoring_contract_evaluation,
             inputs=[
               frame,
               'parameters',
@@ -273,7 +279,7 @@ def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
               f'params:{slice_label}',
             ],
             outputs=[f'{stem}_reg_model_evaluation_{suffix}'],
-            name=f'{slice_label}_model_evaluation_{suffix}',
+            name=f'{slice_label}_regression_scoring_contract_evaluation_{suffix}',
           ),
           # The band error profile is emitted on the scoring path too, matching the
           # training path. Without it the catalog's `test_reg_lift_df` entry was
@@ -281,7 +287,7 @@ def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
           # row with no distribution behind it -- so there was no way to see *where*
           # along the predicted range the model is weak.
           node(
-            func=model_nodes.lift_calculation_regression,
+            func=model_nodes.regression_lift_contract_evaluation,
             inputs=[
               frame,
               'parameters',
@@ -290,7 +296,7 @@ def create_model_scoring_pipeline(topology: PipelineTopology) -> Pipeline:
               f'params:{slice_label}',
             ],
             outputs=[f'{stem}_reg_lift_df_{suffix}'],
-            name=f'{slice_label}_lift_calculation_{suffix}',
+            name=f'{slice_label}_regression_lift_contract_evaluation_{suffix}',
           ),
         ]
       )

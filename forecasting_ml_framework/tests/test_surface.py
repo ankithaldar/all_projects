@@ -22,14 +22,14 @@ from forecasting_ml_framework.preprocessing import routines
 
 
 def _entry_points(group: str) -> list:
-  """Resolve an installed entry-point group.
+  '''Resolve an installed entry-point group.
 
   Args:
     group: The entry-point group name.
 
   Returns:
     The resolved entry points.
-  """
+  '''
   return list(metadata.entry_points(group=group))
 
 
@@ -39,11 +39,11 @@ class TestKedroEntryPoints:
   @pytest.fixture(scope='class')
   @classmethod
   def kedro_commands(cls) -> list:
-    """Return the resolved ``kedro.project_commands`` entry points.
+    '''Return the resolved ``kedro.project_commands`` entry points.
 
     Returns:
       The entry points.
-    """
+    '''
     return _entry_points('kedro.project_commands')
 
   def test_the_run_group_resolves(self, kedro_commands: list) -> None:
@@ -51,12 +51,12 @@ class TestKedroEntryPoints:
     assert entry.load() is cli.commands
 
   def test_the_project_group_resolves(self, kedro_commands: list) -> None:
-    """The defect: the entry point named ``cli:project``, which did not exist."""
+    '''The defect: the entry point named ``cli:project``, which did not exist.'''
     entry = next(item for item in kedro_commands if item.name == 'project')
     assert entry.load() is cli.project_commands
 
   def test_the_project_alias_is_the_same_object(self) -> None:
-    """Aliasing rather than renaming keeps the two spellings from diverging."""
+    '''Aliasing rather than renaming keeps the two spellings from diverging.'''
     assert cli.project is cli.project_commands
 
   def test_the_project_group_exposes_its_subcommands(self, kedro_commands: list) -> None:
@@ -109,7 +109,7 @@ class TestRoutineCatalogueSurface:
     assert not missing, f'__all__ advertises names the module does not define: {missing}'
 
   def test_a_star_import_succeeds(self) -> None:
-    """The defect: the base classes were advertised but never imported."""
+    '''The defect: the base classes were advertised but never imported.'''
     namespace: dict = {}
     exec('from forecasting_ml_framework.preprocessing.routines import *', namespace)  # noqa: S102
     assert 'AVAILABLE_ROUTINES' in namespace
@@ -123,6 +123,6 @@ class TestRoutineCatalogueSurface:
       assert name in routines.__all__
 
   def test_the_registry_key_matches_the_class_name(self) -> None:
-    """Identity is resolved from the class name, so the two must agree."""
+    '''Identity is resolved from the class name, so the two must agree.'''
     for key, routine in routines.AVAILABLE_ROUTINES.items():
       assert key == routine.__name__, f'{key} is registered against {routine.__name__}'

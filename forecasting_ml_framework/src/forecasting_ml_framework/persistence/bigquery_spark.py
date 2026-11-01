@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Spark-native BigQuery dataset adapter.
+'''Spark-native BigQuery dataset adapter.
 
 Carries every Spark-side warehouse table: the three SQL-backed inputs and the
 transformed scoreset. Five write modes are supported and selected by a
@@ -18,7 +18,7 @@ Two properties are worth stating:
   staging table is created in a *scratch* dataset rather than the target dataset
   -- so an orphan cannot pollute production storage -- and the ``finally`` block
   drops it whether the body succeeded or raised.
-"""
+'''
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ _FAULT_MARKERS = (
 
 
 def _is_table_absent(error: BaseException) -> bool:
-  """Report whether a connector failure means the table does not exist.
+  '''Report whether a connector failure means the table does not exist.
 
   Args:
     error: The raised exception.
@@ -91,7 +91,8 @@ def _is_table_absent(error: BaseException) -> bool:
   Returns:
     ``True`` only when the message identifies an absent table. An authentication
       or quota fault returns ``False`` even when it also mentions "not found".
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   text = str(error).lower()
   if any(marker in text for marker in _FAULT_MARKERS):
     return False
@@ -99,7 +100,7 @@ def _is_table_absent(error: BaseException) -> bool:
 
 
 class CustomSparkBQDataSet(AbstractDataset):
-  """A Spark DataFrame backed by a BigQuery table, optionally created from SQL.
+  '''A Spark DataFrame backed by a BigQuery table, optionally created from SQL.
 
   Attributes:
     _sql: An inline query. When present, :meth:`_load` executes it instead of
@@ -107,7 +108,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     _write_mode: The configured write disposition.
     _partition_field: An optional partition column enabling insert-overwrite
       semantics scoped to a single partition.
-  """
+  '''
 
   def __init__(
     self,
@@ -127,7 +128,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     scratch_dataset: str | None = None,
     merge_keys: list[str] | None = None,
   ) -> None:
-    """Validate the configuration eagerly; perform no I/O.
+    '''Validate the configuration eagerly; perform no I/O.
 
     Args:
       table_name: The destination table, without the project or dataset prefix.
@@ -156,7 +157,7 @@ class CustomSparkBQDataSet(AbstractDataset):
 
     Raises:
       DatasetError: If the configuration is invalid.
-    """
+    '''
     if write_mode not in WRITE_MODES:
       raise DatasetError(
         f'Invalid write_mode: {write_mode!r}. Supported modes: {list(WRITE_MODES)}',
@@ -197,11 +198,11 @@ class CustomSparkBQDataSet(AbstractDataset):
   # Kedro contract
   # ---------------------------------------------------------------------- #
   def _describe(self) -> dict[str, Any]:
-    """Return every configuration key.
+    '''Return every configuration key.
 
     Returns:
       A mapping suitable for the run log and for the provenance hooks.
-    """
+    '''
     return {
       'table_name': self._table_name,
       'sql': '<inline sql>' if self._sql else None,
@@ -217,14 +218,14 @@ class CustomSparkBQDataSet(AbstractDataset):
     }
 
   def _load(self) -> Any:
-    """Read the table, or execute the configured query.
+    '''Read the table, or execute the configured query.
 
     Returns:
       A Spark ``DataFrame``.
 
     Raises:
       DatasetError: If neither a table nor a query is configured.
-    """
+    '''
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
 
     session, _ = get_spark_session(params=self._session_params())
@@ -237,14 +238,14 @@ class CustomSparkBQDataSet(AbstractDataset):
     return session.read.format('bigquery').option('materializationProject', self._materialization_project).load(target)
 
   def _save(self, data: Any) -> None:
-    """Write the frame using the configured disposition.
+    '''Write the frame using the configured disposition.
 
     An empty frame is a no-op. This is load-bearing: an empty evaluation slice
     must produce an empty table rather than a failed job.
 
     Args:
       data: The Spark ``DataFrame`` to write.
-    """
+    '''
     if data is None or data.isEmpty():
       LOGGER.warning('Skipping save of an empty frame', extra={'table': self._table_name})
       return
@@ -258,11 +259,11 @@ class CustomSparkBQDataSet(AbstractDataset):
     dispatch[self._write_mode](data)
 
   def _exists(self) -> bool:
-    """Probe whether the destination table is present.
+    '''Probe whether the destination table is present.
 
     Returns:
       ``True`` when the table can be read.
-    """
+    '''
     if not self._table_name:
       return False
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
@@ -287,7 +288,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     return True
 
   def __getstate__(self) -> dict[str, Any]:
-    """Prevent serialisation of the live Spark session.
+    '''Prevent serialisation of the live Spark session.
 
     Returns:
       This is unreachable; the method always raises.
@@ -296,30 +297,30 @@ class CustomSparkBQDataSet(AbstractDataset):
       pickle.PicklingError: Always. A Spark-backed dataset holds a live session
         which cloudpickle would otherwise capture, and the failure would surface
         deep inside a serialisation frame with an unreadable traceback.
-    """
+    '''
     raise pickle.PicklingError('Spark-backed datasets cannot be serialised')
 
   # ---------------------------------------------------------------------- #
   # Write dispositions
   # ---------------------------------------------------------------------- #
   def _insert_save(self, data: Any) -> None:
-    """Append the frame.
+    '''Append the frame.
 
     Args:
       data: The frame to write.
-    """
+    '''
     self._write(data, 'append')
 
   def _overwrite_save(self, data: Any) -> None:
-    """Replace the table contents.
+    '''Replace the table contents.
 
     Args:
       data: The frame to write.
-    """
+    '''
     self._write(data, 'overwrite')
 
   def _create_replace_save(self, data: Any) -> None:
-    """Drop the table if present, then write it.
+    '''Drop the table if present, then write it.
 
     This is the disposition used for the scoreset table, and it is what makes the
     scoring half of the pipeline idempotent: re-running a day replaces that day's
@@ -327,7 +328,7 @@ class CustomSparkBQDataSet(AbstractDataset):
 
     Args:
       data: The frame to write.
-    """
+    '''
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
 
     session, _ = get_spark_session(params=self._session_params())
@@ -346,7 +347,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     self._write(data, 'overwrite')
 
   def _insert_overwrite_save(self, data: Any) -> None:
-    """Replace exactly the partitions the frame occupies, then append.
+    '''Replace exactly the partitions the frame occupies, then append.
 
     The delete scope is derived from the **data being written**, as the design
     requires, rather than from a supplied ``write_partition``. The two differ in
@@ -370,7 +371,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     Raises:
       DatasetError: If no partition field is configured, or the frame carries no
         value for it.
-    """
+    '''
     if not self._partition_field:
       raise DatasetError(
         "write_mode 'insert_overwrite' requires a 'partition_field': the delete scope is derived "
@@ -380,7 +381,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     if self._partition_field not in data.columns:
       raise DatasetError(
         f"write_mode 'insert_overwrite' declares partition_field "
-        f"{self._partition_field!r}, which the frame does not carry, so the delete scope cannot "
+        f'{self._partition_field!r}, which the frame does not carry, so the delete scope cannot '
         f'be derived from the data. Present columns: {sorted(data.columns)[:20]}',
         table_name=self._table_name,
         partition_field=self._partition_field,
@@ -414,7 +415,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     self._write(frame, 'append')
 
   def _upsert_save(self, data: Any) -> None:
-    """Merge the frame into the table via a staging table.
+    '''Merge the frame into the table via a staging table.
 
     A merge cannot read and write the same table in one pass, so the payload is
     staged first and the merge reads the staging table while writing the target.
@@ -434,7 +435,7 @@ class CustomSparkBQDataSet(AbstractDataset):
     Raises:
       DatasetError: If no merge keys are declared, or if the destination's column
         set is incompatible with the incoming frame.
-    """
+    '''
     from forecasting_ml_framework.platform.spark import get_spark_session  # noqa: PLC0415
 
     keys = list(self._merge_keys)
@@ -470,12 +471,12 @@ class CustomSparkBQDataSet(AbstractDataset):
   # Internals
   # ---------------------------------------------------------------------- #
   def _write(self, data: Any, mode: str) -> None:
-    """Write a frame through the connector.
+    '''Write a frame through the connector.
 
     Args:
       data: The frame to write.
       mode: The connector save mode.
-    """
+    '''
     target = self._qualified_name()
     writer = data.write.format('bigquery')
     if self._materialization_project:
@@ -489,7 +490,7 @@ class CustomSparkBQDataSet(AbstractDataset):
 
   @contextmanager
   def _staging_table(self, session: Any, data: Any) -> Iterator[str]:
-    """Materialise a frame into a temporary staging table.
+    '''Materialise a frame into a temporary staging table.
 
     Args:
       session: The live ``SparkSession``.
@@ -497,7 +498,7 @@ class CustomSparkBQDataSet(AbstractDataset):
 
     Yields:
       The fully-qualified staging table name.
-    """
+    '''
     scratch = self._scratch_dataset or self._materialization_dataset
     if not scratch:
       raise DatasetError('upsert requires a scratch dataset to stage the payload into')
@@ -515,14 +516,14 @@ class CustomSparkBQDataSet(AbstractDataset):
         LOGGER.warning('Failed to drop the staging table', extra={'staging_table': staging, 'error': str(error)})
 
   def _qualified_name(self) -> str:
-    """Return the fully-qualified table name.
+    '''Return the fully-qualified table name.
 
     Returns:
       ``project.dataset.table``.
 
     Raises:
       DatasetError: If the table name or database is missing.
-    """
+    '''
     if not self._table_name:
       raise DatasetError('No table_name configured for a table-backed dataset')
     if self._database:
@@ -531,11 +532,11 @@ class CustomSparkBQDataSet(AbstractDataset):
     return self._table_name
 
   def _session_params(self) -> dict[str, Any]:
-    """Build the parameter bag used to construct a Spark session.
+    '''Build the parameter bag used to construct a Spark session.
 
     Returns:
       A mapping in the shape the platform session builder expects.
-    """
+    '''
     return {
       constants.ENV_IS_HOSTED: self._is_hosted_env,
       'model_key': self._model_key,

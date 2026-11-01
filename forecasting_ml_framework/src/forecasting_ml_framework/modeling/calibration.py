@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Probability calibration and decision-threshold selection.
+'''Probability calibration and decision-threshold selection.
 
 **Calibration.** The framework computes two rates: ``real_rate``, the population
 positive rate measured *before* any reweighting, and ``sample_rate``, the
@@ -41,7 +41,7 @@ discrimination, model comparison and threshold semantics are defined on; and
 as the expected event probability. Keeping both lets a consumer verify that
 calibration has not degraded ranking, and lets a monitor watch the two
 distributions independently.
-"""
+'''
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def calibrate_probability(
   real_rate: float,
   sample_rate: float,
 ) -> pd.Series:
-  """Apply exact prior-shift correction to a probability column.
+  '''Apply exact prior-shift correction to a probability column.
 
   Args:
     probabilities: The raw model probability.
@@ -95,7 +95,7 @@ def calibrate_probability(
 
   Raises:
     Never. A degenerate prior degrades to the raw score rather than raising.
-  """
+  '''
   # Both *endpoints* of the unit interval are degenerate, not just zero. The
   # prior odds are ``rate / (1 - rate)``, which is undefined at 0 and at 1
   # equally, and the previous guard tested only ``not rate`` -- so it caught 0.0
@@ -125,7 +125,7 @@ def calibrate_probability(
 
 
 def _is_proportion(value: Any) -> bool:
-  """Report whether a value is a usable proportion, strictly inside ``(0, 1)``.
+  '''Report whether a value is a usable proportion, strictly inside ``(0, 1)``.
 
   The prior-odds term ``rate / (1 - rate)`` is defined only for a rate strictly
   between zero and one. Both endpoints are excluded deliberately: a rate of zero
@@ -137,7 +137,7 @@ def _is_proportion(value: Any) -> bool:
 
   Returns:
     ``True`` when the value is a finite, non-zero, non-unit proportion.
-  """
+  '''
   try:
     rate = float(value)
   except (TypeError, ValueError):
@@ -153,7 +153,7 @@ def select_threshold(
   target_col: str,
   probability_col: str,
 ) -> float:
-  """Select the decision threshold that maximises a chosen criterion.
+  '''Select the decision threshold that maximises a chosen criterion.
 
   Args:
     frame: A labelled frame containing the target and the probability.
@@ -167,7 +167,7 @@ def select_threshold(
 
   Raises:
     ValueError: If the frame is empty or the required columns are absent.
-  """
+  '''
   if frame is None or frame.empty:
     raise ValueError('Cannot select a threshold from an empty frame')
   missing = [column for column in (target_col, probability_col) if column not in frame.columns]
@@ -207,7 +207,7 @@ def select_threshold(
 
 
 def _guard_threshold(selected: float, y_score: np.ndarray, method: str, column: str) -> float:
-  """Refuse a threshold that is not a usable probability.
+  '''Refuse a threshold that is not a usable probability.
 
   Both scikit-learn threshold curves lead with a sentinel that is not a
   probability: ``roc_curve`` opens with ``inf`` and ``precision_recall_curve``
@@ -232,7 +232,7 @@ def _guard_threshold(selected: float, y_score: np.ndarray, method: str, column: 
 
   Returns:
     A finite threshold within the observed score range.
-  """
+  '''
   if y_score.size == 0:
     return 0.5
   lowest, highest = float(np.nanmin(y_score)), float(np.nanmax(y_score))
@@ -257,7 +257,7 @@ def _guard_threshold(selected: float, y_score: np.ndarray, method: str, column: 
 
 
 def _select_by_mcc(y_true: np.ndarray, y_score: np.ndarray) -> float:
-  """Select the threshold maximising the Matthews correlation coefficient.
+  '''Select the threshold maximising the Matthews correlation coefficient.
 
   MCC is the only criterion in the set that stays informative under extreme
   imbalance, which is the entire reason the progressive zoom exists: the first
@@ -270,7 +270,7 @@ def _select_by_mcc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
   Returns:
     The selected threshold.
-  """
+  '''
   best_threshold = 0.0
   for index, grid in enumerate(MCC_ZOOM_GRIDS):
     binarised = (y_score[None, :] >= grid[:, None]).astype(int)
@@ -295,7 +295,7 @@ def _select_by_mcc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
 
 def _select_by_ks(frame: pd.DataFrame, target_col: str, probability_col: str) -> float:
-  """Select the threshold maximising the Kolmogorov-Smirnov separation.
+  '''Select the threshold maximising the Kolmogorov-Smirnov separation.
 
   KS optimises ranking quality directly rather than optimising a point metric,
   which is why it is the natural criterion when the operational question is
@@ -308,7 +308,7 @@ def _select_by_ks(frame: pd.DataFrame, target_col: str, probability_col: str) ->
 
   Returns:
     The selected threshold.
-  """
+  '''
   ordered = frame.sort_values(by=probability_col, ascending=False)
   labels = ordered[target_col]
   positives = float(labels.sum())
@@ -328,7 +328,7 @@ def _select_by_ks(frame: pd.DataFrame, target_col: str, probability_col: str) ->
 
 
 def _safe_mcc(y_true: np.ndarray, prediction: np.ndarray) -> float:
-  """Compute the Matthews correlation coefficient, degrading gracefully.
+  '''Compute the Matthews correlation coefficient, degrading gracefully.
 
   Args:
     y_true: The labels.
@@ -336,7 +336,7 @@ def _safe_mcc(y_true: np.ndarray, prediction: np.ndarray) -> float:
 
   Returns:
     The coefficient, or ``0.0`` when it is undefined.
-  """
+  '''
   try:
     return float(matthews_corrcoef(y_true, prediction))
   except ValueError:
@@ -344,14 +344,14 @@ def _safe_mcc(y_true: np.ndarray, prediction: np.ndarray) -> float:
 
 
 def _round_threshold(value: float) -> float:
-  """Round a threshold with precision adapted to its magnitude.
+  '''Round a threshold with precision adapted to its magnitude.
 
   Args:
     value: The raw threshold.
 
   Returns:
     The rounded threshold.
-  """
+  '''
   for ceiling, digits in _ROUNDING_BANDS:
     if value < ceiling:
       return float(np.round(value, digits))

@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Modelling nodes.
+# pylint: disable=import-outside-toplevel,broad-exception-caught
+# pylint: disable=unused-argument
+
+'''Modelling nodes.
 
 The modelling tier never sees a Spark ``DataFrame``. :func:`spark_to_pandas` is
 the single place the two worlds touch, and it is the only node that crosses that
@@ -12,10 +15,11 @@ behaviour, not defensive boilerplate: it is what allows ``eval_size: 0.0``, or a
 degenerate sample, to produce *empty metric and lift tables* rather than a
 failure. End to end, an empty evaluation slice produces an empty table, and the
 downstream BigQuery datasets skip on empty in turn.
-"""
+'''
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import Any
 
@@ -24,13 +28,24 @@ import pandas as pd
 
 from forecasting_ml_framework import constants
 from forecasting_ml_framework.core.metadata import Metadata
-from forecasting_ml_framework.exceptions import DataContractError
+from forecasting_ml_framework.exceptions import DataContractError, MetricBandEmptyError
+from forecasting_ml_framework.modeling.lift_contract import (
+  lift_contract_evaluation as lift_contract_evaluation_fn,
+)
+from forecasting_ml_framework.modeling.lift_contract import (
+  regression_lift_contract_evaluation as regression_lift_contract_evaluation_fn,
+)
 from forecasting_ml_framework.modeling.metrics import (
   band_metrics,
   parse_metric,
   regression_band_metrics,
+  select_band,
 )
 from forecasting_ml_framework.modeling.models import ModelTraining, SparkModelTraining
+from forecasting_ml_framework.modeling.scoring_contract import (
+  classification_scoring_contract,
+  regression_scoring_contract,
+)
 from forecasting_ml_framework.observability.logging import get_logger
 from forecasting_ml_framework.platform.environment import as_flag
 
@@ -59,7 +74,7 @@ def spark_to_pandas(
   convert_to_pandas: bool | None = None,
   category_cols: list[str] | None = None,
 ) -> tuple[Any, Metadata]:
-  """Cross the Spark/pandas boundary.
+  '''Cross the Spark/pandas boundary.
 
   This is the only place the two compute worlds touch, and the trade is
   consequential: it forfeits distributed training in exchange for the entire
@@ -91,7 +106,8 @@ def spark_to_pandas(
   Raises:
     DataContractError: If a requested category column is absent, or the settings
       block is not a mapping or a boolean.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   if isinstance(conversion, bool) or conversion is None:
     settings: dict[str, Any] = {}
     default_convert = True if conversion is None else conversion
@@ -143,7 +159,7 @@ def model_training(
   metadata: Metadata,
   model_type: str = 'sklearn',
 ) -> tuple[Any, Any, dict[str, Any], pd.DataFrame, pd.DataFrame]:
-  """Build the configured trainer and fit it.
+  '''Build the configured trainer and fit it.
 
   Args:
     parameters: The full parameters document.
@@ -162,7 +178,7 @@ def model_training(
 
   Raises:
     DataContractError: If the modelling block is absent.
-  """
+  '''
   config = _resolve_model_block(parameters, CLASSIFICATION_BLOCK_TEMPLATE, _run_suffix())
   trainer = _build_trainer(model_type, config)
   LOGGER.info(
@@ -177,7 +193,7 @@ def model_training_regression(
   metadata: Metadata,
   model_type: str = 'sklearn',
 ) -> tuple[Any, Any, dict[str, Any], pd.DataFrame, pd.DataFrame]:
-  """Train a continuous-target model.
+  '''Train a continuous-target model.
 
   The regression tier is a deliberately stripped clone: no stratification on the
   split, no class weighting, no calibration, no threshold selection. Rather than
@@ -193,7 +209,7 @@ def model_training_regression(
 
   Returns:
     The five-tuple.
-  """
+  '''
   # The regression block is resolved by the *regression* prefix and the trainer is
   # built from it directly, rather than delegating to ``model_training``. Delegating
   # resolved the *classification* block, so a document carrying both
@@ -217,7 +233,7 @@ def model_scoring(
   metadata: Metadata,
   data_type: str = 'score',
 ) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
-  """Score a frame, returning the sequencing token.
+  '''Score a frame, returning the sequencing token.
 
   Args:
     trainer: The trainer instance.
@@ -230,7 +246,7 @@ def model_scoring(
   Returns:
     A three-tuple of the raw frame, the calibrated frame and the pass-through
     sequencing token.
-  """
+  '''
   if frame.empty:
     LOGGER.info('Empty scoring slice; passing it through untouched', extra={'slice': data_type})
     return frame, frame, True
@@ -246,7 +262,7 @@ def model_scoring_regression(
   metadata: Metadata,
   data_type: str = 'score',
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-  """Score a continuous-target frame.
+  '''Score a continuous-target frame.
 
   The regression projection carries ``score_value`` as an alias of the raw score
   and an empty ``high_score_ind``, so the enterprise egress SQL works unchanged
@@ -271,10 +287,8 @@ def model_scoring_regression(
 
   Returns:
     A two-tuple of the raw frame and the calibrated frame.
-  """
-  raw, calibrated, unused_token = model_scoring(
-    trainer, fitted_model, calibrated_model, frame, metadata, data_type
-  )
+  '''
+  raw, calibrated, unused_token = model_scoring(trainer, fitted_model, calibrated_model, frame, metadata, data_type)
   del unused_token
   for projection in (raw, calibrated):
     if not projection.empty:
@@ -292,7 +306,7 @@ def model_evaluation(
   multi_class: bool,
   sequence_flag: bool = True,
 ) -> tuple[pd.DataFrame, bool]:
-  """Compute the slice metric row for a scored frame.
+  '''Compute the slice metric row for a scored frame.
 
   The metric bag is deliberately complete: the point metrics, three
   macro-averaged variants, and the four raw confusion counts. The macro averages
@@ -346,7 +360,7 @@ def model_evaluation(
 
   Returns:
     A two-tuple of the one-row metric frame and the token.
-  """
+  '''
   if frame.empty:
     LOGGER.info('Empty evaluation slice; no metrics produced', extra={'slice': data_type})
     return frame, sequence_flag
@@ -388,7 +402,11 @@ def model_evaluation(
 
   if is_multiclass:
     return _multiclass_metric_row(frame, y_true, y_pred, parameters, data_type, sequence_flag)
-  return _binary_metric_row(frame, y_true, y_pred, y_prob, parameters, data_type, sequence_flag)
+
+  metric_frame, token = _binary_metric_row(frame, y_true, y_pred, y_prob, parameters, data_type, sequence_flag)
+  if not metric_frame.empty:
+    _add_selected_bucket_columns(metric_frame, frame, metadata, prediction_col, prediction_probability_col, parameters)
+  return metric_frame, token
 
 
 def lift_calculation(
@@ -400,7 +418,7 @@ def lift_calculation(
   data_type: str,
   sequence_flag: bool = True,
 ) -> tuple[pd.DataFrame, bool]:
-  """Compute the per-band lift table for a scored frame.
+  '''Compute the per-band lift table for a scored frame.
 
   Args:
     frame: The scored frame.
@@ -413,7 +431,7 @@ def lift_calculation(
 
   Returns:
     A two-tuple of the band table and the token.
-  """
+  '''
   if frame.empty:
     return frame, sequence_flag
   prediction_col, prediction_probability_col = _resolve_column_family(
@@ -442,7 +460,7 @@ def model_evaluation_regression(
   prediction_col: str,
   data_type: str,
 ) -> pd.DataFrame:
-  """Compute the slice error metrics for a continuous target.
+  '''Compute the slice error metrics for a continuous target.
 
   Returns the metric row alone. The classification twin threads a sequencing
   token through to order the evaluation fan-out; this tier has no fan-out, so
@@ -458,7 +476,7 @@ def model_evaluation_regression(
 
   Returns:
     The one-row metric frame.
-  """
+  '''
   if frame.empty:
     return frame
   prediction_col, _ = _resolve_column_family(data_type, prediction_col, prediction_col)
@@ -499,7 +517,7 @@ def lift_calculation_regression(
   prediction_col: str,
   data_type: str,
 ) -> pd.DataFrame:
-  """Compute the per-band error profile for a continuous target.
+  '''Compute the per-band error profile for a continuous target.
 
   With no positive class to lift over, the decile error profile is the analogue
   of a lift table, which is why the regression pipelines need no separate lift
@@ -515,7 +533,7 @@ def lift_calculation_regression(
 
   Returns:
     The per-band error profile.
-  """
+  '''
   if frame.empty:
     return frame
   prediction_col, _ = _resolve_column_family(data_type, prediction_col, prediction_col)
@@ -543,7 +561,7 @@ def lift_calculation_regression(
 # Internals
 # --------------------------------------------------------------------------- #
 def _run_suffix() -> str:
-  """Return the namespace suffix the current run is specialised on.
+  '''Return the namespace suffix the current run is specialised on.
 
   The suffix is the run's model-instance token, and the modelling block's name is
   built from it. It is read from the process environment, which is where the
@@ -554,12 +572,12 @@ def _run_suffix() -> str:
   Returns:
     The suffix, defaulting to
     :data:`~forecasting_ml_framework.constants.DEFAULT_SUFFIX`.
-  """
+  '''
   return os.environ.get(constants.ENV_SUFFIX, constants.DEFAULT_SUFFIX)
 
 
 def _resolve_model_block(parameters: dict[str, Any], template: str, suffix: str) -> dict[str, Any]:
-  """Locate the configuration block for a modelling tier.
+  '''Locate the configuration block for a modelling tier.
 
   The model identifier is a namespace suffix, so the block is named
   ``modeling_{suffix}``. The lookup is by *prefix* rather than by exact name,
@@ -586,7 +604,7 @@ def _resolve_model_block(parameters: dict[str, Any], template: str, suffix: str)
   Raises:
     DataContractError: If the named block is absent, is not a mapping, or carries
       no ``model_handle``.
-  """
+  '''
   expected = template.format(suffix=suffix)
   block = parameters.get(expected)
   if block is None:
@@ -598,8 +616,7 @@ def _resolve_model_block(parameters: dict[str, Any], template: str, suffix: str)
     )
   if not isinstance(block, dict) or 'model_handle' not in block:
     raise DataContractError(
-      f'The {expected!r} block must be a mapping carrying a model_handle. Found '
-      f'{type(block).__name__}.',
+      f'The {expected!r} block must be a mapping carrying a model_handle. Found {type(block).__name__}.',
       expected=expected,
       found=type(block).__name__,
     )
@@ -607,7 +624,7 @@ def _resolve_model_block(parameters: dict[str, Any], template: str, suffix: str)
 
 
 def _build_trainer(model_type: str, config: dict[str, Any]) -> Any:
-  """Construct the trainer for a modelling tier.
+  '''Construct the trainer for a modelling tier.
 
   Args:
     model_type: The configured tier.
@@ -615,14 +632,14 @@ def _build_trainer(model_type: str, config: dict[str, Any]) -> Any:
 
   Returns:
     A trainer instance.
-  """
+  '''
   if model_type == constants.ModelType.PYSPARK.value:
     return SparkModelTraining(**_filter_kwargs(SparkModelTraining, config))
   return ModelTraining(**_filter_kwargs(ModelTraining, config))
 
 
 def _filter_kwargs(target: type, config: dict[str, Any]) -> dict[str, Any]:
-  """Drop configuration keys the trainer does not accept.
+  '''Drop configuration keys the trainer does not accept.
 
   The parameters document doubles as a cookbook, so it legitimately carries keys
   for tiers that are not active. Passing them through as keyword arguments would
@@ -635,7 +652,7 @@ def _filter_kwargs(target: type, config: dict[str, Any]) -> dict[str, Any]:
 
   Returns:
     The accepted keyword arguments.
-  """
+  '''
   import inspect  # noqa: PLC0415
 
   accepted = set(inspect.signature(target.__init__).parameters) - {'self'}
@@ -653,7 +670,7 @@ def _safe_percentage_error(
   actual: pd.Series,
   predicted: pd.Series,
 ) -> float:
-  """Compute the mean absolute percentage error, excluding zero targets.
+  '''Compute the mean absolute percentage error, excluding zero targets.
 
   A percentage error is undefined where the target is zero, and the unguarded
   expression ``((actual - predicted) / actual)`` is not merely undefined there --
@@ -677,7 +694,7 @@ def _safe_percentage_error(
   Returns:
     The mean absolute percentage error as a percentage, or ``nan`` when every
     target is zero and the quantity is therefore undefined.
-  """
+  '''
   non_zero = actual != 0
   if not bool(non_zero.any()):
     return float('nan')
@@ -685,10 +702,8 @@ def _safe_percentage_error(
   return float(np.nanmean(ratio) * 100)
 
 
-def _resolve_column_family(
-  data_type: str, prediction_col: str, probability_col: str
-) -> tuple[str, str]:
-  """Resolve the calibrated or uncalibrated column family from a slice label.
+def _resolve_column_family(data_type: str, prediction_col: str, probability_col: str) -> tuple[str, str]:
+  '''Resolve the calibrated or uncalibrated column family from a slice label.
 
   A single string prefix, injected by the run command, selects between two column
   families so that one function serves both calibrated and uncalibrated
@@ -703,13 +718,114 @@ def _resolve_column_family(
 
   Returns:
     A two-tuple of the resolved column names.
-  """
+  '''
   if data_type.startswith(constants.CALIBRATION_PREFIX):
     return (
       f'{constants.CALIBRATION_PREFIX}{prediction_col}',
       f'{constants.CALIBRATION_PREFIX}{probability_col}',
     )
   return prediction_col, probability_col
+
+
+def _eval_metric_name(parameters: dict[str, Any]) -> str | None:
+  '''Resolve the configured promotion metric name, if any.
+
+  Args:
+    parameters: The full parameters document.
+
+  Returns:
+    The configured metric name, or ``None`` when none was configured.
+  '''
+  if not isinstance(parameters, dict):
+    return None
+  block = parameters.get('modeling_params')
+  if isinstance(block, dict) and block.get('eval_metric') is not None:
+    return block.get('eval_metric')
+  if parameters.get('eval_metric') is not None:
+    return parameters.get('eval_metric')
+  return None
+
+
+def _add_selected_bucket_columns(
+  metric_frame: pd.DataFrame,
+  frame: pd.DataFrame,
+  metadata: Metadata,
+  prediction_col: str,
+  probability_col: str,
+  parameters: dict[str, Any],
+) -> None:
+  '''Emit the selected-bucket classification metric vector into ``metric_frame``.
+
+  The promotion gate selects a single score band (for example the top decile)
+  and reads one number from it. The evaluation table additionally carries the
+  *full* metric vector for that same band, so a reviewer can see how the
+  selected segment behaves beyond the single promoted scalar.
+
+  Args:
+    metric_frame: The one-row metric frame to extend in place.
+    frame: The scored frame the metrics describe.
+    metadata: The contract, used to name the target column.
+    prediction_col: The hard prediction column.
+    probability_col: The score column.
+    parameters: The full parameters document.
+
+  Returns:
+    None. ``metric_frame`` is mutated in place.
+  '''
+  if frame.empty:
+    return
+  target_col = metadata.target_col
+  spec = parse_metric(_eval_metric_name(parameters), kind='classification', strict=False)
+  try:
+    bands = band_metrics(
+      frame.copy(),
+      target_col=target_col,
+      prediction_col=prediction_col,
+      probability_col=probability_col,
+      spec=spec,
+    )
+  except Exception:  # noqa: BLE001 - a degenerate slice must not break evaluation
+    LOGGER.debug('Could not compute the selected-bucket vector', exc_info=True)
+    return
+  if bands.empty:
+    return
+  try:
+    selected = select_band(bands, spec)
+  except MetricBandEmptyError:
+    selected = bands[bands['score_ntile'] == bands['score_ntile'].max()]
+  if selected.empty:
+    selected = bands.iloc[[0]]
+  row = selected.iloc[0]
+
+  # Carry every column the banded table produces, so the selected bucket's
+  # full vector (and its counts) land in the evaluation row.
+  for column in bands.columns:
+    if column == 'score_ntile':
+      continue
+    value = row[column]
+    with contextlib.suppress(AttributeError, ValueError):
+      value = value.item() if hasattr(value, 'item') else value
+    metric_frame[column] = value
+
+  # Aliases under the names a selected-bucket vector is most often read by.
+  metric_aliases = {
+    'AUC': ('selected_auc', 'selected_roc_auc'),
+    'PRECISION': ('selected_precision',),
+    'RECALL': ('selected_recall',),
+    'ACCURACY': ('selected_accuracy',),
+    'F1': ('selected_f1',),
+    'BRIER_SCORE': ('selected_brier_score',),
+    'LIFT': ('selected_lift',),
+  }
+  for source, aliases in metric_aliases.items():
+    if source not in row.index:
+      continue
+    value = row[source]
+    with contextlib.suppress(AttributeError, ValueError):
+      value = value.item() if hasattr(value, 'item') else value
+    for alias in aliases:
+      metric_frame[alias] = value
+    metric_frame[f'selected_{source}'] = value
 
 
 def _binary_metric_row(
@@ -721,7 +837,7 @@ def _binary_metric_row(
   data_type: str,
   sequence_flag: bool,
 ) -> tuple[pd.DataFrame, bool]:
-  """Build the one-row binary metric frame.
+  '''Build the one-row binary metric frame.
 
   Args:
     frame: The scored frame.
@@ -734,7 +850,7 @@ def _binary_metric_row(
 
   Returns:
     A two-tuple of the metric frame and the token.
-  """
+  '''
   from sklearn.metrics import (  # noqa: PLC0415
     accuracy_score,
     confusion_matrix,
@@ -788,7 +904,7 @@ def _multiclass_metric_row(
   data_type: str,
   sequence_flag: bool,
 ) -> tuple[pd.DataFrame, bool]:
-  """Build the one-row multiclass metric frame.
+  '''Build the one-row multiclass metric frame.
 
   Args:
     frame: The scored frame.
@@ -800,7 +916,7 @@ def _multiclass_metric_row(
 
   Returns:
     A two-tuple of the metric frame and the token.
-  """
+  '''
   from sklearn.metrics import (  # noqa: PLC0415
     accuracy_score,
     f1_score,
@@ -829,7 +945,7 @@ def _write_report_csv(
   parameters: dict[str, Any],
   data_type: str,
 ) -> None:
-  """Write the classification report to the model's metrics prefix.
+  '''Write the classification report to the model's metrics prefix.
 
   The report is one of the artefacts the framework computes and does not
   durably persist, because a container driver's filesystem is ephemeral. It is
@@ -841,7 +957,7 @@ def _write_report_csv(
     y_pred: The hard predictions.
     parameters: The full parameters document.
     data_type: The slice label.
-  """
+  '''
   from sklearn.metrics import classification_report  # noqa: PLC0415
 
   from forecasting_ml_framework.utils.storage import get_file_system  # noqa: PLC0415
@@ -850,7 +966,11 @@ def _write_report_csv(
   if not metrics_path:
     return
   report = pd.DataFrame(classification_report(y_true, y_pred, output_dict=True, digits=2)).reset_index()
-  path = f'{metrics_path.rstrip("/")}/Classification_Report_{data_type}.csv'
+  from forecasting_ml_framework.utils.storage import _resolve_filepath  # noqa: PLC0415
+
+  stripped_path = metrics_path.rstrip('/')
+  filename = 'Classification_Report_' + data_type + '.csv'
+  path = _resolve_filepath(stripped_path + '/' + filename)
   try:
     filesystem = get_file_system(path)
     with filesystem.open(path, 'w') as handle:
@@ -858,3 +978,134 @@ def _write_report_csv(
     LOGGER.info('Wrote the classification report', extra={'slice': data_type, 'path': path})
   except OSError as error:  # pragma: no cover - the metrics prefix is optional
     LOGGER.warning('Could not write the classification report', extra={'path': metrics_path, 'error': str(error)})
+
+
+# --------------------------------------------------------------------------- #
+# New evaluation nodes using forecasting scoring and lift contracts
+# --------------------------------------------------------------------------- #
+
+
+def scoring_contract_evaluation(
+  frame: pd.DataFrame,
+  parameters: dict[str, Any],
+  metadata: Metadata,
+  prediction_col: str,
+  prediction_probability_col: str,
+  data_type: str,
+  multi_class: bool,
+  sequence_flag: bool = True,
+) -> tuple[pd.DataFrame, bool]:
+  '''New classification evaluation node using the scoring contract.
+
+  Args:
+    frame: The scored frame.
+    parameters: The full parameters document.
+    metadata: The contract.
+    prediction_col: The hard prediction column.
+    prediction_probability_col: The probability column.
+    data_type: The slice label.
+    multi_class: Whether the problem has more than two classes.
+    sequence_flag: The sequencing token.
+
+  Returns:
+    A two-tuple of the metric frame and the token.
+  '''
+  return classification_scoring_contract(
+    frame=frame,
+    parameters=parameters,
+    metadata=metadata,
+    prediction_col=prediction_col,
+    prediction_probability_col=prediction_probability_col,
+    data_type=data_type,
+    sequence_flag=sequence_flag,
+  )
+
+
+def lift_contract_evaluation(
+  frame: pd.DataFrame,
+  parameters: dict[str, Any],
+  metadata: Metadata,
+  prediction_col: str,
+  prediction_probability_col: str,
+  data_type: str,
+  sequence_flag: bool = True,
+) -> tuple[pd.DataFrame, bool]:
+  '''New lift evaluation node using the lift contract.
+
+  Args:
+    frame: The scored frame.
+    parameters: The full parameters document.
+    metadata: The contract.
+    prediction_col: The hard prediction column.
+    prediction_probability_col: The probability column.
+    data_type: The slice label.
+    sequence_flag: The sequencing token.
+
+  Returns:
+    A two-tuple of the lift table and the token.
+  '''
+  return lift_contract_evaluation_fn(
+    frame=frame,
+    parameters=parameters,
+    metadata=metadata,
+    prediction_col=prediction_col,
+    prediction_probability_col=prediction_probability_col,
+    data_type=data_type,
+    sequence_flag=sequence_flag,
+  )
+
+
+def regression_scoring_contract_evaluation(
+  frame: pd.DataFrame,
+  parameters: dict[str, Any],
+  metadata: Metadata,
+  prediction_col: str,
+  data_type: str,
+) -> pd.DataFrame:
+  '''New regression evaluation node using the scoring contract.
+
+  Args:
+    frame: The scored frame.
+    parameters: The full parameters document.
+    metadata: The contract.
+    prediction_col: The predicted value column.
+    data_type: The slice label.
+
+  Returns:
+    The one-row metric frame.
+  '''
+  return regression_scoring_contract(
+    frame=frame,
+    parameters=parameters,
+    metadata=metadata,
+    prediction_col=prediction_col,
+    data_type=data_type,
+  )
+
+
+def regression_lift_contract_evaluation(
+  frame: pd.DataFrame,
+  parameters: dict[str, Any],
+  metadata: Metadata,
+  prediction_col: str,
+  data_type: str,
+) -> pd.DataFrame:
+  '''New regression lift evaluation node using the lift contract.
+
+  Args:
+    frame: The scored frame.
+    parameters: The full parameters document.
+    metadata: The contract.
+    prediction_col: The predicted value column.
+    data_type: The slice label.
+
+  Returns:
+    The per-band error profile frame.
+  '''
+  return regression_lift_contract_evaluation_fn(
+    frame=frame,
+    parameters=parameters,
+    metadata=metadata,
+    prediction_col=prediction_col,
+    data_type=data_type,
+  )

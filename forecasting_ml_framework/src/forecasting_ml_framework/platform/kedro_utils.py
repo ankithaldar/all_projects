@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Kedro runner utilities.
+'''Kedro runner utilities.
 
 A module was documented as dead code: an exhaustive search found no
 import of it anywhere in the framework, and ``run_pipeline``'s docstring
@@ -10,7 +10,7 @@ commented out.
 It is retained here because it is genuinely useful for tests and notebooks, but
 the docstring and the body now agree, and the module is a supported part of the
 platform layer rather than an orphan.
-"""
+'''
 
 from __future__ import annotations
 
@@ -28,20 +28,21 @@ LOGGER = get_logger(__name__)
 
 
 class MemoryCachedDataSet(MemoryDataset):
-  """An in-memory dataset that does not release its payload between runs.
+  '''An in-memory dataset that does not release its payload between runs.
 
   ``MemoryDataSet`` drops its stored object when a node's outputs are consumed,
   which forces a recomputation whenever a later node re-reads the same value.
   This subclass keeps the object, which is what makes a fan-out node — several
   consumers of one frame — cheap in a test or a notebook.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   def release(self) -> None:
-    """Retain the stored payload instead of discarding it."""
+    '''Retain the stored payload instead of discarding it.'''
     return
 
   def __deepcopy__(self, memo: dict[int, Any]) -> MemoryCachedDataSet:
-    """Return an independent instance holding a deep copy of the payload.
+    '''Return an independent instance holding a deep copy of the payload.
 
     The previous implementation read ``_factory`` and ``_serializer``, which are
     attributes of a *pickle* dataset. ``MemoryDataset`` has neither, so any
@@ -53,7 +54,7 @@ class MemoryCachedDataSet(MemoryDataset):
 
     Returns:
       A new instance with its own payload copy.
-    """
+    '''
     clone = type(self)()
     memo[id(self)] = clone
     clone._data = copy.deepcopy(self._data, memo)  # noqa: SLF001 - the parent owns these
@@ -66,7 +67,7 @@ def add_param_to_feed_dict(
   key_path: str,
   value: Any,
 ) -> dict[str, Any]:
-  """Expand a ``params:<dotted.key>`` reference into a feed-dictionary entry.
+  '''Expand a ``params:<dotted.key>`` reference into a feed-dictionary entry.
 
   The expansion is performed rather than merely promised: a ``params:``-prefixed
   reference may point at the top-level parameter dictionary or at a nested key,
@@ -81,7 +82,7 @@ def add_param_to_feed_dict(
 
   Returns:
     The mutated feed dictionary.
-  """
+  '''
   if not key_path.startswith('params'):
     feed_dict[key_path] = value
     return feed_dict
@@ -107,7 +108,7 @@ def run_pipeline(
   session_id: str | None = None,
   hook_manager: Any = None,
 ) -> dict[str, Any]:
-  """Execute a pipeline programmatically with a chosen runner.
+  '''Execute a pipeline programmatically with a chosen runner.
 
   Args:
     pipeline: The ``Pipeline`` to run.
@@ -128,7 +129,7 @@ def run_pipeline(
     ConfigurationError: If asynchronous execution is requested, which this
       framework does not support. Raised rather than ignored, so an operator who
       asked for it learns that they did not get it.
-  """
+  '''
   from forecasting_ml_framework.exceptions import ConfigurationError  # noqa: PLC0415
 
   # `AbstractRunner.run` in Kedro 1.0 accepts neither `is_async` nor
@@ -156,7 +157,7 @@ def run_pipeline(
 
 
 def load_pipeline_object(pipeline_name: str) -> Any:
-  """Load a pipeline by dotted path, mirroring Kedro's own resolver.
+  '''Load a pipeline by dotted path, mirroring Kedro's own resolver.
 
   Args:
     pipeline_name: A dotted path such as ``'package.module:object'`` or
@@ -164,5 +165,5 @@ def load_pipeline_object(pipeline_name: str) -> Any:
 
   Returns:
     The resolved object.
-  """
+  '''
   return load_obj(pipeline_name)

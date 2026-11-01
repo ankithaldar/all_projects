@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Process-wide Spark session lifecycle.
+'''Process-wide Spark session lifecycle.
 
 Three components in this framework need a Spark session: the registry's
 fit/apply loop, the modelling nodes, and the BigQuery-Spark dataset adapter.
@@ -27,7 +27,7 @@ Three properties are load-bearing and worth stating explicitly:
   validated at construction, so a missing ``model_key`` fails here with a
   message naming it, rather than as a ``KeyError`` from a frame several layers
   away.
-"""
+'''
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def get_spark_session(
   conf_dir: str | Path | None = None,
   conf_env: str | None = None,
 ) -> tuple[Any, Any]:
-  """Build or reuse the process-wide Spark session.
+  '''Build or reuse the process-wide Spark session.
 
   The first call in a process creates the session and applies the BigQuery
   connector configuration. Every subsequent call returns the same object and, if
@@ -105,7 +105,8 @@ def get_spark_session(
   Raises:
     MissingParameterError: If a mandatory parameter is absent.
     SparkTuningConfigNotFoundError: If tuning is requested but no document exists.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
   from pyspark.sql import SparkSession  # noqa: PLC0415 - deferred so the core imports without pyspark
 
   merged = dict(params or {})
@@ -163,14 +164,14 @@ def get_spark_session(
 
 
 def refresh_access_token(session: Any) -> str | None:
-  """Force-refresh the BigQuery connector credential on a live session.
+  '''Force-refresh the BigQuery connector credential on a live session.
 
   Args:
     session: The live ``SparkSession``.
 
   Returns:
     The new token, or ``None`` when hosted-platform mode is off.
-  """
+  '''
   token = _fetch_access_token()
   if not token:
     return None
@@ -179,12 +180,12 @@ def refresh_access_token(session: Any) -> str | None:
 
 
 def _maybe_refresh_token(session: Any, params: dict[str, Any]) -> None:
-  """Refresh the connector token on an existing session when it is stale.
+  '''Refresh the connector token on an existing session when it is stale.
 
   Args:
     session: The live ``SparkSession``.
     params: The merged run parameters.
-  """
+  '''
   if not resolve_environment(params).is_hosted:
     return
   key = str(session.sparkContext.applicationId)
@@ -198,20 +199,20 @@ def _maybe_refresh_token(session: Any, params: dict[str, Any]) -> None:
 
 
 def _validate_session_params(params: dict[str, Any]) -> None:
-  """Assert that every mandatory session parameter is present.
+  '''Assert that every mandatory session parameter is present.
 
   Args:
     params: The merged run parameters.
 
   Raises:
     MissingParameterError: If a mandatory key is absent.
-  """
+  '''
   for key in _MANDATORY_PARAMS:
     require(params, key, stage='get_spark_session')
 
 
 def _is_hosted(value: Any) -> bool:
-  """Interpret the hosted-environment flag, which arrives as a string or a bool.
+  '''Interpret the hosted-environment flag, which arrives as a string or a bool.
 
   Args:
     value: The raw flag.
@@ -223,16 +224,16 @@ def _is_hosted(value: Any) -> bool:
     ConfigurationError: If the value is not recognisable as a boolean. An
       unrecognised value is rejected rather than read as false, because the
       credential path chosen on a misread flag fails later and somewhere unrelated.
-  """
+  '''
   return as_flag(value, default=False, key=constants.ENV_IS_HOSTED)
 
 
 def _fetch_access_token() -> str:
-  """Shell out to the cloud SDK for a short-lived access token.
+  '''Shell out to the cloud SDK for a short-lived access token.
 
   Raises:
     SparkSessionError: If the token cannot be obtained.
-  """
+  '''
   try:
     token = subprocess.getoutput('gcloud auth application-default print-access-token').strip()
   except Exception as error:  # noqa: BLE001 - defensive
@@ -247,7 +248,7 @@ def _fetch_access_token() -> str:
 
 
 def _load_spark_conf(conf_dir: str | Path | None, conf_env: str | None) -> dict[str, str]:
-  """Load the Spark tuning document for an environment, with a base fallback.
+  '''Load the Spark tuning document for an environment, with a base fallback.
 
   Args:
     conf_dir: The configuration root. Defaults to ``<project>/conf``.
@@ -259,7 +260,7 @@ def _load_spark_conf(conf_dir: str | Path | None, conf_env: str | None) -> dict[
   Raises:
     SparkTuningConfigNotFoundError: If no document exists for the environment or
       for ``base``.
-  """
+  '''
   import yaml  # noqa: PLC0415
 
   root = Path(conf_dir) if conf_dir else Path(__file__).resolve().parents[3] / 'conf'

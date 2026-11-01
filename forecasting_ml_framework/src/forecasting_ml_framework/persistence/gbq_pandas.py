@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""pandas-gbq dataset adapter for the production score table.
+'''pandas-gbq dataset adapter for the production score table.
 
 The score table is the framework's most important external contract, so its
 adapter is the one that most needs to be explicit about its write semantics.
@@ -9,7 +9,7 @@ idempotent: the same input produces the same scores, and re-running a day
 replaces that day's table instead of appending to it. Combined with
 ``create_replace`` on the scoreset, the entire scoring half can be re-run safely
 at any time.
-"""
+'''
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ DEFAULT_SAVE_ARGS: dict[str, Any] = {'project_id': None, 'location': None, 'cred
 
 
 class GBQTableDataSet(AbstractDataset):
-  """A pandas ``DataFrame`` bound to a BigQuery table via ``pandas-gbq``."""
+  '''A pandas ``DataFrame`` bound to a BigQuery table via ``pandas-gbq``.'''
 
   def __init__(
     self,
@@ -42,7 +42,7 @@ class GBQTableDataSet(AbstractDataset):
     load_args: dict[str, Any] | None = None,
     save_args: dict[str, Any] | None = None,
   ) -> None:
-    """Validate the configuration eagerly; perform no I/O.
+    '''Validate the configuration eagerly; perform no I/O.
 
     Args:
       table_name: The destination table.
@@ -55,7 +55,8 @@ class GBQTableDataSet(AbstractDataset):
     Raises:
       DatasetError: If mandatory configuration is absent or ``if_exists`` is
         unsupported.
-    """
+    '''
+# pylint: disable=import-outside-toplevel
     for key, value in (('table_name', table_name), ('dataset', dataset), ('project_id', project_id)):
       if not value:
         raise DatasetError(f"Missing required configuration '{key}'")
@@ -75,11 +76,11 @@ class GBQTableDataSet(AbstractDataset):
       )
 
   def _describe(self) -> dict[str, Any]:
-    """Return every configuration key.
+    '''Return every configuration key.
 
     Returns:
       A mapping suitable for the run log.
-    """
+    '''
     return {
       'table_name': self._table_name,
       'dataset': self._dataset,
@@ -90,19 +91,19 @@ class GBQTableDataSet(AbstractDataset):
 
   @property
   def qualified_name(self) -> str:
-    """Return the fully-qualified table name.
+    '''Return the fully-qualified table name.
 
     Returns:
       ``project.dataset.table``.
-    """
+    '''
     return f'{self._project_id}.{self._dataset}.{self._table_name}'
 
   def _load(self) -> Any:
-    """Read the score table.
+    '''Read the score table.
 
     Returns:
       A pandas ``DataFrame``.
-    """
+    '''
     import pandas_gbq  # noqa: PLC0415
 
     LOGGER.info('Reading score table', extra={'table': self.qualified_name})
@@ -115,11 +116,11 @@ class GBQTableDataSet(AbstractDataset):
     )
 
   def _save(self, data: Any) -> None:
-    """Write the score table with the configured disposition.
+    '''Write the score table with the configured disposition.
 
     Args:
       data: The pandas ``DataFrame`` to write.
-    """
+    '''
     if data is None or getattr(data, 'empty', True):
       LOGGER.warning('Skipping save of an empty score table', extra={'table': self.qualified_name})
       return
@@ -137,7 +138,7 @@ class GBQTableDataSet(AbstractDataset):
 
 
 def _pick(configured: Any, declared: Any) -> Any:
-  """Return the first value that was actually supplied.
+  '''Return the first value that was actually supplied.
 
   The defaults are merged into ``load_args`` / ``save_args`` at construction, so
   every key *exists* and ``args.get(key, declared)`` therefore never reaches its
@@ -157,5 +158,5 @@ def _pick(configured: Any, declared: Any) -> Any:
 
   Returns:
     ``configured`` when it is not ``None``, otherwise ``declared``.
-  """
+  '''
   return declared if configured is None else configured

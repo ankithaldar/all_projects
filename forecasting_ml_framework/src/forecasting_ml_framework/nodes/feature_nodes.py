@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Feature-engineering nodes.
+'''Feature-engineering nodes.
 
 These are the pipeline's application services. Each one is a pure function from
 persisted datasets to persisted datasets, which is what allows the four pipelines
@@ -16,7 +16,7 @@ two places with no compiler to catch a miss.
 **Four new assertions** enforce what a only observed. the
 framework printed every count and asserted none, so a routine that dropped 40 % of
 a frame produced a complete, plausible and entirely wrong model with no alert.
-"""
+'''
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def load_input_data(
   global_params: dict[str, Any],
   input_frame: Any,
 ) -> tuple[Any, Metadata]:
-  """Validate the input frame, coerce indicators, and construct the contract.
+  '''Validate the input frame, coerce indicators, and construct the contract.
 
   The label is *derived upstream in SQL*, not present in the feature feed. That
   separation is architecturally significant: the node's only job is to assert the
@@ -66,7 +66,7 @@ def load_input_data(
   Raises:
     DataContractError: If a declared column is absent from the frame.
     TargetCardinalityError: If the target has fewer than two distinct values.
-  """
+  '''
   target_col = require(global_params, 'target_col', stage='load_input_data')
   role_map = {
     constants.ROLE_NUMERICAL: list(parameters.get(constants.ROLE_NUMERICAL, []) or []),
@@ -132,7 +132,7 @@ def split_frame(
   test_split_ratio: float | None,
   seed: int = 10,
 ) -> tuple[Any, Metadata, Any, Metadata]:
-  """Split the frame at the Spark level, with exact partition coverage.
+  '''Split the frame at the Spark level, with exact partition coverage.
 
   For a classification target the test frame is the ``left_anti`` complement of
   the train frame on the identifier columns, so no row can be in both and none is
@@ -163,7 +163,7 @@ def split_frame(
 
   Raises:
     ValueError: If both ratios are supplied and do not sum to one.
-  """
+  '''
   train_ratio, test_ratio = _resolve_ratios(training_split_ratio, test_split_ratio)
   row_count = frame.count()
   LOGGER.info(
@@ -208,7 +208,7 @@ def split_frame(
 
 
 def sampling_node(frame: Any, metadata: Metadata, sampling_config: dict[str, Any]) -> tuple[Any, Metadata]:
-  """Resample the frame and compute the imbalance statistics.
+  '''Resample the frame and compute the imbalance statistics.
 
   This node does double duty, and the second role is the more important one: it
   is the **origin of the imbalance statistics** that later drive both weight
@@ -228,14 +228,14 @@ def sampling_node(frame: Any, metadata: Metadata, sampling_config: dict[str, Any
 
   Raises:
     DataContractError: If the target is absent.
-  """
+  '''
   return _apply_sampling(frame, metadata, sampling_config, compute_weights=True)
 
 
 def sampling_node_regression(
   frame: Any, metadata: Metadata, sampling_config: dict[str, Any]
 ) -> tuple[Any, Metadata]:
-  """Resample a continuous-target frame.
+  '''Resample a continuous-target frame.
 
   It is the same function with a flag, so the two variants cannot drift
   apart.
@@ -247,12 +247,12 @@ def sampling_node_regression(
 
   Returns:
     A two-tuple of the sampled frame and the contract.
-  """
+  '''
   return _apply_sampling(frame, metadata, sampling_config, compute_weights=False)
 
 
 def build_registry(global_params: dict[str, Any], data_prep_config: list[dict[str, Any]]) -> Registry:
-  """Instantiate the configured transform chain.
+  '''Instantiate the configured transform chain.
 
   The configuration shape is a **list of single-key dictionaries**, and that is
   the enabling decision. A mapping could express neither ordering nor repetition;
@@ -268,7 +268,7 @@ def build_registry(global_params: dict[str, Any], data_prep_config: list[dict[st
 
   Raises:
     ValueError: If a registration block is not a single-key mapping.
-  """
+  '''
   registry = Registry()
   for entry in data_prep_config or []:
     for key, block in entry.items():
@@ -287,7 +287,7 @@ def fit_registry(
   parameters: dict[str, Any],
   quality: QualityPolicy | None = None,
 ) -> tuple[Registry, Any, Metadata]:
-  """Fit the transform chain and apply the output conventions.
+  '''Fit the transform chain and apply the output conventions.
 
   Responsibilities beyond delegation are three **cross-cutting conventions**:
   narrowing the schema before the driver boundary, synthesising a report date,
@@ -307,7 +307,7 @@ def fit_registry(
 
   Raises:
     DataContractError: If the projection would drop a declared feature.
-  """
+  '''
   policy = quality or QualityPolicy()
   observed_before = frame.count()
   LOGGER.info('Fitting the registry', extra={'rows': observed_before})
@@ -344,7 +344,7 @@ def apply_registry(
   registry: Registry,
   quality: QualityPolicy | None = None,
 ) -> tuple[Any, Metadata]:
-  """Apply the persisted transform chain and the output conventions.
+  '''Apply the persisted transform chain and the output conventions.
 
   In production the target column is deliberately withheld, so the label can
   never leak into the scoreset materialisation. That is a genuine
@@ -366,7 +366,7 @@ def apply_registry(
       scoring path enforces the same contract as the fitting path, because a
       partial feature set scored and published as a whole one is the most
       consequential silent failure the framework has.
-  """
+  '''
   policy = quality or QualityPolicy()
   observed_before = frame.count()
   run_mode = parameters.get('run_mode', 'prod')
@@ -407,7 +407,7 @@ def apply_output_conventions(
   parameters: dict[str, Any],
   include_target: bool,
 ) -> tuple[Any, Metadata]:
-  """Apply the two shared cross-cutting conventions to a frame.
+  '''Apply the two shared cross-cutting conventions to a frame.
 
   **The report-date convention.** If none of ``rpt_dt``, ``report_period`` or
   ``create_date`` is present among the identifiers, a synthetic report date is
@@ -446,7 +446,7 @@ def apply_output_conventions(
 
   Returns:
     A two-tuple of the modified frame and the modified contract.
-  """
+  '''
   del include_target
   if not any(column in frame.columns for column in constants.CANONICAL_DATE_COLUMNS):
     if not any(column in metadata.id_cols for column in constants.CANONICAL_DATE_COLUMNS):
@@ -476,7 +476,7 @@ def apply_output_conventions(
 
 
 def merge_registries(*registries: Registry) -> Registry:
-  """Concatenate registries into one chain.
+  '''Concatenate registries into one chain.
 
   Exposed as a node for a pipeline that composes its chain from separately
   defined fragments. A defined this and wired it into nothing.
@@ -486,7 +486,7 @@ def merge_registries(*registries: Registry) -> Registry:
 
   Returns:
     A new registry.
-  """
+  '''
   merged = Registry.merge(*registries)
   LOGGER.info('Merged registries', extra={'routines': [r.name for r in merged.get_routines()]})
   return merged
@@ -499,7 +499,7 @@ def transform_frame(
   parameters: dict[str, Any],
   apply_only: bool = False,
 ) -> tuple[Any, Metadata]:
-  """Fit-and-apply in a single call, optionally skipping the fit.
+  '''Fit-and-apply in a single call, optionally skipping the fit.
 
   The production pipelines use ``fit_registry`` and ``apply_registry`` as two
   distinct stages, because scoring must apply the *persisted* registry rather
@@ -514,7 +514,7 @@ def transform_frame(
 
   Returns:
     A two-tuple of the transformed frame and the enriched contract.
-  """
+  '''
   frame, metadata = registry.transform(frame, metadata, parameters, apply_only=apply_only)
   frame, metadata = apply_output_conventions(frame, metadata, parameters, include_target=True)
   return frame, metadata
@@ -529,7 +529,7 @@ def _apply_sampling(
   sampling_config: dict[str, Any],
   compute_weights: bool,
 ) -> tuple[Any, Metadata]:
-  """Resample a frame and optionally compute imbalance statistics.
+  '''Resample a frame and optionally compute imbalance statistics.
 
   Args:
     frame: The input frame.
@@ -543,7 +543,7 @@ def _apply_sampling(
 
   Raises:
     DataContractError: If the target column is absent.
-  """
+  '''
   target_col = metadata.target_col
   if target_col is None or target_col not in frame.columns:
     raise DataContractError(
@@ -589,7 +589,7 @@ def _apply_sampling(
 
 
 def _distribution(frame: Any, stratum_col: str, target_col: str) -> dict[str, dict[str, int]]:
-  """Measure the stratum and target distributions of a frame.
+  '''Measure the stratum and target distributions of a frame.
 
   Args:
     frame: The Spark frame.
@@ -598,7 +598,7 @@ def _distribution(frame: Any, stratum_col: str, target_col: str) -> dict[str, di
 
   Returns:
     A mapping of column name to its value counts.
-  """
+  '''
   measured: dict[str, dict[str, int]] = {}
   # A set, so the case where the sampling stratum IS the target measures it once
   # rather than twice.
@@ -609,7 +609,7 @@ def _distribution(frame: Any, stratum_col: str, target_col: str) -> dict[str, di
 
 
 def _attach_imbalance_statistics(frame: Any, metadata: Metadata, target_col: str) -> None:
-  """Compute and attach the population rate and the class weights.
+  '''Compute and attach the population rate and the class weights.
 
   The precision guard matters more than it looks. Rounding a rare-event rate of
   0.00043 to two places yields ``0.0``, which would silently disable calibration
@@ -621,7 +621,7 @@ def _attach_imbalance_statistics(frame: Any, metadata: Metadata, target_col: str
     frame: The input frame.
     metadata: The contract to attach to.
     target_col: The target column.
-  """
+  '''
   distinct = frame.select(target_col).distinct().count()
   if distinct == 2:
     total = frame.count()
@@ -663,7 +663,7 @@ def _attach_imbalance_statistics(frame: Any, metadata: Metadata, target_col: str
 
 
 def _compute_fractions(frame: Any, stratum_col: str, sampling_type: str) -> dict[Any, float]:
-  """Compute a per-stratum sampling fraction.
+  '''Compute a per-stratum sampling fraction.
 
   ``'Equal'`` is a class-balancing resampling: the dominant stratum gets the
   smallest fraction, so stratum sizes converge toward equality. ``'Uniform'`` is
@@ -676,7 +676,7 @@ def _compute_fractions(frame: Any, stratum_col: str, sampling_type: str) -> dict
 
   Returns:
     A mapping of stratum value to sampling fraction.
-  """
+  '''
   counts = frame.groupBy(sf.col(stratum_col).alias(stratum_col)).count()
   total = frame.count()
   with_total = counts.withColumn('__total', sf.lit(total))
@@ -689,7 +689,7 @@ def _compute_fractions(frame: Any, stratum_col: str, sampling_type: str) -> dict
 
 
 def _rounded_rate(numerator: int, denominator: int) -> float:
-  """Compute a rate with a rare-event precision guard.
+  '''Compute a rate with a rare-event precision guard.
 
   Args:
     numerator: The numerator.
@@ -697,7 +697,7 @@ def _rounded_rate(numerator: int, denominator: int) -> float:
 
   Returns:
     The rate.
-  """
+  '''
   rate = float(np.round(numerator / denominator, 2))
   if rate < 0.1:
     rate = float(np.round(numerator / denominator, 4))
@@ -705,7 +705,7 @@ def _rounded_rate(numerator: int, denominator: int) -> float:
 
 
 def _resolve_ratios(training_split_ratio: float | None, test_split_ratio: float | None) -> tuple[float, float]:
-  """Resolve the two split ratios, allowing either to be omitted.
+  '''Resolve the two split ratios, allowing either to be omitted.
 
   Args:
     training_split_ratio: The training fraction, or ``None``.
@@ -716,7 +716,7 @@ def _resolve_ratios(training_split_ratio: float | None, test_split_ratio: float 
 
   Raises:
     ValueError: If both are supplied and do not sum to one, or if neither is.
-  """
+  '''
   has_train = training_split_ratio not in (None, 0, 0.0, False)
   has_test = test_split_ratio not in (None, 0, 0.0, False)
   if not has_train and not has_test:
@@ -739,7 +739,7 @@ def _assert_declared_columns_present(
   identifiers: list[str],
   target_col: str | None,
 ) -> None:
-  """Assert that every declared column exists in the frame.
+  '''Assert that every declared column exists in the frame.
 
   Args:
     frame: The input frame.
@@ -750,7 +750,7 @@ def _assert_declared_columns_present(
   Raises:
     TargetCardinalityError: If the target is missing from a labelled frame.
     DataContractError: If a declared feature or identifier is absent.
-  """
+  '''
   available = set(frame.columns)
   missing = [column for column in [*features, *identifiers] if column not in available]
   if missing:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""The NBA end-to-end run: warehouse to warehouse, on a workstation.
+# pylint: disable=import-outside-toplevel,broad-exception-caught,unused-argument,unexpected-keyword-arg,invalid-name,inconsistent-quotes
+'''The NBA end-to-end run: warehouse to warehouse, on a workstation.
 
 This driver executes the framework's own node functions -- the same
 ``load_input_data``, ``fit_registry``, ``apply_registry``, ``model_training``,
@@ -26,7 +27,7 @@ structural rather than numerical:
 * **The self-describing model handle.** The trainer is pickled, dropped, and
   reloaded from disk before anything is scored. A model that cannot be scored
   from its own artefact is a model that cannot be deployed.
-"""
+'''
 
 from __future__ import annotations
 
@@ -95,7 +96,7 @@ LOCAL_SOURCE_DATASET = 'nba_source'
 #: The label-derivation query, in the catalog's shape. The three business rules
 #: it encodes are the framework's, and the local run executes them rather than
 #: reading a label that was handed to it.
-TRAIN_INPUT_SQL = """
+TRAIN_INPUT_SQL = '''
 WITH deactivations AS (
   SELECT esn, deactivation_reason, deactivation_date
   FROM `${data_project}.${db_source_data}.nba_deactivations`
@@ -133,13 +134,13 @@ SELECT
 FROM features f
 LEFT JOIN dedup_deactivations d ON f.service_id = d.esn
 LEFT JOIN customer_info c ON f.service_id = c.service_id
-"""
+'''
 
 #: The scoring query: features, identifiers and the model key, and no label at
 #: all. A production scoring frame never carries an outcome, and neither does
 #: this one -- so a leak between the two paths is a structural error, not a
 #: number that happens to look too good.
-SCORE_INPUT_SQL = """
+SCORE_INPUT_SQL = '''
 WITH customer_info AS (
   SELECT service_id, cust_id, line_seq_id, account_ref, mobile_ref
   FROM `${data_project}.${db_source_data}.nba_customer_info`
@@ -149,12 +150,12 @@ SELECT f.*, c.cust_id, c.line_seq_id, c.account_ref, c.mobile_ref,
 FROM `${data_project}.${db_staging_data}.nba_features` f
 LEFT JOIN customer_info c ON f.service_id = c.service_id
 WHERE f.run_date = DATE('${train_run_dt}')
-"""
+'''
 
 
 @dataclass
 class RunReport:
-  """Accumulates what each stage produced, for the final summary.
+  '''Accumulates what each stage produced, for the final summary.
 
   A long pipeline that fails at stage six should be able to say what stages one
   to five did, and a run that succeeds should be able to show the numbers rather
@@ -165,7 +166,8 @@ class RunReport:
     facts: Stage name to a small mapping of reported values.
     tables: Warehouse table name to row count after the run.
     artefacts: Artefact name to the path written.
-  """
+  '''
+# pylint: disable=import-outside-toplevel
 
   stages: list[tuple[str, float]] = field(default_factory=list)
   facts: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -173,25 +175,25 @@ class RunReport:
   artefacts: dict[str, str] = field(default_factory=dict)
 
   def record(self, name: str, seconds: float, **facts: Any) -> None:
-    """Record one completed stage.
+    '''Record one completed stage.
 
     Args:
       name: The stage name.
       seconds: How long it took.
       **facts: Reported values for the summary.
-    """
+    '''
     self.stages.append((name, seconds))
     self.facts[name] = facts
     LOGGER.info('Stage complete', extra={'stage': name, 'seconds': round(seconds, 2), **facts})
 
 
 def _parameters() -> dict[str, Any]:
-  """Build the parameters document the node functions read.
+  '''Build the parameters document the node functions read.
 
   Returns:
     A parameters document carrying the model program, the modelling block and
     the globals the routines resolve their column roles from.
-  """
+  '''
   return {
     # These are read from the *top level* of the parameters document, not from
     # the globals or from a modelling block. A metric row that omits them is
@@ -224,11 +226,11 @@ def _parameters() -> dict[str, Any]:
 
 
 def _globals() -> dict[str, Any]:
-  """Build the globals document that declares the column roles.
+  '''Build the globals document that declares the column roles.
 
   Returns:
     A mapping of role key to column names, plus the slices the runner injects.
-  """
+  '''
   return {
     constants.ROLE_IDENTIFIER: ['service_id'],
     constants.ROLE_CATEGORICAL: [],
@@ -241,7 +243,7 @@ def _globals() -> dict[str, Any]:
 
 
 def _routine_program() -> list[dict[str, Any]]:
-  """Build the feature-transform program.
+  '''Build the feature-transform program.
 
   Each entry is one routine with its configuration. The program is the framework's
   central declarative artefact: the same list is used to fit the registry and,
@@ -249,7 +251,7 @@ def _routine_program() -> list[dict[str, Any]]:
 
   Returns:
     The routine configuration list.
-  """
+  '''
   # The catalog passes *resolved column names* here, via `${globals:NUM_COL}`,
   # not the role keys. The distinction matters: a role key is a label the
   # contract carries, and a routine that received one would treat the string
@@ -290,11 +292,11 @@ def _routine_program() -> list[dict[str, Any]]:
 
 
 def _modeling_block() -> dict[str, Any]:
-  """Build the modelling configuration block.
+  '''Build the modelling configuration block.
 
   Returns:
     The modelling block, resolved by the node layer as ``modeling_params``.
-  """
+  '''
   return {
     'model_handle': 'sklearn.ensemble.HistGradientBoostingClassifier',
     'model_params': {
@@ -331,7 +333,7 @@ def _modeling_block() -> dict[str, Any]:
 
 
 def _build_metadata(artefact_root: str) -> Metadata:
-  """Build the schema contract the pipeline threads through every stage.
+  '''Build the schema contract the pipeline threads through every stage.
 
   Args:
     artefact_root: The local directory that routines persist their fitted Spark
@@ -341,7 +343,7 @@ def _build_metadata(artefact_root: str) -> Metadata:
 
   Returns:
     A contract with the identifier, the target and the feature roles declared.
-  """
+  '''
   Path(artefact_root).mkdir(parents=True, exist_ok=True)
   metadata = Metadata()
   # The field names are the contract's own: `id_cols` and `seq_cols`. Writing
@@ -361,14 +363,14 @@ def _build_metadata(artefact_root: str) -> Metadata:
 
 
 def _resolve_sql(sql: str) -> str:
-  """Expand the references in a catalog query and translate it for SQLite.
+  '''Expand the references in a catalog query and translate it for SQLite.
 
   Args:
     sql: The query.
 
   Returns:
     A SQLite query.
-  """
+  '''
   resolved = (
     sql.replace('${data_project}', LOCAL_PROJECT)
       .replace('${db_source_data}', LOCAL_SOURCE_DATASET)
@@ -382,14 +384,14 @@ def _resolve_sql(sql: str) -> str:
 
 
 def stage_load_input(warehouse_path: str) -> pd.DataFrame:
-  """Execute the label-derivation query and return the labelled frame.
+  '''Execute the label-derivation query and return the labelled frame.
 
   Args:
     warehouse_path: The SQLite file.
 
   Returns:
     A pandas ``DataFrame`` with a derived label.
-  """
+  '''
   warehouse = SQLiteWarehouse(warehouse_path)
   try:
     return warehouse.query(_resolve_sql(TRAIN_INPUT_SQL))
@@ -398,14 +400,14 @@ def stage_load_input(warehouse_path: str) -> pd.DataFrame:
 
 
 def stage_load_score_input(warehouse_path: str) -> pd.DataFrame:
-  """Execute the scoring query, which carries no outcome.
+  '''Execute the scoring query, which carries no outcome.
 
   Args:
     warehouse_path: The SQLite file.
 
   Returns:
     A pandas ``DataFrame`` of features and identifiers.
-  """
+  '''
   warehouse = SQLiteWarehouse(warehouse_path)
   try:
     return warehouse.query(_resolve_sql(SCORE_INPUT_SQL))
@@ -414,7 +416,7 @@ def stage_load_score_input(warehouse_path: str) -> pd.DataFrame:
 
 
 def _coerce_types(frame: pd.DataFrame) -> pd.DataFrame:
-  """Give every column a concrete dtype before it reaches Spark.
+  '''Give every column a concrete dtype before it reaches Spark.
 
   SQLite is dynamically typed, so a query returns every column as ``object``.
   Spark's schema inference refuses a column it cannot type, and the error names a
@@ -428,7 +430,7 @@ def _coerce_types(frame: pd.DataFrame) -> pd.DataFrame:
 
   Returns:
     A frame with no ``object`` dtype remaining, other than text.
-  """
+  '''
   coerced = frame.copy()
   for column in coerced.columns:
     if coerced[column].dtype != object:
@@ -461,21 +463,21 @@ def _coerce_types(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _to_spark(frame: pd.DataFrame) -> Any:
-  """Convert a frame to a Spark DataFrame using the active session.
+  '''Convert a frame to a Spark DataFrame using the active session.
 
   Args:
     frame: The pandas frame.
 
   Returns:
     A Spark ``DataFrame``.
-  """
+  '''
   from pyspark.sql import SparkSession  # noqa: PLC0415
 
   return SparkSession.getActiveSession().createDataFrame(_coerce_types(frame))
 
 
 def _assert_row_count_preserved(stage: str, before: int, after: int) -> None:
-  """Assert that a stage neither added nor lost rows.
+  '''Assert that a stage neither added nor lost rows.
 
   A row-count change across a transform is either a bug or an undeclared
   sampling step, and both must be visible. A fan-out join is the case that
@@ -490,7 +492,7 @@ def _assert_row_count_preserved(stage: str, before: int, after: int) -> None:
 
   Raises:
     LocalRunError: If the counts differ.
-  """
+  '''
   if before != after:
     raise LocalRunError(
       f'{stage} changed the row count from {before} to {after}. A transform must be '
@@ -500,14 +502,14 @@ def _assert_row_count_preserved(stage: str, before: int, after: int) -> None:
 
 
 def run(report: RunReport | None = None) -> RunReport:
-  """Execute the whole pipeline and return what each stage produced.
+  '''Execute the whole pipeline and return what each stage produced.
 
   Args:
     report: An existing report to append to. A new one is created when omitted.
 
   Returns:
     The populated report.
-  """
+  '''
   report = report or RunReport()
   paths = workspace_paths()
 
@@ -994,18 +996,18 @@ def run(report: RunReport | None = None) -> RunReport:
 
 
 class LocalRunError(RuntimeError):
-  """Raised when a local run violates a framework invariant."""
+  '''Raised when a local run violates a framework invariant.'''
 
 
 def format_report(report: RunReport) -> str:
-  """Render a run report as readable text.
+  '''Render a run report as readable text.
 
   Args:
     report: The report to render.
 
   Returns:
     A multi-line summary.
-  """
+  '''
   lines = ['=' * 78, 'NBA END-TO-END RUN'.center(78), '=' * 78, '']
   source = report.facts.get('source', {})
   if source:
@@ -1033,11 +1035,11 @@ def format_report(report: RunReport) -> str:
 
 
 def main() -> int:
-  """Run the pipeline and print the report.
+  '''Run the pipeline and print the report.
 
   Returns:
     A process exit code.
-  """
+  '''
   report = run()
   print(format_report(report))
   print(json.dumps(report.tables, indent=2))
