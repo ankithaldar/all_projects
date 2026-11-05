@@ -110,12 +110,98 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   (`training_split_ratio` / `test_split_ratio`,
   `stratify_col`, `random_state`).
 
+## Model registry (`registry_params`)
+
+Model registry hooks live in base `parameters.yml` under
+`registry_params`. Every key is commented in place (strict per-key
+comments for every new key):
+
+- `tracking_uri` — MLflow tracking URI (`${oc.env:MLFLOW_TRACKING_URI,mlruns}`).
+- `registry_uri` — MLflow registry URI (`''` = no registry,
+  `${oc.env:MLFLOW_REGISTRY_URI,}`).
+- `model_name` — registered model name (e.g. `forecast_model`).
+- `alias` — MLflow alias to promote under (e.g. `champion`).
+- `promote_on_metric` — metric that must improve to promote
+  (e.g. `f1_weighted`; `''` = promote unconditionally).
+
+WARNING: promoting overwrites the alias target for consumers.
+The catalog placeholder `registry_model`
+(`kedro_datasets.pickle.PickleDataset`,
+`artifacts/models/registry_model.pkl`) gives Kedro a file-backed
+handle; the real backend is MLflow via the URIs above.
+
+## Batch scoring (`scoring_params`)
+
+Batch scoring lives under `scoring_params` (contract:
+`pipelines/scoring/pipeline.py` + `nodes.py`):
+
+- `input_dataset` — catalog input name (`scoring_input`).
+- `output_dataset` — catalog output name (`predictions`). **Chosen
+  wiring:** `predictions` to match the pipeline default — the
+  scoring pipeline hardcodes `outputs='predictions'` for
+  `write_predictions`, so `output_dataset: predictions` keeps
+  config and pipeline in sync. (Alternative `scoring_output` was
+  rejected: it would diverge from the pipeline's catalog write.)
+- `score_model_id` — model id to score with
+  (`${..global_params.score_model_id}`, single definition).
+- `batch_size` — rows per scoring batch (positive int, e.g. `1000`;
+  too large can OOM on wide feature sets).
+- `max_rows` — hard cap on rows scored per run (positive int, e.g.
+  `1000000`).
+- `max_cols` — hard cap on feature columns scored (positive int, e.g.
+  `1000`; guards against runaway one-hot expansions).
+- `model_path` — pickle path loaded via `FileModelLoader`
+  (e.g. `artifacts/models/model.pkl`; `''` = none).
+- `model_name` / `alias` — registry model name / MLflow alias for
+  registry load (e.g. `forecast_model` / `champion`; mirror
+  `registry_params.model_name` / `registry_params.alias`).
+- `id_cols` — identifier columns carried into the output
+  (e.g. `['id']`).
+- `feature_cols` — feature columns to score on (`null` = all except
+  id/target, or a list).
+- `task_type` — `classification` | `regression` (controls `proba`).
+
+Catalog entries: `scoring_input` / `predictions` (canonical, writable)
+plus legacy writable `scoring_output`
+(`kedro_datasets.pandas.ParquetDataset`, `artifacts/scoring/*.parquet`).
+SQL **inputs only** are read-only — `scoring_input_bq` /
+`scoring_input_athena` use only our
+`forecast_ml_framework.core.datasets.SQLQueryDataSet` /
+`SparkSQLDataSet` types with `${params:...}` interpolations, and their
+`save` raises `NotImplementedError` by design. The former
+`scoring_output_bq` / `scoring_output_athena` SQL entries were
+**removed as write targets** and replaced with writable
+`kedro_datasets.pandas.ParquetDataset` entries
+(`artifacts/scoring/output_{bq,athena}.parquet`); export to
+BigQuery/Athena in a separate writable step. No extra/swallowed keys
+are present on the SQL input entries — only documented keys
+(`type`, `project`, `dataset`, `table_name`, `sql`, `database`,
+plus the dataset's own documented params).
+
+## Infra hooks (`infra_params`)
+
+CI/infra hooks live under `infra_params`. Every leaf is an
+OmegaConf env-var placeholder (`${oc.env:...}`) — no bucket,
+project, dataset, cluster or database literal ever ships in YAML:
+
+- `gcp.project` (`GCP_PROJECT`), `gcp.bucket` (`GCP_BUCKET`),
+  `gcp.dataset` (`GCP_DATASET`), `gcp.cluster` (`GCP_CLUSTER`).
+- `aws.bucket` (`AWS_BUCKET`), `aws.database` (`AWS_DATABASE`).
+
+Set the env vars at runtime; credentials come from the cloud SDK
+environment (`GOOGLE_APPLICATION_CREDENTIALS` / `AWS_PROFILE`),
+never from YAML. Empty defaults mean unset — hooks must fail fast
+when a required env var is missing. All keys are Pydantic-compatible
+(`extra='allow'`) and OmegaConf-resolvable
+(`OmegaConf.resolve` leaves no `${...}` in parameters).
+
 ## Tests
 
 ```bash
 cd forecast_ml_framework
 PYTHONPATH=src python -m pytest tests/test_conf_omegaconf.py \
-  tests/test_catalog_params.py tests/test_loss_params.py -q
+  tests/test_catalog_params.py tests/test_loss_params.py \
+  tests/test_phase2_config.py -q
 ```
 
 `test_conf_omegaconf.py` loads base conf via OmegaConf and asserts
@@ -128,8 +214,8 @@ that are not installed).
 | File | `base` | `local` | `gcp` | `aws` |
 |---|---|---|---|---|
 | `variables.yml` | column registry (the definition) | — (inherits base) | — (inherits base) | — (inherits base) |
-| `parameters.yml` | all parameters (the definition) | minimal overrides (artifact store, MLflow, DVC, Spark) | — (inherits base) | — (inherits base) |
-| `catalog.yml` | all datasets (the definition) | `filepath` only -> `./data`, `./artifacts` | `filepath` only -> `gs://forecast-ml-artifacts/...` | `filepath` only -> `s3://forecast-ml-artifacts/...` |
+| `parameters.yml` | all parameters (the definition) incl. `registry_params` / `scoring_params` / `infra_params` | minimal overrides (artifact store, MLflow, DVC, Spark) | — (inherits base incl. new sections) | — (inherits base incl. new sections) |
+| `catalog.yml` | all datasets (the definition) incl. `scoring_input` / `scoring_output` / `scoring_*_bq` / `scoring_*_athena` / `registry_model` | `filepath` only -> `./data`, `./artifacts` | `filepath` only -> `gs://forecast-ml-artifacts/...` | `filepath` only -> `s3://forecast-ml-artifacts/...` |
 
 **Why only `catalog.yml` is overridden per env (gcp/aws):** the only
 thing that differs between environments is *where bytes live*

@@ -67,9 +67,17 @@ sampling_reg_params:
   stratify_col: ${..global_params.target_col}
 
 # --- Spark -> pandas conversion ----------------------------------------------
+# Code contract (core.spark_factory.check_pandas_limits /
+# SparkSessionFactory.to_pandas): max_rows_for_pandas is the guard
+# threshold; a frame above it raises an error directing the caller to
+# the Spark-native / distributed path (scoring_params.spark_scoring).
 pandas_conversion_params:
+  # convert_to_pandas: true = collect Spark frames to pandas locally (example: true).
   convert_to_pandas: true
+  # category_cols: columns to cast to category on conversion (example: []).
   category_cols: []
+  # max_rows_for_pandas: guard threshold in rows; above it conversion raises and directs to Spark (example: 5000000). Local pandas default cap; matches the code default in check_pandas_limits.
+  max_rows_for_pandas: 5000000
 
 # Evaluation: metric names are plain strings resolved by the
 # modeling worker. classification metrics: roc_auc |
@@ -574,13 +582,31 @@ cv_params:
 # spark.* keys are passed as SparkConf entries (shuffle partitions,
 # driver memory). jar_packages lists extra JDBC jars. WARNING:
 # driver.memory too small OOMs large shuffles.
+# Scaling for 100M rows (cloud Dataproc/EMR): dynamic allocation
+# scales executors to the shuffle workload, adaptive query execution
+# (AQE) coalesces oversized shuffle partitions, and shufflePartitions
+# is sized so one partition holds ~100k rows at 100M rows (1000
+# partitions) instead of ~500k at the old 200. Local 'local[*]' runs
+# inherit these values harmlessly (no cluster billing).
 # --- Spark --------------------------------------------------------------------
 spark_params:
   master: 'local[*]'
   app_name: 'forecast-ml-framework'
   spark:
-    spark.sql.shuffle.partitions: 200
+    # spark.sql.shuffle.partitions: shufflePartitions for 100M rows (example: 1000; ~100k rows/partition, AQE coalesces for small shuffles).
+    spark.sql.shuffle.partitions: 1000
+    # spark.driver.memory: driver heap for collectors (example: '4g'; raise on Dataproc/EMR for 100M-row shuffles).
     spark.driver.memory: '4g'
+    # spark.dynamicAllocation.enabled: dynamicAllocation scales executors with load (example: 'true' on Dataproc/EMR; needs an external shuffle service there).
+    spark.dynamicAllocation.enabled: 'true'
+    # spark.dynamicAllocation.minExecutors: executor floor while scaling (example: 2).
+    spark.dynamicAllocation.minExecutors: 2
+    # spark.dynamicAllocation.maxExecutors: executor ceiling; bounds cost at 100M rows (example: 20).
+    spark.dynamicAllocation.maxExecutors: 20
+    # spark.sql.adaptive.enabled: adaptive query execution right-sizes partitions at runtime (example: 'true').
+    spark.sql.adaptive.enabled: 'true'
+    # spark.sql.adaptive.coalescePartitions.enabled: AQE coalescePartitions merges small partitions (example: 'true').
+    spark.sql.adaptive.coalescePartitions.enabled: 'true'
   jar_packages: []
 
 # Artifact store: type local | gcp | s3 (env overlays override).
@@ -654,3 +680,148 @@ validation_params:
   fail_fast: false
   required_cols: []
   max_null_ratio: 0.5
+
+# --- Model registry (MLflow registry hooks) ----------------------------------
+# Code contract: registry worker reads registry_params to register a
+# trained model and (optionally) promote it under an alias.
+# registry_params.tracking_uri: MLflow tracking server / folder
+# (valid: local path like 'mlruns' or http(s) URI; env: MLFLOW_TRACKING_URI).
+# registry_params.registry_uri: registry backend ('' = no registry;
+# env: MLFLOW_REGISTRY_URI). registry_params.model_name: registered
+# model name (example: 'forecast_model'). registry_params.alias:
+# MLflow model alias to promote under (example: 'champion').
+# registry_params.promote_on_metric: metric that must improve to
+# promote (example: 'f1_weighted'; '' = promote unconditionally).
+# WARNING: promoting overwrites the alias target for consumers.
+# --- Model registry ---------------------------------------------------------
+registry_params:
+  # tracking_uri: MLflow tracking URI for the registry (example: 'mlruns').
+  tracking_uri: '${oc.env:MLFLOW_TRACKING_URI,mlruns}'
+  # registry_uri: MLflow registry URI ('' = no registry; example: '').
+  registry_uri: '${oc.env:MLFLOW_REGISTRY_URI,""}'
+  # model_name: registered model name (example: 'forecast_model').
+  model_name: 'forecast_model'
+  # alias: MLflow alias to promote under (example: 'champion').
+  alias: 'champion'
+  # promote_on_metric: metric gating promotion (example: 'f1_weighted').
+  promote_on_metric: 'f1_weighted'
+
+# --- Batch scoring ------------------------------------------------------------
+# Code contract (pipelines/scoring/{pipeline,nodes}.py): scoring_params
+# is passed as params:scoring_params to every scoring node.
+# scoring_params.input_dataset: catalog dataset name to score
+# (example: 'scoring_input'; pipeline input is hardcoded to the same
+# catalog name 'scoring_input', so keep them in sync).
+# scoring_params.output_dataset: catalog dataset name for scored output.
+# CHOSEN WIRING (documented in conf/README): output_dataset is set to
+# 'predictions' to match the pipeline default -- the scoring pipeline
+# hardcodes outputs='predictions' for write_predictions, so a different
+# value (e.g. legacy 'scoring_output') would silently diverge from the
+# catalog write. 'scoring_output' remains in the catalog only as a
+# legacy writable parquet alias, NOT the pipeline output.
+# scoring_params.score_model_id: model id recorded on every output row
+# (defaults to global_params.score_model_id; OmegaConf interpolation).
+# scoring_params.batch_size: rows per scoring batch (positive int;
+# example: 1000; larger batches use more memory).
+# scoring_params.max_rows: hard cap on rows scored per run (positive
+# int; example: 1000000; rows beyond the cap are not scored). null =
+# unbounded: the Spark path (spark_scoring) scores every row; the
+# local pandas path is capped instead by
+# pandas_conversion_params.max_rows_for_pandas (default 5000000).
+# scoring_params.spark_scoring: Spark-native scoring switch.
+# spark_scoring.enabled: false = local pandas path (safe default,
+# no cluster); true = distributed Spark path via mapPartitions.
+# spark_scoring.partition_batch_size: rows per Spark partition
+# sub-batch (example: 10000; bounds per-task memory at 100M rows
+# and >500 features). Mirrored at scoring_params.partition_batch_size
+# (top-level) which the scoring worker also reads -- keep in sync.
+# scoring_params.max_cols: hard cap on feature columns scored
+# (positive int; example: 1000; guards against scoring on runaway
+# one-hot expansions).
+# scoring_params.model_path: pickle path loaded via FileModelLoader
+# (example: 'artifacts/models/model.pkl'; '' = no file model, fall
+# back to model_loader/model/model_handle or the registry below).
+# scoring_params.model_name: registered model name for registry load
+# (example: 'forecast_model'; mirrors registry_params.model_name;
+# '' = unused when model_path/loader is set).
+# scoring_params.alias: MLflow registry alias for registry load
+# (example: 'champion'; mirrors registry_params.alias; '' = unused).
+# scoring_params.id_cols: identifier columns carried into the output
+# (example: ['id']; default ['id'] in nodes.predict).
+# scoring_params.feature_cols: feature columns to score on
+# (example: null = every column except id_cols/target_col; a list
+# restricts scoring to those columns present in the input).
+# scoring_params.task_type: 'classification' (default) or
+# 'regression'; controls whether proba is populated.
+# WARNING: batch_size / max_rows / max_cols too large can OOM; too
+# small is slow but safe. model_path vs registry model_name/alias:
+# nodes._resolve_loader prefers an injected model_loader, then
+# model_path (FileModelLoader), then model_handle; registry loading
+# (RegistryModelLoader) is via serving/model_loader, wired by the
+# caller passing model_name/alias -- keep them in sync with
+# registry_params.
+# --- Batch scoring ------------------------------------------------------------
+scoring_params:
+  # input_dataset: catalog name of the scoring input (example: 'scoring_input').
+  input_dataset: 'scoring_input'
+  # output_dataset: catalog name of the scored output; 'predictions' matches the pipeline default (example: 'predictions').
+  output_dataset: 'predictions'
+  # score_model_id: model id to score with (example: '${..global_params.score_model_id}').
+  score_model_id: ${..global_params.score_model_id}
+  # batch_size: rows per scoring batch, positive int (example: 1000).
+  batch_size: 1000
+  # max_rows: maximum rows scored per run; null = unbounded Spark path, local pandas capped by pandas_conversion_params.max_rows_for_pandas (example: null).
+  max_rows: null
+  # partition_batch_size: rows per Spark partition sub-batch, top-level mirror of spark_scoring.partition_batch_size (example: 10000).
+  partition_batch_size: 10000
+  # spark_scoring: Spark-native scoring switch (example: {enabled: false, partition_batch_size: 10000}).
+  spark_scoring:
+    # enabled: false = local pandas path, safe default with no cluster billing (example: false; true = distributed Spark path).
+    enabled: false
+    # partition_batch_size: rows per Spark partition sub-batch, bounds per-task memory at 100M rows (example: 10000).
+    partition_batch_size: 10000
+  # max_cols: maximum feature columns scored, positive int (example: 1000).
+  max_cols: 1000
+  # model_path: pickle path loaded via FileModelLoader (example: 'artifacts/models/model.pkl'; '' = none).
+  model_path: ''
+  # model_name: registered model name for registry load (example: 'forecast_model'; mirrors registry_params.model_name).
+  model_name: 'forecast_model'
+  # alias: MLflow registry alias for registry load (example: 'champion'; mirrors registry_params.alias).
+  alias: 'champion'
+  # id_cols: identifier columns carried into the output (example: ['id']).
+  id_cols: ['id']
+  # feature_cols: feature columns to score on, null = all except id/target (example: null).
+  feature_cols: null
+  # task_type: classification or regression (example: 'classification').
+  task_type: 'classification'
+
+# --- Infra hooks ---------------------------------------------------------------
+# Code contract: CI/infra hooks read infra_params for cloud locations.
+# Every leaf is an OmegaConf env-var placeholder (${oc.env:VAR,default})
+# so no bucket/project/database literal ever ships in YAML. Set the
+# env vars at runtime; credentials themselves come from the cloud
+# SDK environment (GOOGLE_APPLICATION_CREDENTIALS / AWS_PROFILE),
+# never from YAML. infra_params.gcp.project: GCP project id
+# (env: GCP_PROJECT). infra_params.gcp.bucket: GCS bucket name
+# (env: GCP_BUCKET). infra_params.gcp.dataset: BigQuery dataset
+# (env: GCP_DATASET). infra_params.gcp.cluster: Dataproc/GKE cluster
+# (env: GCP_CLUSTER). infra_params.aws.bucket: S3 bucket name
+# (env: AWS_BUCKET). infra_params.aws.database: Athena database
+# (env: AWS_DATABASE). WARNING: empty defaults mean unset — hooks
+# must fail fast when a required env var is missing.
+# --- Infra hooks (all env-var placeholders, no secrets) -----------------------
+infra_params:
+  gcp:
+    # project: GCP project id from env (example: '${oc.env:GCP_PROJECT,""}').
+    project: '${oc.env:GCP_PROJECT,""}'
+    # bucket: GCS bucket name from env (example: '${oc.env:GCP_BUCKET,""}').
+    bucket: '${oc.env:GCP_BUCKET,""}'
+    # dataset: BigQuery dataset from env (example: '${oc.env:GCP_DATASET,""}').
+    dataset: '${oc.env:GCP_DATASET,""}'
+    # cluster: Dataproc/GKE cluster from env (example: '${oc.env:GCP_CLUSTER,""}').
+    cluster: '${oc.env:GCP_CLUSTER,""}'
+  aws:
+    # bucket: S3 bucket name from env (example: '${oc.env:AWS_BUCKET,""}').
+    bucket: '${oc.env:AWS_BUCKET,""}'
+    # database: Athena database from env (example: '${oc.env:AWS_DATABASE,""}').
+    database: '${oc.env:AWS_DATABASE,""}'

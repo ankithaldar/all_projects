@@ -1,0 +1,135 @@
+name: forecast-ml-ci
+
+# Quoted "on" so YAML 1.1 parsers (e.g. Python yaml.safe_load) keep the
+# literal string key instead of boolean True. GitHub Actions accepts it.
+"on":
+  push:
+    paths:
+      - forecast_ml_framework/**
+      - .github/workflows/forecast-ml-ci.yml
+      - .pylintrc
+  pull_request:
+    paths:
+      - forecast_ml_framework/**
+      - .github/workflows/forecast-ml-ci.yml
+      - .pylintrc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forecast-ml-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+          cache-dependency-path: forecast_ml_framework/uv.lock
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies
+        working-directory: forecast_ml_framework
+        run: uv sync --frozen
+
+      # .pylintrc lives at the repo root, not inside forecast_ml_framework/,
+      # so run from the root with an explicit --rcfile. pylint is not a
+      # project dependency, hence --with pylint. --fail-under=9.0 gates on
+      # the overall score (9.72/10 at introduction) without disabling any
+      # check from the root rcfile.
+      - name: Lint with pylint
+        run: >-
+          uv run --project forecast_ml_framework --with pylint
+          pylint --rcfile=.pylintrc --fail-under=9.0 forecast_ml_framework/src
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+          cache-dependency-path: forecast_ml_framework/uv.lock
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies
+        working-directory: forecast_ml_framework
+        run: uv sync --frozen
+
+      - name: Run tests
+        working-directory: forecast_ml_framework
+        run: uv run pytest -q
+
+  demo:
+    name: demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+          cache-dependency-path: forecast_ml_framework/uv.lock
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Sync dependencies
+        working-directory: forecast_ml_framework
+        run: uv sync --frozen
+
+      # Fast smoke instead of `kedro run --env local`: a full run needs
+      # catalog data files, while this proves the package imports and the
+      # pipeline registry resolves the expected pipelines.
+      - name: Registry / import smoke check
+        working-directory: forecast_ml_framework
+        run: >-
+          uv run python -c
+          "from forecast_ml_framework.pipeline_registry import register_pipelines;
+          pipelines = register_pipelines();
+          assert pipelines, 'no pipelines registered';
+          assert {'data', 'modeling', 'scoring'} <= set(pipelines), sorted(pipelines);
+          assert 'scoring' in pipelines, sorted(pipelines);
+          print('registered pipelines:', sorted(pipelines))"
+
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt check
+        # Runs fmt check on infra/; fails the job on unformatted .tf.
+        # Terraform is present via setup-terraform, so no
+        # continue-on-error is needed.
+        run: terraform fmt -check -recursive forecast_ml_framework/infra

@@ -5,12 +5,16 @@
 
 Endpoints: GET /health, POST /predict.
 
+Models come from an injected loader (preferred) or from the
+MLflow registry via explicit config or MODEL_* env vars.
+
 No auth or Docker is provided (out of scope for Phase 1).
 '''
 # pylint: disable=import-outside-toplevel, broad-exception-raised
 
 import logging
 import math
+import os
 
 try:
   from fastapi import FastAPI, HTTPException
@@ -148,18 +152,47 @@ def _predict(model, records):
   raise TypeError('model must have predict() or be callable')
 
 
-def create_app(model_loader):
-  '''Create FastAPI app with injected model loader.
+def _resolve_loader(model_loader, registry_uri, model_name, alias):
+  '''Resolve the effective loader, preferring injection.
+
+  Falls back to explicit registry config, then MODEL_*
+  environment variables. Errors are generic (no leak).
+  '''
+  if model_loader is not None:
+    return model_loader
+  registry_uri = registry_uri or os.environ.get('MODEL_REGISTRY_URI')
+  model_name = model_name or os.environ.get('MODEL_NAME')
+  alias = alias or os.environ.get('MODEL_ALIAS') or 'production'
+  if not model_name:
+    raise ValueError('model loader or registry config is required')
+  from forecast_ml_framework.serving.model_loader import (  # noqa: E501
+    RegistryModelLoader,
+  )
+  return RegistryModelLoader(registry_uri, model_name, alias=alias)
+
+
+def create_app(model_loader=None, registry_uri=None, model_name=None,
+               alias=None):
+  '''Create FastAPI app with injected or registry model loader.
 
   Args:
     model_loader: Callable returning a model, or a model.
+      Preferred when given (back-compat); registry config
+      and MODEL_* env vars are ignored in that case.
+    registry_uri: MLflow registry URI (or MODEL_REGISTRY_URI).
+    model_name: Registered model name (or MODEL_NAME).
+    alias: Registry alias (or MODEL_ALIAS, default
+      ``production``).
 
   Returns:
     Configured FastAPI application.
 
   Raises:
     ImportError: If fastapi or pydantic is not installed.
+    ValueError: If no loader or registry config is given.
   '''
+  model_loader = _resolve_loader(
+      model_loader, registry_uri, model_name, alias)
   if _IMPORT_ERROR is not None:
     raise ImportError(
       'fastapi and pydantic are required to serve: install them '
@@ -197,3 +230,22 @@ def create_app(model_loader):
     return PredictResponse(predictions=predictions)
 
   return app
+
+
+def create_app_from_registry(registry_uri, model_name,
+                             alias='production'):
+  '''Create app loading its model from the MLflow registry.
+
+  Args:
+    registry_uri: MLflow registry URI, or None for ambient.
+    model_name: Registered model name.
+    alias: Registry alias, default ``production``.
+
+  Returns:
+    Configured FastAPI application.
+  '''
+  from forecast_ml_framework.serving.model_loader import (  # noqa: E501
+    RegistryModelLoader,
+  )
+  loader = RegistryModelLoader(registry_uri, model_name, alias=alias)
+  return create_app(loader)

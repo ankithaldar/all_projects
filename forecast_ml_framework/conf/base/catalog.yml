@@ -322,3 +322,81 @@ shap_summary:
 # (filepath='artifacts/charts/<name>.png', save_args/overwrite).
 charts:
   type: 'kedro.io.MemoryDataset'
+
+# --- Batch scoring input/output (phase 2) -------------------------------------
+# scoring_input: batch scoring input frame.
+# Type: kedro_datasets.pandas.ParquetDataset. Names the catalog input
+# consumed by scoring_params.input_dataset (see parameters.yml).
+# WARNING: rows must carry the id + feature columns the model needs.
+scoring_input:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/scoring/input.parquet'
+
+# scoring_output: legacy writable batch scoring output frame.
+# Type: kedro_datasets.pandas.ParquetDataset (writable). NOT the
+# pipeline output: scoring_params.output_dataset is 'predictions'
+# (matches pipelines/scoring/pipeline.py outputs='predictions').
+# Kept as a writable alias only; new code should read/write
+# 'predictions'. Kept to avoid breaking existing references.
+scoring_output:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/scoring/output.parquet'
+
+# --- Batch scoring SQL sources (BigQuery / Athena via our SQL datasets) -------
+# scoring_input_bq: BigQuery batch scoring input.
+# Type: forecast_ml_framework.core.datasets.SQLQueryDataSet (our SQL
+# dataset, the only SQL type allowed in this catalog). SQL is trusted
+# config only; edit the FROM table + run_date per dataset. Credentials
+# come from GOOGLE_APPLICATION_CREDENTIALS, never from YAML.
+scoring_input_bq:
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'scoring_input'
+  sql: >
+    SELECT id FROM
+    `${params:etl_project}.${params:etl_dataset}.${params:etl_table}`
+    WHERE run_date = '${params:score_run_dt}'
+
+# scoring_output_bq: WRITABLE batch scoring output (BigQuery runs).
+# Type: kedro_datasets.pandas.ParquetDataset (writable). The former
+# SQLQueryDataSet entry was REMOVED as a write target: our core SQL
+# datasets are read-only (save raises NotImplementedError), so
+# presenting one as an output swallowed the write. Write scored
+# output via this parquet dataset (or the canonical 'predictions'
+# dataset); export to BigQuery in a separate, writable step.
+scoring_output_bq:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/scoring/output_bq.parquet'
+
+# scoring_input_athena: Athena batch scoring input (via Spark SQL).
+# Type: forecast_ml_framework.core.datasets.SparkSQLDataSet (our SQL
+# dataset). database names the Athena database; credentials come
+# from AWS_PROFILE / AWS env vars, never from YAML.
+scoring_input_athena:
+  type: 'forecast_ml_framework.core.datasets.SparkSQLDataSet'
+  database: '${params:db_staging_data}'
+  sql: >
+    SELECT id FROM scoring_input
+    WHERE run_date = '${params:score_run_dt}'
+
+# scoring_output_athena: WRITABLE batch scoring output (Athena runs).
+# Type: kedro_datasets.pandas.ParquetDataset (writable). The former
+# SparkSQLDataSet entry was REMOVED as a write target: our core SQL
+# datasets are read-only (save raises NotImplementedError), so
+# presenting one as an output swallowed the write. Write scored
+# output via this parquet dataset (or the canonical 'predictions'
+# dataset); export to Athena in a separate, writable step.
+scoring_output_athena:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/scoring/output_athena.parquet'
+
+# --- Model registry placeholder (phase 2) --------------------------------------
+# registry_model: registered model artifact placeholder.
+# Type: kedro_datasets.pickle.PickleDataset. Placeholder location for
+# the registry worker (registry_params in parameters.yml); the real
+# registry backend is MLflow (tracking_uri / registry_uri), this
+# entry only gives Kedro a file-backed handle for the artifact.
+registry_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/registry_model.pkl'

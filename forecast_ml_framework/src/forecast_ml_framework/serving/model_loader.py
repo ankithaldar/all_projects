@@ -4,7 +4,8 @@
 '''Model loaders for serving.
 
 File-based loading is supported in v1. The MLflow registry
-loader is a Phase 2 stub.
+loader loads ``models:/<name>@<alias>`` via the lazy mlflow
+sklearn/pyfunc entry points.
 
 Trust boundary: model files are trusted framework artifacts
 only. Pickle payloads are decoded with the restricted
@@ -17,9 +18,43 @@ rejected with ``ValueError`` instead of executing code.
 No auth or Docker is provided by this module.
 '''
 
+import logging
 import os
 
 from forecast_ml_framework.core.artifact_store import restricted_loads
+from forecast_ml_framework.registry.model_registry import (
+  _is_mlflow_exception, validate_alias, validate_model_name,
+  validate_registry_uri)
+
+logger = logging.getLogger(__name__)
+
+_FLAVOUR_HINTS = (
+  'flavour', 'flavor', 'does not have the specified',
+  'does not have a specified', 'not have the specified',
+  'no sklearn flavor', 'no sklearn flavour',
+)
+
+_NOT_FOUND_HINTS = (
+  'alias', 'does not exist', 'resource_does_not_exist',
+  'not found', 'no such', 'no model version',
+)
+
+
+def _is_alias_not_found(exc):
+  '''Return True when ``exc`` signals alias/model not found.'''
+  if type(exc).__name__ == 'ResourceDoesNotExistException':
+    return True
+  text = str(exc).lower()
+  code = str(getattr(exc, 'error_code', '') or '').lower()
+  if 'RESOURCE_DOES_NOT_EXIST' in code:
+    return True
+  return any(hint in text for hint in _NOT_FOUND_HINTS)
+
+
+def _is_flavour_error(exc):
+  '''Return True when ``exc`` signals a flavour mismatch.'''
+  text = str(exc).lower()
+  return any(hint in text for hint in _FLAVOUR_HINTS)
 
 
 class FileModelLoader:
@@ -71,23 +106,85 @@ class FileModelLoader:
 
 
 class RegistryModelLoader:
-  '''Stub for MLflow registry loading (Phase 2).
+  '''Load a model from the MLflow registry lazily.
 
   Args:
+    registry_uri: MLflow tracking/registry URI, or None to
+      keep the ambient mlflow configuration.
     model_name: Registered model name.
-    alias: Registry alias, for example ``latest``.
+    alias: Registry alias, default ``production``.
   '''
 
-  def __init__(self, model_name: str, alias: str = 'latest') -> None:
+  def __init__(
+      self,
+      registry_uri: str | None = None,
+      model_name: str | None = None,
+      alias: str = 'production',
+  ) -> None:
+    validate_model_name(model_name)
+    validate_alias(alias)
+    if registry_uri:
+      validate_registry_uri(registry_uri)
+    self.registry_uri = registry_uri
     self.model_name = model_name
     self.alias = alias
+    self._model = None
 
   def load(self):
-    '''Raise NotImplementedError until Phase 2.'''
-    raise NotImplementedError(
-      'MLflow registry loading is Phase 2; use FileModelLoader'
-    )
+    '''Load and cache the registry model, returning it.
+
+    Raises:
+      RuntimeError: With a generic message (no registry URI,
+        model path, or underlying error leak) when loading
+        fails for any reason.
+    '''
+    if self._model is None:
+      self._model = self._load_registry()
+    return self._model
 
   def __call__(self):
-    '''Raise NotImplementedError until Phase 2.'''
+    '''Return the cached model, loading it on first call.'''
     return self.load()
+
+  def _load_registry(self):
+    '''Load ``models:/<name>@<alias>`` via lazy mlflow imports.
+
+    Only an MlflowException signalling a flavour mismatch
+    falls back to pyfunc loading (logged as a warning).
+    Alias/model-not-found and every other MlflowException
+    are surfaced as a generic RuntimeError without a
+    pyfunc fallback; unexpected errors likewise become a
+    generic RuntimeError so no URI/detail leaks.
+    '''
+    try:
+      import mlflow
+    except ImportError:
+      raise RuntimeError('model unavailable') from None
+    try:
+      if self.registry_uri:
+        mlflow.set_tracking_uri(self.registry_uri)
+      uri = f'models:/{self.model_name}@{self.alias}'
+      try:
+        return mlflow.sklearn.load_model(uri)
+      except Exception as exc:  # pylint: disable=broad-exception-caught
+        if not _is_mlflow_exception(exc):
+          raise RuntimeError('model unavailable') from None
+        if _is_alias_not_found(exc):
+          logger.warning(
+            'registry model %r alias %r not found',
+            self.model_name, self.alias)
+          raise RuntimeError('model unavailable') from None
+        if not _is_flavour_error(exc):
+          logger.warning(
+            'sklearn load failed for %r@%r: %s',
+            self.model_name, self.alias, exc)
+          raise RuntimeError('model unavailable') from None
+        logger.warning(
+          'sklearn flavour unavailable for %r@%r, '
+          'falling back to pyfunc: %s',
+          self.model_name, self.alias, exc)
+        return mlflow.pyfunc.load_model(uri)
+    except RuntimeError:
+      raise
+    except Exception:  # pylint: disable=broad-exception-caught
+      raise RuntimeError('model unavailable') from None
