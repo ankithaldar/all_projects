@@ -1,0 +1,324 @@
+# catalog.yml — Kedro Data Catalog (base defaults).
+# Env overlays (conf/local, conf/gcp, conf/aws) override only filepaths/URIs
+# for the entries they redefine. No credentials here — SQL/cloud credentials
+# come from the environment (e.g. GOOGLE_APPLICATION_CREDENTIALS, AWS_PROFILE).
+#
+# Interpolation namespace (ONE convention for this file): ${params:<key>}
+# (Kedro params namespace, resolved by OmegaConf/Kedro from
+# parameters.yml top-level runtime keys: score_model_id,
+# output_gcs_location, model_id_prefix, suffix, data_project,
+# db_staging_data, etl_project, etl_dataset, etl_table,
+# external_project, tmp_bucket, is_domino, run_date, train_run_dt,
+# score_run_dt, brand). The reference vz catalog uses
+# runtime_params namespace; this project uses params: everywhere.
+# Every `type:` below is a real importable dataset class string:
+# kedro_datasets.* for files/Spark/JSON/pickle, and only our own
+# forecast_ml_framework.core.datasets.SQLQueryDataSet /
+# SparkSQLDataSet for SQL/BigQuery. Signatures were checked against
+# kedro-datasets 10.0.0 in the uv venv (filepath/file_format/
+# load_args/save_args/version/credentials/metadata for file datasets;
+# SparkDataset adds file_format='parquet' default).
+
+# --- Anchors (merge with <<: *anchor, then override per entry) ----------------
+# BigQuery/Spark input anchor. Type: our SparkSQLDataSet (Kedro
+# AbstractDataset subclass, importable). Keys are the runtime params
+# the Spark BQ dataset needs; write_mode 'overwrite' is safe here
+# because inputs are read-only staging views (change per env).
+_spark_bq_data: &spark_bq_data
+  type: 'forecast_ml_framework.core.datasets.SparkSQLDataSet'
+  score_model_id: '${params:score_model_id}'
+  database: '${params:data_project}.${params:db_staging_data}'
+  tmp_bucket: '${params:tmp_bucket}'
+  write_mode: 'overwrite'
+
+# Parquet save anchor. Type: kedro_datasets.spark.SparkDataset
+# (filepath, file_format, load_args, save_args, version, credentials).
+_save_parquet: &save_parquet
+  type: 'kedro_datasets.spark.SparkDataset'
+  file_format: 'parquet'
+  save_args:
+    mode: 'overwrite'
+
+# Pickle save anchor (vz _save_json pattern: pickle-serialised
+# metadata/model handles). Type: kedro_datasets.pickle.PickleDataset
+# (filepath, backend='pickle', load_args, save_args, version).
+_save_json: &save_json
+  type: 'kedro_datasets.pickle.PickleDataset'
+  backend: 'pickle'
+
+# --- Raw data -----------------------------------------------------------------
+# CSV raw input. Type: kedro_datasets.pandas.CSVDataset (filepath...).
+raw_data:
+  type: 'kedro_datasets.pandas.CSVDataset'
+  filepath: 'data/raw/raw_data.csv'
+
+# Parquet raw input. Type: kedro_datasets.pandas.ParquetDataset.
+raw_data_parquet:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/raw/raw_data.parquet'
+
+# Regression raw input. Type: kedro_datasets.pandas.CSVDataset.
+raw_data_regression:
+  type: 'kedro_datasets.pandas.CSVDataset'
+  filepath: 'data/raw/raw_data_regression.csv'
+
+# --- BigQuery/Spark inputs (vz *_input_params pattern) -------------------------
+# Train input: Spark BQ anchor + BigQuery SQL (backtick
+# project.dataset.table). WARNING: SQL is trusted config only;
+# SparkSQLDataSet enforces single-statement read-only intent, it is
+# not a sandbox. Edit the FROM table + run_date per dataset.
+train_input_params:
+  <<: *spark_bq_data
+  sql: >
+    SELECT id, target FROM
+    `${params:etl_project}.${params:etl_dataset}.${params:etl_table}`
+    WHERE run_date = '${params:train_run_dt}'
+
+# Test input: same pattern, score run date.
+test_input_params:
+  <<: *spark_bq_data
+  sql: >
+    SELECT id, target FROM
+    `${params:etl_project}.${params:etl_dataset}.${params:etl_table}`
+    WHERE run_date = '${params:score_run_dt}'
+
+# Score input: features without labels.
+score_input_params:
+  <<: *spark_bq_data
+  sql: >
+    SELECT id FROM
+    `${params:etl_project}.${params:etl_dataset}.${params:etl_table}`
+    WHERE run_date = '${params:score_run_dt}'
+
+# --- Sampled / preprocessed frames (parquet via _save_parquet) ----------------
+# Sampled training frame. Type: kedro_datasets.spark.SparkDataset.
+sampled_df_params:
+  <<: *save_parquet
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_data_${params:suffix}/'
+
+# Score frame. Type: kedro_datasets.spark.SparkDataset.
+score_df_params:
+  <<: *save_parquet
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_score_data_${params:suffix}/'
+
+# Preprocessed training frame. Type: kedro_datasets.spark.SparkDataset.
+train_pp_data_df_params:
+  <<: *save_parquet
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_pp_data_${params:suffix}/'
+
+# --- Models (pickle via _save_json) -------------------------------------------
+# Fitted model artifact. Type: kedro_datasets.pickle.PickleDataset.
+fitted_model_params:
+  <<: *save_json
+  filepath: '${params:output_gcs_location}/xgb.pkl'
+
+# Calibrated model artifact. Type: kedro_datasets.pickle.PickleDataset.
+calibrated_model_params:
+  <<: *save_json
+  filepath: '${params:output_gcs_location}/calib.pkl'
+
+# --- Predictions (parquet) -----------------------------------------------------
+# Train predictions. Type: kedro_datasets.pandas.ParquetDataset.
+train_prediction_df_params:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_prediction_${params:suffix}/'
+
+# Score predictions. Type: kedro_datasets.pandas.ParquetDataset.
+prediction_df_params:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_score_prediction_${params:suffix}/'
+
+# Train lift frame. Type: kedro_datasets.pandas.ParquetDataset.
+train_lift_df_params:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_lift_${params:suffix}/'
+
+# Test lift frame. Type: kedro_datasets.pandas.ParquetDataset.
+test_lift_df_params:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: '${params:output_gcs_location}/${params:model_id_prefix}_test_lift_${params:suffix}/'
+
+# --- Metrics / lift BigQuery tables (vz BQTable pattern) -----------------------
+# BQ table entries use our SQLQueryDataSet type (the only SQL/BQ type
+# allowed in this catalog, per project rule) with vz-style table keys:
+# project/dataset/table_name identify the table, save_args carry
+# write_disposition + clustering_fields, partition_field/partition_type
+# (DAY) + partition_value (${params:run_date}) select the partition.
+# WARNING: write_disposition WRITE_TRUNCATE replaces the partition.
+train_model_evaluation_params:
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'value_train_metrics'
+  save_args:
+    write_disposition: 'WRITE_TRUNCATE'
+    clustering_fields: ['score_model_id']
+  partition_field: 'run_date'
+  partition_type: 'DAY'
+  partition_value: '${params:run_date}'
+
+# Test metrics BQ table (append pattern).
+test_model_evaluation_params:
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'value_score_metrics'
+  save_args:
+    write_disposition: 'WRITE_APPEND'
+    clustering_fields: ['score_model_id']
+  partition_field: 'run_date'
+  partition_type: 'DAY'
+  partition_value: '${params:run_date}'
+
+# Regression overall-metrics anchor (vz
+# _regression_model_overall_metrics pattern).
+_regression_model_overall_metrics: &regression_model_overall_metrics
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'faas_regression_model_overall_metrics'
+  save_args:
+    write_disposition: 'WRITE_APPEND'
+    clustering_fields: ['score_model_id', 'data_type']
+  partition_field: 'run_date'
+  partition_type: 'DAY'
+  partition_value: '${params:run_date}'
+
+# Train/valid/test overall regression metrics share the anchor.
+train_model_evaluation_reg_params:
+  <<: *regression_model_overall_metrics
+
+valid_model_evaluation_reg_params:
+  <<: *regression_model_overall_metrics
+
+test_model_evaluation_reg_params:
+  <<: *regression_model_overall_metrics
+
+# Regression decile-metrics anchor (vz
+# faas_regression_model_decile_metrics pattern).
+_regression_model_decile_metrics: &regression_model_decile_metrics
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'faas_regression_model_decile_metrics'
+  save_args:
+    write_disposition: 'WRITE_APPEND'
+    clustering_fields: ['score_model_id', 'data_type']
+  partition_field: 'run_date'
+  partition_type: 'DAY'
+  partition_value: '${params:run_date}'
+
+# Train/valid/test decile (lift) regression metrics share the anchor.
+train_model_lift_reg_params:
+  <<: *regression_model_decile_metrics
+
+valid_model_lift_reg_params:
+  <<: *regression_model_decile_metrics
+
+test_model_lift_reg_params:
+  <<: *regression_model_decile_metrics
+
+# --- Processed / split data (generic, kept) -----------------------------------
+# Processed frame. Type: kedro_datasets.pandas.ParquetDataset.
+processed_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/processed_data.parquet'
+
+# Train split. Type: kedro_datasets.pandas.ParquetDataset.
+train_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/train_data.parquet'
+
+# Test split. Type: kedro_datasets.pandas.ParquetDataset.
+test_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/test_data.parquet'
+
+# Selected feature names. Type: kedro.io.MemoryDataset (in-memory;
+# kedro-datasets 10.x ships no MemoryDataset, kedro core does).
+selected_features:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Models (generic, kept) ----------------------------------------------------
+# Fitted model. Type: kedro_datasets.pickle.PickleDataset.
+model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/model.pkl'
+
+# Calibrated model. Type: kedro_datasets.pickle.PickleDataset.
+calibration_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/calibration_model.pkl'
+
+# H2O AutoML model. Type: kedro_datasets.pickle.PickleDataset.
+h2o_automl_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/h2o_automl_model.pkl'
+
+# XGBoost model. Type: kedro_datasets.pickle.PickleDataset.
+xgboost_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/xgboost_model.pkl'
+
+# LightGBM model. Type: kedro_datasets.pickle.PickleDataset.
+lightgbm_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/lightgbm_model.pkl'
+
+# CatBoost model. Type: kedro_datasets.pickle.PickleDataset.
+catboost_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/catboost_model.pkl'
+
+# sklearn model. Type: kedro_datasets.pickle.PickleDataset.
+sklearn_model:
+  type: 'kedro_datasets.pickle.PickleDataset'
+  filepath: 'artifacts/models/sklearn_model.pkl'
+
+# In-memory model variants (pipeline wiring without disk).
+# Type: kedro.io.MemoryDataset.
+model_memory:
+  type: 'kedro.io.MemoryDataset'
+
+calibration_model_memory:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Metrics (generic, kept) ---------------------------------------------------
+# Metrics JSON. Type: kedro_datasets.json.JSONDataset.
+metrics:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/metrics.json'
+
+# Metrics CSV. Type: kedro_datasets.pandas.CSVDataset.
+metrics_csv:
+  type: 'kedro_datasets.pandas.CSVDataset'
+  filepath: 'artifacts/metrics/metrics.csv'
+
+# --- Predictions (generic, kept) ----------------------------------------------
+# Predictions parquet. Type: kedro_datasets.pandas.ParquetDataset.
+predictions:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/predictions/predictions.parquet'
+
+# Predictions CSV. Type: kedro_datasets.pandas.CSVDataset.
+predictions_csv:
+  type: 'kedro_datasets.pandas.CSVDataset'
+  filepath: 'artifacts/predictions/predictions.csv'
+
+# --- SHAP artifacts (generic, kept) -------------------------------------------
+# SHAP values parquet. Type: kedro_datasets.pandas.ParquetDataset.
+shap_values:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/shap/shap_values.parquet'
+
+# SHAP summary JSON. Type: kedro_datasets.json.JSONDataset.
+shap_summary:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/shap/shap_summary.json'
+
+# --- Charts (generic, kept) ----------------------------------------------------
+# Chart figures dict in memory. Type: kedro.io.MemoryDataset.
+# Persisted single figures: kedro_datasets.matplotlib.MatplotlibDataset
+# (filepath='artifacts/charts/<name>.png', save_args/overwrite).
+charts:
+  type: 'kedro.io.MemoryDataset'

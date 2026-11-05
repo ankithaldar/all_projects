@@ -1,0 +1,85 @@
+{
+  "task": "classification",
+  "meta": {
+    "model": "xgboost (demo_model_v1)",
+    "task": "classification",
+    "target_col": "target",
+    "date": "2026-11-05",
+    "env": "local",
+    "run_date": "2026-11-05",
+    "random_state": 42,
+    "reproducibility_hash": "sha256:PLACEHOLDER-run-date-2026-11-05-seed-42",
+    "generated_by": "forecast_ml_framework pipelines/modeling evaluate_model (sample/synthetic)"
+  },
+  "global": {
+    "accuracy": 0.924,
+    "balanced_accuracy": 0.901,
+    "precision_weighted": 0.918,
+    "recall_weighted": 0.924,
+    "f1_weighted": 0.921,
+    "f1_macro": 0.894,
+    "roc_auc": 0.912,
+    "pr_auc": 0.861,
+    "log_loss": 0.287,
+    "brier": 0.081,
+    "kappa": 0.847,
+    "mcc": 0.849,
+    "sensitivity": 0.888,
+    "specificity": 0.942,
+    "ks": 0.72,
+    "ece": 0.031,
+    "confusion_matrix": [[820, 45], [60, 475]],
+    "per_class_f1": [0.948, 0.84]
+  },
+  "regression_global": {
+    "mae": 4.12,
+    "rmse": 5.74,
+    "r2": 0.88,
+    "mape": 0.074,
+    "bias": 0.12
+  },
+  "buckets": {
+    "segment": {
+      "north": {"accuracy": 0.938, "f1_weighted": 0.935, "roc_auc": 0.931, "ece": 0.022, "n": 520},
+      "south": {"accuracy": 0.905, "f1_weighted": 0.901, "roc_auc": 0.89, "ece": 0.041, "n": 480},
+      "east": {"accuracy": 0.919, "f1_weighted": 0.914, "roc_auc": 0.905, "ece": 0.033, "n": 400}
+    },
+    "decile": {
+      "0": {"accuracy": 0.996, "f1_weighted": 0.997, "roc_auc": 0.999, "ece": 0.004, "n": 140},
+      "1": {"accuracy": 0.986, "f1_weighted": 0.985, "roc_auc": 0.99, "ece": 0.009, "n": 140},
+      "2": {"accuracy": 0.957, "f1_weighted": 0.955, "roc_auc": 0.972, "ece": 0.018, "n": 140},
+      "3": {"accuracy": 0.929, "f1_weighted": 0.925, "roc_auc": 0.94, "ece": 0.026, "n": 140},
+      "4": {"accuracy": 0.893, "f1_weighted": 0.888, "roc_auc": 0.905, "ece": 0.034, "n": 140},
+      "5": {"accuracy": 0.871, "f1_weighted": 0.864, "roc_auc": 0.88, "ece": 0.039, "n": 140},
+      "6": {"accuracy": 0.843, "f1_weighted": 0.835, "roc_auc": 0.852, "ece": 0.047, "n": 140},
+      "7": {"accuracy": 0.814, "f1_weighted": 0.803, "roc_auc": 0.82, "ece": 0.056, "n": 140},
+      "8": {"accuracy": 0.779, "f1_weighted": 0.766, "roc_auc": 0.785, "ece": 0.068, "n": 140},
+      "9": {"accuracy": 0.714, "f1_weighted": 0.698, "roc_auc": 0.72, "ece": 0.089, "n": 140}
+    }
+  },
+  "by_bucket": {
+    "north": {"accuracy": 0.938, "f1_weighted": 0.935, "roc_auc": 0.931, "ece": 0.022, "n": 520},
+    "south": {"accuracy": 0.905, "f1_weighted": 0.901, "roc_auc": 0.89, "ece": 0.041, "n": 480},
+    "east": {"accuracy": 0.919, "f1_weighted": 0.914, "roc_auc": 0.905, "ece": 0.033, "n": 400}
+  },
+  "by_decile": {
+    "0": {"accuracy": 0.996, "f1_weighted": 0.997, "ece": 0.004, "n": 140},
+    "9": {"accuracy": 0.714, "f1_weighted": 0.698, "ece": 0.089, "n": 140}
+  },
+  "shap_top": [
+    {"feature": "income", "importance": 0.312},
+    {"feature": "tenure_days", "importance": 0.241},
+    {"feature": "purchase_count", "importance": 0.187},
+    {"feature": "age", "importance": 0.124},
+    {"feature": "region", "importance": 0.089},
+    {"feature": "channel", "importance": 0.047}
+  ],
+  "charts": [
+    {"file": "charts/roc.png", "set": "classification", "name": "roc", "caption": "ROC: ranking quality. Flat/late rise suggests weak separation or leakage-inflated scores — check drift.", "alt": "ROC curve with AUC 0.912 above the chance diagonal"},
+    {"file": "charts/pr.png", "set": "classification", "name": "pr", "caption": "PR curve: precision at each recall. Sharp drop at high recall flags threshold/calibration issues.", "alt": "Precision-recall curve declining as recall rises"},
+    {"file": "charts/confusion.png", "set": "classification", "name": "confusion_heatmap", "caption": "Confusion matrix: asymmetric errors reveal leakage, class imbalance, or a bad default threshold.", "alt": "Confusion matrix heatmap, 820 true negatives, 475 true positives"},
+    {"file": "charts/calibration.png", "set": "classification", "name": "calibration_curve", "caption": "Calibration: predicted vs observed rates. Deviation from diagonal = mis-calibration (known issue) — recalibrate.", "alt": "Calibration curve close to but below the perfect diagonal"},
+    {"file": "charts/pred_vs_actual.png", "set": "regression", "name": "pred_vs_actual", "caption": "Predicted vs actual (regression): scatter off the diagonal, fan-out at extremes suggests drift or heteroscedastic leakage.", "alt": "Scatter of predicted versus actual values around the diagonal"},
+    {"file": "charts/residuals.png", "set": "regression", "name": "residuals_vs_fitted", "caption": "Residuals vs fitted: funnel/curve patterns diagnose leakage, non-linearity, or drift; QQ tail deviation flags outliers.", "alt": "Residuals versus fitted scatter with zero line"}
+  ]
+}

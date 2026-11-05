@@ -1,0 +1,103 @@
+# variables.yml — column registry (100% config-driven; no code edits per dataset).
+# Synthetic demo schema: one row per customer snapshot.
+# Classification is the default; a regression example is commented at the bottom.
+#
+# How to read this file: every key below is preceded by a comment in the
+# form `# key: what it does (valid: ...; default: ...; example: ...)`.
+# Keys are consumed by pipelines/data_prep (column groups) and by
+# core.config_loader (feature merge rules). Changing a column name here
+# only works if that column exists in your raw data.
+
+# --- Target -------------------------------------------------------------------
+# target_col: the column the model predicts. Defined ONCE here;
+# parameters.yml references it as ${variables.target_col} so renaming
+# the target is a one-line edit. (valid: a column name present in the
+# raw data; default: 'target'; example: 'churn' or 'purchase_amount').
+# WARNING: leakage columns (future values) must NOT be the target.
+target_col: 'target'
+
+# --- Identifiers ---------------------------------------------------------------
+# id_cols: row identifiers, never used as features; used for joins,
+# dedup and grouping. (valid: list of column names; default: ['id'];
+# example: ['customer_id', 'snapshot_date']).
+id_cols:
+  - 'id'
+
+# --- Categorical ---------------------------------------------------------------
+# cat_cols: categorical columns, encoded by the CategoricalEncoding FE
+# step (label_encode_handle / ohe_handle in parameters.yml).
+# (valid: list of column names; default: ['region', 'plan_type',
+# 'channel']; example: ['country', 'device_type']).
+cat_cols:
+  - 'region'
+  - 'plan_type'
+  - 'channel'
+
+# --- Numeric -------------------------------------------------------------------
+# num_cols: numeric columns, imputed / capped / normalised by the FE
+# registry. (valid: list of column names; default: the four demo
+# numeric columns; example: ['age', 'monthly_spend']).
+num_cols:
+  - 'age'
+  - 'income'
+  - 'tenure_days'
+  - 'purchase_count'
+
+# --- Dates ---------------------------------------------------------------------
+# date_cols: date/datetime columns, parsed before time-based features
+# and splits. (valid: list of column names; default: the two demo
+# dates; example: ['signup_date']).
+date_cols:
+  - 'signup_date'
+  - 'last_purchase_date'
+
+# --- Sequences -----------------------------------------------------------------
+# seq_cols: sequence columns (one value per timestep), aggregated by
+# Sequence* FE steps. (valid: list of column names holding lists or
+# '|'-separated strings; default: ['monthly_spend_seq'];
+# example: ['spend_seq']).
+seq_cols:
+  - 'monthly_spend_seq'
+
+# --- Indicators ----------------------------------------------------------------
+# ind_cols: binary 0/1 columns, treated as numeric but kept separate
+# for explicit imputation/encoding handling.
+# (valid: list of column names; default: the two demo flags;
+# example: ['is_premium']).
+ind_cols:
+  - 'is_premium'
+  - 'has_support_ticket'
+
+# --- Drops ---------------------------------------------------------------------
+# drop_cols: columns dropped before modelling (leakage, PII,
+# duplicates). (valid: list of column names; default: ['email_hash'];
+# example: [] to keep everything, or ['email_hash', 'full_name']).
+# WARNING: dropping a column that a FE step touches makes that step
+# silently no-op on it.
+drop_cols:
+  - 'email_hash'
+
+# --- Segments ------------------------------------------------------------------
+# bucket_segment_col: optional segment column for per-segment metrics
+# and bucketing. Interpolated from cat_cols[0] so it always points at
+# a real categorical column. (valid: a cat_cols entry;
+# default: ${.cat_cols[0]} = 'region'; example: 'country').
+bucket_segment_col: ${.cat_cols[0]}
+
+# --- Feature-selection rules (core.config_loader.merged_feature_list) ---------
+# business_relevant_features: always kept through feature selection.
+# (valid: list of column names; default: []; example: ['age']).
+business_relevant_features: []
+# override_features: when non-empty, ONLY these features are used
+# (wins alone, deduplicated; exclude_features is NOT applied).
+# (valid: list of column names; default: []; example: ['f1', 'f2']).
+# WARNING: non-existent names pass through config validation and are
+# only checked against the actual dataframe downstream.
+override_features: []
+# exclude_features: always removed, even if present in the data.
+# (valid: list of column names; default: []; example: ['email_hash']).
+exclude_features: []
+
+# --- Regression example (commented; swap target_col / task in parameters) ---
+# target_col: 'purchase_amount'
+# num_cols: ['age', 'income', 'tenure_days', 'purchase_count', 'purchase_amount']

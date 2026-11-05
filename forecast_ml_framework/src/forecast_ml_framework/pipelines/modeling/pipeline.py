@@ -1,0 +1,167 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Kedro pipeline for the modeling phase.
+
+Params (params:modeling_params, a dict):
+  task_type: 'classification' (default) or 'regression'.
+  target_col: target column name (default 'target').
+  feature_cols: list of features or None for all others.
+  models_to_use: adapter names, e.g. ['sklearn', 'xgboost'].
+    Supported: sklearn, xgboost, lightgbm, catboost, h2o_automl.
+  selection_metric: metric used to pick the best model,
+    e.g. 'f1_weighted' (default) or 'rmse'.
+  selection_metric_higher_better: bool or None (inferred).
+  random_state: int seed (default 42).
+  test_size: float test fraction (default 0.2).
+  sampling_params: {method: 'stratified'|'random',
+    test_size: float, stratify_col: str}.
+  calibration: {method: 'sigmoid'|'isotonic'|'betacal'|'none',
+    cv: int} (classification only).
+  loss_function: plain string, top-level default for every
+    model in models_to_use. Per-model value inside
+    model_params[adapter_name]['loss_function'] wins over
+    this top-level default. Mapped per adapter via
+    LOSS_REGISTRY / get_loss() in adapters.py:
+      sklearn: kwarg 'loss' (log_loss, squared_error,
+        absolute_error, huber, quantile,
+        epsilon_insensitive, poisson, gamma, tweedie).
+      xgboost: kwarg 'objective' (binary:logistic,
+        reg:squarederror, reg:gamma, reg:tweedie,
+        reg:absoluteerror, count:poisson).
+      lightgbm: kwarg 'objective' (binary, regression,
+        regression_l1, huber, fair, poisson, gamma,
+        tweedie, quantile).
+      catboost: kwarg 'loss_function' (Logloss, RMSE,
+        MAE, Poisson, Gamma, Tweedie, Quantile).
+      h2o_automl: kwarg 'loss_function' (logloss,
+        squared_error, poisson, gamma, tweedie, huber).
+    Aliases accepted case-insensitively (logloss,
+    squared_error/mse/rmse, mae, poisson, ...); native
+    values accepted as-is. Custom loss: dotted importable
+    string resolving to a callable, e.g.
+    'my_pkg.losses.my_loss', resolved via resolve_handle()
+    and passed through as the adapter's loss kwarg.
+    Unknown loss -> ValueError listing valid losses.
+    Explicit loss_function overrides a per-model
+    'objective' (xgboost/lightgbm) or 'loss' (sklearn);
+    a recognised 'objective' is normalised, an
+    unrecognised native objective passes through.
+    No loss_function -> estimator defaults unchanged.
+  objective: per-model native objective (xgboost/
+    lightgbm only), e.g. 'binary:logistic'. Normalised
+    via the registry when recognised, else passed
+    through unchanged for back-compat.
+  model_params: {adapter_name: {hyperparameters}}.
+    May include loss_function/objective as above, plus
+    model_handle. Flat {hyperparameters} (no adapter
+    nesting) is also accepted for a single model.
+  model_handle: dotted importable string (preferred form,
+    e.g. 'sklearn.linear_model.LogisticRegression',
+    'xgboost.XGBClassifier') or short adapter name in
+    models_to_use. Also accepted per-model in model_params
+    or as a models_to_use entry itself.
+  calibration_handle: dotted importable string, e.g.
+    'sklearn.calibration.CalibratedClassifierCV' or
+    'betacal.BetaCalibration'.
+  tuning_handle: dotted importable string, resolved and
+    validated via resolve_handle() when present.
+  bucket_segment_col: column for per-bucket metrics/charts.
+  shap_params: {method: 'shap'|'permutation'|'auto',
+    n_repeats: int, sample_rows: int, random_state: int}.
+
+Datasets:
+  modeling_input (in) -> x_train/x_test/y_train/y_test/split_meta
+  -> best_model/per_model_metrics/best_model_name
+  -> calibrated_model/calibration_meta
+  -> evaluation_metrics, plus y_pred/y_pred_proba
+  -> charts (dict of figures), shap_artifact (dict).
+'''
+
+from kedro.pipeline import Pipeline, node
+
+from forecast_ml_framework.pipelines.modeling.calibration import (
+  calibrate_model,
+)
+from forecast_ml_framework.pipelines.modeling.charts import (
+  make_charts,
+)
+from forecast_ml_framework.pipelines.modeling.data_split import (
+  split_data,
+)
+from forecast_ml_framework.pipelines.modeling.evaluate import (
+  evaluate_model,
+)
+from forecast_ml_framework.pipelines.modeling.adapters import (
+  train_models,
+)
+from forecast_ml_framework.pipelines.modeling.shap_explain import (
+  explain_model,
+)
+
+
+def _predict(model, x_test):
+  '''Predict labels with the calibrated model.'''
+  return model.predict(x_test)
+
+
+def _predict_proba(model, x_test, task_type):
+  '''Predict proba, or None for regression.'''
+  if task_type != 'classification':
+    return None
+  return model.predict_proba(x_test)
+
+
+def create_pipeline(**kwargs):
+  '''Create the modeling Kedro pipeline.
+
+  Args:
+    **kwargs: Forwarded to Pipeline (e.g. tags, namespace).
+
+  Returns:
+    Kedro Pipeline: split -> train -> calibrate -> evaluate
+    -> charts + shap.
+  '''
+  pipe = Pipeline([
+    node(func=split_data,
+         inputs=['modeling_input', 'params:modeling_params'],
+         outputs=['x_train', 'x_test', 'y_train', 'y_test',
+                  'split_meta'],
+         name='split_data_node'),
+    node(func=train_models,
+         inputs=['x_train', 'y_train', 'x_test', 'y_test',
+                 'params:modeling_params'],
+         outputs=['best_model', 'per_model_metrics',
+                  'best_model_name'],
+         name='train_models_node'),
+    node(func=calibrate_model,
+         inputs=['best_model', 'x_train', 'y_train',
+                 'params:modeling_params'],
+         outputs=['calibrated_model', 'calibration_meta'],
+         name='calibrate_model_node'),
+    node(func=_predict,
+         inputs=['calibrated_model', 'x_test'],
+         outputs='y_pred',
+         name='predict_node'),
+    node(func=_predict_proba,
+         inputs=['calibrated_model', 'x_test',
+                 'params:modeling_params.task_type'],
+         outputs='y_pred_proba',
+         name='predict_proba_node'),
+    node(func=evaluate_model,
+         inputs=['y_test', 'y_pred', 'y_pred_proba', 'x_test',
+                 'params:modeling_params'],
+         outputs='evaluation_metrics',
+         name='evaluate_model_node'),
+    node(func=make_charts,
+         inputs=['y_test', 'y_pred', 'y_pred_proba', 'x_test',
+                 'params:modeling_params'],
+         outputs='charts',
+         name='make_charts_node'),
+    node(func=explain_model,
+         inputs=['calibrated_model', 'x_test', 'y_test',
+                 'params:modeling_params'],
+         outputs='shap_artifact',
+         name='explain_model_node'),
+  ], **kwargs)
+  return pipe

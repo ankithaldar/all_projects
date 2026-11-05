@@ -1,0 +1,48 @@
+# parameters.yml — local env overlay (minimal overrides only).
+# Purpose: laptop/dev runs. Every key below overrides base
+# parameters.yml; keys not listed here inherit base values.
+# (valid: same enums as base; see base file for the full contract.)
+
+# artifact_store_params: where artifacts are written.
+# type: 'local' keeps everything on disk under base_path.
+# (valid: local|gcp|s3; default here: local; example: 'gcp').
+# base_path: local root for artifacts (example: './artifacts').
+# bucket: unused locally, keep ''.
+# versioning: dataset versioning on/off (false = overwrite).
+artifact_store_params:
+  type: 'local'
+  base_path: './artifacts'
+  bucket: ''
+  versioning: false
+
+# mlflow_params: experiment tracking for local runs.
+# tracking_uri: './mlruns' stores runs in a local folder
+# (valid: local path or http(s) server URI; example: 'mlruns').
+# experiment_name: groups runs (example: 'forecast-ml-framework-local').
+# registry_uri: '' = no model registry.
+# log_params/log_metrics/log_artifacts: record each after a run.
+mlflow_params:
+  tracking_uri: './mlruns'
+  experiment_name: 'forecast-ml-framework-local'
+  registry_uri: ''
+  log_params: true
+  log_metrics: true
+  log_artifacts: true
+
+# dvc_params: version control for data. enabled: false locally so
+# dev runs never push. remote/remote_url name the DVC remote
+# ('' = none). push_on_run: push after each run (keep false locally;
+# WARNING: true needs credentials and uploads data).
+dvc_params:
+  enabled: false
+  remote: 'local'
+  remote_url: ''
+  push_on_run: false
+
+# spark_params: Spark session for local runs.
+# master: 'local[*]' uses all CPU cores (valid: 'local[*]' |
+# 'local[4]' | 'spark://...'). app_name labels the Spark app.
+# WARNING: local[*] on a shared laptop can starve other processes.
+spark_params:
+  master: 'local[*]'
+  app_name: 'forecast-ml-framework-local'

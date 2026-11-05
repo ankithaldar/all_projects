@@ -1,0 +1,62 @@
+[build-system]
+requires = ['hatchling']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'forecast-ml-framework'
+version = '0.1.0'
+description = 'Config-driven Kedro ML framework for forecasting'
+readme = 'README.md'
+requires-python = '>=3.14'
+license = { text = 'MIT' }
+authors = [{ name = 'Forecast ML Framework Team' }]
+dependencies = [
+  'kedro',
+  'scikit-learn',
+  'pandas',
+  'polars',
+  'pyyaml',
+  'pydantic',
+  'omegaconf',
+  'matplotlib',
+  'seaborn',
+  'fastapi',
+  'uvicorn',
+  'mlflow',
+  'h2o',
+  'xgboost',
+  'lightgbm',
+  'catboost',
+  'pyspark',
+  'dvc',
+  'shap',
+]
+
+[project.optional-dependencies]
+# Placeholder for libs that fail the Python 3.14 spike.
+# They are kept here (not in core deps) so `uv sync` succeeds
+# on 3.14. See README.md for the spike results table.
+extras-314-failures = []
+
+[dependency-groups]
+dev = [
+  'pytest',
+  # starlette TestClient (fastapi.testclient) requires httpx at test
+  # runtime; keep it in dev so `uv run pytest` serving tests pass
+  # without bloating production dependencies.
+  'httpx',
+]
+
+[project.scripts]
+forecast-ml = 'forecast_ml_framework.__main__:main'
+
+[tool.hatch.build.targets.wheel]
+packages = ['src/forecast_ml_framework']
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+pythonpath = ['src']
+
+[tool.ruff]
+line-length = 80
+indent-width = 2
