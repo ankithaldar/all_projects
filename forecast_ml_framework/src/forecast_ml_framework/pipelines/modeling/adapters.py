@@ -139,22 +139,32 @@ LOSS_REGISTRY = {
 
 
 def resolve_handle(handle):
-  '''Resolve a dotted importable string to the object it names.
+  '''Resolve a dotted handle under the scoring allowlist.
+
+  Delegates to
+  ``pipelines.scoring.nodes._resolve_handle_strict`` so
+  modeling handles share its allowlist (sklearn / xgboost /
+  lightgbm / catboost / h2o / forecast_ml_framework) and
+  estimator check (class with ``fit`` and ``predict``).
+  Arbitrary importables such as ``os.system``,
+  ``subprocess.Popen`` or ``builtins.eval`` are rejected,
+  preventing RCE via ``HandleAdapter.fit`` /
+  ``calibration_handle``.
 
   Args:
     handle: Dotted importable string, e.g.
-      'sklearn.linear_model.LogisticRegression',
-      'xgboost.XGBClassifier' or
-      'sklearn.calibration.CalibratedClassifierCV'.
+      'sklearn.linear_model.LogisticRegression'.
 
   Returns:
-    The imported module attribute named by handle.
+    The allowlisted estimator-like class named by handle.
 
   Raises:
-    ValueError: If handle is not a dotted string or cannot be
-      resolved. The message names the handle and the supported
-      '*_handle' parameter keys.
+    ValueError: If handle is not allowlisted, cannot be
+      resolved, or is not an estimator-like class.
   '''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _resolve_handle_strict,
+  )
   if not isinstance(handle, str) or '.' not in handle:
     raise ValueError(
       f'Cannot resolve handle {handle!r}: expected a dotted '
@@ -163,22 +173,59 @@ def resolve_handle(handle):
       'model_handle / calibration_handle / tuning_handle, or a '
       'short adapter name (sklearn, xgboost, lightgbm, catboost, '
       'h2o_automl).')
-  module_path, _, attr = handle.rpartition('.')
+  try:
+    return _resolve_handle_strict(handle)
+  except ValueError as exc:
+    raise ValueError(
+      f'Cannot resolve handle {handle!r}: {exc}. Check '
+      'model_handle / calibration_handle / tuning_handle is an '
+      'allowlisted estimator handle.') from exc
+
+
+def _resolve_loss_callable(loss):
+  '''Resolve a dotted custom-loss under the allowlist.
+
+  Only callables whose top-level module is allowlisted
+  (same list as ``_resolve_handle_strict``) are accepted;
+  arbitrary callables such as ``os.system`` are rejected.
+
+  Args:
+    loss: Dotted importable string naming a callable.
+
+  Returns:
+    The resolved callable.
+
+  Raises:
+    ValueError: If not allowlisted, unresolvable, or
+      non-callable.
+  '''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _ALLOWED_MODEL_MODULES,
+  )
+  top_level = loss.split('.', 1)[0]
+  if top_level not in _ALLOWED_MODEL_MODULES:
+    raise ValueError(
+      f'loss_function {loss!r} is not allowlisted: top-level '
+      f'module {top_level!r} is not one of '
+      + ', '.join(_ALLOWED_MODEL_MODULES))
+  module_path, _, attr = loss.rpartition('.')
   try:
     module = importlib.import_module(module_path)
   except ImportError as exc:
     raise ValueError(
-      f'Cannot resolve handle {handle!r}: module '
-      f'{module_path!r} could not be imported ({exc}). Check '
-      'model_handle / calibration_handle / tuning_handle is an '
-      'installed dotted importable string.') from exc
+      f'Cannot resolve loss_function {loss!r}: module '
+      f'{module_path!r} could not be imported ({exc}).') from exc
   try:
-    return getattr(module, attr)
+    resolved = getattr(module, attr)
   except AttributeError as exc:
     raise ValueError(
-      f'Cannot resolve handle {handle!r}: module '
-      f'{module_path!r} has no attribute {attr!r}. Check '
-      'model_handle / calibration_handle / tuning_handle.') from exc
+      f'Cannot resolve loss_function {loss!r}: module '
+      f'{module_path!r} has no attribute {attr!r}.') from exc
+  if not callable(resolved):
+    raise ValueError(
+      f'loss_function {loss!r} resolved to a non-callable '
+      'object; a custom loss must be callable.')
+  return resolved
 
 
 def _canonical_adapter(adapter_name):
@@ -232,17 +279,11 @@ def get_loss(adapter_name, loss):
       "string such as 'my_pkg.losses.my_loss'.")
   if '.' in loss:
     try:
-      resolved = resolve_handle(loss)
+      return _resolve_loss_callable(loss)
     except ValueError as exc:
       raise ValueError(
         f'Cannot resolve loss_function {loss!r} for adapter '
         f'{adapter_name!r}: {exc}') from exc
-    if not callable(resolved):
-      raise ValueError(
-        f'loss_function {loss!r} for adapter {adapter_name!r} '
-        'resolved to a non-callable object; a custom loss '
-        'must be callable.')
-    return resolved
   canonical = _canonical_adapter(adapter_name)
   registry = LOSS_REGISTRY.get(canonical)
   if registry is None:
@@ -372,9 +413,35 @@ class ModelAdapter(ABC):
 
   @classmethod
   def load(cls, path):
-    '''Load a saved model and wrap it in an adapter.'''
+    '''Load a saved model and wrap it in an adapter.
+
+    Reads the raw bytes and unpickles via
+    ``core.artifact_store.restricted_loads`` (exact allowlist),
+    never raw ``pickle.load``. Only sklearn/numpy/pandas
+    objects whose globals are in the allowlist roundtrip;
+    zoo models (xgboost/lightgbm/catboost/h2o) whose pickles
+    reference non-allowlisted globals are rejected with
+    ``ValueError`` by design (sklearn-only loading). Callers
+    needing those libraries must add their globals to the
+    artifact_store allowlist in a reviewed change — this
+    module must not widen it unilaterally.
+
+    Args:
+      path: Filesystem path of the saved model.
+
+    Returns:
+      An adapter instance wrapping the loaded model.
+
+    Raises:
+      ValueError: When the pickle is malformed or references
+        a forbidden (non-allowlisted) global.
+    '''
+    from forecast_ml_framework.core.artifact_store import (
+      restricted_loads,
+    )
     with open(path, 'rb') as handle:
-      model = pickle.load(handle)
+      raw = handle.read()
+    model = restricted_loads(raw)
     obj = cls({})
     obj.model = model
     return obj

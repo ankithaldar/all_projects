@@ -22,12 +22,19 @@ def split_data(df, params):
   from sklearn.model_selection import train_test_split
   params = params or {}
   sampling = params.get('sampling_params', {}) or {}
+  if df is None or len(df) == 0:
+    raise ValueError('split_data requires a non-empty dataframe')
   target = params.get('target_col', 'target')
+  if target not in df.columns:
+    raise ValueError(f'target column not found: {target}')
+  test_size = sampling.get('test_size',
+                           params.get('test_size', 0.2))
+  if isinstance(test_size, bool) or not isinstance(
+      test_size, (int, float)) or not 0 < test_size < 1:
+    raise ValueError('test_size must be in (0, 1)')
   features = params.get('feature_cols')
   if features is None:
     features = [c for c in df.columns if c != target]
-  test_size = sampling.get('test_size',
-                           params.get('test_size', 0.2))
   seed = params.get('random_state', 42)
   method = sampling.get('method', 'stratified')
   stratify = None

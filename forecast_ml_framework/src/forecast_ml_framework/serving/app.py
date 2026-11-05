@@ -30,6 +30,7 @@ _LOG = logging.getLogger(__name__)
 
 MAX_RECORDS = 10000
 MAX_FEATURE_KEYS = 1000
+MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 if _IMPORT_ERROR is None:
@@ -120,20 +121,31 @@ def _validate_records(model, records):
   keys = list(records[0].keys())
   if not keys:
     raise ValueError('features or records is required')
-  required = list(getattr(model, 'feature_names_in_', keys) or keys)
+  _names = getattr(model, 'feature_names_in_', None)
+  if _names is None or len(_names) == 0:
+    required = keys
+  else:
+    required = list(_names)
+  unknown = [name for name in keys if name not in required]
+  if unknown:
+    raise ValueError(f'unknown feature: {unknown}')
   rows = []
   for record in records:
     for name in required:
       if name not in record:
         raise ValueError(f'missing feature: {name}')
     row = []
-    for name in keys:
+    for name in required:
       value = record[name]
       if isinstance(value, bool) or not isinstance(
           value, (int, float)):
         raise ValueError(
             f'feature {name} must be a finite number')
-      number = float(value)
+      try:
+        number = float(value)
+      except OverflowError:
+        raise ValueError(
+            f'feature {name} must be a finite number') from None
       if not math.isfinite(number):
         raise ValueError(
             f'feature {name} must be a finite number')
@@ -142,14 +154,36 @@ def _validate_records(model, records):
   return rows
 
 
+def _check_predictions_finite(predictions):
+  '''Raise ValueError when any numeric prediction is non-finite.'''
+  stack = list(predictions)
+  while stack:
+    value = stack.pop()
+    if isinstance(value, (list, tuple)):
+      stack.extend(value)
+    elif isinstance(value, bool):
+      continue
+    elif isinstance(value, (int, float)):
+      try:
+        number = float(value)
+      except OverflowError:
+        raise ValueError(
+            'predictions must be finite numbers') from None
+      if not math.isfinite(number):
+        raise ValueError('predictions must be finite numbers')
+
+
 def _predict(model, records):
   '''Run model prediction on records.'''
   rows = _validate_records(model, records)
   if hasattr(model, 'predict'):
-    return _to_list(model.predict(rows))
-  if callable(model):
-    return _to_list(model(records))
-  raise TypeError('model must have predict() or be callable')
+    predictions = _to_list(model.predict(rows))
+  elif callable(model):
+    predictions = _to_list(model(records))
+  else:
+    raise TypeError('model must have predict() or be callable')
+  _check_predictions_finite(predictions)
+  return predictions
 
 
 def _resolve_loader(model_loader, registry_uri, model_name, alias):
@@ -199,6 +233,22 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
       'with pip install fastapi pydantic'
     ) from _IMPORT_ERROR
   app = FastAPI(title='forecast-ml serving')
+
+  @app.middleware('http')
+  async def _reject_oversized_body(request, call_next):
+    '''Reject requests whose Content-Length exceeds 10MB.'''
+    length = request.headers.get('content-length')
+    if length is not None:
+      try:
+        size = int(length)
+      except (TypeError, ValueError):
+        size = 0
+      if size > MAX_BODY_BYTES:
+        from starlette.responses import JSONResponse
+        return JSONResponse(
+            status_code=413,
+            content={'detail': 'request body too large'})
+    return await call_next(request)
 
   @app.get('/health', response_model=HealthResponse)
   def health() -> HealthResponse:

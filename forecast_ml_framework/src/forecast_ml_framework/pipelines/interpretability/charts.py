@@ -3,32 +3,25 @@
 
 '''Interpretability and diagnostics charts (Phase 3).
 
-Matplotlib figures for the structured artifacts produced
-by ``pipelines.interpretability.nodes``. Every public
-function returns a Figure or None on insufficient data,
-never raises, and closes its figure in a finally block
-(via :func:`_safe_fig`) so no figure slot leaks.
+Unique interpretability charts live here: SHAP
+beeswarm/bar/heatmap, PDP 1D (+ICE), PDP 2D heatmap,
+permutation importance bar, calibration curve, and
+diagnostics charts with no ``modeling.charts``
+equivalent.
 
-Where ``pipelines.modeling.charts`` already provides an
-equivalent function (SHAP dependence/waterfall/force,
-LIME bar, decision boundary, tree, Cook, REC, residuals
-over time, learning/validation/loss/CV/overfitting), it
-is reused defensively: the import happens inside the
-function and any failure falls back to the local
-implementation below. ``modeling/charts.py`` is never
-modified from here.
+Charts already provided by
+``pipelines.modeling.charts`` (SHAP dependence/
+waterfall/force, LIME bar, decision boundary, tree,
+Cook, REC, residuals over time, learning/validation/
+loss/CV/overfitting) are imported directly below --
+no local copies and no delegation shim. Ambiguous
+inputs are adapted at the boundary only: ``lime_bar``
+accepts ``lime_explain`` rows and ``tree_plot``
+accepts a forest via its first estimator.
 
-Interpretability: SHAP beeswarm, SHAP bar, SHAP
-heatmap, SHAP dependence, SHAP waterfall, SHAP force,
-PDP 1D (+ICE overlay), PDP 2D heatmap, permutation
-importance bar, LIME bar, decision boundary contour,
-tree plot.
-Diagnostics: calibration curve, residual vs fitted,
-residual histogram+QQ, scale-location, error by
-segment bar, prediction distribution by class,
-confidence histogram, residuals over time, Cook's
-distance, REC curve, learning curve, validation
-curve, loss vs epoch, CV box, overfitting gap.
+Every public function returns a Figure or None on
+insufficient data, never raises, and closes its
+figure in a finally block so no figure slot leaks.
 '''
 
 import logging
@@ -39,7 +32,60 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from forecast_ml_framework.pipelines.modeling.charts import (
+  cooks_distance,
+  cv_scores_box,
+  decision_boundary,
+  learning_curve,
+  lime_bar as _modeling_lime_bar,
+  loss_vs_epoch,
+  overfitting_gap,
+  rec_curve,
+  residuals_over_time,
+  shap_dependence,
+  shap_force,
+  shap_waterfall,
+  tree_plot as _modeling_tree_plot,
+  validation_curve,
+)
+
 LOG = logging.getLogger(__name__)
+
+# Direct re-exports under the interpretability names.
+decision_boundary_chart = decision_boundary
+residuals_over_time_chart = residuals_over_time
+cv_box = cv_scores_box
+
+__all__ = [
+  'calibration_curve',
+  'confidence_histogram',
+  'cooks_distance',
+  'cv_box',
+  'decision_boundary_chart',
+  'error_by_segment_bar',
+  'learning_curve',
+  'lime_bar',
+  'loss_vs_epoch',
+  'overfitting_gap',
+  'pdp_1d',
+  'pdp_1d_chart',
+  'pdp_2d_heatmap',
+  'permutation_importance_bar',
+  'prediction_distribution_by_class',
+  'rec_curve',
+  'residual_hist_qq',
+  'residual_vs_fitted',
+  'residuals_over_time_chart',
+  'scale_location',
+  'shap_bar',
+  'shap_beeswarm',
+  'shap_dependence',
+  'shap_force',
+  'shap_heatmap',
+  'shap_waterfall',
+  'tree_plot',
+  'validation_curve',
+]
 
 
 def _safe_fig(fn):
@@ -78,27 +124,6 @@ def _new_fig(title):
   fig, ax = plt.subplots()
   ax.set_title(title)
   return fig, ax
-
-
-def _delegate(name, *args, **kwargs):
-  '''Try a modeling.charts function of the same name.
-
-  Returns (figure, True) when the modeling function
-  exists (figure may be None = insufficient data),
-  else (None, False) so the caller uses its local
-  implementation. Never raises.
-  '''
-  try:
-    from forecast_ml_framework.pipelines.modeling import (
-      charts as modeling_charts,
-    )
-    func = getattr(modeling_charts, name, None)
-    if not callable(func):
-      return None, False
-    return func(*args, **kwargs), True
-  except Exception as exc:  # noqa: BLE001 - local fallback
-    LOG.warning('modeling chart %r unavailable: %s' % (name, exc))
-    return None, False
 
 
 def _pairs(y_true, y_pred):
@@ -175,7 +200,36 @@ def _barh(title, labels, values):
   return fig
 
 
-# --- Interpretability charts ---
+@_safe_fig
+def lime_bar(importances, feature_names=None):
+  '''LIME bar from rows, dict, explainer, or array.
+
+  ``lime_explain`` rows (``top_features``) are adapted
+  to a feature->weight dict, then rendered by
+  ``modeling.charts.lime_bar``.
+  '''
+  if isinstance(importances, (list, tuple)) and importances \
+      and isinstance(importances[0], dict) \
+      and 'top_features' in importances[0]:
+    first = importances[0].get('top_features') or []
+    weights = {str(e.get('feature', 'f%d' % i)):
+               float(e.get('weight', 0.0))
+               for i, e in enumerate(first)}
+    return _modeling_lime_bar(weights, feature_names)
+  return _modeling_lime_bar(importances, feature_names)
+
+
+@_safe_fig
+def tree_plot(model, feature_names=None):
+  '''Plot a sklearn tree (or first forest estimator).'''
+  target = model
+  if not hasattr(target, 'tree_'):
+    estimators = getattr(model, 'estimators_', None)
+    if estimators is None or len(estimators) == 0:
+      return None
+    target = estimators[0]
+  return _modeling_tree_plot(target, feature_names)
+
 
 @_safe_fig
 def shap_beeswarm(shap_values, feature_names=None):
@@ -193,13 +247,11 @@ def shap_beeswarm(shap_values, feature_names=None):
   ax.set_xlabel('SHAP value')
   return fig
 
-
 @_safe_fig
 def shap_bar(importance, feature_names=None):
   '''SHAP bar: sorted global importance.'''
   labels, values = _importance_pairs(importance, feature_names)
   return _barh('SHAP bar', labels, values)
-
 
 @_safe_fig
 def shap_heatmap(shap_values, feature_names=None):
@@ -213,75 +265,6 @@ def shap_heatmap(shap_values, feature_names=None):
   ax.set_yticklabels(names)
   ax.set_xlabel('row')
   return fig
-
-
-@_safe_fig
-def shap_dependence(shap_values, x=None, feature_index=0):
-  '''SHAP dependence for one feature (delegates if able).'''
-  matrix, _names = _matrix(shap_values)
-  if matrix is None or not (0 <= feature_index < matrix.shape[1]):
-    return None
-  fig, done = _delegate('shap_dependence', matrix, x, feature_index)
-  if done:
-    return fig
-  vals = matrix[:, feature_index]
-  xs = np.arange(matrix.shape[0])
-  if x is not None:
-    arr = np.asarray(x, dtype=float)
-    if arr.ndim == 2 and arr.shape[0] == matrix.shape[0] \
-        and arr.shape[1] > feature_index:
-      xs = arr[:, feature_index]
-  fig, ax = _new_fig('SHAP dependence')
-  ax.scatter(xs, vals, s=10, c=vals)
-  ax.set_xlabel('feature %d' % feature_index)
-  ax.set_ylabel('SHAP value')
-  return fig
-
-
-@_safe_fig
-def shap_waterfall(shap_values, feature_names=None, baseline=None):
-  '''SHAP waterfall: single row as cumulative steps.'''
-  fig, done = _delegate('shap_waterfall', shap_values, feature_names)
-  if done:
-    return fig
-  vals = np.asarray(shap_values, dtype=float).ravel() \
-    if not isinstance(shap_values, dict) else np.array([])
-  if vals.size < 1:
-    return None
-  labels = list(feature_names) if feature_names else \
-    ['f%d' % i for i in range(vals.size)]
-  order = np.argsort(-np.abs(vals))
-  start = float(baseline or 0.0)
-  cumulative = start + np.cumsum(vals[order])
-  fig, ax = _new_fig('SHAP waterfall')
-  ax.plot(range(len(cumulative) + 1),
-          [start] + list(cumulative), marker='o')
-  ax.set_xticks(range(len(cumulative) + 1))
-  ax.set_xticklabels(['base'] + [str(labels[i]) for i in order],
-                     rotation=45)
-  ax.set_ylabel('cumulative SHAP value')
-  return fig
-
-
-@_safe_fig
-def shap_force(shap_values, feature_names=None, baseline=None):
-  '''SHAP force: single-row bars around the baseline.'''
-  fig, done = _delegate('shap_force', shap_values, feature_names)
-  if done:
-    return fig
-  vals = np.asarray(shap_values, dtype=float).ravel() \
-    if not isinstance(shap_values, dict) else np.array([])
-  if vals.size < 1:
-    return None
-  labels = list(feature_names) if feature_names else \
-    ['f%d' % i for i in range(vals.size)]
-  fig, ax = _new_fig('SHAP force')
-  ax.bar([str(v) for v in labels[:vals.size]], vals)
-  if baseline is not None:
-    ax.axvline(0, color='r')
-  ax.set_ylabel('SHAP value')
-  return fig
-
 
 @_safe_fig
 def pdp_1d_chart(pdp_result, ice_curves=None):
@@ -372,86 +355,11 @@ def pdp_2d_heatmap(model, x, feature_a=0, feature_b=1):
   ax.set_ylabel(str(cols[ib]))
   return fig
 
-
 @_safe_fig
 def permutation_importance_bar(importance, feature_names=None):
   '''Bar chart of permutation importance.'''
   labels, values = _importance_pairs(importance, feature_names)
   return _barh('Permutation importance', labels, values)
-
-
-@_safe_fig
-def lime_bar(importances, feature_names=None):
-  '''LIME bar from rows, dict, explainer, or array.'''
-  rows = importances
-  if isinstance(rows, (list, tuple)) and rows \
-      and isinstance(rows[0], dict) and 'top_features' in rows[0]:
-    first = rows[0].get('top_features') or []
-    labels = [str(e.get('feature', 'f%d' % i))
-              for i, e in enumerate(first)]
-    values = np.array([float(e.get('weight', 0.0)) for e in first])
-    return _barh('LIME bar', labels, values)
-  fig, done = _delegate('lime_bar', importances, feature_names)
-  if done:
-    return fig
-  labels, values = _importance_pairs(importances, feature_names)
-  return _barh('LIME bar', labels, values)
-
-
-@_safe_fig
-def decision_boundary_chart(x, y_true, model=None):
-  '''Decision boundary contour over the top-2 features.'''
-  fig, done = _delegate('decision_boundary', x, y_true, model)
-  if done:
-    return fig
-  data = np.asarray(x, dtype=float)
-  yt = np.asarray(y_true).ravel()
-  if data.ndim != 2 or data.shape[1] < 2 or data.shape[0] < 5 \
-      or data.shape[0] != yt.size:
-    return None
-  fig, ax = _new_fig('Decision boundary')
-  if model is not None:
-    mins = data[:, :2].min(axis=0)
-    maxs = data[:, :2].max(axis=0)
-    gx, gy = np.meshgrid(np.linspace(mins[0], maxs[0], 20),
-                         np.linspace(mins[1], maxs[1], 20))
-    grid = np.column_stack([gx.ravel(), gy.ravel()])
-    try:
-      scores = np.asarray(model.predict(grid), dtype=float).ravel()
-    except Exception:  # noqa: BLE001 - fill with medians
-      full = np.tile(np.median(data, axis=0), (grid.shape[0], 1))
-      full[:, :2] = grid
-      scores = np.asarray(
-        model.predict(full), dtype=float).ravel()
-    ax.contourf(gx, gy, scores.reshape(gx.shape), alpha=0.3)
-  ax.scatter(data[:, 0], data[:, 1], s=8, c=yt)
-  ax.set_xlabel('feature 0')
-  ax.set_ylabel('feature 1')
-  return fig
-
-
-@_safe_fig
-def tree_plot(model, feature_names=None):
-  '''Plot a sklearn tree (or first forest estimator).'''
-  fig, done = _delegate('tree_plot', model, feature_names)
-  if done and fig is not None:
-    return fig
-  target = model
-  if not hasattr(target, 'tree_'):
-    estimators = getattr(model, 'estimators_', None)
-    if estimators is None or len(estimators) == 0:
-      return None
-    target = estimators[0]
-  if not hasattr(target, 'tree_'):
-    return None
-  from sklearn.tree import plot_tree
-  fig, ax = plt.subplots()
-  plot_tree(target, ax=ax, feature_names=feature_names, filled=True)
-  ax.set_title('Decision tree')
-  return fig
-
-
-# --- Diagnostics charts ---
 
 @_safe_fig
 def calibration_curve(data, y_pred=None):
@@ -577,165 +485,4 @@ def confidence_histogram(proba):
   fig, ax = _new_fig('Confidence histogram')
   ax.hist(scores, bins=10)
   ax.set_xlabel('confidence')
-  return fig
-
-
-@_safe_fig
-def residuals_over_time_chart(y_true, y_pred, dates=None):
-  '''Residuals over time / sample order.'''
-  fig, done = _delegate('residuals_over_time', y_true, y_pred, dates)
-  if done:
-    return fig
-  pairs = _pairs(y_true, y_pred)
-  if pairs is None:
-    return None
-  axis = dates if dates is not None and len(dates) == len(pairs[0]) \
-    else np.arange(len(pairs[0]))
-  fig, ax = _new_fig('Residuals over time')
-  ax.plot(axis, pairs[0] - pairs[1])
-  ax.axhline(0, color='r')
-  return fig
-
-
-@_safe_fig
-def cooks_distance(y_true, y_pred, x=None):
-  '''Cook's distance stem plot.'''
-  fig, done = _delegate('cooks_distance', y_true, y_pred, x)
-  if done:
-    return fig
-  pairs = _pairs(y_true, y_pred)
-  if pairs is None:
-    return None
-  yt, yp = pairs
-  resid = yt - yp
-  design = np.asarray(x, dtype=float) if x is not None else yp
-  if design.ndim == 1:
-    design = design.reshape(-1, 1)
-  design = np.column_stack([np.ones(len(yt)), design])
-  p = design.shape[1]
-  if len(yt) <= p + 1:
-    return None
-  hat = design @ np.linalg.pinv(design.T @ design) @ design.T
-  leverage = np.clip(np.diag(hat), 0, 0.999)
-  mse = float(np.mean(resid ** 2)) or 1.0
-  cooks = (resid ** 2 / (p * mse)) * (leverage / (1 - leverage) ** 2)
-  fig, ax = _new_fig('Cooks distance')
-  ax.stem(cooks)
-  ax.set_xlabel('observation')
-  return fig
-
-
-@_safe_fig
-def rec_curve(y_true, y_pred):
-  '''REC curve: accuracy within tolerance.'''
-  fig, done = _delegate('rec_curve', y_true, y_pred)
-  if done:
-    return fig
-  pairs = _pairs(y_true, y_pred)
-  if pairs is None:
-    return None
-  err = np.sort(np.abs(pairs[0] - pairs[1]))
-  acc = np.arange(1, len(err) + 1) / len(err)
-  fig, ax = _new_fig('REC curve')
-  ax.plot(err, acc)
-  ax.set_xlabel('tolerance')
-  ax.set_ylabel('accuracy within tolerance')
-  return fig
-
-
-@_safe_fig
-def learning_curve(train_scores, val_scores):
-  '''Learning curve: train vs validation scores.'''
-  fig, done = _delegate('learning_curve', train_scores, val_scores)
-  if done:
-    return fig
-  tr = np.asarray(train_scores, dtype=float).ravel()
-  va = np.asarray(val_scores, dtype=float).ravel()
-  if min(tr.size, va.size) < 2:
-    return None
-  n = min(tr.size, va.size)
-  fig, ax = _new_fig('Learning curve')
-  ax.plot(range(n), tr[:n], label='train')
-  ax.plot(range(n), va[:n], label='validation')
-  ax.legend()
-  return fig
-
-
-@_safe_fig
-def validation_curve(param_values, train_scores, val_scores):
-  '''Validation curve vs hyperparameter values.'''
-  fig, done = _delegate('validation_curve', param_values,
-                        train_scores, val_scores)
-  if done:
-    return fig
-  pv = np.asarray(param_values, dtype=float).ravel()
-  tr = np.asarray(train_scores, dtype=float).ravel()
-  va = np.asarray(val_scores, dtype=float).ravel()
-  if min(pv.size, tr.size, va.size) < 2:
-    return None
-  n = min(pv.size, tr.size, va.size)
-  fig, ax = _new_fig('Validation curve')
-  ax.plot(pv[:n], tr[:n], marker='o', label='train')
-  ax.plot(pv[:n], va[:n], marker='s', label='validation')
-  ax.legend()
-  ax.set_xlabel('parameter')
-  return fig
-
-
-@_safe_fig
-def loss_vs_epoch(train_loss, val_loss=None):
-  '''Loss vs epoch.'''
-  fig, done = _delegate('loss_vs_epoch', train_loss, val_loss)
-  if done:
-    return fig
-  tr = np.asarray(train_loss, dtype=float).ravel()
-  if tr.size < 2:
-    return None
-  fig, ax = _new_fig('Loss vs epoch')
-  ax.plot(tr, label='train')
-  if val_loss is not None:
-    va = np.asarray(val_loss, dtype=float).ravel()
-    if va.size >= 2:
-      ax.plot(va, label='validation')
-  ax.legend()
-  ax.set_xlabel('epoch')
-  return fig
-
-
-@_safe_fig
-def cv_box(cv_scores):
-  '''Box plot of cross-validation scores.'''
-  fig, done = _delegate('cv_scores_box', cv_scores)
-  if done:
-    return fig
-  if isinstance(cv_scores, dict):
-    groups = {str(k): np.asarray(v, dtype=float).ravel()
-              for k, v in cv_scores.items()}
-    groups = {k: v for k, v in groups.items() if v.size >= 2}
-  else:
-    arr = np.asarray(cv_scores, dtype=float).ravel()
-    groups = {'scores': arr} if arr.size >= 2 else {}
-  if not groups:
-    return None
-  fig, ax = _new_fig('CV scores')
-  ax.boxplot(list(groups.values()), tick_labels=list(groups.keys()))
-  ax.set_ylabel('score')
-  return fig
-
-
-@_safe_fig
-def overfitting_gap(train_scores, val_scores):
-  '''Train-validation gap per point.'''
-  fig, done = _delegate('overfitting_gap', train_scores, val_scores)
-  if done:
-    return fig
-  tr = np.asarray(train_scores, dtype=float).ravel()
-  va = np.asarray(val_scores, dtype=float).ravel()
-  if min(tr.size, va.size) < 2:
-    return None
-  n = min(tr.size, va.size)
-  fig, ax = _new_fig('Overfitting gap')
-  ax.bar(range(n), tr[:n] - va[:n])
-  ax.axhline(0, color='r')
-  ax.set_xlabel('fold / epoch')
   return fig

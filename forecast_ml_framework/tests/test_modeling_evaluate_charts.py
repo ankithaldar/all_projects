@@ -11,7 +11,7 @@ from forecast_ml_framework.pipelines.modeling.charts import make_charts
 from forecast_ml_framework.pipelines.modeling.evaluate import (
   evaluate_model,
 )
-from forecast_ml_framework.pipelines.modeling.shap_explain import (
+from forecast_ml_framework.pipelines.modeling.pipeline import (
   explain_model,
 )
 
@@ -639,3 +639,28 @@ def test_phase3_make_charts_dispatcher_new_groups():
     assert key in figs_r, key
   for fig in figs_r.values():
     plt.close(fig)
+
+
+def test_compute_metrics_length_mismatch_raises():
+  import pytest
+  from forecast_ml_framework.pipelines.modeling.metrics import (
+    compute_metrics,
+  )
+  with pytest.raises(ValueError):
+    compute_metrics(
+        [0, 1, 0], [0, 1], [[0.5, 0.5]] * 3, 'classification')
+  with pytest.raises(ValueError):
+    compute_metrics(
+        [0, 1], [0, 1], [[0.5, 0.5]], 'classification')
+  with pytest.raises(ValueError):
+    compute_metrics([1.0, 2.0], [1.0], None, 'regression')
+
+
+def test_evaluate_model_length_mismatch_raises():
+  import pandas as pd
+  import pytest
+  x = pd.DataFrame({'f1': [1.0, 2.0]})
+  with pytest.raises(ValueError):
+    evaluate_model(
+        [0, 1, 0], [0, 1], [[0.5, 0.5]] * 3, x,
+        {'task_type': 'classification'})

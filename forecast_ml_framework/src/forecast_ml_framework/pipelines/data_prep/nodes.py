@@ -6,54 +6,49 @@
 Public handle helper: :func:`resolve_handle` resolves dotted
 importable strings used as ``handle`` / ``*_handle`` values in
 ``conf/base/parameters.yml`` (e.g. ``model_handle``,
-``label_encode_handle``, ``ohe_handle``, ``calibration_handle``,
-``tuning_handle``) via ``importlib.import_module`` + ``getattr``.
+``calibration_handle``, ``tuning_handle``) under the same
+allowlist as scoring (sklearn / xgboost / lightgbm / catboost /
+h2o / forecast_ml_framework roots, estimator-like classes
+with ``fit`` and ``predict`` only).
 '''
 
-import importlib
 import logging
 
 import numpy as np
 import pandas as pd
 
+from forecast_ml_framework.core import spark_factory
 from forecast_ml_framework.core.config_loader import ConfigLoader
+from forecast_ml_framework.pipelines.scoring.nodes import (
+  _resolve_handle_strict as _resolve_handle_strict,
+)
 
 LOG = logging.getLogger(__name__)
 
 
 def resolve_handle(handle):
-  '''Resolve a dotted importable string to the object it names.
+  '''Resolve a dotted handle under the allowlist (reused).
+
+  Delegates to scoring's ``_resolve_handle_strict`` so both
+  pipelines share one allowlist (sklearn / xgboost / lightgbm /
+  catboost / h2o / forecast_ml_framework) and estimator check
+  (a class with ``fit`` and ``predict``); handles such as
+  ``os.system`` never resolve.
 
   Args:
     handle: Dotted importable string, e.g.
       'xgboost.XGBClassifier',
-      'sklearn.ensemble.RandomForestClassifier',
-      'pyspark.ml.feature.StringIndexer' or
+      'sklearn.ensemble.RandomForestClassifier' or
       'sklearn.calibration.CalibratedClassifierCV'.
 
   Returns:
-    The imported module attribute named by handle.
+    The estimator-like class named by handle.
 
   Raises:
-    ValueError: If handle is not a dotted string or cannot be
-      resolved.
+    ValueError: If handle is not allowlisted, cannot be
+      resolved, or is not an estimator-like class.
   '''
-  if not isinstance(handle, str) or '.' not in handle:
-    raise ValueError(
-        'expected a dotted importable string, got %r' % (handle,))
-  module_path, _, attr = handle.rpartition('.')
-  try:
-    module = importlib.import_module(module_path)
-  except ImportError as exc:
-    raise ValueError(
-        'cannot resolve handle %r: module %r failed to import'
-        % (handle, module_path)) from exc
-  try:
-    return getattr(module, attr)
-  except AttributeError as exc:
-    raise ValueError(
-        'cannot resolve handle %r: module %r has no %r'
-        % (handle, module_path, attr)) from exc
+  return _resolve_handle_strict(handle)
 
 
 def _resolve_cols(args, default):
@@ -62,25 +57,6 @@ def _resolve_cols(args, default):
   include = cols.get('include_cols') or list(default)
   exclude = set(cols.get('exclude_cols') or [])
   return [c for c in include if c not in exclude]
-
-
-def _to_pandas(df, conv_params=None):
-  '''Convert Spark df to pandas if needed.
-
-  Spark path: if df exposes ``toPandas``/``to_pandas`` and is
-  not a pandas frame, convert via that helper, honouring
-  ``pandas_conversion_params.convert_to_pandas``.
-  '''
-  if isinstance(df, pd.DataFrame):
-    return df
-  conv = conv_params or {}
-  if conv.get('convert_to_pandas', True) is False:
-    raise TypeError('Spark input requires convert_to_pandas=True')
-  if hasattr(df, 'toPandas'):
-    return df.toPandas()
-  if hasattr(df, 'to_pandas'):
-    return df.to_pandas()
-  raise TypeError('Unsupported dataframe type: %r' % type(df))
 
 
 def _seq_list(val):
@@ -484,7 +460,12 @@ def preprocess(df, prep_params, variables,
     Preprocessed pandas dataframe, or tuple with report.
   '''
   warnings, unknown = [], []
-  df = _to_pandas(df, pandas_conversion_params).copy()
+  pandas_conversion_params = pandas_conversion_params or {}
+  if (not isinstance(df, pd.DataFrame)
+      and pandas_conversion_params.get('convert_to_pandas', True)
+      is False):
+    raise TypeError('Spark input requires convert_to_pandas=True')
+  df = spark_factory.to_pandas(df, pandas_conversion_params).copy()
   for name, skip, args in _iter_steps(prep_params):
     if skip:
       continue
@@ -515,7 +496,16 @@ def select_features(train_df, params, variables):
   params = params or {}
   fparams = params.get('feature_selection_params', params)
   target = variables.get('target_col', 'target')
-  df = _to_pandas(train_df).copy()
+  pandas_conversion_params = (
+      fparams.get('pandas_conversion_params')
+      or params.get('pandas_conversion_params') or {})
+  if (not isinstance(train_df, pd.DataFrame)
+      and isinstance(pandas_conversion_params, dict)
+      and pandas_conversion_params.get('convert_to_pandas', True)
+      is False):
+    raise TypeError('Spark input requires convert_to_pandas=True')
+  df = spark_factory.to_pandas(
+      train_df, pandas_conversion_params).copy()
   base = list(variables.get('feature_cols') or [])
   candidates = [c for c in base if c in df.columns]
   report = {'initial': list(candidates), 'warnings': []}

@@ -467,3 +467,73 @@ def test_make_charts_malformed_does_not_crash():
   assert isinstance(dfigs, dict)
   for fig in dfigs.values():
     plt.close(fig)
+
+
+# --- Cycle-2 dedupe: canonical params + direct chart imports ---
+
+def test_flatten_params_canonical():
+  '''core.params.flatten_params unwraps nested key, top wins.'''
+  from forecast_ml_framework.core.params import flatten_params
+  assert flatten_params(None, 'eda_params') == {}
+  assert flatten_params({'a': 1}, 'eda_params') == {'a': 1}
+  assert flatten_params(
+      {'eda_params': {'a': 1, 'b': 2}, 'b': 3},
+      'eda_params') == {'a': 1, 'b': 3}
+  assert flatten_params(
+      {'monitoring_params': {'bins': 5}}, 'monitoring_params') == {
+      'bins': 5}
+  import pytest
+  with pytest.raises(ValueError, match='params must be a dict'):
+    flatten_params('bad', 'eda_params')
+
+
+def test_interpretability_charts_import_duplicates_directly():
+  '''Duplicated charts are modeling.charts objects, no shim.'''
+  from forecast_ml_framework.pipelines.interpretability import (
+    charts as interp_charts,
+  )
+  from forecast_ml_framework.pipelines.modeling import (
+    charts as modeling_charts,
+  )
+  assert not hasattr(interp_charts, '_delegate')
+  assert interp_charts.shap_dependence is \
+    modeling_charts.shap_dependence
+  assert interp_charts.shap_waterfall is \
+    modeling_charts.shap_waterfall
+  assert interp_charts.shap_force is modeling_charts.shap_force
+  assert interp_charts.cooks_distance is \
+    modeling_charts.cooks_distance
+  assert interp_charts.rec_curve is modeling_charts.rec_curve
+  assert interp_charts.learning_curve is \
+    modeling_charts.learning_curve
+  assert interp_charts.validation_curve is \
+    modeling_charts.validation_curve
+  assert interp_charts.loss_vs_epoch is modeling_charts.loss_vs_epoch
+  assert interp_charts.overfitting_gap is \
+    modeling_charts.overfitting_gap
+  assert interp_charts.cv_box is modeling_charts.cv_scores_box
+  assert interp_charts.decision_boundary_chart is \
+    modeling_charts.decision_boundary
+  assert interp_charts.residuals_over_time_chart is \
+    modeling_charts.residuals_over_time
+  # Unique interpretability charts remain.
+  for name in ('shap_beeswarm', 'shap_bar', 'shap_heatmap',
+               'pdp_1d_chart', 'pdp_2d_heatmap',
+               'permutation_importance_bar', 'calibration_curve',
+               'lime_bar', 'tree_plot'):
+    assert callable(getattr(interp_charts, name)), name
+
+
+def test_no_local_params_dict_copies():
+  '''Nodes import flatten_params, no local _params_dict defs.'''
+  import inspect
+  from forecast_ml_framework.pipelines.eda import nodes as eda_nodes
+  from forecast_ml_framework.pipelines.monitoring import (
+    nodes as mon_nodes,
+  )
+  from forecast_ml_framework.pipelines.interpretability import (
+    nodes as interp_nodes,
+  )
+  for mod in (eda_nodes, mon_nodes, interp_nodes):
+    assert not hasattr(mod, '_params_dict'), mod.__name__
+    assert hasattr(mod, 'flatten_params'), mod.__name__

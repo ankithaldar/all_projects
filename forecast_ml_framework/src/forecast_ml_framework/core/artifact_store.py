@@ -7,7 +7,8 @@ Trust boundary: artifacts are trusted only when produced by this
 framework. Loading uses a restricted unpickler (see
 :func:`restricted_loads`) with an EXACT ``(module, name)``
 allowlist of classes/reconstruction helpers for sklearn, numpy,
-and pandas objects. Prefix/module-wide allowlisting is NOT used:
+pandas, and verified zoo models (xgboost/lightgbm/catboost).
+Prefix/module-wide allowlisting is NOT used:
 loader functions such as ``pandas.read_pickle``/``read_csv``,
 ``numpy.load``, ``eval``/``exec``/``open``, and any
 ``os``/``subprocess``/``sys`` global are rejected, so a chained
@@ -301,11 +302,26 @@ _SAFE_GLOBALS = {
   ('pytz.tzinfo', 'DstTzInfo'),
   ('pytz.tzinfo', 'StaticTzInfo'),
   ('pytz', 'UTC'),
+  # zoo models verified by inspecting pickle globals of tiny
+  # trained models in the uv venv (see tests/test_core.py):
+  # xgboost Booster + sklearn wrappers, lightgbm Booster +
+  # sklearn wrappers, catboost sklearn wrappers. No loaders,
+  # no os/subprocess/sys, no DMatrix/Pool (not picklable /
+  # not needed to unpickle a fitted model).
+  ('xgboost.core', 'Booster'),
+  ('xgboost.sklearn', 'XGBRegressor'),
+  ('xgboost.sklearn', 'XGBClassifier'),
+  ('lightgbm.basic', 'Booster'),
+  ('lightgbm.sklearn', 'LGBMRegressor'),
+  ('lightgbm.sklearn', 'LGBMClassifier'),
+  ('catboost.core', 'CatBoostRegressor'),
+  ('catboost.core', 'CatBoostClassifier'),
 }
 
 
 class _RestrictedUnpickler(pickle.Unpickler):
-  '''Unpickler allowing only sklearn/numpy/pandas + safe types.'''
+  '''Unpickler allowing only allowlisted sklearn/numpy/pandas/zoo
+  model classes plus safe types.'''
 
   def find_class(self, module, name):
     '''Return allowlisted global or raise ValueError.
@@ -333,7 +349,7 @@ def restricted_loads(raw):
   '''Unpickle ``raw`` with an allowlist, rejecting other globals.
 
   Trusted-artifact boundary: only artifacts written by this
-  framework (sklearn/numpy/pandas objects and safe builtin
+  framework (sklearn/numpy/pandas/zoo objects and safe builtin
   types) should be loaded. Untrusted pickles must be rejected
   before this call; this function is defence in depth.
 

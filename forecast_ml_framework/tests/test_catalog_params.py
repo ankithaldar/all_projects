@@ -5,6 +5,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -56,7 +57,8 @@ def test_parquet_and_pickle_params():
     assert entry['filepath'].startswith('${params:output_gcs_location}')
   for name in ('fitted_model_params', 'calibrated_model_params'):
     entry = catalog[name]
-    assert entry['type'] == 'kedro_datasets.pickle.PickleDataset'
+    assert entry['type'] == (
+        'forecast_ml_framework.core.datasets.RestrictedPickleDataset')
   for name in ('train_prediction_df_params', 'prediction_df_params'):
     assert catalog[name]['filepath'].startswith(
         '${params:output_gcs_location}')
@@ -78,6 +80,68 @@ def test_bq_metrics_and_decile_anchor():
   assert catalog['test_model_lift_reg_params'] == decile
   overall = catalog['train_model_evaluation_reg_params']
   assert catalog['test_model_evaluation_reg_params'] == overall
+
+
+def test_model_pickle_entries_use_restricted_dataset():
+  '''All model/calibration/filtered pickle entries are restricted.'''
+  catalog = _load_catalog()
+  restricted = 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
+  for name in ('model', 'calibration_model', 'h2o_automl_model',
+               'xgboost_model', 'lightgbm_model', 'catboost_model',
+               'sklearn_model', 'registry_model',
+               'fitted_model_params', 'calibrated_model_params'):
+    assert catalog[name]['type'] == restricted, name
+  assert 'kedro_datasets.pickle.PickleDataset' not in _raw()
+
+
+def test_restricted_pickle_dataset_sklearn_roundtrip(tmp_path):
+  '''Restricted dataset roundtrips a fitted sklearn model.'''
+  import numpy as np
+  import pandas as pd
+  from sklearn.linear_model import LogisticRegression
+
+  from forecast_ml_framework.core.datasets import (
+    RestrictedPickleDataset,
+  )
+  rng = np.random.RandomState(42)
+  x = pd.DataFrame(rng.randn(40, 2), columns=['a', 'b'])
+  y = (x['a'] + x['b'] > 0).astype(int)
+  model = LogisticRegression().fit(x, y)
+  dataset = RestrictedPickleDataset(filepath=str(tmp_path / 'm.pkl'))
+  dataset.save(model)
+  loaded = dataset.load()
+  assert (loaded.predict(x) == model.predict(x)).all()
+
+
+def test_restricted_pickle_dataset_blocks_evil_pickle(tmp_path):
+  '''Restricted dataset rejects malicious pickle, no side effect.'''
+  import pickle
+
+  from forecast_ml_framework.core.datasets import (
+    RestrictedPickleDataset,
+  )
+
+  class _Evil:
+    '''Pickle payload that would execute a shell command.'''
+
+    def __init__(self, marker):
+      '''Store marker path the payload would create.'''
+      self.marker = str(marker)
+
+    def __reduce__(self):
+      '''Return an os.system call as the reconstruction.'''
+      import os
+      return (os.system, (f'touch {self.marker}',))
+
+  marker = tmp_path / 'pwned'
+  path = tmp_path / 'evil.pkl'
+  path.write_bytes(pickle.dumps(_Evil(marker)))
+  dataset = RestrictedPickleDataset(filepath=str(path))
+  # _load raises ValueError directly; Kedro's public load()
+  # wraps it in DatasetError (same as SQLQueryDataSet).
+  with pytest.raises(ValueError):
+    dataset._load()
+  assert not marker.exists()
 
 
 def test_existing_generic_datasets_kept():
@@ -127,3 +191,17 @@ def test_every_type_importable():
     assert callable(obj), (name, path)
     checked += 1
   assert checked > 0
+
+# --- cycle2 overlays restricted pickle (RED) ---
+def test_env_overlays_pickle_entries_restricted():
+  '''All overlay pickle entries use RestrictedPickleDataset.'''
+  restricted = ('forecast_ml_framework.core.datasets.'
+         'RestrictedPickleDataset')
+  for env in ('local', 'gcp', 'aws'):
+    catalog = _load_catalog(env)
+    raw = _raw(env)
+    assert 'kedro_datasets.pickle.PickleDataset' not in raw, env
+    for name in ('model', 'calibration_model', 'h2o_automl_model',
+          'xgboost_model', 'lightgbm_model', 'catboost_model',
+          'sklearn_model'):
+      assert catalog[name]['type'] == restricted, (env, name)

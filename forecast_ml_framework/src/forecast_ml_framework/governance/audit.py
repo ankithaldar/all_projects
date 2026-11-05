@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 
 REDACTED = '***REDACTED***'
 
-_SECRET_MARKERS = ('password', 'passwd', 'pwd', 'secret', 'token',
+_SECRET_MARKERS = ('password', 'passwd', 'pwd', 'pass', 'secret',
+                   'token',
                    'api_key', 'apikey', 'api-key', 'access_key',
                    'accesskey', 'private_key', 'privatekey',
                    'authorization', 'credential', 'passphrase',
@@ -28,13 +29,15 @@ _SECRET_MARKERS = ('password', 'passwd', 'pwd', 'secret', 'token',
                    'awssecretaccesskey')
 
 _SECRET_TEXT_RE = re.compile(
-    r'\b([A-Za-z0-9_.\-]*?(?:password|passwd|pwd|passphrase|'
-    r'secret|token|api[_-]?key|access[_-]?key|private[_-]?key|'
+    r'(["\']?[A-Za-z0-9_.\-]*?(?:password|passwd|pwd|passphrase|'
+    r'pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|'
     r'bearer|auth|cookie|credential|authorization)'
-    r'[A-Za-z0-9_.\-]*\s*[:=]\s*["\']?)([^\s,;"\']+)',
+    r'[A-Za-z0-9_.\-]*?["\']?\s*[:=]\s*["\']?)([^\s,;"\']+)',
     re.IGNORECASE)
 _BEARER_TEXT_RE = re.compile(
     r'\b(Bearer\s+)([A-Za-z0-9_.\-]+)', re.IGNORECASE)
+_URL_CRED_RE = re.compile(
+    r'(://[^/\s:@]+:)([^\s/]+)(@[^/\s@]+)', re.IGNORECASE)
 
 
 def _normalize_key(key):
@@ -64,6 +67,7 @@ def _scrub_text(text):
   '''
   if not isinstance(text, str):
     return text
+  text = _URL_CRED_RE.sub(r'\1' + REDACTED + r'\3', text)
   text = _BEARER_TEXT_RE.sub(r'\1' + REDACTED, text)
   return _SECRET_TEXT_RE.sub(r'\1' + REDACTED, text)
 
@@ -90,6 +94,12 @@ def scrub_details(details):
     return [scrub_details(item) for item in details]
   if isinstance(details, tuple):
     return tuple(scrub_details(item) for item in details)
+  if isinstance(details, frozenset):
+    return frozenset(scrub_details(item) for item in details)
+  if isinstance(details, set):
+    return {scrub_details(item) for item in details}
+  if isinstance(details, (bytes, bytearray)):
+    return _scrub_text(details.decode('utf-8', errors='replace'))
   if isinstance(details, str):
     return _scrub_text(details)
   return copy.deepcopy(details)

@@ -6,7 +6,42 @@
 
 from forecast_ml_framework.feature_store.store import (
     ENTITY_COL, FeatureStore, _normalize_frame, _resolve_time,
-    _snapshot_timestamp, _strip_tz, _to_timestamp, _version_key)
+    _snapshot_timestamp, _version_key)
+
+
+def _naive_utc(value):
+  '''Parse ``value`` to a naive UTC Timestamp (or None).'''
+  if value is None:
+    return None
+  import pandas as pd
+  stamp = pd.Timestamp(value)
+  if getattr(stamp, 'tzinfo', None) is not None:
+    stamp = stamp.tz_convert('UTC').tz_localize(None)
+  return stamp
+
+
+def _naive_utc_frame(frame):
+  '''Return ``frame`` with tz-aware as_of converted to naive UTC.'''
+  import pandas as pd
+  frame = frame.copy()
+  if 'as_of' in frame.columns and len(frame):
+    converted = pd.to_datetime(frame['as_of'])
+    if getattr(converted.dtype, 'tz', None) is not None:
+      converted = converted.dt.tz_convert('UTC').dt.tz_localize(None)
+    frame['as_of'] = converted
+  return frame
+
+
+def _check_not_empty(dataframe):
+  '''Raise an informative ValueError for an empty dataframe.'''
+  try:
+    empty = dataframe is None or len(dataframe) == 0
+  except TypeError:
+    empty = False
+  if empty:
+    raise ValueError(
+        'cannot materialize empty dataframe: '
+        'offline feature store is empty')
 
 
 class OfflineFeatureStore(FeatureStore):
@@ -61,15 +96,21 @@ class OfflineFeatureStore(FeatureStore):
       ValueError: When the frame lacks an entity column.
     '''
     import pandas as pd
-    frame = _normalize_frame(
+    _check_not_empty(dataframe)
+    frame = _naive_utc_frame(_normalize_frame(
         dataframe, as_of=as_of,
         entity_col=entity_col or self.entity_col,
-        timestamp_col=timestamp_col or self.timestamp_col)
+        timestamp_col=timestamp_col or self.timestamp_col))
+    if frame.empty:
+      raise ValueError(
+          'cannot materialize empty dataframe: '
+          'offline feature store is empty')
     if feature_names is not None:
       keep = [ENTITY_COL, 'as_of'] + [
           name for name in feature_names if name in frame.columns]
       frame = frame[keep].copy()
-    version = as_of if as_of is not None else frame['as_of'].max()
+    version = _naive_utc(as_of) if as_of is not None \
+        else frame['as_of'].max()
     key = _version_key(self.prefix, version)
     self.artifact_store.save(key, frame)
     return key
@@ -100,7 +141,7 @@ class OfflineFeatureStore(FeatureStore):
       return None
     import pandas as pd
     if isinstance(loaded, pd.DataFrame):
-      return _normalize_frame(loaded)
+      return _naive_utc_frame(_normalize_frame(loaded))
     return None
 
   def load(self, as_of=None, key=None):
@@ -130,10 +171,15 @@ class OfflineFeatureStore(FeatureStore):
       for candidate in self._all_keys():
         stamp = _snapshot_timestamp(candidate)
         if stamp is not None:
-          candidates.append((stamp, candidate))
-      if candidates:
+          candidates.append((_naive_utc(stamp), candidate))
+      try:
+        parsed = _naive_utc(as_of)
+      except Exception:  # pylint: disable=broad-exception-caught
+        parsed = None
+      parsed_ok = parsed is not None
+      if candidates and parsed_ok:
         if re.fullmatch(r'\d{4}-\d{2}-\d{2}', text.strip()):
-          day = _strip_tz(_to_timestamp(text))
+          day = parsed
           same_day = [(s, k) for s, k in candidates
                       if s.normalize() == day.normalize()]
           if same_day:
@@ -141,26 +187,29 @@ class OfflineFeatureStore(FeatureStore):
             if frame is not None:
               return frame
         else:
-          when = _strip_tz(_to_timestamp(as_of))
-          if when is not None:
-            eligible = [(s, k) for s, k in candidates if s <= when]
-            if eligible:
-              frame = self._load_frame(sorted(eligible)[-1][1])
-              if frame is not None:
-                return frame
-            # No snapshot at or before the request: do not fall
-            # back to a future snapshot.
-            raise FileNotFoundError(
-                f'No offline feature snapshot for as_of={as_of!r}')
-      else:
+          when = parsed
+          eligible = [(s, k) for s, k in candidates if s <= when]
+          if eligible:
+            frame = self._load_frame(sorted(eligible)[-1][1])
+            if frame is not None:
+              return frame
+          # No snapshot at or before the request: do not fall
+          # back to a future snapshot.
+          raise FileNotFoundError(
+              f'No offline feature snapshot for as_of={as_of!r}')
+      if not candidates or not parsed_ok:
         for candidate in self._all_keys():
           if text in candidate:
             frame = self._load_frame(candidate)
             if frame is not None:
               return frame
-      direct = _version_key(self.prefix, as_of)
-      if self.artifact_store.exists(direct):
-        return self._load_frame(direct)
+      if parsed_ok:
+        try:
+          direct = _version_key(self.prefix, parsed)
+        except Exception:  # pylint: disable=broad-exception-caught
+          direct = None
+        if direct is not None and self.artifact_store.exists(direct):
+          return self._load_frame(direct)
     raise FileNotFoundError(
         f'No offline feature snapshot for as_of={as_of!r}')
 
@@ -201,7 +250,8 @@ class OfflineFeatureStore(FeatureStore):
     '''
     import warnings
     import pandas as pd
-    when = _resolve_time(as_of=as_of, request_time=request_time)
+    raw_when = _resolve_time(as_of=as_of, request_time=request_time)
+    when = _naive_utc(raw_when) if raw_when is not None else None
     if when is None:
       warnings.warn(
           'get_features without a cutoff returns the latest '
@@ -209,9 +259,6 @@ class OfflineFeatureStore(FeatureStore):
           'point-in-time correctness (future leakage risk)',
           UserWarning, stacklevel=2)
     frame = self._combined_frame()
-    if frame.empty:
-      cols = [ENTITY_COL] + list(feature_names or [])
-      return pd.DataFrame(columns=cols)
     available = [c for c in frame.columns
                  if c not in (ENTITY_COL, 'as_of')]
     names = list(feature_names) if feature_names is not None \
@@ -219,6 +266,9 @@ class OfflineFeatureStore(FeatureStore):
     unknown = [n for n in names if n not in available]
     if unknown:
       raise ValueError(f'Unknown features: {unknown}')
+    if frame.empty:
+      cols = [ENTITY_COL] + list(feature_names or [])
+      return pd.DataFrame(columns=cols)
     if when is not None:
       frame = frame[frame['as_of'] <= when]
     if frame.empty:

@@ -109,8 +109,8 @@ def test_cost_params_keys():
   params = _params()
   assert 'cost_params' in params
   c = params['cost_params']
-  for key in ('compute_price_per_hour', 'storage_price_per_gb',
-              'scan_price_per_tb_scanned'):
+  for key in ('compute_price_per_hour', 'storage_price_per_gb_month',
+              'data_scan_price_per_gb'):
     assert key in c, key
     assert isinstance(c[key], (int, float)) and c[key] >= 0, key
 
@@ -168,8 +168,8 @@ _NEW_LEAF_KEYS = (
   'schedule_days', 'drift_alert_threshold', 'decay_threshold',
   'offline_path', 'online_backend', 'entity_key',
   'traffic_split', 'mode',
-  'compute_price_per_hour', 'storage_price_per_gb',
-  'scan_price_per_tb_scanned',
+  'compute_price_per_hour', 'storage_price_per_gb_month',
+  'data_scan_price_per_gb',
   'retention_days', 'audit_actor_required',
 )
 

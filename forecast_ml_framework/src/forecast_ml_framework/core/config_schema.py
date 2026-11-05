@@ -8,15 +8,26 @@ and omegaconf. ``core.config_loader`` only imports it lazily,
 so plain-dict use never needs those packages.
 '''
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omegaconf import OmegaConf
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Allow(BaseModel):
-  '''Base model allowing unknown keys.'''
+  '''Base model allowing unknown keys.
+
+  ``extra='allow'`` is deliberate forward-compatibility: shipped
+  conf gains new keys (e.g. a new bucket in
+  ``conf/base/parameters/``) without breaking older schemas.
+  Known sections are typed fields on ``ParametersConfig`` (not
+  extras), so a typo in a known top-level section name is
+  caught by the round-trip test asserting every shipped key
+  lands in a typed field; unknown keys inside a section are
+  preserved rather than silently dropped.
+  '''
 
   model_config = ConfigDict(extra='allow')
 
@@ -54,8 +65,16 @@ class VariablesConfig(_Allow):
 
 
 class GlobalParams(_Allow):
-  '''Global run parameters.'''
+  '''Global run parameters.
 
+  ``task_type`` defaults to ``'classification'``: this is the
+  single schema default, aligned with ``ModelingParams`` and
+  with ``is_regression=False``. (``ConfigLoader.task_type``
+  keeps its legacy ``'regression'`` fallback only when no
+  explicit task type is present anywhere in the config.)
+  '''
+
+  task_type: str = 'classification'
   is_regression: bool = False
   is_domino: bool = False
   score_model_id: str = 'demo_model_v1'
@@ -85,6 +104,9 @@ class PandasConversionParams(_Allow):
 
   convert_to_pandas: bool = True
   category_cols: List[str] = Field(default_factory=list)
+  # Guard threshold matching conf/base/parameters/data.yml and
+  # core.spark_factory.check_pandas_limits.
+  max_rows_for_pandas: int = 5000000
 
 
 class EvaluationParams(_Allow):
@@ -227,12 +249,144 @@ class ValidationParams(_Allow):
   max_null_ratio: Optional[float] = None
 
 
+class RegistryParams(_Allow):
+  '''Model registry parameters (Phase 3).'''
+
+  tracking_uri: str = 'mlruns'
+  registry_uri: str = ''
+  model_name: str = 'forecast_model'
+  alias: str = 'champion'
+  promote_on_metric: str = 'f1_weighted'
+
+
+class ScoringParams(_Allow):
+  '''Batch scoring parameters (Phase 3).'''
+
+  input_dataset: str = 'scoring_input'
+  output_dataset: str = 'predictions'
+  score_model_id: str = 'demo_model_v1'
+  batch_size: int = 1000
+  max_rows: int = 100000
+  partition_batch_size: int = 10000
+  spark_scoring: Dict[str, Any] = Field(default_factory=dict)
+  max_cols: int = 1000
+  model_path: str = ''
+  model_name: str = 'forecast_model'
+  alias: str = 'champion'
+  id_cols: List[str] = Field(default_factory=lambda: ['id'])
+  feature_cols: Optional[List[str]] = None
+  task_type: str = 'classification'
+
+
+class GcpInfraParams(_Allow):
+  '''GCP infra locations (env placeholders in shipped conf).'''
+
+  project: str = ''
+  bucket: str = ''
+  dataset: str = ''
+  cluster: str = ''
+
+
+class AwsInfraParams(_Allow):
+  '''AWS infra locations (env placeholders in shipped conf).'''
+
+  bucket: str = ''
+  database: str = ''
+
+
+class InfraParams(_Allow):
+  '''Infra parameters (Phase 3).'''
+
+  gcp: GcpInfraParams = Field(default_factory=GcpInfraParams)
+  aws: AwsInfraParams = Field(default_factory=AwsInfraParams)
+
+
+class MonitoringParams(_Allow):
+  '''Monitoring / drift parameters (Phase 3).'''
+
+  psi_threshold: float = 0.1
+  ks_threshold: float = 0.05
+  bins: int = 10
+  alert_severities: List[str] = Field(
+    default_factory=lambda: ['warn', 'critical'])
+
+
+class RetrainingParams(_Allow):
+  '''Retraining parameters (Phase 3).'''
+
+  schedule_days: int = 7
+  drift_alert_threshold: float = 0.2
+  decay_threshold: float = 0.05
+
+
+class FeatureStoreParams(_Allow):
+  '''Feature store parameters (Phase 3).'''
+
+  offline_path: str = 'artifacts/feature_store/offline'
+  online_backend: str = 'redis'
+  entity_key: str = 'id'
+
+
+class AbParams(_Allow):
+  '''A/B testing parameters (Phase 3).'''
+
+  traffic_split: float = 0.1
+  mode: str = 'shadow'
+
+
+class CostParams(_Allow):
+  '''Cost accounting parameters (Phase 3).
+
+  Canonical keys are ``data_scan_price_per_gb`` (USD per GB
+  scanned, 0.005 == 5.0 USD/TB) and
+  ``storage_price_per_gb_month``. Deprecated aliases
+  ``storage_price_per_gb`` and ``scan_price_per_tb_scanned``
+  are accepted on input and translated to the canonical
+  keys (scan alias is converted from USD/TB to USD/GB).
+  '''
+
+  compute_price_per_hour: float = 0.5
+  storage_price_per_gb_month: float = 0.02
+  data_scan_price_per_gb: float = 0.005
+
+  @model_validator(mode='before')
+  @classmethod
+  def _translate_deprecated_aliases(cls, data):
+    '''Translate deprecated cost keys to canonical keys.'''
+    if isinstance(data, dict):
+      data = dict(data)
+      if 'storage_price_per_gb' in data and (
+          'storage_price_per_gb_month' not in data):
+        data['storage_price_per_gb_month'] = data.pop(
+            'storage_price_per_gb')
+      else:
+        data.pop('storage_price_per_gb', None)
+      if 'scan_price_per_tb_scanned' in data and (
+          'data_scan_price_per_gb' not in data):
+        try:
+          data['data_scan_price_per_gb'] = float(
+              data.pop('scan_price_per_tb_scanned')) / 1000.0
+        except (TypeError, ValueError):
+          data.pop('scan_price_per_tb_scanned', None)
+      else:
+        data.pop('scan_price_per_tb_scanned', None)
+    return data
+
+
+class GovernanceParams(_Allow):
+  '''Governance / audit parameters (Phase 3).'''
+
+  retention_days: int = 365
+  audit_actor_required: bool = True
+
+
 class ParametersConfig(_Allow):
   '''Parameters (parameters.yml) contract.
 
   Every shipped top-level section is a nested model with
   sensible defaults; unknown sections/keys pass through
-  via ``extra='allow'`` so shipped conf always validates.
+  via ``extra='allow'`` (see ``_Allow``) so shipped conf
+  always validates and round-trips.
   '''
 
   global_params: GlobalParams = Field(
@@ -273,6 +427,21 @@ class ParametersConfig(_Allow):
     default_factory=ChartParams)
   validation_params: ValidationParams = Field(
     default_factory=ValidationParams)
+  registry_params: RegistryParams = Field(
+    default_factory=RegistryParams)
+  scoring_params: ScoringParams = Field(
+    default_factory=ScoringParams)
+  infra_params: InfraParams = Field(default_factory=InfraParams)
+  monitoring_params: MonitoringParams = Field(
+    default_factory=MonitoringParams)
+  retraining_params: RetrainingParams = Field(
+    default_factory=RetrainingParams)
+  feature_store_params: FeatureStoreParams = Field(
+    default_factory=FeatureStoreParams)
+  ab_params: AbParams = Field(default_factory=AbParams)
+  cost_params: CostParams = Field(default_factory=CostParams)
+  governance_params: GovernanceParams = Field(
+    default_factory=GovernanceParams)
 
 
 def validate_variables(data):
@@ -315,13 +484,34 @@ def _load_merged(base_dir, env_dir, name):
     OmegaConf config, or empty config when absent.
   '''
   base_path = Path(base_dir) / name
-  cfg = OmegaConf.load(base_path) if base_path.exists() else (
-    OmegaConf.create({}))
+  cfg = (_safe_load(base_path) if base_path.exists() else (
+    OmegaConf.create({})))
   if env_dir is not None:
     env_path = Path(env_dir) / name
     if env_path.exists():
-      cfg = OmegaConf.merge(cfg, OmegaConf.load(env_path))
+      cfg = OmegaConf.merge(cfg, _safe_load(env_path))
   return cfg
+
+
+def _safe_load(path):
+  '''Load a YAML file, rejecting non-canonical ``oc.*`` first.
+
+  OmegaConf parses interpolation grammar at load time
+  and would raise ``GrammarParseError`` for variants
+  such as ``${oc .env:...}`` before the sanitizer runs.
+  Scanning the raw text first ensures every spaced /
+  case variant fails closed with a ``ValueError``
+  naming ``oc.`` instead.
+
+  Args:
+    path: Path to the YAML file.
+
+  Returns:
+    OmegaConf config for the file.
+  '''
+  text = Path(path).read_text()
+  _reject_noncanonical_oc(text)
+  return OmegaConf.load(path)
 
 
 def _load_parameters_dir(directory):
@@ -341,12 +531,12 @@ def _load_parameters_dir(directory):
   directory = Path(directory)
   single = directory / 'parameters.yml'
   if single.exists():
-    return OmegaConf.load(single)
+    return _safe_load(single)
   folder = directory / 'parameters'
   if folder.is_dir():
     cfg = OmegaConf.create({})
     for path in sorted(folder.glob('*.yml')):
-      cfg = OmegaConf.merge(cfg, OmegaConf.load(path))
+      cfg = OmegaConf.merge(cfg, _safe_load(path))
     return cfg
   return None
 
@@ -375,6 +565,89 @@ def _load_merged_parameters(base_dir, env_dir):
   return cfg
 
 
+_OC_INTERPOLATION = re.compile(r'\$\{oc\.([a-z_]+)(?::([^}]*))?\}')
+
+_OC_ANY = re.compile(r'\$\{\s*oc\s*\.', re.IGNORECASE)
+
+
+def _reject_noncanonical_oc(text):
+  '''Reject spaced/case-variant ``oc.*`` interpolations.
+
+  OmegaConf's own resolver parsing tolerates whitespace
+  and case variation, so ``${ oc.env:...}``,
+  ``${ OC.env:...}`` and ``${oc .env:...}`` would bypass
+  the canonical regex above. Any ``oc.`` interpolation
+  that is not exactly the canonical form is rejected
+  outright (fail-closed), never resolved against the
+  process environment.
+
+  Args:
+    text: String to inspect.
+
+  Raises:
+    ValueError: If ``text`` contains a non-canonical
+      ``oc.*`` interpolation.
+  '''
+  for match in _OC_ANY.finditer(text):
+    if _OC_INTERPOLATION.match(text, match.start()) is None:
+      raise ValueError(
+        'oc.* resolvers with whitespace/case variation are '
+        'blocked: ' + text)
+
+
+def _oc_replacement(match):
+  '''Resolve one ``oc.*`` match without reading the environment.
+
+  ``oc.env:VAR,default`` becomes the literal ``default`` (the
+  process environment is never read, so a secret placed in an
+  env var cannot leak into the returned dict). ``oc.env:VAR``
+  with no default, ``oc.create`` and every other ``oc.*``
+  resolver raise ``ValueError``.
+  '''
+  kind = match.group(1)
+  rest = match.group(2) or ''
+  if kind == 'env':
+    if ',' not in rest:
+      raise ValueError(
+        'oc.env without a default is blocked: '
+        + match.group(0))
+    default = rest.split(',', 1)[1].strip()
+    if len(default) >= 2 and default[0] == default[-1] and (
+        default[0] in ('"', "'")):
+      default = default[1:-1]
+    return default
+  raise ValueError(
+    'oc.%s resolver is blocked: %s' % (kind, match.group(0)))
+
+
+def _sanitize_oc_interpolations(cfg):
+  '''Return a copy of ``cfg`` with ``oc.*`` handled safely.
+
+  Args:
+    cfg: OmegaConf config loaded with ``resolve=False``.
+
+  Returns:
+    New OmegaConf config where ``oc.env`` defaults are literal
+    strings and any other ``oc.*`` interpolation has raised.
+    Non-``oc`` interpolations (``${variables...}``,
+    ``${params...}``, relative ``${.global_params...}``) are
+    preserved for OmegaConf to resolve.
+  '''
+  plain = OmegaConf.to_container(cfg, resolve=False)
+
+  def walk(node):
+    if isinstance(node, dict):
+      return {key: walk(value) for key, value in node.items()}
+    if isinstance(node, list):
+      return [walk(value) for value in node]
+    if isinstance(node, str):
+      _reject_noncanonical_oc(node)
+      return _OC_INTERPOLATION.sub(_oc_replacement, node)
+    return node
+
+  return OmegaConf.create(walk(plain))
+
+
 def load_config(env_dir='base'):
   '''Load shipped config with env overlay, resolved.
 
@@ -390,7 +663,11 @@ def load_config(env_dir='base'):
     catalog entries use Kedro-style ``${params:...}``
     interpolations that OmegaConf cannot resolve, so the
     catalog is converted with ``resolve=False`` and left
-    for Kedro to resolve at runtime.
+    for Kedro to resolve at runtime. ``${oc.*}`` resolvers
+    are never resolved against the process environment:
+    ``oc.env`` with a default is replaced by that literal
+    default, while ``oc.env`` without a default, ``oc.create``
+    and other ``oc.*`` resolvers raise ``ValueError``.
   '''
   raw = str(env_dir)
   env_path = Path(raw)
@@ -413,8 +690,15 @@ def load_config(env_dir='base'):
     'variables': _load_merged(base_dir, overlay, 'variables.yml'),
     'parameters': _load_merged_parameters(base_dir, overlay),
   })
+  # Never resolve oc.* against the process environment: strip
+  # them (default-literal substitution, see above) before the
+  # only resolve() call, which then handles ${variables/...}
+  # and relative interpolations. Env values cannot leak.
+  merged = _sanitize_oc_interpolations(merged)
   OmegaConf.resolve(merged)
   plain = OmegaConf.to_container(merged, resolve=True)
   plain['catalog'] = OmegaConf.to_container(
-    _load_merged(base_dir, overlay, 'catalog.yml'), resolve=False)
+    _sanitize_oc_interpolations(
+      _load_merged(base_dir, overlay, 'catalog.yml')),
+    resolve=False)
   return plain

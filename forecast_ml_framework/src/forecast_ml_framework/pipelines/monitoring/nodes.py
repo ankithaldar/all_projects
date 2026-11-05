@@ -43,7 +43,12 @@ import logging
 import numpy as np
 import pandas as pd
 
+from forecast_ml_framework.core.params import (
+  flatten_params,
+)
+
 LOG = logging.getLogger(__name__)
+
 
 DEFAULT_BINS = 10
 DEFAULT_EPSILON = 1e-4
@@ -57,22 +62,9 @@ DEFAULT_THRESHOLDS = {
 _PERFORMANCE_THRESHOLDS = {'warning': 0.05, 'critical': 0.1}
 
 
-def _params_dict(params):
-  '''Return params as a dict (None -> {}).'''
-  if params is None:
-    return {}
-  if isinstance(params, dict):
-    return dict(params)
-  try:
-    return dict(params)
-  except (TypeError, ValueError) as exc:
-    raise ValueError(
-      'params must be a dict, got %r' % (params,)) from exc
-
-
 def _bins(params):
   '''Resolve the number of PSI bins from params.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   for key in ('bins', 'n_bins', 'num_bins'):
     if params.get(key) is not None:
       raw = params[key]
@@ -95,7 +87,7 @@ def _bins(params):
 
 def _epsilon(params):
   '''Resolve the PSI smoothing epsilon from params.'''
-  raw = _params_dict(params).get('epsilon', DEFAULT_EPSILON)
+  raw = flatten_params(params, 'monitoring_params').get('epsilon', DEFAULT_EPSILON)
   if isinstance(raw, bool):
     raise ValueError('epsilon must be a positive number, got %r'
                      % (raw,))
@@ -113,7 +105,7 @@ def _epsilon(params):
 
 def _min_rows(params):
   '''Resolve the small-input row threshold from params.'''
-  raw = _params_dict(params).get('min_rows', DEFAULT_MIN_ROWS)
+  raw = flatten_params(params, 'monitoring_params').get('min_rows', DEFAULT_MIN_ROWS)
   try:
     return int(raw)
   except (TypeError, ValueError, OverflowError) as exc:
@@ -323,7 +315,7 @@ def compute_drift(reference_df, current_df, params=None):
     or small inputs (fewer than ``min_rows`` non-null rows)
     return NaN stats plus a warning, never an exception.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   _bins(params)
   _epsilon(params)
   _min_rows(params)
@@ -355,7 +347,7 @@ def compute_drift(reference_df, current_df, params=None):
 
 def _as_series(values, params):
   '''Coerce predictions input to a pandas Series.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   col = params.get('prediction_col', 'prediction')
   if isinstance(values, pd.DataFrame):
     if col in values.columns:
@@ -385,7 +377,7 @@ def _prediction_stats(ref, cur, params):
       'prediction_drift: empty/small predictions (ref=%d, cur=%d);'
       ' returning NaN stats' % (len(ref_clean), len(cur_clean)))
     return stats
-  ptype = _params_dict(params).get('prediction_type', 'auto')
+  ptype = flatten_params(params, 'monitoring_params').get('prediction_type', 'auto')
   numeric = pd.api.types.is_numeric_dtype(ref_clean)
   if ptype == 'auto':
     numeric = numeric and ref_clean.nunique() > 10
@@ -461,7 +453,7 @@ def prediction_drift(reference=None, current=None, params=None,
     reference = kwargs.get('reference_predictions', kwargs.get('ref'))
   if current is None:
     current = kwargs.get('current_predictions', kwargs.get('cur'))
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   _bins(params)
   _epsilon(params)
   _min_rows(params)
@@ -493,7 +485,7 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
     and ``relative_delta``. Empty input returns ``{}`` plus
     a warning, never an exception.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   if callable(current_metrics):
     current_metrics = {}
   if isinstance(current_metrics, dict) and (
@@ -597,7 +589,7 @@ def _threshold_pair(value):
 
 def _resolve_thresholds(params):
   '''Merge supplied thresholds over the documented defaults.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   raw = {}
   for key in ('thresholds', 'alert_thresholds', 'severity_thresholds',
               'thresholds_by_severity'):
@@ -685,7 +677,7 @@ def evaluate_alerts(drift_report=None, params=None, **kwargs):
   '''
   if drift_report is None:
     drift_report = kwargs.get('report') or {}
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   thresholds = _resolve_thresholds(params)
   report = drift_report or {}
   alerts = []
@@ -744,7 +736,7 @@ def build_monitoring_report(drift_report=None,
     report) sections -- the input shape of
     :func:`evaluate_alerts`.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'monitoring_params')
   if 'predictions' in kwargs:
     pair = kwargs['predictions']
     reference_predictions, current_predictions = pair[0], pair[1]

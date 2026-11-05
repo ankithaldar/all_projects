@@ -42,13 +42,19 @@ def _load_pipeline(module_name):
     The ``create_pipeline`` factory, or None when its module
     is not yet implemented (scaffold phase).
   '''
+  full_name = 'forecast_ml_framework.pipelines.' + module_name
   try:
     module = __import__(
-      'forecast_ml_framework.pipelines.' + module_name,
+      full_name,
       fromlist=['create_pipeline'],
     )
-  except ImportError:
-    return None
+  except ModuleNotFoundError as exc:
+    # Only a missing pipeline module itself is a scaffold gap.
+    # Any other missing module is an internal dependency of an
+    # existing pipeline and must surface, not be swallowed.
+    if exc.name == full_name:
+      return None
+    raise
   return getattr(module, 'create_pipeline', None)
 
 

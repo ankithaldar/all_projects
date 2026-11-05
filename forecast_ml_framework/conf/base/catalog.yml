@@ -12,12 +12,14 @@
 # score_run_dt, brand). The reference vz catalog uses
 # runtime_params namespace; this project uses params: everywhere.
 # Every `type:` below is a real importable dataset class string:
-# kedro_datasets.* for files/Spark/JSON/pickle, and only our own
+# kedro_datasets.* for files/Spark/JSON, and only our own
 # forecast_ml_framework.core.datasets.SQLQueryDataSet /
-# SparkSQLDataSet for SQL/BigQuery. Signatures were checked against
-# kedro-datasets 10.0.0 in the uv venv (filepath/file_format/
-# load_args/save_args/version/credentials/metadata for file datasets;
-# SparkDataset adds file_format='parquet' default).
+# SparkSQLDataSet for SQL/BigQuery plus RestrictedPickleDataset
+# for model/calibration pickle (restricted unpickler only).
+# Signatures were checked against kedro-datasets 10.0.0 in the
+# uv venv (filepath/file_format/load_args/save_args/version/
+# credentials/metadata for file datasets; SparkDataset adds
+# file_format='parquet' default).
 
 # --- Anchors (merge with <<: *anchor, then override per entry) ----------------
 # BigQuery/Spark input anchor. Type: our SparkSQLDataSet (Kedro
@@ -40,10 +42,10 @@ _save_parquet: &save_parquet
     mode: 'overwrite'
 
 # Pickle save anchor (vz _save_json pattern: pickle-serialised
-# metadata/model handles). Type: kedro_datasets.pickle.PickleDataset
+# metadata/model handles). Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset
 # (filepath, backend='pickle', load_args, save_args, version).
 _save_json: &save_json
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   backend: 'pickle'
 
 # --- Raw data -----------------------------------------------------------------
@@ -107,12 +109,12 @@ train_pp_data_df_params:
   filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_pp_data_${params:suffix}/'
 
 # --- Models (pickle via _save_json) -------------------------------------------
-# Fitted model artifact. Type: kedro_datasets.pickle.PickleDataset.
+# Fitted model artifact. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 fitted_model_params:
   <<: *save_json
   filepath: '${params:output_gcs_location}/xgb.pkl'
 
-# Calibrated model artifact. Type: kedro_datasets.pickle.PickleDataset.
+# Calibrated model artifact. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 calibrated_model_params:
   <<: *save_json
   filepath: '${params:output_gcs_location}/calib.pkl'
@@ -240,39 +242,39 @@ selected_features:
   type: 'kedro.io.MemoryDataset'
 
 # --- Models (generic, kept) ----------------------------------------------------
-# Fitted model. Type: kedro_datasets.pickle.PickleDataset.
+# Fitted model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/model.pkl'
 
-# Calibrated model. Type: kedro_datasets.pickle.PickleDataset.
+# Calibrated model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 calibration_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/calibration_model.pkl'
 
-# H2O AutoML model. Type: kedro_datasets.pickle.PickleDataset.
+# H2O AutoML model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 h2o_automl_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/h2o_automl_model.pkl'
 
-# XGBoost model. Type: kedro_datasets.pickle.PickleDataset.
+# XGBoost model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 xgboost_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/xgboost_model.pkl'
 
-# LightGBM model. Type: kedro_datasets.pickle.PickleDataset.
+# LightGBM model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 lightgbm_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/lightgbm_model.pkl'
 
-# CatBoost model. Type: kedro_datasets.pickle.PickleDataset.
+# CatBoost model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 catboost_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/catboost_model.pkl'
 
-# sklearn model. Type: kedro_datasets.pickle.PickleDataset.
+# sklearn model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 sklearn_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/sklearn_model.pkl'
 
 # In-memory model variants (pipeline wiring without disk).
@@ -393,12 +395,12 @@ scoring_output_athena:
 
 # --- Model registry placeholder (phase 2) --------------------------------------
 # registry_model: registered model artifact placeholder.
-# Type: kedro_datasets.pickle.PickleDataset. Placeholder location for
+# Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset. Placeholder location for
 # the registry worker (registry_params in parameters.yml); the real
 # registry backend is MLflow (tracking_uri / registry_uri), this
 # entry only gives Kedro a file-backed handle for the artifact.
 registry_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/registry_model.pkl'
 
 # --- Phase 3: monitoring / cost / governance outputs ---------------------------

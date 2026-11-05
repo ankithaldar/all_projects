@@ -234,3 +234,208 @@ def test_retention_without_age_is_kept():
     [{'name': 'unknown'}], {'retention_days': 30})
   assert [a['name'] for a in result['keep']] == ['unknown']
   assert result['delete'] == []
+
+
+def test_audit_scrubs_quoted_json_secrets():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice', '{"password": "hunter2", "ok": "keep"}')
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_audit_scrubs_url_credentials():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice',
+      {'url': 'https://user:secretpass@example.com/db'})
+  blob = json.dumps(entry)
+  assert 'secretpass' not in blob
+  assert 'user' in blob
+
+
+def test_audit_scrubs_uppercase_pass_assignment():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train PASS=hunter2', 'alice', {})
+  assert 'hunter2' not in json.dumps(entry)
+
+
+def test_audit_redacts_pass_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'pass': 'hunter2', 'ok': 1})
+  assert entry['details']['pass'] == '***REDACTED***'
+  assert entry['details']['ok'] == 1
+
+
+def test_audit_scrubs_sets_and_bytes():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details(
+      {'tags': {'password=hunter2'}, 'raw': b'password=hunter2'})
+  blob = json.dumps(out, default=str)
+  assert 'hunter2' not in blob
+  assert '***REDACTED***' in blob
+  frozen = scrub_details(frozenset({'token=tok-123'}))
+  assert 'tok-123' not in json.dumps(list(frozen))
+
+
+def test_audit_scrubs_url_password_containing_at():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice',
+      {'url': 'postgres://user:p@ssw0rd@host/db'})
+  blob = json.dumps(entry)
+  assert 'ssw0rd' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_pyproject_dependencies_cover_used_and_trim_unused():
+  import tomllib
+  from pathlib import Path
+  raw = Path(__file__).resolve().parents[1] / 'pyproject.toml'
+  data = tomllib.loads(raw.read_text())
+  deps = data['project']['dependencies']
+  for needed in ('kedro-datasets', 'scipy', 'pyarrow'):
+    assert needed in deps
+  for unused in ('polars', 'seaborn', 'dvc', 'pyyaml'):
+    assert unused not in deps
+  dev = str(data.get('dependency-groups', {}).get('dev', []))
+  assert 'pyyaml' in dev
+  extras = str(data['project']['optional-dependencies'])
+  for unused in ('polars', 'seaborn', 'dvc'):
+    assert unused in extras
+
+
+# --- Coverage: lineage extraction branches ---
+
+
+def test_lineage_get_from_object_run_info():
+  from types import SimpleNamespace
+  from forecast_ml_framework.governance.lineage import build_lineage
+  run_info = SimpleNamespace(
+      inputs=['raw'], outputs=['pred'], features=['f1'],
+      model_name='m1', variables={'a': 1}, parameters={'b': 2})
+  out = build_lineage(run_info)
+  assert out['inputs'] == ['raw']
+  assert out['outputs'] == ['pred']
+  assert out['features'] == ['f1']
+  assert out['model'] == 'm1'
+  assert out['config_hash']
+
+
+def test_lineage_get_alias_fields_and_config_nested():
+  from forecast_ml_framework.governance.lineage import build_lineage
+  out = build_lineage({
+      'input_datasets': ['i1'], 'output_datasets': ['o1'],
+      'feature_cols': ['f9'], 'model_id': 'mid',
+      'config': {'variables': {'v': 1}, 'parameters': {'p': 2}}})
+  assert out['inputs'] == ['i1']
+  assert out['outputs'] == ['o1']
+  assert out['features'] == ['f9']
+  assert out['model'] == 'mid'
+  # Explicit kwargs win over run_info sections.
+  out2 = build_lineage(
+      {'config': 'not-a-dict'}, variables={'x': 1}, parameters={'y': 2})
+  assert out2['config_hash']
+  assert build_lineage(None)['model'] is None
+  assert build_lineage({})['inputs'] == []
+  assert build_lineage({})['outputs'] == []
+  assert build_lineage({})['features'] == []
+
+
+def test_lineage_catalog_names_tagged_entries():
+  from forecast_ml_framework.governance.lineage import (
+    _catalog_names, build_lineage)
+  entries = [
+      {'role': 'input', 'name': 'raw'},
+      {'kind': 'output', 'dataset': 'pred'},
+      {'direction': 'INPUT', 'name': 'raw2'},
+      {'name': 'untagged'},
+      'not-a-dict',
+      {'role': 'output', 'name': 'pred2'},
+  ]
+  assert _catalog_names(entries, 'input') == ['raw', 'raw2']
+  assert _catalog_names(entries, 'output') == ['pred', 'pred2']
+  assert _catalog_names([], 'input') == []
+  assert _catalog_names(None, 'input') == []
+  as_dict = {'a': {'role': 'input', 'name': 'd1'}}
+  assert _catalog_names(as_dict, 'input') == ['d1']
+  out = build_lineage({}, catalog_entries=entries)
+  assert out['inputs'] == ['raw', 'raw2']
+  assert out['outputs'] == ['pred', 'pred2']
+
+
+# --- Coverage: retention clock injection / parsing branches ---
+
+
+def test_retention_resolve_days_variants():
+  from forecast_ml_framework.governance.retention import check_retention
+  now = datetime(2024, 1, 31, tzinfo=timezone.utc)
+  arts = [{'age_days': 100}, {'age_days': 1}]
+  assert check_retention(arts, params=10, now=now)['delete'] == [arts[0]]
+  assert check_retention(arts, params=10.0, now=now)['keep'] == [arts[1]]
+  for key in ('retention', 'ttl_days', 'max_age_days'):
+    out = check_retention(arts, params={key: 10}, now=now)
+    assert len(out['delete']) == 1
+  out = check_retention(arts, retention_days=10, now=now)
+  assert len(out['delete']) == 1
+  for bad_params in (None, {}, {'other': 1}, 'ten', object()):
+    with pytest.raises(ValueError, match='retention_days'):
+      check_retention(arts, params=bad_params)
+  with pytest.raises(ValueError, match='non-negative'):
+    check_retention(arts, params=-1)
+  with pytest.raises(ValueError, match='non-negative'):
+    check_retention(arts, retention_days=-0.5)
+
+
+def test_retention_clock_and_now_injection():
+  from forecast_ml_framework.governance.retention import check_retention
+  arts = [{'name': 'old', 'created_at': '2024-01-01T00:00:00Z'},
+          {'name': 'new', 'created_at': '2024-01-30T00:00:00+00:00'}]
+  # Callable clock returning a datetime.
+  out = check_retention(
+      arts, params=10,
+      clock=lambda: datetime(2024, 1, 31, tzinfo=timezone.utc))
+  assert out['delete'] == [arts[0]]
+  # Clock returning an epoch float.
+  epoch = datetime(2024, 1, 31, tzinfo=timezone.utc).timestamp()
+  out = check_retention(arts, params=10, clock=lambda: epoch)
+  assert out['delete'] == [arts[0]]
+  # now as epoch and as ISO string.
+  assert check_retention(arts, params=10, now=epoch)['delete'] == [arts[0]]
+  out = check_retention(arts, params=10, now='2024-01-31T00:00:00Z')
+  assert out['delete'] == [arts[0]]
+  # Naive reference vs naive stamp still aligns.
+  out = check_retention(
+      [{'age_days': 1}], params=10, now=datetime(2024, 1, 31))
+  assert len(out['keep']) == 1
+
+
+def test_retention_age_from_datetime_and_mixed_tz():
+  from forecast_ml_framework.governance.retention import check_retention
+  now = datetime(2024, 1, 31, 12, tzinfo=timezone.utc)
+  arts = [
+      {'created_at': datetime(2024, 1, 1)},  # naive, aligns to UTC
+      {'timestamp': 0},  # epoch 1970 -> very old
+      {'date': '2024-01-30T00:00:00'},  # naive ISO
+      {'name': 'no-date'},  # conservatively kept
+      'not-a-dict',  # conservatively kept
+  ]
+  out = check_retention(arts, params=10, now=now)
+  assert arts[0] in out['delete']
+  assert arts[1] in out['delete']
+  assert arts[2] in out['keep']
+  assert arts[3] in out['keep']
+  assert arts[4] in out['keep']
+
+
+def test_retention_dict_input_returns_names():
+  from forecast_ml_framework.governance.retention import check_retention
+  now = datetime(2024, 1, 31, tzinfo=timezone.utc)
+  artifacts = {
+      'old': datetime(2024, 1, 1, tzinfo=timezone.utc),
+      'new': '2024-01-30T00:00:00+00:00',
+      'epoch': 0,
+  }
+  out = check_retention(artifacts, params=10, now=now)
+  assert out == {'keep': ['new'], 'delete': ['old', 'epoch']}

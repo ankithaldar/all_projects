@@ -383,3 +383,78 @@ def test_model_handle_rejects_non_estimator_allowlisted():
   with pytest.raises(ValueError):
     _resolve_loader(
       _params(model_handle='sklearn.datasets.load_iris'), None)
+
+
+def test_predict_max_rows_null_without_spark_raises():
+  '''max_rows=None with spark_scoring disabled raises ValueError.'''
+  with pytest.raises(ValueError, match='max_rows'):
+    predict(_frame(), _params(max_rows=None,
+                               spark_scoring={'enabled': False}),
+            model_loader=lambda: _FakeModel())
+
+
+def test_load_scoring_data_max_rows_null_without_spark_raises():
+  '''load_scoring_data rejects max_rows=None when spark is off.'''
+  with pytest.raises(ValueError, match='max_rows'):
+    load_scoring_data(_frame(), _params(max_rows=None,
+                                        spark_scoring={'enabled': False}))
+
+
+class _FakeSparkCountOnly:
+  '''Fake Spark frame reporting >5M rows via count() only.'''
+
+  def __init__(self, rows):
+    self._rows = rows
+    self.columns = ['id', 'f1', 'f2']
+    self.to_pandas_calls = 0
+
+  def count(self):
+    '''Return row count without materialising data.'''
+    return self._rows
+
+  def toPandas(self):
+    '''Record call; the guard must prevent this.'''
+    self.to_pandas_calls += 1
+    raise AssertionError('toPandas must not be called')
+
+
+class _FakeRegistryLoader:
+  '''Fake RegistryModelLoader returning _FakeModel.'''
+
+  def __init__(self, registry_uri=None, model_name=None,
+               alias='production', *args, **kwargs):
+    self.registry_uri = registry_uri
+    self.model_name = model_name
+    self.alias = alias
+
+  def __call__(self):
+    '''Return the fake model.'''
+    return _FakeModel()
+
+
+def test_resolve_loader_model_name_alias_uses_registry(monkeypatch):
+  '''model_name/alias without loader resolves via RegistryModelLoader.'''
+  import forecast_ml_framework.serving.model_loader as loader_mod
+  monkeypatch.setattr(
+      loader_mod, 'RegistryModelLoader', _FakeRegistryLoader)
+  resolved = _resolve_loader(
+      _params(model_name='my-model', alias='production'), None)
+  assert isinstance(resolved, _FakeModel)
+
+
+def test_predict_model_name_alias_loads_via_registry(monkeypatch):
+  '''predict with model_name/alias loads via registry, no loader.'''
+  import forecast_ml_framework.serving.model_loader as loader_mod
+  monkeypatch.setattr(
+      loader_mod, 'RegistryModelLoader', _FakeRegistryLoader)
+  out = predict(
+      _frame(), _params(model_name='my-model', alias='production'))
+  assert out['prediction'].tolist() == [1, 0, 1]
+
+
+def test_scoring_fake_spark_over_pandas_limit_raises():
+  '''Scoring load enforces pandas guard on fake Spark >5M rows.'''
+  spark_df = _FakeSparkCountOnly(5_000_001)
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    load_scoring_data(spark_df, _params(spark_scoring={'enabled': False}))
+  assert spark_df.to_pandas_calls == 0

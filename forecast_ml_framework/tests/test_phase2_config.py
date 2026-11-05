@@ -310,7 +310,8 @@ def test_registry_catalog_entry():
   catalog = _catalog()
   assert 'registry_model' in catalog
   entry = catalog['registry_model']
-  assert entry['type'] == 'kedro_datasets.pickle.PickleDataset'
+  assert entry['type'] == (
+      'forecast_ml_framework.core.datasets.RestrictedPickleDataset')
   assert 'filepath' in entry
 
 
@@ -418,10 +419,21 @@ def test_infra_gcp_hardening():
 # --- Phase 2 scaling: conf + infra (100M rows) --------------------------------
 
 def test_scoring_spark_scaling_keys():
-  '''spark_scoring off by default, 10k partitions, max_rows unbounded.'''
+  '''spark_scoring off by default, 10k partitions, max_rows 100000.'''
   params = _params()
   scoring = params['scoring_params']
-  assert scoring['max_rows'] is None
+  # Phase 4: shipped default is the local-safe cap 100000;
+  # null (unbounded) is only allowed with spark_scoring enabled.
+  assert scoring['max_rows'] == 100000
+  raw = _params_raw()
+  lines = raw.splitlines()
+  idx = next(
+      (i for i, line in enumerate(lines)
+       if re.match(r'\s+max_rows:', line)), None)
+  assert idx is not None, 'max_rows definition not found'
+  # Null-with-spark rule is documented in the comment above it.
+  assert 'null only allowed with spark_scoring' in lines[idx - 1], (
+      lines[idx - 1])
   spark_scoring = scoring['spark_scoring']
   assert spark_scoring['enabled'] is False
   assert spark_scoring['partition_batch_size'] == 10000

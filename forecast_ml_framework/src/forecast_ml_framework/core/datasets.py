@@ -5,6 +5,8 @@
 # pylint: disable=import-outside-toplevel, super-init-not-called
 # pylint: disable=broad-exception-caught
 
+import os
+import pickle
 import re
 
 try:
@@ -383,5 +385,144 @@ class SparkSQLDataSet(_KedroDataset):
 
     Returns:
       True when a session exists or can be created.
+    '''
+    return self._exists()
+
+
+class RestrictedPickleDataset(_KedroDataset):
+  '''Pickle dataset loading only via the restricted unpickler.
+
+  Drop-in replacement for
+  ``kedro_datasets.pickle.PickleDataset`` for model,
+  calibration, and filtered pickle entries in the catalog.
+  Saving uses ``pickle.dumps`` (dumping never executes code);
+  loading reads raw bytes and unpickles via
+  ``core.artifact_store.restricted_loads`` with its exact
+  ``(module, name)`` allowlist, never raw ``pickle.load``.
+  Only sklearn/numpy/pandas objects whose globals are
+  allowlisted roundtrip; zoo models (xgboost/lightgbm/
+  catboost/h2o) referencing non-allowlisted globals are
+  rejected with ``ValueError`` by design (sklearn-only).
+
+  Args:
+    filepath: Local filesystem path of the pickle file.
+      May also arrive via ``kwargs`` as ``path``.
+    **kwargs: Accepted for Kedro catalog compatibility
+      (``backend``, ``load_args``, ``save_args``,
+      ``version``, ``credentials``, ``metadata``,
+      ``protocol``) and stored, not otherwise used.
+  '''
+
+  def __init__(self, filepath=None, *args, **kwargs):
+    '''Initialize with a pickle filepath.
+
+    Args:
+      filepath: Local filesystem path of the pickle file;
+        may also be the first positional arg or ``path``.
+      *args: Positional compatibility (filepath).
+      **kwargs: Kedro catalog keys (see class docstring).
+    '''
+    if args and filepath is None:
+      filepath = args[0]
+    filepath = filepath or kwargs.pop('path', None)
+    self.filepath = filepath
+    self.load_args = kwargs.pop('load_args', None) or {}
+    self.save_args = kwargs.pop('save_args', None) or {}
+    self.version = kwargs.pop('version', None)
+    self.credentials = kwargs.pop('credentials', None)
+    self.metadata = kwargs.pop('metadata', None)
+    self.protocol = kwargs.pop('protocol', None)
+    self.backend = kwargs.pop('backend', None)
+    self._kwargs = kwargs
+
+  def _describe(self):
+    '''Describe the dataset for Kedro catalog introspection.
+
+    Returns:
+      A dict with the dataset type and filepath.
+    '''
+    return {'type': type(self).__name__,
+            'filepath': str(self.filepath) if self.filepath else None}
+
+  def _path(self):
+    '''Return the local filepath as a string.
+
+    Returns:
+      The filepath as a string.
+
+    Raises:
+      ValueError: When no filepath is configured.
+    '''
+    if not self.filepath:
+      raise ValueError('RestrictedPickleDataset requires a filepath')
+    return str(self.filepath).removeprefix('file://')
+
+  def _load(self):
+    '''Load via the restricted unpickler.
+
+    Returns:
+      The unpickled object.
+
+    Raises:
+      ValueError: When no filepath is configured, the file
+        is missing, or the pickle is malformed/forbidden.
+    '''
+    from forecast_ml_framework.core.artifact_store import (
+      restricted_loads,
+    )
+    path = self._path()
+    with open(path, 'rb') as handle:
+      raw = handle.read()
+    return restricted_loads(raw)
+
+  def load(self):
+    '''Load the unpickled object.
+
+    Returns:
+      The unpickled object.
+    '''
+    return self._load()
+
+  def _save(self, data):
+    '''Serialize ``data`` as pickle bytes to the filepath.
+
+    Args:
+      data: Picklable payload to persist.
+
+    Raises:
+      ValueError: When no filepath is configured.
+    '''
+    path = self._path()
+    parent = os.path.dirname(path)
+    if parent:
+      os.makedirs(parent, exist_ok=True)
+    protocol = self.protocol if self.protocol is not None else -1
+    with open(path, 'wb') as handle:
+      handle.write(pickle.dumps(data, protocol=protocol))
+
+  def save(self, data):
+    '''Serialize ``data`` as pickle bytes to the filepath.
+
+    Args:
+      data: Picklable payload to persist.
+    '''
+    return self._save(data)
+
+  def _exists(self):
+    '''Check whether the pickle file exists.
+
+    Returns:
+      True when the file exists on disk.
+    '''
+    try:
+      return os.path.isfile(self._path())
+    except Exception:
+      return False
+
+  def exists(self):
+    '''Check whether the pickle file exists.
+
+    Returns:
+      True when the file exists on disk.
     '''
     return self._exists()

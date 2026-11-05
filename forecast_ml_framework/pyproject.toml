@@ -12,24 +12,19 @@ license = { text = 'MIT' }
 authors = [{ name = 'Forecast ML Framework Team' }]
 dependencies = [
   'kedro',
+  'kedro-datasets',
   'scikit-learn',
   'pandas',
-  'polars',
-  'pyyaml',
+  'scipy',
+  'pyarrow',
   'pydantic',
   'omegaconf',
   'matplotlib',
-  'seaborn',
   'fastapi',
   'uvicorn',
-  'mlflow',
-  'h2o',
   'xgboost',
   'lightgbm',
   'catboost',
-  'pyspark',
-  'dvc',
-  'shap',
 ]
 
 [project.optional-dependencies]
@@ -37,10 +32,28 @@ dependencies = [
 # They are kept here (not in core deps) so `uv sync` succeeds
 # on 3.14. See README.md for the spike results table.
 extras-314-failures = []
+# polars/seaborn/dvc are not imported by src/ (grep verified
+# 2026-11-05: no `import polars`/`seaborn`/`dvc` in src/);
+# kept as opt-in extras rather than core dependencies.
+optional = ['polars', 'seaborn', 'dvc']
+
+# Lazy-only heavy deps (verified 2026-11-05: no module-level
+# import of pyspark/h2o/shap/mlflow in src/; all are lazy
+# inside adapters, spark_factory, serving/model_loader,
+# and interpretability nodes). Core keeps only the deps
+# used at import time plus lazy-optional gradient-boosting
+# libraries (xgboost/lightgbm/catboost are also lazy in
+# adapters but retained in core for the default models).
+spark = ['pyspark']  # lazy: core/spark_factory only
+tracking = ['mlflow']  # lazy: serving/model_loader only
+explain = ['shap']  # lazy: interpretability nodes only
+maximal = ['h2o']  # lazy: modeling adapters (h2o_automl) only
 
 [dependency-groups]
 dev = [
   'pytest',
+  # pyyaml is used only by tests (yaml.safe_load), not by src/.
+  'pyyaml',
   # starlette TestClient (fastapi.testclient) requires httpx at test
   # runtime; keep it in dev so `uv run pytest` serving tests pass
   # without bloating production dependencies.

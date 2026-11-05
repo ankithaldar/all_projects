@@ -80,30 +80,30 @@ def test_get_loss_unknown_raises_listing_valid():
   assert 'binary:logistic' in msg
 
 
-def test_get_loss_custom_callable_string(monkeypatch):
-  '''Dotted callable string resolves via resolve_handle.'''
-  def my_loss(y_true, y_pred):
-    '''Dummy custom loss.'''
-    return 0.0
-
-  module = _fake_module('my_pkg.losses', my_loss=my_loss)
-  monkeypatch.setitem(sys.modules, 'my_pkg.losses', module)
-  assert get_loss('sklearn', 'my_pkg.losses.my_loss') is my_loss
+def test_get_loss_custom_callable_string():
+  '''Allowlisted dotted callable string resolves.'''
+  from sklearn.metrics import mean_absolute_error
+  assert get_loss(
+      'sklearn',
+      'sklearn.metrics.mean_absolute_error') is mean_absolute_error
 
 
-def test_get_loss_custom_bogus_string_raises(monkeypatch):
-  '''Bogus dotted loss string raises informative error.'''
-  monkeypatch.setitem(sys.modules, 'my_pkg.losses', None)
-  with pytest.raises(ValueError, match='my_pkg.losses.my_loss'):
-    get_loss('sklearn', 'my_pkg.losses.my_loss')
+def test_get_loss_custom_bogus_string_raises():
+  '''Bogus allowlisted dotted loss string raises informative error.'''
+  with pytest.raises(ValueError, match='sklearn.metrics.nope_loss'):
+    get_loss('sklearn', 'sklearn.metrics.nope_loss')
 
 
-def test_get_loss_custom_non_callable_raises(monkeypatch):
+def test_get_loss_custom_non_callable_raises():
   '''Dotted loss resolving to non-callable raises.'''
-  module = _fake_module('my_pkg.losses', my_loss=42)
-  monkeypatch.setitem(sys.modules, 'my_pkg.losses', module)
   with pytest.raises(ValueError, match='non-callable'):
-    get_loss('sklearn', 'my_pkg.losses.my_loss')
+    get_loss('sklearn', 'sklearn.__version__')
+
+
+def test_get_loss_custom_os_system_rejected():
+  '''Non-allowlisted dotted loss (os.system) is rejected.'''
+  with pytest.raises(ValueError, match='not allowlisted'):
+    get_loss('sklearn', 'os.system')
 
 
 def test_xgboost_loss_overrides_objective(monkeypatch):

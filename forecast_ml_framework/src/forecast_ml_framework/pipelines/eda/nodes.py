@@ -52,7 +52,12 @@ import logging
 import numpy as np
 import pandas as pd
 
+from forecast_ml_framework.core.params import (
+  flatten_params,
+)
+
 LOG = logging.getLogger(__name__)
+
 
 _RECOMMENDATIONS = {
   'high_missing': 'Investigate or impute columns with high missingness.',
@@ -67,18 +72,6 @@ _RECOMMENDATIONS = {
 _DEFAULT_LEAKAGE_KEYWORDS = [
   'target', 'churn', 'label', 'outcome', 'result', 'after', 'post',
 ]
-
-
-def _params_dict(params):
-  '''Return params as a flat dict (None -> {}).'''
-  params = dict(params) if params else {}
-  nested = params.get('eda_params')
-  if isinstance(nested, dict):
-    merged = dict(nested)
-    merged.update({k: v for k, v in params.items()
-                   if k != 'eda_params'})
-    return merged
-  return params
 
 
 def _float(value, default):
@@ -109,7 +102,7 @@ def _scalar(value):
 def _target_col(params, variables, df):
   '''Resolve the target column name, or None when absent.'''
   variables = variables or {}
-  params = _params_dict(params)
+  params = flatten_params(params, 'eda_params')
   col = variables.get('target_col') or params.get('target_col')
   if col and col in df.columns:
     return col
@@ -169,7 +162,7 @@ def eda_summary(df, params=None, variables=None):
     (top pairs), ``outliers`` (IQR + z-score counts),
     ``duplicate_rows``, ``constant_cols``, and ``warnings``.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'eda_params')
   variables = dict(variables) if variables else {}
   if df is None:
     df = pd.DataFrame()
@@ -285,7 +278,7 @@ def eda_quality_checks(summary, params=None):
     imbalance, constant columns, and duplicate rows. Empty
     summaries yield no findings.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'eda_params')
   summary = summary or {}
   if not summary or summary.get('n_rows', 0) == 0:
     return []
@@ -471,7 +464,7 @@ def detect_leakage(df, target, params=None):
     near-constant features, and features identical or
     mapped 1-1 to the target.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'eda_params')
   if df is None or not isinstance(df, pd.DataFrame) or df.empty:
     if df is not None and len(df) == 0:
       LOG.warning('detect_leakage: empty dataframe; no findings')
@@ -660,7 +653,7 @@ def eda_report(summary, params=None, df=None, variables=None):
     ``warnings``. Empty summaries return empty
     findings/recommendations plus the summary warning.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'eda_params')
   summary = summary or {}
   _try_data_charts(summary)
   findings = eda_quality_checks(summary, params)

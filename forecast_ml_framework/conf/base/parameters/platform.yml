@@ -138,10 +138,10 @@ registry_params:
 # scoring_params.batch_size: rows per scoring batch (positive int;
 # example: 1000; larger batches use more memory).
 # scoring_params.max_rows: hard cap on rows scored per run (positive
-# int; example: 1000000; rows beyond the cap are not scored). null =
-# unbounded: the Spark path (spark_scoring) scores every row; the
-# local pandas path is capped instead by
-# pandas_conversion_params.max_rows_for_pandas (default 5000000).
+# int; example: 100000; rows beyond the cap are not scored). null =
+# unbounded and is only allowed with spark_scoring.enabled: true
+# (Spark path scores every row); with spark_scoring disabled, null
+# raises ValueError. Local pandas default is 100000.
 # scoring_params.spark_scoring: Spark-native scoring switch.
 # spark_scoring.enabled: false = local pandas path (safe default,
 # no cluster); true = distributed Spark path via mapPartitions.
@@ -184,8 +184,8 @@ scoring_params:
   score_model_id: ${..global_params.score_model_id}
   # batch_size: rows per scoring batch, positive int (example: 1000).
   batch_size: 1000
-  # max_rows: maximum rows scored per run; null = unbounded Spark path, local pandas capped by pandas_conversion_params.max_rows_for_pandas (example: null).
-  max_rows: null
+  # max_rows: maximum rows scored per run, pandas default 100000; null only allowed with spark_scoring.enabled: true (example: 100000).
+  max_rows: 100000
   # partition_batch_size: rows per Spark partition sub-batch, top-level mirror of spark_scoring.partition_batch_size (example: 10000).
   partition_batch_size: 10000
   # spark_scoring: Spark-native scoring switch (example: {enabled: false, partition_batch_size: 10000}).
@@ -311,20 +311,27 @@ ab_params:
   mode: 'shadow'
 
 # --- Cost accounting ------------------------------------------------------------
-# Code contract: cost-logging reads cost_params unit prices (USD).
+# Code contract: cost-logging reads cost_params unit prices (USD),
+# using the code keys in cost_tracking/nodes.py.
 # cost_params.compute_price_per_hour: USD per compute hour (example: 0.5).
-# cost_params.storage_price_per_gb: USD per GB stored (example: 0.02).
-# cost_params.scan_price_per_tb_scanned: USD per TB scanned
-# (example: 5.0; BigQuery/Athena-style scan pricing). WARNING: prices
-# are estimates for accounting only; actual billing is per cloud.
+# cost_params.storage_price_per_gb_month: USD per GB-month stored
+# (example: 0.02; code key, supersedes deprecated storage_price_per_gb).
+# cost_params.data_scan_price_per_gb: USD per GB scanned
+# (example: 0.005; code key, supersedes deprecated
+# scan_price_per_tb_scanned = 5.0 USD/TB = 0.005 USD/GB).
+# Deprecated aliases (commented, not read by code):
+# storage_price_per_gb (old name for storage_price_per_gb_month),
+# scan_price_per_tb_scanned (old name for data_scan_price_per_gb).
+# WARNING: prices are estimates for accounting only; actual billing
+# is per cloud.
 # --- Cost accounting ----------------------------------------------------------
 cost_params:
   # compute_price_per_hour: USD per compute hour (example: 0.5).
   compute_price_per_hour: 0.5
-  # storage_price_per_gb: USD per GB stored (example: 0.02).
-  storage_price_per_gb: 0.02
-  # scan_price_per_tb_scanned: USD per TB scanned (example: 5.0).
-  scan_price_per_tb_scanned: 5.0
+  # storage_price_per_gb_month: USD per GB-month stored (example: 0.02).
+  storage_price_per_gb_month: 0.02
+  # data_scan_price_per_gb: USD per GB scanned (example: 0.005).
+  data_scan_price_per_gb: 0.005
 
 # --- Governance -----------------------------------------------------------------
 # Code contract: governance/audit reads governance_params.

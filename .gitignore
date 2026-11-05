@@ -213,3 +213,9 @@ woe_iv_optimizer/logs/
 *.db
 *.sqlite
 *.sqlite3
+
+# Generated demo artifacts (metrics/charts/predictions) - must not be committed:
+forecast_ml_framework/demo_outputs/
+
+# CatBoost training artifacts
+forecast_ml_framework/catboost_info/

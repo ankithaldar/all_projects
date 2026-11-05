@@ -33,9 +33,11 @@ values with a ``ValueError`` naming the offending column.
 Cloud scaling (100M rows x 500 cols): caps are env/config
 driven -- ``params['max_rows']`` / ``params['max_cols']``
 win, else ``SCORING_MAX_ROWS`` / ``SCORING_MAX_COLS`` env,
-else the local-safe defaults above. Setting a cap to
-``None`` (null in YAML) means unbounded, for the Spark path
-in particular. When ``params['spark_scoring']['enabled']``
+else the local-safe defaults above. ``max_rows=None`` (null
+in YAML) is unbounded and is only allowed when
+``spark_scoring.enabled`` is true; with Spark scoring
+disabled it raises ``ValueError`` instead of scoring an
+unbounded pandas frame. When ``params['spark_scoring']['enabled']``
 is true and the input is a Spark DataFrame (exposes
 ``mapPartitions``), scoring runs partitioned
 (mapPartitions-style): each partition is scored in chunks of
@@ -54,6 +56,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+from forecast_ml_framework.core import spark_factory
+
 LOG = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 1000
@@ -71,25 +75,24 @@ _ALLOWED_MODEL_MODULES = (
 )
 
 
-def _to_pandas(df):
-  '''Convert a Spark-like frame to pandas, passing pandas as-is.
+def _pandas_conversion_params(params):
+  '''Extract pandas conversion params from scoring params.
 
   Args:
-    df: Pandas or Spark-like dataframe.
+    params: Scoring params dict.
 
   Returns:
-    The dataframe as a pandas DataFrame (a copy).
-
-  Raises:
-    TypeError: If the frame cannot be converted.
+    Dict for ``spark_factory.to_pandas`` (empty dict enforces
+    the default pandas limit).
   '''
-  if isinstance(df, pd.DataFrame):
-    return df.copy()
-  if hasattr(df, 'toPandas'):
-    return df.toPandas()
-  if hasattr(df, 'to_pandas'):
-    return df.to_pandas()
-  raise TypeError('Unsupported dataframe type: %r' % type(df))
+  params = params or {}
+  nested = params.get('pandas_conversion_params')
+  if isinstance(nested, dict):
+    return nested
+  nested = params.get('pandas_conversion')
+  if isinstance(nested, dict):
+    return nested
+  return {}
 
 
 def _spark_scoring_enabled(params):
@@ -248,16 +251,25 @@ def _resolve_handle_strict(handle):
 def _check_caps(df, params):
   '''Enforce max_rows / max_cols caps on a frame.
 
-  Caps are env/config driven (see :func:`_cap_value`); a cap
-  of ``None`` is unbounded. Spark frames are counted via
-  ``count()`` / ``columns`` without ``toPandas()``.
+  Caps are env/config driven (see :func:`_cap_value`); a
+  ``max_rows`` of ``None`` is unbounded and is only allowed
+  with ``spark_scoring.enabled`` true. Spark frames are
+  counted via ``count()`` / ``columns`` without
+  ``toPandas()``.
 
   Raises:
-    ValueError: If the frame exceeds either cap.
+    ValueError: If the frame exceeds either cap, or if
+      ``max_rows`` is ``None`` with Spark scoring disabled.
   '''
   params = params or {}
   max_rows = _cap_value(
       params, 'max_rows', 'SCORING_MAX_ROWS', DEFAULT_MAX_ROWS)
+  if max_rows is None and not _spark_scoring_enabled(params):
+    raise ValueError(
+        'max_rows=None (unbounded) is only allowed with '
+        'spark_scoring.enabled=true; set max_rows or enable '
+        'Spark scoring instead of scoring an unbounded '
+        'pandas frame')
   max_cols = _cap_value(
       params, 'max_cols', 'SCORING_MAX_COLS', DEFAULT_MAX_COLS)
   if max_rows is not None:
@@ -270,6 +282,47 @@ def _check_caps(df, params):
     raise ValueError(
         'scoring input exceeds max_cols=%d: got %d columns'
         % (max_cols, len(df.columns)))
+
+
+def _registry_loader(params):
+  '''Build a RegistryModelLoader from model_name/alias params.
+
+  Args:
+    params: Scoring params dict with ``model_name`` and
+      optional ``alias`` / ``registry_uri`` (or
+      ``tracking_uri``).
+
+  Returns:
+    A RegistryModelLoader instance (callable returning the
+    loaded model).
+  '''
+  params = params or {}
+  model_name = params.get('model_name') or params.get(
+      'registered_model_name')
+  alias = params.get('alias') or params.get('model_alias') \
+      or 'production'
+  model_uri = params.get('model_uri') or ''
+  if not model_name and str(model_uri).startswith('models:/'):
+    remainder = str(model_uri)[len('models:/'):].lstrip('/')
+    model_name, _, uri_alias = remainder.partition('@')
+    if uri_alias:
+      alias = uri_alias
+  registry_uri = params.get('registry_uri') or params.get(
+      'tracking_uri') or params.get('registry') or params.get(
+      'mlflow_tracking_uri')
+  loader_cls = globals().get('RegistryModelLoader')
+  if loader_cls is None:
+    from forecast_ml_framework.serving.model_loader import (
+      RegistryModelLoader,
+    )
+    loader_cls = RegistryModelLoader
+  try:
+    return loader_cls(registry_uri, model_name, alias=alias)
+  except TypeError:
+    try:
+      return loader_cls(model_name, alias=alias)
+    except TypeError:
+      return loader_cls(registry_uri, model_name, alias)
 
 
 def _resolve_loader(params, model_loader):
@@ -295,17 +348,26 @@ def _resolve_loader(params, model_loader):
     loader = FileModelLoader(str(params['model_path']))
   if loader is None and params.get('model_handle'):
     loader = _resolve_handle_strict(str(params['model_handle']))
+  if loader is None and (
+          params.get('model_name') or params.get('model_uri')):
+    loader = _registry_loader(params)
   if loader is None:
     raise ValueError(
         'scoring requires a model loader: pass model_loader=..., '
-        'params["model_loader"], params["model_path"], or '
-        'params["model_handle"]')
+        'params["model_loader"], params["model_path"], '
+        'params["model_handle"], or params["model_name"]/'
+        'params["alias"] for registry loading')
   if isinstance(loader, str):
     loader = _resolve_handle_strict(loader)
   if hasattr(loader, 'predict'):
     return loader
   if callable(loader):
     model = loader()
+    if not hasattr(model, 'predict'):
+      raise TypeError('model loader returned object without predict')
+    return model
+  if hasattr(loader, 'load'):
+    model = loader.load()
     if not hasattr(model, 'predict'):
       raise TypeError('model loader returned object without predict')
     return model
@@ -414,7 +476,10 @@ def load_scoring_data(data, params=None):
     if _row_count(data) == 0:
       LOG.warning('load_scoring_data: empty scoring input')
     return data
-  df = _to_pandas(data)
+  pandas_conversion_params = _pandas_conversion_params(params)
+  df = spark_factory.to_pandas(data, pandas_conversion_params)
+  if isinstance(data, pd.DataFrame):
+    df = df.copy()
   _check_caps(df, params)
   if df.empty:
     LOG.warning('load_scoring_data: empty scoring input')
@@ -469,7 +534,9 @@ def predict(data, params=None, model_loader=None):
 
     def _score_partition(part):
       """Score one Spark partition in sub-chunks."""
-      part = part if isinstance(part, pd.DataFrame) else _to_pandas(part)
+      pandas_conversion_params = _pandas_conversion_params(params)
+      part = (part if isinstance(part, pd.DataFrame)
+              else spark_factory.to_pandas(part, pandas_conversion_params))
       if part.empty:
         return part
       part_ids = [c for c in id_cols if c in part.columns]
@@ -483,7 +550,10 @@ def predict(data, params=None, model_loader=None):
     if isinstance(scored, pd.DataFrame):
       return scored
     return scored
-  df = _to_pandas(data)
+  pandas_conversion_params = _pandas_conversion_params(params)
+  df = spark_factory.to_pandas(data, pandas_conversion_params)
+  if isinstance(data, pd.DataFrame):
+    df = df.copy()
   _check_caps(df, params)
   if df.empty:
     LOG.warning('predict: empty scoring input, no rows scored')
@@ -521,7 +591,10 @@ def write_predictions(predictions, params=None, destination=None):
   if _spark_scoring_enabled(params) and _is_spark_partitionable(
           predictions):
     return predictions
-  df = _to_pandas(predictions)
+  pandas_conversion_params = _pandas_conversion_params(params)
+  df = spark_factory.to_pandas(predictions, pandas_conversion_params)
+  if isinstance(predictions, pd.DataFrame):
+    df = df.copy()
   if df.empty:
     LOG.warning('write_predictions: empty predictions, nothing written')
     return df

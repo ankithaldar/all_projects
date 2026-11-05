@@ -40,19 +40,12 @@ import logging
 import numpy as np
 import pandas as pd
 
+from forecast_ml_framework.core.params import (
+  flatten_params,
+)
+
 LOG = logging.getLogger(__name__)
 
-
-def _params_dict(params):
-  '''Return params as a flat dict (None -> {}).'''
-  params = dict(params) if params else {}
-  nested = params.get('interpretability_params')
-  if isinstance(nested, dict):
-    merged = dict(nested)
-    merged.update({k: v for k, v in params.items()
-                   if k != 'interpretability_params'})
-    return merged
-  return params
 
 
 def _int(value, default):
@@ -65,7 +58,7 @@ def _int(value, default):
 
 def _seed(params):
   '''Resolve the random seed from params.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   return _int(params.get('random_state', params.get('seed', 42)), 42)
 
 
@@ -155,7 +148,7 @@ def _sorted_importance(scores, top_k=None):
 def _pred_change_importance(model, frame, params):
   '''Permutation importance via prediction change (no y).'''
   rng = np.random.RandomState(_seed(params))
-  repeats = max(_int(_params_dict(params).get('n_repeats', 5), 5), 1)
+  repeats = max(_int(flatten_params(params, 'interpretability_params').get('n_repeats', 5), 5), 1)
   base = _predict(model, frame)
   scores = []
   for col in frame.columns:
@@ -203,7 +196,7 @@ def shap_explain(model, X, params=None):
     occlusion/permutation when ``shap`` is unavailable
     or explainer construction fails.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   warnings = []
   if not _is_valid_X(X):
     warnings.append('invalid X: expected a 2-D numeric '
@@ -268,7 +261,7 @@ def permutation_importance(model, X, y=None, params=None):
   when ``y`` is given, otherwise prediction-change
   permutation. Empty inputs return ``[]``.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   if not _is_valid_X(X) or _row_count(X) == 0:
     LOG.warning('empty/invalid data: no rows for permutation '
                 'importance')
@@ -304,7 +297,7 @@ def pdp_1d(model, X, feature, params=None):
   value across all rows (sklearn-agnostic, ``predict``
   only). Unknown/empty inputs warn, never raise.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   warnings = []
   if not _is_valid_X(X) or _row_count(X) == 0:
     warnings.append('empty/invalid data: no rows for PDP')
@@ -365,7 +358,7 @@ def _calibration_bins(preds, y, n_bins):
 
 def _segments(frame, preds, params):
   '''Return segment labels for each row.'''
-  segment_col = _params_dict(params).get('segment_col')
+  segment_col = flatten_params(params, 'interpretability_params').get('segment_col')
   if segment_col and segment_col in frame.columns:
     return frame[segment_col].astype(str).to_numpy()
   labels = np.full(len(frame), 'segment_0', dtype=object)
@@ -384,7 +377,7 @@ def diagnostics(model, X, y, params=None):
   'error_by_segment', 'prediction_summary', 'warnings'}``.
   Empty inputs return empty bins with a warning.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   warnings = []
   if not _is_valid_X(X) or _row_count(X) == 0 \
       or _seq_len(y) == 0:
@@ -450,7 +443,7 @@ def lime_explain(model, X, params=None):
   global (prediction-change) permutation importance,
   documented by ``method='permutation_surrogate'``.
   '''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   warnings = []
   if not _is_valid_X(X) or _row_count(X) == 0:
     warnings.append('empty/invalid data: no rows for LIME')
@@ -502,14 +495,14 @@ def lime_explain(model, X, params=None):
 
 def explain_model(model, X, y, params=None):
   '''Pipeline node: SHAP + permutation explanations.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   return {'shap': shap_explain(model, X, params),
           'permutation': permutation_importance(model, X, y, params)}
 
 
 def interpret_features(model, X, params=None):
   '''Pipeline node: PDP per feature + LIME rows.'''
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   frame = _frame(X) if _row_count(X) else None
   features = params.get('pdp_features') or (
     list(frame.columns) if frame is not None else [])
@@ -670,7 +663,7 @@ def make_diagnostics_charts(diagnostics, params=None):
   from forecast_ml_framework.pipelines.interpretability import (
     charts,
   )
-  params = _params_dict(params)
+  params = flatten_params(params, 'interpretability_params')
   report = _dict_or_empty(diagnostics)
 
   def _get(key):

@@ -57,6 +57,30 @@ def test_sklearn_adapter_save_load_roundtrip(tmp_path):
   assert (loaded.predict(x) == adapter.predict(x)).all()
 
 
+class _EvilReduce:
+  '''Pickle payload that would execute a shell command.'''
+
+  def __init__(self, marker):
+    '''Store marker path the payload would create.'''
+    self.marker = str(marker)
+
+  def __reduce__(self):
+    '''Return an os.system call as the reconstruction.'''
+    import os
+    return (os.system, (f'touch {self.marker}',))
+
+
+def test_adapter_load_blocks_evil_pickle(tmp_path):
+  '''Adapter load rejects a malicious pickle, no side effect.'''
+  import pickle
+  marker = tmp_path / 'pwned'
+  path = tmp_path / 'evil.pkl'
+  path.write_bytes(pickle.dumps(_EvilReduce(marker)))
+  with pytest.raises(ValueError):
+    SklearnAdapter.load(str(path))
+  assert not marker.exists()
+
+
 def test_unsupported_lib_raises_informative_error(monkeypatch):
   '''Missing optional lib suggests disabling it in params.
 
@@ -295,3 +319,53 @@ def test_compute_metrics_regression_keys():
   got = compute_metrics(y_true, y_pred, None, 'regression')
   for key in ('mae', 'rmse', 'r2', 'mape', 'bias', 'max_error'):
     assert key in got
+
+# --- cycle2 handles hardening (RED) ---
+
+@pytest.mark.parametrize('handle', [
+  'os.system', 'subprocess.Popen', 'builtins.eval', 'builtins.exec',
+  'os.popen', 'subprocess.run', 'sys.modules', 'builtins.__import__',
+])
+def test_resolve_handle_rejects_non_allowlisted(handle):
+  '''Dangerous callables are rejected by resolve_handle.'''
+  with pytest.raises(ValueError):
+    resolve_handle(handle)
+
+def test_handle_adapter_fit_rejects_os_system():
+  '''HandleAdapter.fit cannot instantiate os.system.'''
+  x, y, _ = _clf_data()
+  adapter = create_adapter('os.system', {})
+  with pytest.raises(ValueError):
+    adapter.fit(x, y)
+
+def test_get_loss_rejects_os_system_dotted():
+  '''get_loss dotted os.system is rejected.'''
+  from forecast_ml_framework.pipelines.modeling.adapters import get_loss
+  with pytest.raises(ValueError):
+    get_loss('sklearn', 'os.system')
+
+def test_get_loss_rejects_subprocess_popen_dotted():
+  '''get_loss dotted subprocess.Popen is rejected.'''
+  from forecast_ml_framework.pipelines.modeling.adapters import get_loss
+  with pytest.raises(ValueError):
+    get_loss('sklearn', 'subprocess.Popen')
+
+def test_calibration_handle_os_system_rejected_in_train():
+  '''train_models rejects calibration_handle=os.system.'''
+  x, y, _ = _clf_data()
+  params = {
+    'task_type': 'classification',
+    'models_to_use': ['sklearn'],
+    'calibration_handle': 'os.system',
+    'model_params': {'sklearn': {}},
+  }
+  with pytest.raises(ValueError):
+    train_models(x, y, x, y, params)
+
+def test_sklearn_handle_still_fits():
+  '''Allowlisted sklearn handle still fits via HandleAdapter.'''
+  x, y, _ = _clf_data()
+  adapter = create_adapter(
+    'sklearn.linear_model.LogisticRegression', {})
+  adapter.fit(x, y)
+  assert adapter.predict_proba(x).shape == (len(y), 2)

@@ -132,13 +132,24 @@ def test_load_scoring_data_spark_passthrough_when_enabled():
   assert spark_df.to_pandas_calls == 0
 
 
-def test_max_rows_null_unbounded_pandas():
-  '''max_rows=None means unbounded for pandas path.'''
+def test_max_rows_null_raises_without_spark():
+  '''max_rows=None with spark disabled raises (unbounded pandas).'''
+  frame = pd.DataFrame({
+    'id': np.arange(250_000), 'f1': np.ones(250_000),
+    'f2': np.zeros(250_000)})
+  with pytest.raises(ValueError, match='max_rows'):
+    predict(
+      frame, _params(max_rows=None, spark_scoring={'enabled': False}),
+      model_loader=lambda: _FakeModel())
+
+
+def test_max_rows_null_allowed_with_spark_enabled():
+  '''max_rows=None is allowed only when spark_scoring is enabled.'''
   frame = pd.DataFrame({
     'id': np.arange(250_000), 'f1': np.ones(250_000),
     'f2': np.zeros(250_000)})
   out = predict(
-    frame, _params(max_rows=None, spark_scoring={'enabled': False}),
+    frame, _params(max_rows=None, spark_scoring={'enabled': True}),
     model_loader=lambda: _FakeModel())
   assert len(out) == 250_000
 
@@ -161,7 +172,7 @@ def test_max_cols_null_unbounded_wide_frame():
   extra = pd.DataFrame({('x%d' % i): np.zeros(4) for i in range(498)})
   frame = pd.concat([_frame(4), extra], axis=1)
   assert len(frame.columns) == 501
-  params = _params(max_cols=None, max_rows=None,
+  params = _params(max_cols=None, max_rows=1000,
                    spark_scoring={'enabled': False})
   del params['feature_cols']
   out = predict(frame, params, model_loader=lambda: _FakeModel())
@@ -176,7 +187,7 @@ def test_wide_500_col_chunked_predict():
   for i in range(1, 500):
     cols['f%d' % i] = np.zeros(n)
   frame = pd.DataFrame(cols)
-  params = _params(max_cols=None, max_rows=None, batch_size=2,
+  params = _params(max_cols=None, max_rows=1000, batch_size=2,
                    spark_scoring={'enabled': False})
   del params['feature_cols']
   model = _RecordingModel()
@@ -282,3 +293,45 @@ def test_spark_factory_to_pandas_guards():
   with pytest.raises(ValueError, match='max_rows_for_pandas'):
     SparkSessionFactory.to_pandas(
       frame, {'pandas_conversion_params': {'max_rows_for_pandas': 10}})
+
+
+class _FakeSparkCountOnly:
+  '''Fake Spark frame reporting >5M rows via count() only.'''
+
+  def __init__(self, rows):
+    self._rows = rows
+    self.columns = ['id', 'f1']
+    self.to_pandas_calls = 0
+
+  def count(self):
+    '''Return row count without materialising data.'''
+    return self._rows
+
+  def toPandas(self):
+    '''Record call; the guard must prevent this.'''
+    self.to_pandas_calls += 1
+    raise AssertionError('toPandas must not be called')
+
+
+def test_fake_spark_over_5m_rows_raises_without_to_pandas():
+  '''Fake Spark frame >5M rows raises through guarded to_pandas.'''
+  from forecast_ml_framework.core.spark_factory import to_pandas
+  spark_df = _FakeSparkCountOnly(5_000_001)
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    to_pandas(spark_df, {})
+  assert spark_df.to_pandas_calls == 0
+
+
+def test_scoring_load_fake_spark_over_pandas_limit_raises():
+  '''Scoring load path enforces the pandas guard via factory.'''
+  spark_df = _FakeSparkCountOnly(5_000_001)
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    load_scoring_data(spark_df, _params(spark_scoring={'enabled': False}))
+  assert spark_df.to_pandas_calls == 0
+
+
+def test_load_scoring_data_max_rows_null_without_spark_raises():
+  '''load_scoring_data rejects max_rows=None when spark is off.'''
+  with pytest.raises(ValueError, match='max_rows'):
+    load_scoring_data(
+      _frame(3), _params(max_rows=None, spark_scoring={'enabled': False}))

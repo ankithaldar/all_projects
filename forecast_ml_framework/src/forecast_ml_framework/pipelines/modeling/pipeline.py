@@ -80,6 +80,12 @@ Datasets:
 
 from kedro.pipeline import Pipeline, node
 
+from forecast_ml_framework.pipelines.interpretability.nodes import (
+  shap_explain,
+)
+from forecast_ml_framework.pipelines.modeling.adapters import (
+  train_models,
+)
 from forecast_ml_framework.pipelines.modeling.calibration import (
   calibrate_model,
 )
@@ -91,12 +97,6 @@ from forecast_ml_framework.pipelines.modeling.data_split import (
 )
 from forecast_ml_framework.pipelines.modeling.evaluate import (
   evaluate_model,
-)
-from forecast_ml_framework.pipelines.modeling.adapters import (
-  train_models,
-)
-from forecast_ml_framework.pipelines.modeling.shap_explain import (
-  explain_model,
 )
 
 
@@ -110,6 +110,49 @@ def _predict_proba(model, x_test, task_type):
   if task_type != 'classification':
     return None
   return model.predict_proba(x_test)
+
+
+
+def explain_model(model, x, y, params):
+  '''Adapt interpretability SHAP output to the legacy artifact.
+
+  Args:
+    model: Fitted calibrated model.
+    x: Features to explain.
+    y: Target values (unused; kept for node signature).
+    params: modeling_params; ``shap_params`` keys are
+      mapped onto interpretability params.
+
+  Returns:
+    Dict with ``method``, ``global_importance`` (name to
+    value), ``per_row`` (row index to SHAP values), and
+    ``shap_available``.
+  '''
+  _ = y
+  cfg = (params or {}).get('shap_params', {}) or {}
+  interp_params = {
+    'max_rows': cfg.get('sample_rows', 100),
+    'n_repeats': cfg.get('n_repeats', 5),
+    'random_state': cfg.get('random_state', 42),
+  }
+  out = shap_explain(model, x, interp_params)
+  method = out.get('method', 'none')
+  global_importance = {
+    str(entry['feature']): float(entry['importance'])
+    for entry in out.get('global_importance') or []
+    if isinstance(entry, dict) and 'feature' in entry}
+  per_row = {}
+  for row in out.get('per_row') or []:
+    if not isinstance(row, dict):
+      continue
+    values = row.get('shap_values') or {}
+    per_row[str(row.get('row', len(per_row)))] = {
+      str(name): float(value) for name, value in values.items()}
+  return {'method': method if method != 'permutation_fallback'
+          else 'permutation',
+          'global_importance': global_importance,
+          'per_row': per_row,
+          'shap_available': method == 'shap'}
 
 
 def create_pipeline(**kwargs):

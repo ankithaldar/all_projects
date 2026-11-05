@@ -29,6 +29,66 @@ def test_new_pipelines_are_real_kedro_pipelines():
     assert len(pipeline.nodes) > 0
 
 
+def test_missing_pipeline_module_returns_none_via_registry(monkeypatch):
+  '''Missing pipeline module is skipped, not an error.'''
+  import builtins
+  import forecast_ml_framework.pipeline_registry as registry
+  real_import = builtins.__import__
+
+  def fake_import(name, *args, **kwargs):
+    if name == 'forecast_ml_framework.pipelines.modeling':
+      raise ModuleNotFoundError(
+        "No module named 'forecast_ml_framework.pipelines.modeling'",
+        name=name)
+    return real_import(name, *args, **kwargs)
+
+  monkeypatch.setattr(builtins, '__import__', fake_import)
+  pipelines = registry.register_pipelines()
+  assert 'modeling' not in pipelines
+  assert 'data' in pipelines
+
+
+def test_internal_import_error_surfaces(monkeypatch):
+  '''Internal ImportError inside a pipeline module is re-raised.'''
+  import builtins
+  import forecast_ml_framework.pipeline_registry as registry
+  real_import = builtins.__import__
+
+  def fake_import(name, *args, **kwargs):
+    if name == 'forecast_ml_framework.pipelines.modeling':
+      raise ModuleNotFoundError(
+        "No module named 'some_internal_dep'", name='some_internal_dep')
+    return real_import(name, *args, **kwargs)
+
+  monkeypatch.setattr(builtins, '__import__', fake_import)
+  try:
+    registry.register_pipelines()
+  except ModuleNotFoundError as exc:
+    assert exc.name == 'some_internal_dep'
+  else:
+    raise AssertionError('internal ImportError was swallowed')
+
+
+def test_internal_import_error_other_subclass_surfaces(monkeypatch):
+  '''Plain ImportError inside a pipeline module is re-raised.'''
+  import builtins
+  import forecast_ml_framework.pipeline_registry as registry
+  real_import = builtins.__import__
+
+  def fake_import(name, *args, **kwargs):
+    if name == 'forecast_ml_framework.pipelines.modeling':
+      raise ImportError('boom inside pipeline')
+    return real_import(name, *args, **kwargs)
+
+  monkeypatch.setattr(builtins, '__import__', fake_import)
+  try:
+    registry.register_pipelines()
+  except ImportError as exc:
+    assert 'boom inside pipeline' in str(exc)
+  else:
+    raise AssertionError('internal ImportError was swallowed')
+
+
 def test_new_modules_expose_no_arg_factory():
   '''Each new module's create_pipeline works with no args.'''
   from forecast_ml_framework.pipelines.cost_tracking import (

@@ -48,11 +48,27 @@ def _collect_handles(node, found=None):
 
 
 def test_shipped_handles_resolve():
-  '''Every shipped handle resolves (skip-unless-available).'''
+  '''Every shipped handle is importable; estimator handles resolve.
+
+  Phase 4: shipped FE handles (SimpleImputer, TargetEncoder,
+  pyspark transformers) are transformers, not fit+predict
+  estimators, so the strict model-loader allowlist in
+  resolve_handle correctly rejects them. This test therefore
+  splits the assertion instead of expecting resolve_handle to
+  accept every handle: every available handle must be
+  importable via importlib, estimator-like handles (fit +
+  predict) must additionally resolve via resolve_handle, and
+  non-estimator handles must be rejected by resolve_handle
+  with ValueError. Security is not weakened: resolve_handle
+  still only returns fit+predict classes under allowlisted
+  top-level modules.
+  '''
+  import importlib
+
   params = _load_shipped_params()
   handles = sorted(set(_collect_handles(params)))
   assert handles, 'no handles found in shipped parameters.yml'
-  resolved, skipped = [], []
+  resolved, estimator_resolved, skipped = [], [], []
   for handle in handles:
     module = handle.rsplit('.', 1)[0]
     try:
@@ -62,10 +78,32 @@ def test_shipped_handles_resolve():
     if not available:
       skipped.append(handle)  # skip-unless-available, per handle
       continue
-    obj = resolve_handle(handle)
+    # Importable: dotted path names an importable callable/class,
+    # regardless of whether it is an estimator.
+    obj = getattr(importlib.import_module(module), handle.rsplit('.', 1)[1])
     assert callable(obj), handle
     resolved.append(handle)
+    if isinstance(obj, type) and hasattr(obj, 'fit') and hasattr(
+        obj, 'predict'):
+      # Estimator-like: strict allowlist must accept it.
+      assert resolve_handle(handle) is obj, handle
+      estimator_resolved.append(handle)
+    else:
+      # Transformer / non-estimator (e.g. SimpleImputer has fit
+      # but no predict; pyspark heads are not allowlisted):
+      # strict allowlist must reject it.
+      with pytest.raises(ValueError):
+        resolve_handle(handle)
   assert resolved, 'no shipped handle resolved: %s' % skipped
+  assert estimator_resolved, (
+      'no estimator handle resolved via resolve_handle: %s' % skipped)
+
+
+def test_strict_allowlist_rejects_simple_imputer():
+  '''resolve_handle rejects SimpleImputer (no predict).'''
+  pytest.importorskip('sklearn')
+  with pytest.raises(ValueError, match='fit and predict'):
+    resolve_handle('sklearn.impute.SimpleImputer')
 
 
 def test_expected_handles_present():

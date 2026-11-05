@@ -117,3 +117,95 @@ def test_calibrate_regression_passthrough():
   calibrated, meta = calibrate_model(base, x, y, params)
   assert meta['calibrated'] is False
   assert calibrated is base
+
+
+def test_split_rejects_bad_test_size():
+  import pytest
+  for bad in (0, 1, 1.5, -0.2):
+    with pytest.raises(ValueError):
+      split_data(
+          _frame(), {'target_col': 'target', 'test_size': bad})
+
+
+def test_split_rejects_empty_frame():
+  import pytest
+  with pytest.raises(ValueError):
+    split_data(
+        _frame(0), {'target_col': 'target', 'test_size': 0.2})
+
+
+def test_split_rejects_missing_target():
+  import pytest
+  with pytest.raises(ValueError):
+    split_data(
+        _frame(), {'target_col': 'missing', 'test_size': 0.2})
+
+
+# --- Coverage: betacal missing-library fallback + wrapper ---
+
+
+def test_calibrate_betacal_missing_library_falls_back_to_sigmoid(
+    monkeypatch):
+  '''betacal ImportError falls back to sigmoid calibration.'''
+  import sys
+  monkeypatch.setitem(sys.modules, 'betacal', None)
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    SklearnAdapter,
+  )
+  frame = _frame(80)
+  x = frame[['f1', 'f2']]
+  y = frame['target']
+  base = SklearnAdapter({}).fit(x, y)
+  params = {
+    'task_type': 'classification',
+    'calibration': {'method': 'betacal', 'cv': 2},
+  }
+  calibrated, meta = calibrate_model(base, x, y, params)
+  assert meta == {'calibrated': True, 'method': 'sigmoid'}
+  assert calibrated.predict_proba(x).shape[1] == 2
+
+
+def test_calibrate_betacal_handle_string_falls_back_when_missing(
+    monkeypatch):
+  '''A BetaCalibration handle also routes through betacal fallback.'''
+  import sys
+  monkeypatch.setitem(sys.modules, 'betacal', None)
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    SklearnAdapter,
+  )
+  frame = _frame(80)
+  x = frame[['f1', 'f2']]
+  y = frame['target']
+  base = SklearnAdapter({}).fit(x, y)
+  params = {
+    'task_type': 'classification',
+    'calibration_handle': 'betacal.BetaCalibration',
+    'calibration': {'method': 'sigmoid', 'cv': 2},
+  }
+  calibrated, meta = calibrate_model(base, x, y, params)
+  assert meta['method'] == 'sigmoid'
+  assert meta['calibrated'] is True
+
+
+def test_beta_cal_wrapper_delegates_to_base_and_calibrator():
+  '''_BetaCalWrapper maps proba through base then calibrator.'''
+  from forecast_ml_framework.pipelines.modeling.calibration import (
+    _BetaCalWrapper,
+  )
+
+  class FakeBase:
+    classes_ = np.array(['neg', 'pos'])
+
+    def predict_proba(self, x):
+      return np.array([[0.9, 0.1], [0.2, 0.8]])
+
+  class FakeCalibrator:
+    def predict_proba(self, proba):
+      return proba * 0.5
+
+  wrapped = _BetaCalWrapper(FakeBase(), FakeCalibrator())
+  assert wrapped.base is not None
+  assert wrapped.calibrator is not None
+  proba = wrapped.predict_proba(None)
+  assert proba.shape == (2, 2)
+  assert list(wrapped.predict(None)) == ['neg', 'pos']

@@ -49,24 +49,55 @@ class ConfigLoader:
     model_dump = getattr(value, 'model_dump', None)
     if callable(model_dump):
       # Pydantic model: validate on construction by
-      # re-validating its dump through its own class.
+      # re-validating its dump through its own class. Validation
+      # errors propagate: swallowing them would silently accept
+      # a config that does not match its schema.
       dumped = model_dump()
-      try:
-        value.__class__.model_validate(dumped)
-      except Exception:
-        pass
+      value.__class__.model_validate(dumped)
       return dict(dumped)
     if isinstance(value, dict):
       return dict(value)
     # OmegaConf DictConfig/ListConfig (lazy import).
-    try:
-      from omegaconf import OmegaConf  # pylint: disable=import-outside-toplevel
-      if OmegaConf.is_config(value):
-        plain = OmegaConf.to_container(value, resolve=True)
-        return dict(plain) if isinstance(plain, dict) else {}
-    except Exception:
-      pass
+    from omegaconf import OmegaConf  # pylint: disable=import-outside-toplevel
+    if OmegaConf.is_config(value):
+      ConfigLoader._reject_oc_interpolations(
+        OmegaConf.to_container(value, resolve=False))
+      plain = OmegaConf.to_container(value, resolve=True)
+      return dict(plain) if isinstance(plain, dict) else {}
     return dict(value)
+
+  @staticmethod
+  def _reject_oc_interpolations(node):
+    '''Reject any ``${oc.*}`` interpolation in ``node``.
+
+    ``oc.env`` would read process environment (a secret-leak
+    vector when the variable holds a credential) and
+    ``oc.create`` builds arbitrary objects; neither is ever
+    resolved here. Use ``core.config_schema.load_config``,
+    which replaces ``oc.env`` defaults statically without
+    reading the environment, instead of passing a raw
+    DictConfig to this loader. Whitespace/case variants
+    (``${ oc.env:...}``, ``${ OC.env:...}``,
+    ``${oc .env:...}``) are rejected too.
+
+    Args:
+      node: Plain container from ``OmegaConf.to_container``.
+
+    Raises:
+      ValueError: When any string contains ``${oc...}``,
+        including whitespace/case variants.
+    '''
+    import re as _re
+    _pattern = _re.compile(r'\$\{\s*oc\s*\.', _re.IGNORECASE)
+    if isinstance(node, dict):
+      for item in node.values():
+        ConfigLoader._reject_oc_interpolations(item)
+    elif isinstance(node, (list, tuple)):
+      for item in node:
+        ConfigLoader._reject_oc_interpolations(item)
+    elif isinstance(node, str) and _pattern.search(node):
+      raise ValueError(
+        'oc.* resolvers are blocked in ConfigLoader: ' + node)
 
   def _sources(self):
     '''Return sources in search order (parameters first).'''
@@ -130,7 +161,7 @@ class ConfigLoader:
     '''
     explicit = self._lookup(
         ('task_type', 'task', 'model_type', 'problem_type'),
-        sections=('model', 'task', 'target'))
+        sections=('model', 'task', 'target', 'global_params'))
     if explicit is not None:
       return self._normalize(explicit)
     target_type = self._lookup(

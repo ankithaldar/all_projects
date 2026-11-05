@@ -10,6 +10,47 @@ from forecast_ml_framework.feature_store.store import (
     ENTITY_COL, FeatureStore, _normalize_frame, _resolve_time)
 
 
+def _naive_utc(value):
+  '''Parse ``value`` to a naive UTC Timestamp (or None).'''
+  if value is None:
+    return None
+  import pandas as pd
+  stamp = pd.Timestamp(value)
+  if getattr(stamp, 'tzinfo', None) is not None:
+    stamp = stamp.tz_convert('UTC').tz_localize(None)
+  return stamp
+
+
+def _resolve_naive(as_of=None, request_time=None):
+  '''Resolve cutoff to a naive UTC Timestamp (or None).'''
+  raw = _resolve_time(as_of=as_of, request_time=request_time)
+  return _naive_utc(raw) if raw is not None else None
+
+
+def _naive_utc_frame(frame):
+  '''Return ``frame`` with tz-aware as_of converted to naive UTC.'''
+  import pandas as pd
+  frame = frame.copy()
+  if 'as_of' in frame.columns and len(frame):
+    converted = pd.to_datetime(frame['as_of'])
+    if getattr(converted.dtype, 'tz', None) is not None:
+      converted = converted.dt.tz_convert('UTC').dt.tz_localize(None)
+    frame['as_of'] = converted
+  return frame
+
+
+def _check_not_empty(dataframe):
+  '''Raise an informative ValueError for an empty dataframe.'''
+  try:
+    empty = dataframe is None or len(dataframe) == 0
+  except TypeError:
+    empty = False
+  if empty:
+    raise ValueError(
+        'cannot materialize empty dataframe: '
+        'online feature store is empty')
+
+
 class OnlineFeatureStore(FeatureStore):
   '''Serve point-in-time features from memory / optional Redis.
 
@@ -88,9 +129,7 @@ class OnlineFeatureStore(FeatureStore):
       if isinstance(raw, bytes):
         raw = raw.decode('utf-8')
       data = json.loads(raw)
-      from forecast_ml_framework.feature_store.store import (
-          _to_timestamp)
-      records = [{'as_of': _to_timestamp(r['as_of']),
+      records = [{'as_of': _naive_utc(r['as_of']),
                   'features': dict(r['features'])} for r in data]
       records.sort(key=lambda r: r['as_of'])
       return records
@@ -102,7 +141,13 @@ class OnlineFeatureStore(FeatureStore):
     redis_records = self._redis_get(entity)
     if redis_records:
       return redis_records
-    return list(self._store.get(entity, []))
+    records = []
+    for record in self._store.get(entity, []):
+      records.append({
+          'as_of': _naive_utc(record['as_of']),
+          'features': dict(record['features']),
+      })
+    return records
 
   # -- Writes ------------------------------------------------------
   def set_features(self, entity_id, features, as_of=None,
@@ -115,7 +160,7 @@ class OnlineFeatureStore(FeatureStore):
       as_of: Timestamp for this record.
       request_time: Alias timestamp (wins over ``as_of``).
     '''
-    when = _resolve_time(as_of=as_of, request_time=request_time)
+    when = _resolve_naive(as_of=as_of, request_time=request_time)
     if when is None:
       raise ValueError('set_features requires as_of')
     records = self._records_for(entity_id)
@@ -143,10 +188,15 @@ class OnlineFeatureStore(FeatureStore):
     Returns:
       Number of entity records stored.
     '''
-    frame = _normalize_frame(
+    _check_not_empty(dataframe)
+    frame = _naive_utc_frame(_normalize_frame(
         dataframe, as_of=as_of,
         entity_col=entity_col or self.entity_col,
-        timestamp_col=timestamp_col or self.timestamp_col)
+        timestamp_col=timestamp_col or self.timestamp_col))
+    if frame.empty:
+      raise ValueError(
+          'cannot materialize empty dataframe: '
+          'online feature store is empty')
     if feature_names is not None:
       keep = [ENTITY_COL, 'as_of'] + [
           n for n in feature_names if n in frame.columns]
@@ -188,13 +238,26 @@ class OnlineFeatureStore(FeatureStore):
       Future-only entities are omitted.
     '''
     import warnings
-    when = _resolve_time(as_of=as_of, request_time=request_time)
+    when = _resolve_naive(as_of=as_of, request_time=request_time)
     if when is None:
       warnings.warn(
           'get_features without a cutoff returns the latest '
           'available features; pass as_of/request_time for '
           'point-in-time correctness (future leakage risk)',
           UserWarning, stacklevel=2)
+    if feature_names is not None:
+      # Union of feature names across all stored records.
+      known = set()
+      for stored in self._store.values():
+        for record in stored:
+          known.update(record.get('features', {}))
+      # Also consider Redis-backed entities requested here.
+      for entity in entity_ids:
+        for record in self._records_for(entity):
+          known.update(record.get('features', {}))
+      unknown = [n for n in feature_names if n not in known]
+      if unknown:
+        raise ValueError(f'Unknown features: {unknown}')
     result = {}
     for entity in entity_ids:
       chosen = None

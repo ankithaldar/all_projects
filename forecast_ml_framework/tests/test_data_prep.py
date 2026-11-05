@@ -9,6 +9,7 @@ import pytest
 
 from forecast_ml_framework.pipelines.data_prep.nodes import (
   preprocess,
+  resolve_handle,
   select_features,
   synthetic_data,
   validate_data,
@@ -337,4 +338,61 @@ def test_select_warns_nonexistent_override():
     'target_col': 'target', 'feature_cols': ['f1', 'f2']})
   assert sel == []
   assert any('ghost_col' in w for w in rep.get('warnings', []))
+
+
+class _FakeSparkCountOnly:
+  '''Fake Spark frame reporting rows via count() only.'''
+
+  def __init__(self, rows):
+    self._rows = rows
+    self.columns = ['id', 'x1', 'x2', 'cat', 'seq', 'target']
+    self.to_pandas_calls = 0
+
+  def count(self):
+    '''Return row count without materialising data.'''
+    return self._rows
+
+  def toPandas(self):
+    '''Record call; the guard must prevent this.'''
+    self.to_pandas_calls += 1
+    raise AssertionError('toPandas must not be called')
+
+
+def test_preprocess_fake_spark_over_5m_raises():
+  '''Preprocess enforces default pandas guard on fake Spark >5M rows.'''
+  spark_df = _FakeSparkCountOnly(5_000_001)
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    preprocess(spark_df, [], _vars())
+  assert spark_df.to_pandas_calls == 0
+
+
+def test_preprocess_fake_spark_over_configured_limit_raises():
+  '''Preprocess honours pandas_conversion_params limit.'''
+  spark_df = _FakeSparkCountOnly(100)
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    preprocess(spark_df, [], _vars(),
+               pandas_conversion_params={'max_rows_for_pandas': 10})
+  assert spark_df.to_pandas_calls == 0
+
+
+@pytest.mark.parametrize('handle', [
+  'os.system', 'subprocess.Popen', 'builtins.eval', 'builtins.exec',
+])
+def test_resolve_handle_rejects_non_allowlisted(handle):
+  '''resolve_handle rejects handles outside the allowlist.'''
+  with pytest.raises(ValueError):
+    resolve_handle(handle)
+
+
+def test_resolve_handle_rejects_non_estimator_allowlisted():
+  '''Allowlisted non-estimator (function) raises ValueError.'''
+  with pytest.raises(ValueError):
+    resolve_handle('sklearn.datasets.load_iris')
+
+
+def test_resolve_handle_accepts_allowlisted_estimator():
+  '''Allowlisted estimator class resolves.'''
+  obj = resolve_handle('sklearn.ensemble.RandomForestClassifier')
+  assert obj.__name__ == 'RandomForestClassifier'
+  assert hasattr(obj, 'fit') and hasattr(obj, 'predict')
 

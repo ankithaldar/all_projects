@@ -1125,60 +1125,78 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "catboost" },
-    { name = "dvc" },
     { name = "fastapi" },
-    { name = "h2o" },
     { name = "kedro" },
+    { name = "kedro-datasets" },
     { name = "lightgbm" },
     { name = "matplotlib" },
-    { name = "mlflow" },
     { name = "omegaconf" },
     { name = "pandas" },
-    { name = "polars" },
+    { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pyspark" },
-    { name = "pyyaml" },
     { name = "scikit-learn" },
-    { name = "seaborn" },
-    { name = "shap" },
+    { name = "scipy" },
     { name = "uvicorn" },
     { name = "xgboost" },
+]
+
+[package.optional-dependencies]
+explain = [
+    { name = "shap" },
+]
+maximal = [
+    { name = "h2o" },
+]
+optional = [
+    { name = "dvc" },
+    { name = "polars" },
+    { name = "seaborn" },
+]
+spark = [
+    { name = "pyspark" },
+]
+tracking = [
+    { name = "mlflow" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
     { name = "pytest" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "catboost" },
-    { name = "dvc" },
+    { name = "dvc", marker = "extra == 'optional'" },
     { name = "fastapi" },
-    { name = "h2o" },
+    { name = "h2o", marker = "extra == 'maximal'" },
     { name = "kedro" },
+    { name = "kedro-datasets" },
     { name = "lightgbm" },
     { name = "matplotlib" },
-    { name = "mlflow" },
+    { name = "mlflow", marker = "extra == 'tracking'" },
     { name = "omegaconf" },
     { name = "pandas" },
-    { name = "polars" },
+    { name = "polars", marker = "extra == 'optional'" },
+    { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pyspark" },
-    { name = "pyyaml" },
+    { name = "pyspark", marker = "extra == 'spark'" },
     { name = "scikit-learn" },
-    { name = "seaborn" },
-    { name = "shap" },
+    { name = "scipy" },
+    { name = "seaborn", marker = "extra == 'optional'" },
+    { name = "shap", marker = "extra == 'explain'" },
     { name = "uvicorn" },
     { name = "xgboost" },
 ]
-provides-extras = ["extras-314-failures"]
+provides-extras = ["extras-314-failures", "optional", "spark", "tracking", "explain", "maximal"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx" },
     { name = "pytest" },
+    { name = "pyyaml" },
 ]
 
 [[package]]
@@ -1547,6 +1565,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kedro-datasets"
+version = "10.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "kedro" },
+    { name = "lazy-loader" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/5c/9fd8f6ee4c4b28ff1acb00e125657a802c0c08f77cb484d3d686d5508b88/kedro_datasets-10.0.0.tar.gz", hash = "sha256:b97f0f0f0f0e2c2fba8e5d8d82787de3e1ab5df3e3c8d2685a9ca9d8c09d02de", size = 276760, upload-time = "2026-11-03T16:36:13.665Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/90/8211f3248363dd8c1348933e6654ff174c0799048487f840100e5cad942a/kedro_datasets-10.0.0-py3-none-any.whl", hash = "sha256:8a5cfbce788affb8df18e4c8322ef5855957b3fe8cac7cce1fbf0ca3f5bf87ac", size = 407544, upload-time = "2026-11-03T16:36:11.151Z" },
+]
+
+[[package]]
 name = "kedro-telemetry"
 version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1647,6 +1678,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/57/31/3e632ebce43c684dcc6eead4660b33307e6153be87e33c14e1ed9875deff/kombu-5.7.0.tar.gz", hash = "sha256:31e62fdfd2381caa3422f8e02b84a491d9a2180ddda74507b57f4cb1e1c2c2c9", size = 627051, upload-time = "2026-11-03T05:58:33.446Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/84/20/f73d8e0bff9708b0f2337220be1b5d7ebd738bc3a89b63cf44d257157014/kombu-5.7.0-py3-none-any.whl", hash = "sha256:dede73bff4c89175be382c4203d2f167cf7017c384396ec75c36a1b5678f1587", size = 266635, upload-time = "2026-11-03T05:58:31.475Z" },
+]
+
+[[package]]
+name = "lazy-loader"
+version = "0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/8c/0f2ff2a8b7513e68871a74740c17a504b0488c679b379e6445ebb7bd78dc/lazy_loader-0.6.tar.gz", hash = "sha256:2f4b7824d6401958639008a0cae20c776b61dff619accd6890693e2de8260167", size = 18438, upload-time = "2026-09-21T21:31:32.982Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/93/4e45e37f26c820216704b36b8e67cc55c490a7abd287a78a26a2c0e21386/lazy_loader-0.6-py3-none-any.whl", hash = "sha256:77253be3391b06124a0e16105bd663b6c54470af1a9ca8e1cf026f38d58ed056", size = 8791, upload-time = "2026-09-21T21:31:31.632Z" },
 ]
 
 [[package]]

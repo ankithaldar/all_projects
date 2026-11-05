@@ -1121,6 +1121,32 @@ def _log_cosh(y_true, y_pred):
                        - np.log(2)))
 
 
+def _validate_lengths(y_true, y_pred, y_proba):
+  '''Require y_true, y_pred and y_proba to share one length.'''
+  try:
+    n_true = len(y_true)
+  except TypeError:
+    raise ValueError('y_true must be a sized sequence') from None
+  try:
+    n_pred = len(y_pred)
+  except TypeError:
+    raise ValueError('y_pred must be a sized sequence') from None
+  if n_pred != n_true:
+    raise ValueError(
+        f'length mismatch: y_true has {n_true} samples but '
+        f'y_pred has {n_pred}')
+  if y_proba is not None:
+    try:
+      n_proba = len(y_proba)
+    except TypeError:
+      raise ValueError(
+          'y_proba must be a sized sequence') from None
+    if n_proba != n_true:
+      raise ValueError(
+          f'length mismatch: y_true has {n_true} samples but '
+          f'y_proba has {n_proba}')
+
+
 def compute_metrics(y_true, y_pred, y_proba, task_type,
                     selected=None):
   '''Compute metrics dict for the given task type.
@@ -1139,6 +1165,7 @@ def compute_metrics(y_true, y_pred, y_proba, task_type,
   Raises:
     ValueError: If a selected name is unknown for the task.
   '''
+  _validate_lengths(y_true, y_pred, y_proba)
   sel = None
   if selected is not None:
     sel = set(resolve_selected_metrics(selected, task_type))

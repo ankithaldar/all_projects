@@ -38,37 +38,37 @@ test_data:
 # model: Fitted model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/model.pkl').
 model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/model.pkl'
 # calibration_model: Calibrated model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/calibration_model.pkl').
 calibration_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/calibration_model.pkl'
 # h2o_automl_model: H2O AutoML model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/h2o_automl_model.pkl').
 h2o_automl_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/h2o_automl_model.pkl'
 # xgboost_model: XGBoost model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/xgboost_model.pkl').
 xgboost_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/xgboost_model.pkl'
 # lightgbm_model: LightGBM model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/lightgbm_model.pkl').
 lightgbm_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/lightgbm_model.pkl'
 # catboost_model: CatBoost model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/catboost_model.pkl').
 catboost_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/catboost_model.pkl'
 # sklearn_model: sklearn model. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/models/sklearn_model.pkl').
 sklearn_model:
-  type: 'kedro_datasets.pickle.PickleDataset'
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: './artifacts/models/sklearn_model.pkl'
 # metrics: Metrics JSON. Overrides only filepath vs base
 # (valid: a filepath URI for this env; example: './artifacts/metrics/metrics.json').

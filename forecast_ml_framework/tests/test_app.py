@@ -214,3 +214,90 @@ def test_registry_loader_failure_500_no_leak():
   assert r.status_code == 500
   assert '/secret' not in r.text
   assert 'model.pkl' not in r.text
+
+
+def test_predict_huge_int_422():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  r = client.post(
+      '/predict',
+      content='{"features": {"a": 1' + '0' * 400 + '}}',
+      headers={'Content-Type': 'application/json'})
+  assert r.status_code == 422
+
+
+def test_predict_unknown_feature_key_422():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class StrictModel:
+    feature_names_in_ = ['a', 'b']
+
+    def predict(self, rows):
+      return [sum(row) for row in rows]
+
+  client = TestClient(create_app(lambda: StrictModel()))
+  r = client.post(
+      '/predict', json={'features': {'a': 1.0, 'b': 2.0, 'c': 3.0}})
+  assert r.status_code == 422
+  assert 'c' in r.text
+
+
+def test_predict_nonfinite_output_422():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class InfModel:
+    def predict(self, rows):
+      return [float('inf') for _ in rows]
+
+  client = TestClient(create_app(lambda: InfModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 422
+  assert 'predictions' in r.text
+
+
+def test_predict_nan_output_422():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class NanModel:
+    def predict(self, rows):
+      return [float('nan') for _ in rows]
+
+  client = TestClient(create_app(lambda: NanModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 422
+
+
+def test_predict_body_too_large_413():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  body = '{"features": {"a": 1.0}, "pad": "' + ('x' * (11 * 1024 * 1024)) + '"}'
+  r = client.post(
+      '/predict', content=body,
+      headers={'Content-Type': 'application/json',
+               'Content-Length': str(len(body))})
+  assert r.status_code == 413
+
+# --- cycle2 real sklearn ndarray feature_names_in_ (RED) ---
+def test_predict_real_sklearn_logreg():
+  '''Real sklearn LogisticRegression (ndarray feature_names_in_) serves 200.'''
+  import numpy as np
+  import pandas as pd
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  from sklearn.linear_model import LogisticRegression
+  rng = np.random.RandomState(42)
+  x = pd.DataFrame(rng.randn(60, 3), columns=['f1', 'f2', 'f3'])
+  y = (x['f1'] + x['f2'] > 0).astype(int)
+  model = LogisticRegression(max_iter=1000).fit(x, y)
+  # feature_names_in_ is a numpy ndarray on real sklearn models
+  assert hasattr(model.feature_names_in_, 'tolist')
+  client = TestClient(create_app(lambda: model))
+  r = client.post(
+    '/predict', json={'features': {'f1': 1.0, 'f2': 2.0, 'f3': 3.0}})
+  assert r.status_code == 200, r.text
+  assert len(r.json()['predictions']) == 1

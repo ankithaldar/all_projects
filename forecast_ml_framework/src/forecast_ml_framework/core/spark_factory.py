@@ -237,21 +237,23 @@ def check_pandas_limits(df, config=None):
 def to_pandas(df_or_spark_df, config=None):
   '''Convert a Spark DataFrame to pandas, passing others through.
 
-  When ``config`` is supplied, :func:`check_pandas_limits` runs
-  first so oversized frames raise instead of OOM-ing.
+  :func:`check_pandas_limits` always runs first (with the
+  default 5,000,000-row threshold when ``config`` is ``None``)
+  so oversized frames raise instead of OOM-ing.
 
   Args:
     df_or_spark_df: A Spark DataFrame, a pandas object, or any
       other object to return unchanged.
     config: Optional configuration; used for the pandas limit
-      guard.
+      guard (``pandas_conversion_params`` /
+      ``max_rows_for_pandas``).
 
   Returns:
     The pandas representation, or the input unchanged when it
     is not a Spark DataFrame.
   '''
-  if config is not None:
-    check_pandas_limits(df_or_spark_df, config)
+  check_pandas_limits(
+      df_or_spark_df, config if config is not None else {})
   converter = getattr(df_or_spark_df, 'toPandas', None)
   if callable(converter):
     return converter()
