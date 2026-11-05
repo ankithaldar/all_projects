@@ -255,14 +255,17 @@ def test_pipeline_end_to_end_via_node_funcs():
 # --- Phase 2 fix: registry, I/O wiring, caps, finite, allowlist ---
 
 
-def test_registry_includes_scoring_seven_keys():
-  '''Registry returns 7 keys including scoring.'''
+def test_registry_includes_scoring_twelve_keys():
+  '''Registry returns 12 keys including scoring (Phase 3).'''
   from forecast_ml_framework.pipeline_registry import register_pipelines
   pipelines = register_pipelines()
   assert set(pipelines) == {
     'data', 'preprocessing', 'feature_selection',
-    'modeling', 'evaluation', 'predict', 'scoring'}
-  assert len(pipelines) == 7
+    'modeling', 'evaluation', 'predict', 'scoring',
+    'eda', 'monitoring', 'retraining', 'cost_tracking',
+    'interpretability'}
+  assert len(pipelines) == 12
+  assert 'scoring' in pipelines
 
 
 def test_pipeline_uses_params_io():

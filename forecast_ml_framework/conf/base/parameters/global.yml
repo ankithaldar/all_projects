@@ -1,0 +1,46 @@
+# parameters/global.yml — part of the split of the former base parameters.yml.
+# Runtime / global keys: flat ${params:} catalog keys + global_params.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+# parameters.yml — modelling + feature-engineering parameters (base defaults).
+# Structure mirrors the reference vz_faas_framework_v2 conf/base/parameters.yml,
+# plus feature-selection / multi-model / MLOps sections. Kedro env overlays
+# (conf/local, conf/gcp, conf/aws) override only what they must.
+# No credentials or secrets here — read them from the environment at runtime.
+
+# --- Runtime params (catalog interpolations) ------------------------------------
+# Flat keys referenced from catalog.yml as ${params:<key>} (Kedro params
+# namespace). NEW keys for config_schema (extra=allow): score_model_id,
+# output_gcs_location, model_id_prefix, suffix, data_project,
+# db_staging_data, etl_project, etl_dataset, etl_table, external_project,
+# tmp_bucket, is_domino, run_date, train_run_dt, score_run_dt, brand.
+score_model_id: ${.global_params.score_model_id}
+output_gcs_location: 'artifacts'
+model_id_prefix: 'demo_model_v1'
+suffix: 'v1'
+data_project: ''
+db_staging_data: ''
+etl_project: ''
+etl_dataset: ''
+etl_table: ''
+external_project: ''
+tmp_bucket: ''
+is_domino: false
+run_date: ${.global_params.run_date}
+train_run_dt: ${.global_params.run_date}
+score_run_dt: ${.global_params.run_date}
+brand: ''
+
+# --- Run / global -------------------------------------------------------------
+global_params:
+  is_regression: false
+  is_domino: false
+  score_model_id: 'demo_model_v1'
+  run_date: '2026-11-05'
+  model_type: 'sklearn'
+  random_state: 42
+  target_col: ${variables.target_col}
+  key_cols_list:
+    - 'id'

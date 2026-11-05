@@ -53,11 +53,12 @@ def test_variables_rejects_wrong_type():
 
 
 def test_parameters_shipped_conf_passes():
-  '''ParametersConfig accepts shipped base parameters.yml.'''
+  '''ParametersConfig accepts shipped base parameters (parameters/).'''
   import yaml
-  path = _root() / 'conf' / 'base' / 'parameters.yml'
-  with path.open() as handle:
-    raw = yaml.safe_load(handle)
+  raw = {}
+  for path in sorted((_root() / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    with path.open() as handle:
+      raw.update(yaml.safe_load(handle))
   cfg = validate_parameters(raw)
   assert isinstance(cfg, ParametersConfig)
   assert 'modeling_params' in cfg.model_dump()
@@ -94,6 +95,37 @@ def test_load_config_env_overlay_merges():
 def test_load_config_accepts_dir_path():
   '''load_config accepts an env directory path.'''
   cfg = load_config(_root() / 'conf' / 'base')
+  assert cfg['variables']['target_col'] == 'target'
+
+
+def test_load_config_merges_parameters_folder(tmp_path):
+  '''load_config merges sorted parameters/*.yml, overlay wins.'''
+  conf = tmp_path / 'conf'
+  base = conf / 'base' / 'parameters'
+  local = conf / 'local' / 'parameters'
+  base.mkdir(parents=True)
+  local.mkdir(parents=True)
+  (conf / 'base' / 'variables.yml').write_text(
+    "target_col: target\nreceipt_date: '2024-01-01'\n")
+  (base / '01_global.yml').write_text(
+    'global_params:\n  target_col: target\n'
+    '  shared: from_01\n'
+    "run_date: '2024-01-01'\n")
+  (base / '02_model.yml').write_text(
+    'global_params:\n  shared: from_02\n'
+    'modeling_params:\n  task_type: regression\n')
+  (base / 'notes.txt').write_text('ignored\n')
+  (local / '01_overlay.yml').write_text(
+    'global_params:\n  shared: from_local\n')
+
+  cfg = load_config(conf / 'local')
+  params = cfg['parameters']
+  # Merged keys from both sorted base bucket files.
+  assert params['global_params']['target_col'] == 'target'
+  assert params['modeling_params']['task_type'] == 'regression'
+  # Sorted order: 02_model.yml wins over 01_global.yml ...
+  # ... and the local overlay wins over base.
+  assert params['global_params']['shared'] == 'from_local'
   assert cfg['variables']['target_col'] == 'target'
 
 

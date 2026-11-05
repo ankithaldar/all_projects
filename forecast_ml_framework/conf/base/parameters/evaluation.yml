@@ -1,0 +1,58 @@
+# parameters/evaluation.yml — part of the split of the former base parameters.yml.
+# Evaluation: evaluation_params incl. metrics_to_calculate.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+
+# Evaluation: metric names are plain strings resolved by the
+# modeling worker. classification metrics: roc_auc |
+# average_precision | f1 | precision | recall | mcc.
+# regression metrics: rmse | mae | r2 | mape. prediction_col /
+# prediction_probability_col name the output columns.
+# --- Evaluation ---------------------------------------------------------------
+evaluation_params:
+  multiclass_flag: false
+  prediction_col: 'xgboost_pred'
+  prediction_probability_col: 'score_value'
+  metrics:
+    classification:
+      - 'roc_auc'
+      - 'average_precision'
+      - 'f1'
+    regression:
+      - 'rmse'
+      - 'mae'
+      - 'r2'
+  # metrics_to_calculate: curated subset of metrics to compute and
+  # show by default (NOT all metrics; only selected ones are
+  # computed/shown, keeping reports readable and fast). The full
+  # registry (~60 metrics incl. F-beta, KL divergence, NDCG, Huber,
+  # MASE, top-k accuracy, per-class rates, ...) is available in code
+  # as METRIC_REGISTRY (pipelines/modeling/metrics.py) — pick any
+  # registry names here or set 'all' to compute everything. The
+  # default below covers the standard classification set (accuracy,
+  # balanced_accuracy, precision_weighted, recall_weighted,
+  # f1_weighted, roc_auc, pr_auc, log_loss, brier_score, cohen_kappa,
+  # matthews_corrcoef) plus the standard regression set (mae, rmse,
+  # r2, mape, smape). WARNING: 'all' computes ~60 metrics, slower
+  # and noisier for dashboards — use a custom list for targeted runs.
+  # metrics_to_calculate: 'all'  # example: compute every registry metric.
+  # metrics_to_calculate: ['f1_weighted', 'roc_auc', 'mae']  # example: custom list (only these).
+  metrics_to_calculate:
+    - 'accuracy'
+    - 'balanced_accuracy'
+    - 'precision_weighted'
+    - 'recall_weighted'
+    - 'f1_weighted'
+    - 'roc_auc'
+    - 'pr_auc'
+    - 'log_loss'
+    - 'brier_score'
+    - 'cohen_kappa'
+    - 'matthews_corrcoef'
+    - 'mae'
+    - 'rmse'
+    - 'r2'
+    - 'mape'
+    - 'smape'

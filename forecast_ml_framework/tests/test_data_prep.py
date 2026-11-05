@@ -240,21 +240,23 @@ def test_create_pipeline_nodes():
   assert any('select' in n for n in names)
 
 
-def _load_params():
-  '''Load shipped base parameters.yml.'''
+def _load_shipped_params():
+  '''Load merged shipped parameters from parameters/*.yml.'''
   from pathlib import Path
 
   import yaml
   root = Path(__file__).resolve().parents[1]
-  path = root / 'conf' / 'base' / 'parameters.yml'
-  assert path.exists(), 'shipped parameters.yml missing'
-  with path.open() as handle:
-    return yaml.safe_load(handle)
+  merged = {}
+  for path in sorted((root / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    with path.open() as handle:
+      merged.update(yaml.safe_load(handle) or {})
+  assert merged, 'no shipped parameters found'
+  return merged
 
 
 def test_shipped_config_drives_selection():
   '''Shipped feature_selection_params drives select_features.'''
-  params = _load_params()
+  params = _load_shipped_params()
   fparams = params['feature_selection_params']
   assert 'variance_threshold' in fparams
   assert 'missing_threshold' in fparams
@@ -272,7 +274,7 @@ def test_shipped_config_drives_selection():
 
 def test_shipped_config_drives_validation():
   '''Shipped validation_params drives validate_data.'''
-  params = _load_params()
+  params = _load_shipped_params()
   vparams = params['validation_params']
   assert 'fail_fast' in vparams
   assert 'required_cols' in vparams

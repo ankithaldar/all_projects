@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Loss-function keys in shipped parameters.yml (config only).'''
+'''Loss-function keys in shipped parameters/ (merged, config only).'''
 
 from pathlib import Path
 
@@ -9,10 +9,13 @@ import yaml
 
 
 def _load_params():
-  '''Load shipped base parameters.yml.'''
+  '''Load shipped base parameters (merged parameters/*.yml).'''
   root = Path(__file__).resolve().parents[1]
-  with (root / 'conf' / 'base' / 'parameters.yml').open() as handle:
-    return yaml.safe_load(handle)
+  merged = {}
+  for path in sorted((root / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    with path.open() as handle:
+      merged.update(yaml.safe_load(handle))
+  return merged
 
 
 def test_top_level_loss_function():

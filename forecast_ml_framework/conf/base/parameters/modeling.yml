@@ -1,0 +1,278 @@
+# parameters/modeling.yml — part of the split of the former base parameters.yml.
+# Modeling: models_to_use, h2o, modeling(_reg)_params incl. loss functions/objectives, model_params_by_name, calibration, cv.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+
+# Models to train: any subset of h2o_automl | xgboost | lightgbm |
+# catboost | sklearn. Removing a name skips that model entirely;
+# per-model params live in modeling_params.model_params.<name>.
+# --- Models to train ----------------------------------------------------------
+models_to_use:
+  - 'h2o_automl'
+  - 'xgboost'
+  - 'lightgbm'
+  - 'catboost'
+  - 'sklearn'
+
+# H2O AutoML: max_models caps the leaderboard size; max_runtime_secs
+# caps wall time (WARNING: large values cost real compute).
+# include_algos/exclude_algos filter base learners (GBM, XGBoost,
+# DeepLearning, GLM, RandomForest). sort_by: AUC (classification) |
+# RMSE (regression). nfolds/stopping_rounds control CV.
+# --- H2O AutoML ---------------------------------------------------------------
+h2o_automl_params:
+  max_models: 10
+  max_runtime_secs: 600
+  seed: 42
+  nfolds: 5
+  sort_by: 'AUC'
+  include_algos:
+    - 'GBM'
+    - 'XGBoost'
+    - 'DeepLearning'
+    - 'GLM'
+    - 'RandomForest'
+  exclude_algos: []
+  stopping_rounds: 5
+  verbosity: 'info'
+
+# --- Modelling (classification) ----------------------------------------------
+# Loss functions (how to change the optimisation objective):
+# Exact contract (modeling worker LOSS_REGISTRY):
+# - modeling_params.loss_function: top-level default, plain string,
+#   e.g. 'logloss'. No loss_function key = defaults unchanged.
+# - model_params.<name>.loss_function: per-model override for
+#   sklearn / xgboost / lightgbm / catboost / h2o_automl.
+# - objective: native xgboost/lightgbm key (adapter maps
+#   loss_function onto it; both are shipped below as examples).
+# - Custom callable: a dotted importable string, e.g.
+#   loss_function: 'my_losses.my_weighted_logloss' (commented
+#   example; must be importable via importlib and callable).
+# Valid sets (aliases logloss / squared_error|mse|rmse / mae /
+# poisson / gamma / tweedie / huber / quantile / binary are
+# case-insensitive):
+#   sklearn: log_loss, squared_error, absolute_error, huber,
+#     quantile, epsilon_insensitive, poisson, gamma, tweedie,
+#     hinge, squared_hinge, modified_huber, perceptron, exponential
+#   xgboost: binary:logistic, reg:squarederror, reg:gamma,
+#     reg:tweedie, reg:absoluteerror, count:poisson, reg:logistic,
+#     multi:softprob, multi:softmax, reg:pseudohubererror
+#   lightgbm: binary, regression, regression_l1, huber, fair,
+#     poisson, gamma, tweedie, quantile, multiclass, multiclassova,
+#     xentropy, lambdarank, rank_xendcg
+#   catboost: Logloss, RMSE, MAE, Poisson, Gamma, Tweedie, Quantile,
+#     Huber, Fair, Hinge, CrossEntropy
+#   h2o_automl: logloss, squared_error, absolute_error, poisson,
+#     gamma, tweedie, huber, quantile
+# Code contract (pipelines/modeling/pipeline.py): modeling_params
+# holds task_type/target_col/models_to_use, model_params
+# per adapter name, calibration{method,cv}, sampling_params
+# {method,test_size,stratify_col}, shap_params. model_handle /
+# calibration_handle / tuning_handle are dotted importables.
+modeling_params:
+  task_type: 'classification'
+  target_col: 'target'
+  feature_cols: null
+  models_to_use:
+    - 'h2o_automl'
+    - 'xgboost'
+    - 'lightgbm'
+    - 'catboost'
+    - 'sklearn'
+  selection_metric: 'f1_weighted'
+  random_state: 42
+  test_size: 0.2
+  sampling_params:
+    method: 'stratified'
+    test_size: 0.2
+    stratify_col: 'target'
+  calibration:
+    method: 'betacal'
+    cv: 5
+  model_handle: 'xgboost.XGBClassifier'
+  calibration_handle: 'sklearn.calibration.CalibratedClassifierCV'
+  tuning_handle: 'sklearn.model_selection.GridSearchCV'
+  # Default loss for all models below (valid: see header comment).
+  loss_function: 'logloss'
+  model_params:
+    xgboost:
+      model_handle: 'xgboost.XGBClassifier'
+      n_estimators: 300
+      max_depth: 5
+      learning_rate: 0.05
+      gamma: 1
+      reg_lambda: 0.8
+      subsample: 0.8
+      colsample_bytree: 0.8
+      eval_metric: 'aucpr'
+      booster: 'gbtree'
+      objective: 'binary:logistic'
+      loss_function: 'binary:logistic'
+      tree_method: 'hist'
+      random_state: 42
+    lightgbm:
+      model_handle: 'lightgbm.LGBMClassifier'
+      n_estimators: 300
+      max_depth: -1
+      learning_rate: 0.05
+      num_leaves: 31
+      objective: 'binary'
+      loss_function: 'binary'
+      random_state: 42
+    catboost:
+      model_handle: 'catboost.CatBoostClassifier'
+      iterations: 500
+      depth: 6
+      learning_rate: 0.05
+      loss_function: 'Logloss'
+      random_state: 42
+    sklearn:
+      model_handle: 'sklearn.ensemble.RandomForestClassifier'
+      n_estimators: 300
+      loss_function: 'log_loss'
+      random_state: 42
+    h2o_automl:
+      max_models: 10
+      max_runtime_secs: 600
+      seed: 42
+      nfolds: 5
+      sort_by: 'AUC'
+      loss_function: 'logloss'
+  bucket_segment_col: 'region'
+  shap_params:
+    method: 'shap'
+    n_repeats: 5
+    sample_rows: 100
+    random_state: 42
+
+# --- Modelling (regression) ---------------------------------------------------
+modeling_reg_params:
+  task_type: 'regression'
+  target_col: 'target'
+  feature_cols: null
+  models_to_use:
+    - 'h2o_automl'
+    - 'xgboost'
+    - 'lightgbm'
+    - 'catboost'
+    - 'sklearn'
+  selection_metric: 'rmse'
+  random_state: 42
+  test_size: 0.2
+  sampling_params:
+    method: 'random'
+    test_size: 0.2
+    stratify_col: 'target'
+  calibration:
+    method: 'none'
+    cv: 5
+  model_handle: 'xgboost.XGBRegressor'
+  calibration_handle: 'sklearn.calibration.CalibratedClassifierCV'
+  tuning_handle: 'sklearn.model_selection.GridSearchCV'
+  # Default loss for all models below (valid: see header comment).
+  loss_function: 'squared_error'
+  model_params:
+    xgboost:
+      model_handle: 'xgboost.XGBRegressor'
+      n_estimators: 200
+      max_depth: 6
+      learning_rate: 0.05
+      gamma: 1
+      subsample: 0.8
+      colsample_bytree: 0.8
+      eval_metric: 'rmse'
+      booster: 'gbtree'
+      objective: 'reg:squarederror'
+      loss_function: 'reg:squarederror'
+      tree_method: 'hist'
+      random_state: 42
+    lightgbm:
+      model_handle: 'lightgbm.LGBMRegressor'
+      n_estimators: 200
+      learning_rate: 0.05
+      num_leaves: 31
+      objective: 'regression'
+      loss_function: 'regression'
+      random_state: 42
+    catboost:
+      model_handle: 'catboost.CatBoostRegressor'
+      iterations: 500
+      depth: 6
+      learning_rate: 0.05
+      loss_function: 'RMSE'
+      random_state: 42
+    sklearn:
+      model_handle: 'sklearn.ensemble.RandomForestRegressor'
+      n_estimators: 200
+      loss_function: 'squared_error'
+      random_state: 42
+    h2o_automl:
+      max_models: 10
+      max_runtime_secs: 600
+      seed: 42
+      nfolds: 5
+      sort_by: 'RMSE'
+      loss_function: 'squared_error'
+  bucket_segment_col: 'region'
+  shap_params:
+    method: 'shap'
+    n_repeats: 5
+    sample_rows: 100
+    random_state: 42
+
+# --- Per-model params (used when models_to_use has >1 entry) -----------------
+model_params_by_name:
+  xgboost:
+    model_handle: 'xgboost.XGBClassifier'
+    n_estimators: 300
+    max_depth: 5
+    learning_rate: 0.05
+    objective: 'binary:logistic'
+    loss_function: 'binary:logistic'
+  lightgbm:
+    model_handle: 'lightgbm.LGBMClassifier'
+    n_estimators: 300
+    max_depth: -1
+    learning_rate: 0.05
+    num_leaves: 31
+    objective: 'binary'
+    loss_function: 'binary'
+  catboost:
+    model_handle: 'catboost.CatBoostClassifier'
+    iterations: 500
+    depth: 6
+    learning_rate: 0.05
+    loss_function: 'Logloss'
+  sklearn:
+    model_handle: 'sklearn.ensemble.RandomForestClassifier'
+    n_estimators: 300
+    loss_function: 'log_loss'
+    random_state: 42
+
+# Calibration (standalone section): enabled: true|false.
+# method: sigmoid | isotonic | betacal | none. handle: dotted
+# importable calibration class (e.g.
+# sklearn.calibration.CalibratedClassifierCV). cv: folds for
+# CalibratedClassifierCV. WARNING: calibration needs out-of-fold
+# probabilities; too few positives per fold breaks isotonic.
+# --- Calibration --------------------------------------------------------------
+calibration_params:
+  enabled: true
+  method: 'betacal'
+  cv: 5
+  handle: 'betacal.BetaCalibration'
+  params:
+    parameters: 'abm'
+
+# Cross-validation: n_splits (default 5), shuffle, random_state,
+# scoring (roc_auc | f1 | rmse ...), strategy (stratified_kfold |
+# kfold). WARNING: n_splits too high on small data fails.
+# --- Cross-validation ---------------------------------------------------------
+cv_params:
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+  scoring: 'roc_auc'
+  strategy: 'stratified_kfold'

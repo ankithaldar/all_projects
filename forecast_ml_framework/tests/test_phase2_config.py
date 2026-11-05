@@ -3,7 +3,7 @@
 
 '''Phase 2 config: registry, batch scoring, infra hooks.
 
-Asserts new sections in base parameters.yml parse via YAML,
+Asserts new sections in base parameters/ (merged) parse via YAML,
 OmegaConf and Pydantic, every new key is commented, catalog
 entries for scoring / registry exist with importable types,
 infra values are env-var placeholders, and no secrets ship.
@@ -32,13 +32,23 @@ def _root():
 
 
 def _params_raw():
-  '''Return raw base parameters.yml text.'''
-  return (_root() / 'conf' / 'base' / 'parameters.yml').read_text()
+  '''Return raw base parameters text (all parameters/*.yml merged).'''
+  params_dir = _root() / 'conf' / 'base' / 'parameters'
+  return '\n'.join(
+      path.read_text() for path in sorted(params_dir.glob('*.yml')))
 
 
 def _params():
-  '''Load base parameters.yml as a dict.'''
+  '''Load base parameters (merged parameters/*.yml) as a dict.'''
   return yaml.safe_load(_params_raw())
+
+
+def _params_omegaconf():
+  '''Load base parameters as OmegaConf merged over parameters/*.yml.'''
+  merged = OmegaConf.create({})
+  for path in sorted((_root() / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    merged = OmegaConf.merge(merged, OmegaConf.load(path))
+  return merged
 
 
 def _catalog(env='base'):
@@ -153,7 +163,7 @@ def test_new_sections_resolve_via_omegaconf():
   base = _root() / 'conf' / 'base'
   cfg = OmegaConf.merge(
       {'variables': OmegaConf.load(base / 'variables.yml'),
-       'parameters': OmegaConf.load(base / 'parameters.yml')})
+       'parameters': _params_omegaconf()})
   OmegaConf.resolve(cfg)
   params = cfg.parameters
   assert 'registry_params' in params

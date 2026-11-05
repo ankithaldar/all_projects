@@ -135,6 +135,59 @@ resource "google_dataproc_cluster" "dev" {
 # autoscaling billing. COST NOTE: when enabled, workers are billed
 # while the cluster runs -- idle/destroy the cluster after a run.
 
+# --- Retraining scheduler (Phase 3, disabled by default) ----------------------
+# count = var.enable_retraining_scheduler ? 1 : 0, and the variable
+# defaults to false, so no scheduler job exists (and no retraining
+# runs are triggered) until explicitly enabled. The cron comes from
+# var.retraining_schedule_cron (default weekly "0 6 * * 1", matching
+# retraining_params.schedule_days = 7). The job body is a stub: set
+# var.retraining_job_uri to the real retraining endpoint (Cloud Run /
+# Cloud Build trigger) before enabling. Least privilege: the job uses
+# the project default compute service account; scope it down in a
+# separate IAM change before production use.
+
+resource "google_cloud_scheduler_job" "retraining" {
+  count      = var.enable_retraining_scheduler ? 1 : 0
+  name       = "forecast-ml-retraining"
+  project    = var.project_id
+  region     = var.region
+  schedule   = var.retraining_schedule_cron
+  time_zone  = "UTC"
+  description = "Phase 3 retraining scheduler (stub body; set retraining_job_uri)."
+
+  http_target {
+    uri         = var.retraining_job_uri == "" ? "https://example.invalid/retraining-stub" : var.retraining_job_uri
+    http_method = "POST"
+  }
+
+  labels = var.labels
+}
+
+# --- Alerts Pub/Sub topic (Phase 3) -------------------------------------------
+# Monitoring pipelines publish alerts (catalog: alerts) to this topic.
+# The email subscription below is a commented stub: to provision it,
+# uncomment and set var.alerts_email to a real address. Pub/Sub push
+# subscriptions need a verified endpoint; email delivery requires a
+# Pub/Sub -> email bridge (e.g. Cloud Functions / SendGrid), so the
+# stub deliberately does nothing until that bridge exists.
+
+resource "google_pubsub_topic" "alerts" {
+  name    = var.alerts_topic_name
+  project = var.project_id
+  labels  = var.labels
+}
+
+# resource "google_pubsub_subscription" "alerts_email" {
+#   name  = "forecast-ml-alerts-email"
+#   topic = google_pubsub_topic.alerts.name
+#
+#   push_config {
+#     push_endpoint = "https://example.invalid/alerts-email-bridge"  # set to a real email-bridge endpoint
+#   }
+#
+#   ack_deadline_seconds = 20
+# }
+
 resource "google_dataproc_autoscaling_policy" "scaling" {
   count    = var.autoscaling_enabled && var.enable_dataproc ? 1 : 0
   name     = var.autoscaling_policy_name

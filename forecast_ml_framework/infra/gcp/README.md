@@ -11,6 +11,9 @@ Terraform for the GCP side of forecast-ml-framework (Phase 2).
 | `google_bigquery_dataset.forecast` | Staging + metrics tables | `params:data_project` / `params:db_staging_data` |
 | `google_dataproc_cluster.dev` (single-node, `count = var.enable_dataproc ? 1 : 0`) | Dev Spark cluster | Spark jobs |
 | `google_dataproc_autoscaling_policy.scaling` (`count = var.autoscaling_enabled && var.enable_dataproc ? 1 : 0`, default **false**) | Dataproc autoscaling policy (workers scale min→max) | Spark jobs at 100M rows, when enabled |
+| `google_cloud_scheduler_job.retraining` (`count = var.enable_retraining_scheduler ? 1 : 0`, default **false**) | Retraining scheduler (cron `retraining_schedule_cron`, default weekly `"0 6 * * 1"`) | Triggers retraining runs per `retraining_params.schedule_days` |
+| `google_pubsub_topic.alerts` | Pub/Sub topic for monitoring alerts (catalog: `alerts`) | Alert sink; email subscription is a commented stub |
+| `google_pubsub_subscription.alerts_email` (**commented stub**) | Email subscription stub for alerts | Uncomment + set `alerts_email` and a real email-bridge endpoint to provision |
 
 Defaults match `conf/` (`artifacts_bucket = "forecast-ml-artifacts"`,
 `bigquery_dataset_id = "forecast_dataset"`, `temp_bucket = "forecast-ml-temp"`).
@@ -118,6 +121,31 @@ Local pandas is capped by `pandas_conversion_params.max_rows_for_pandas`
 terraform apply -var="project_id=YOUR_PROJECT_ID" \
   -var="enable_dataproc=true" -var="autoscaling_enabled=true" \
   -var="autoscaling_max_workers=20"
+```
+
+## Phase 3: retraining scheduler + alerts topic
+
+- **Scheduler:** `google_cloud_scheduler_job.retraining` is
+  count-gated (`count = var.enable_retraining_scheduler ? 1 : 0`) and
+  the variable defaults to **false**, so no scheduled retraining runs
+  by default. To enable: set `enable_retraining_scheduler = true`,
+  `retraining_schedule_cron` (default `"0 6 * * 1"`, weekly — matches
+  `retraining_params.schedule_days = 7`), and `retraining_job_uri` to
+  the real retraining endpoint (Cloud Run / Cloud Build trigger);
+  the default URI is a stub placeholder (`example.invalid`).
+- **Alerts:** `google_pubsub_topic.alerts` receives monitoring alerts
+  (catalog dataset `alerts`). The email subscription
+  `google_pubsub_subscription.alerts_email` is a **commented stub** —
+  uncomment it, set `alerts_email`, and point `push_endpoint` at a
+  real email-bridge endpoint to provision; until then no email is sent.
+- **Cost note:** the scheduler job and topic cost nothing while the
+  scheduler is disabled / the topic is idle; when enabled, each firing
+  triggers a retraining run billed per run.
+
+```bash
+terraform apply -var="project_id=YOUR_PROJECT_ID" \
+  -var="enable_retraining_scheduler=true" \
+  -var="retraining_job_uri=https://YOUR_RETRAINING_ENDPOINT"
 ```
 
 ## Validation

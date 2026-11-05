@@ -4,8 +4,8 @@ Terraform (IaC) for forecast-ml-framework, Phase 2. Two independent stacks:
 
 | Stack | Directory | Creates |
 |---|---|---|
-| GCP (primary) | [`gcp/`](gcp/README.md) | GCS artifacts bucket (versioning on), GCS temp bucket, BigQuery dataset, single-node Dataproc dev cluster |
-| AWS (config-ready) | [`aws/`](aws/README.md) | S3 artifacts bucket (versioning on), Athena database, EMR stub (off by default) |
+| GCP (primary) | [`gcp/`](gcp/README.md) | GCS artifacts bucket (versioning on), GCS temp bucket, BigQuery dataset, single-node Dataproc dev cluster, retraining Cloud Scheduler job (off by default), alerts Pub/Sub topic |
+| AWS (config-ready) | [`aws/`](aws/README.md) | S3 artifacts bucket (versioning on), Athena database, EMR stub (off by default), retraining EventBridge rule stub (commented) |
 
 **Secrets via env only.** No credentials, tokens, keys, project IDs, or
 account IDs are hardcoded in any `.tf` file. GCP auth comes from
@@ -92,6 +92,18 @@ partitioned (`partition_field = run_date`, DAY) and clustered on
 partitioned/clustered the same way so 100M-row scans stay cheap.
 Watch per-worker billing while clusters run; destroy/idle after a
 run.
+
+## Phase 3: retraining scheduler + alerts
+
+| Cloud | Resource | Gate |
+|---|---|---|
+| GCP | `google_cloud_scheduler_job.retraining` (cron `retraining_schedule_cron`, default weekly) | `count = var.enable_retraining_scheduler ? 1 : 0`, default **false** — no scheduled retraining until enabled; set `retraining_job_uri` to a real endpoint first |
+| GCP | `google_pubsub_topic.alerts` (alerts sink; email subscription is a commented stub) | Always created (topic only, no cost when idle); uncomment `google_pubsub_subscription.alerts_email` + set `alerts_email` for email delivery |
+| AWS | `aws_cloudwatch_event_rule.retraining` (EventBridge, weekly) | **Commented stub** — uncomment + set a real target to provision; costs nothing while commented |
+
+Scheduler cadence mirrors `retraining_params.schedule_days = 7` in
+`conf/base/parameters.yml`. Monitoring alerts land in the `alerts`
+catalog dataset and, on GCP, the Pub/Sub topic above.
 
 ## Validation
 

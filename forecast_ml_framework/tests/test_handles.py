@@ -21,13 +21,15 @@ HANDLE_KEYS = {
 }
 
 
-def _load_params():
-  '''Load shipped base parameters.yml.'''
+def _load_shipped_params():
+  '''Load merged shipped parameters from parameters/*.yml.'''
   root = Path(__file__).resolve().parents[1]
-  path = root / 'conf' / 'base' / 'parameters.yml'
-  assert path.exists(), 'shipped parameters.yml missing'
-  with path.open() as handle:
-    return yaml.safe_load(handle)
+  merged = {}
+  for path in sorted((root / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    with path.open() as handle:
+      merged.update(yaml.safe_load(handle) or {})
+  assert merged, 'no shipped parameters found'
+  return merged
 
 
 def _collect_handles(node, found=None):
@@ -47,7 +49,7 @@ def _collect_handles(node, found=None):
 
 def test_shipped_handles_resolve():
   '''Every shipped handle resolves (skip-unless-available).'''
-  params = _load_params()
+  params = _load_shipped_params()
   handles = sorted(set(_collect_handles(params)))
   assert handles, 'no handles found in shipped parameters.yml'
   resolved, skipped = [], []
@@ -68,7 +70,7 @@ def test_shipped_handles_resolve():
 
 def test_expected_handles_present():
   '''Key vz-style handles are present in shipped config.'''
-  params = _load_params()
+  params = _load_shipped_params()
   handles = set(_collect_handles(params))
   assert 'xgboost.XGBClassifier' in handles
   assert 'xgboost.XGBRegressor' in handles
@@ -82,7 +84,7 @@ def test_expected_handles_present():
 
 def test_fe_steps_with_real_handles():
   '''FE steps mapping to real classes carry a handle.'''
-  params = _load_params()
+  params = _load_shipped_params()
   steps = {}
   for item in params['data_prep_params']:
     for name, cfg in item.items():

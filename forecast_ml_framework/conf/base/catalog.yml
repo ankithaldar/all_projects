@@ -400,3 +400,36 @@ scoring_output_athena:
 registry_model:
   type: 'kedro_datasets.pickle.PickleDataset'
   filepath: 'artifacts/models/registry_model.pkl'
+
+# --- Phase 3: monitoring / cost / governance outputs ---------------------------
+# monitoring_report: drift/PSI/KS monitoring report frame.
+# Type: kedro_datasets.pandas.ParquetDataset (writable parquet).
+monitoring_report:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/monitoring_report.parquet'
+
+# alerts: emitted drift/performance alerts.
+# Type: kedro_datasets.pandas.ParquetDataset (writable parquet). Also
+# published to the alerts Pub/Sub topic (infra/gcp) when enabled.
+alerts:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/alerts.parquet'
+
+# cost_log: per-run cost accounting rows (cost_params unit prices).
+# Type: kedro_datasets.pandas.ParquetDataset (writable parquet).
+cost_log:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/cost/cost_log.parquet'
+
+# lineage: dataset/model lineage records (governance).
+# Type: kedro_datasets.pandas.ParquetDataset (writable parquet).
+lineage:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/governance/lineage.parquet'
+
+# audit_log: governance audit trail (actor required per
+# governance_params.audit_actor_required).
+# Type: kedro_datasets.pandas.ParquetDataset (writable parquet).
+audit_log:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/governance/audit_log.parquet'

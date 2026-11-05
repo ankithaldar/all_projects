@@ -1,0 +1,200 @@
+# parameters/preprocessing.yml — part of the split of the former base parameters.yml.
+# Preprocessing: data_prep FE registry + feature selection.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+
+# --- Data preparation: ordered FE registry -----------------------------------
+# Steps run in list order. Each step: skip=false to enable, set args.cols to
+# the columns it should act on (empty include_cols = no-op / all, per impl).
+# Steps mapping to a real importable class carry `handle:` (dotted
+# importable string resolved via importlib in data_prep.resolve_handle).
+# Steps with no single importable class keep the step name + note and are
+# implemented directly in pipelines/data_prep/nodes.py (CapOutliers,
+# HighLabelBinning, FixedLength, Slope, Similarity, Sequence*).
+data_prep_params:
+  - Imputations:
+      skip: false
+      args:
+        handle: 'sklearn.impute.SimpleImputer'
+        strategy: 'median'
+        custom_bounds: {}
+        cols:
+          exclude_cols: []
+          include_cols: ['age', 'income', 'tenure_days', 'purchase_count']
+  - Imputations:
+      skip: false
+      args:
+        handle: 'sklearn.impute.SimpleImputer'
+        strategy: 'mode'
+        custom_bounds: {}
+        cols:
+          exclude_cols: []
+          include_cols: ['region', 'plan_type', 'channel']
+  # Note: no single importable class; implemented in data_prep nodes.
+  - CapOutliers:
+      skip: true
+      args:
+        method: 'bound'
+        custom_bound: {}
+        cols:
+          exclude_cols: []
+          include_cols: []
+        bound:
+          lower: 0.01
+          upper: 0.99
+  - QuantileDiscretizer:
+      skip: true
+      args:
+        handle: 'pyspark.ml.feature.QuantileDiscretizer'
+        params:
+          numBuckets: 20
+          relativeError: 0.001
+          handleInvalid: 'error'
+        cols:
+          exclude_cols: []
+          include_cols: []
+  - Normalizations:
+      skip: true
+      args:
+        handle: 'pyspark.ml.feature.MinMaxScaler'
+        cols:
+          exclude_cols: []
+          include_cols: []
+  # Note: no single importable class; implemented in data_prep nodes.
+  - HighLabelBinning:
+      skip: true
+      args:
+        val_count: 300
+        cols:
+          exclude_cols: []
+          include_cols: ['region']
+  - CategoricalEncoding:
+      skip: false
+      args:
+        label_encode_handle: 'pyspark.ml.feature.StringIndexer'
+        label_encode_params:
+          handleInvalid: 'keep'
+        ohe_handle: 'pyspark.ml.feature.OneHotEncoder'
+        ohe_params:
+          handleInvalid: 'keep'
+        ohe_flag: true
+        cols:
+          exclude_cols: []
+          include_cols: ['region', 'plan_type', 'channel']
+  - TargetEncoding:
+      skip: true
+      args:
+        handle: 'sklearn.preprocessing.TargetEncoder'
+        smoothing: 10
+        cols:
+          exclude_cols: []
+          include_cols: ['region']
+  - FixedLength:
+      skip: true
+      args:
+        fixed_length: 6
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - Slope:
+      skip: true
+      args:
+        order: 1
+        suffix: 'slope'
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - Similarity:
+      skip: true
+      args:
+        rational_vector_map: {}
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceAverage:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceMin:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceMax:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceLast:
+      skip: true
+      args:
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceDelta:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceNormalize:
+      skip: true
+      args:
+        round_off: 3
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+
+# Feature selection: methods run in order; each method has
+# name (variance_threshold | mutual_info | rf_importance |
+# shap_importance | correlation), enabled (true|false) and params.
+# variance_threshold.threshold: minimum variance to keep (0.0 keeps
+# all non-constant). mutual_info.k: top-k by mutual information.
+# rf_importance.threshold: minimum RF importance. shap_importance.
+# top_k: top-k SHAP features. correlation.threshold: drop one of
+# each pair with |corr| above it (0.95). output: dataset name for
+# the selected feature list. Business/override/exclude rules live
+# in variables.yml and always apply.
+# --- Feature selection --------------------------------------------------------
+# Code contract (data_prep.nodes.select_features): flat keys
+# variance_threshold/missing_threshold, correlation/kbest/l1/tree
+# dicts {enabled, ...}, plus core feature-list keys honoured via
+# ConfigLoader.merged_feature_list (business_features /
+# override_features / exclude_features).
+feature_selection_params:
+  enabled: true
+  random_state: 42
+  is_regression: false
+  variance_threshold: 0.0
+  missing_threshold: 0.5
+  correlation:
+    enabled: false
+    threshold: 0.95
+  kbest:
+    enabled: false
+    k: 20
+    score_func: 'f_classif'
+  l1:
+    enabled: false
+    alpha: 0.01
+    C: 1.0
+  tree:
+    enabled: false
+    n_estimators: 200
+    threshold: 0.01
+  business_features: []
+  override_features: []
+  exclude_features: []
+  output: 'selected_features'

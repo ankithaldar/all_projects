@@ -6,18 +6,41 @@ Three files per environment (`conf/base/`, plus `local` / `gcp` /
 | File | What it holds | Who reads it |
 |---|---|---|
 | `variables.yml` | Column registry: target, id/cat/num/date/seq/indicator columns, drop list, feature-selection rules | `pipelines/data_prep` nodes, `core.config_loader` |
-| `parameters.yml` | Everything else: FE registry, models, loss functions, calibration, splits, Spark, artifact store, MLflow/DVC/SHAP, runtime keys for the catalog | Kedro `params:*` inputs to every node |
+| `parameters/*.yml` | Everything else, split one bucket per file (table below): FE registry, models, loss functions, calibration, splits, Spark, artifact store, MLflow/DVC/SHAP, runtime keys for the catalog. The loader merges every `*.yml` in the directory into one `parameters` mapping. | Kedro `params:*` inputs to every node |
 | `catalog.yml` | Dataset registry: every dataset name -> importable dataset class + filepath/connection | Kedro Data Catalog |
+
+## `parameters/` buckets (file-per-bucket)
+
+The former monolithic `conf/base/parameters.yml` was split into
+`conf/base/parameters/` — one file per bucket, top-level keys =
+the sections that bucket owns, per-key comments moved with their keys.
+Env overlays: `conf/local/parameters.yml` **stays a single override
+file** (it overrides individual sections, e.g. `spark_params`,
+`artifact_store_params`, `mlflow_params`, `dvc_params`, over the
+merged base buckets); `conf/gcp/` / `conf/aws/` ship no parameters
+overlay and inherit the merged base.
+
+| Bucket file | Top-level sections it owns |
+|---|---|
+| `parameters/global.yml` | Runtime/global: flat `${params:}` catalog keys (`score_model_id`, `output_gcs_location`, `model_id_prefix`, `suffix`, `data_project`, `db_staging_data`, `etl_project`, `etl_dataset`, `etl_table`, `external_project`, `tmp_bucket`, `is_domino`, `run_date`, `train_run_dt`, `score_run_dt`, `brand`) + `global_params` |
+| `parameters/data.yml` | `data_params`, `sampling_params`, `sampling_reg_params`, `pandas_conversion_params`, `train_test_split_params`, `validation_params` |
+| `parameters/preprocessing.yml` | `data_prep_params` (FE registry), `feature_selection_params` |
+| `parameters/evaluation.yml` | `evaluation_params` incl. `metrics_to_calculate` |
+| `parameters/modeling.yml` | `models_to_use`, `h2o_automl_params`, `modeling_params`, `modeling_reg_params` (incl. loss functions / objectives), `model_params_by_name`, `calibration_params`, `cv_params` |
+| `parameters/platform.yml` | `spark_params`, `artifact_store_params`, `mlflow_params`, `dvc_params`, `shap_params`, `chart_params`, `registry_params`, `scoring_params`, `infra_params`, `monitoring_params`, `retraining_params`, `feature_store_params`, `ab_params`, `cost_params`, `governance_params` |
+
+To edit a section, open its bucket file (e.g. loss functions live in
+`parameters/modeling.yml`, platform hooks in `parameters/platform.yml`).
 
 ## How the files relate
 
 ```
 variables.yml ── target_col, column groups, business/override/exclude
-parameters.yml ── FE steps, models, loss, calibration, splits, runtime keys
+parameters/*.yml ── FE steps, models, loss, calibration, splits, runtime keys (merged)
 catalog.yml ───── dataset name -> type (importable string) + filepath/sql
 ```
 
-- **OmegaConf interpolations.** `parameters.yml` references the single
+- **OmegaConf interpolations.** `parameters/` (merged) references the single
   target definition as `target_col: ${variables.target_col}` and
   stratify columns as `${..global_params.target_col}`; `variables.yml`
   uses `${.cat_cols[0]}` for `bucket_segment_col`. Load both files
@@ -25,7 +48,7 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   and call `OmegaConf.resolve(cfg)` — see `tests/test_conf_omegaconf.py`.
 - **Catalog interpolations use ONE namespace:** `${params:<key>}`
   (Kedro params namespace) for runtime keys defined at the top of
-  `parameters.yml` (`score_model_id`, `output_gcs_location`,
+  `parameters/global.yml` (`score_model_id`, `output_gcs_location`,
   `model_id_prefix`, `suffix`, `data_project`, `db_staging_data`,
   `etl_project`, `etl_dataset`, `etl_table`, `external_project`,
   `tmp_bucket`, `is_domino`, `run_date`, `train_run_dt`,
@@ -58,7 +81,7 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   default, e.g. `logloss`) with per-model
   `model_params.<name>.loss_function` overrides. Valid sets and
   aliases are listed in the comment block above `modeling_params`
-  in `parameters.yml`. Custom loss: use a dotted importable string
+  in `parameters/modeling.yml`. Custom loss: use a dotted importable string
   (`'my_losses.my_loss'`). No `loss_function` = library defaults.
 - **Feature selection:** toggle methods in
   `feature_selection_params.methods` (`enabled: true|false`), or
@@ -112,7 +135,7 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
 
 ## Model registry (`registry_params`)
 
-Model registry hooks live in base `parameters.yml` under
+Model registry hooks live in base `parameters/platform.yml` under
 `registry_params`. Every key is commented in place (strict per-key
 comments for every new key):
 
@@ -132,7 +155,7 @@ handle; the real backend is MLflow via the URIs above.
 
 ## Batch scoring (`scoring_params`)
 
-Batch scoring lives under `scoring_params` (contract:
+Batch scoring lives under `scoring_params` (`parameters/platform.yml`) (contract:
 `pipelines/scoring/pipeline.py` + `nodes.py`):
 
 - `input_dataset` — catalog input name (`scoring_input`).
@@ -195,13 +218,69 @@ when a required env var is missing. All keys are Pydantic-compatible
 (`extra='allow'`) and OmegaConf-resolvable
 (`OmegaConf.resolve` leaves no `${...}` in parameters).
 
+## Evaluation metrics (`evaluation_params.metrics_to_calculate`)
+
+By default only a **curated subset** of metrics is computed and shown
+— not every metric. `evaluation_params.metrics_to_calculate` in base
+`parameters/evaluation.yml` (commented in place) is the selection:
+
+- **Default (curated):** classification `accuracy`,
+  `balanced_accuracy`, `precision_weighted`, `recall_weighted`,
+  `f1_weighted`, `roc_auc`, `pr_auc`, `log_loss`, `brier_score`,
+  `cohen_kappa`, `matthews_corrcoef`, plus regression `mae`, `rmse`,
+  `r2`, `mape`, `smape`.
+- **Full registry:** the code's `METRIC_REGISTRY`
+  (`pipelines/modeling/metrics.py`) holds ~60 metrics (incl.
+  F-beta, KL divergence, NDCG, Huber, MASE, top-k accuracy,
+  per-class rates). Only the selected ones are computed/shown.
+- **Examples (commented in `parameters/evaluation.yml`):**
+  `metrics_to_calculate: 'all'` computes every registry metric
+  (slower, noisier — avoid for dashboards); a custom list such as
+  `['f1_weighted', 'roc_auc', 'mae']` computes only those.
+
+The legacy `evaluation_params.metrics.{classification,regression}`
+lists are unchanged and remain available alongside the new key.
+
+## Phase 3: monitoring / retraining / feature store / A/B / cost / governance
+
+Phase 3 lives under six new sections in base `parameters/platform.yml`, every key
+commented in place (strict per-key comments for every new key — generic
+names, aligned with the pipeline headers parallel workers document):
+
+- `monitoring_params` — `psi_threshold` (PSI alert threshold, 0–1,
+  e.g. `0.1`), `ks_threshold` (KS alert threshold, 0–1, e.g. `0.05`),
+  `bins` (histogram bins, e.g. `10`), `alert_severities` (e.g.
+  `['warn', 'critical']`).
+- `retraining_params` — `schedule_days` (retrain interval in days,
+  e.g. `7`), `drift_alert_threshold` (0–1, e.g. `0.2`),
+  `decay_threshold` (performance-decay, 0–1, e.g. `0.05`).
+- `feature_store_params` — `offline_path` (e.g.
+  `artifacts/feature_store/offline`), `online_backend` (e.g. `redis`),
+  `entity_key` (e.g. `id`).
+- `ab_params` — `traffic_split` (challenger share, 0–1, e.g. `0.1`),
+  `mode` (`shadow` | `canary` | `full`, e.g. `shadow`).
+- `cost_params` — unit prices in USD: `compute_price_per_hour`
+  (e.g. `0.5`), `storage_price_per_gb` (e.g. `0.02`),
+  `scan_price_per_tb_scanned` (e.g. `5.0`).
+- `governance_params` — `retention_days` (e.g. `365`),
+  `audit_actor_required` (`true` — actors mandatory on audit records;
+  always `true`, never disable).
+
+Catalog entries (all `kedro_datasets.*` types, writable parquet):
+`monitoring_report`, `alerts`, `cost_log`, `lineage`, `audit_log`
+(`artifacts/monitoring/*`, `artifacts/cost/*`,
+`artifacts/governance/*`). Infra mapping: GCP
+`google_cloud_scheduler_job` (retraining, count-gated, off by default)
++ `google_pubsub_topic` (alerts) in `infra/gcp/`; AWS
+`aws_cloudwatch_event_rule` retraining stub (commented) in `infra/aws/`.
+
 ## Tests
 
 ```bash
 cd forecast_ml_framework
 PYTHONPATH=src python -m pytest tests/test_conf_omegaconf.py \
   tests/test_catalog_params.py tests/test_loss_params.py \
-  tests/test_phase2_config.py -q
+  tests/test_phase2_config.py tests/test_phase3_config.py -q
 ```
 
 `test_conf_omegaconf.py` loads base conf via OmegaConf and asserts
@@ -214,7 +293,7 @@ that are not installed).
 | File | `base` | `local` | `gcp` | `aws` |
 |---|---|---|---|---|
 | `variables.yml` | column registry (the definition) | — (inherits base) | — (inherits base) | — (inherits base) |
-| `parameters.yml` | all parameters (the definition) incl. `registry_params` / `scoring_params` / `infra_params` | minimal overrides (artifact store, MLflow, DVC, Spark) | — (inherits base incl. new sections) | — (inherits base incl. new sections) |
+| `parameters/*.yml` | all parameters (the definition, one bucket per file) incl. `registry_params` / `scoring_params` / `infra_params` in `platform.yml` | minimal overrides in single `parameters.yml` (artifact store, MLflow, DVC, Spark) | — (inherits base incl. new sections) | — (inherits base incl. new sections) |
 | `catalog.yml` | all datasets (the definition) incl. `scoring_input` / `scoring_output` / `scoring_*_bq` / `scoring_*_athena` / `registry_model` | `filepath` only -> `./data`, `./artifacts` | `filepath` only -> `gs://forecast-ml-artifacts/...` | `filepath` only -> `s3://forecast-ml-artifacts/...` |
 
 **Why only `catalog.yml` is overridden per env (gcp/aws):** the only
@@ -222,8 +301,8 @@ thing that differs between environments is *where bytes live*
 (filepaths/URIs) and *how credentials are found* (environment
 variables, never YAML). Column names, models, losses and splits are
 identical across envs, so duplicating `variables.yml` /
-`parameters.yml` per env would only create drift. `local` additionally
-overrides a few `parameters.yml` keys (local artifact store, local
+`parameters/` per env would only create drift. `local` additionally
+overrides a few `parameters.yml` (overlay) keys (local artifact store, local
 MLflow folder, DVC off, `local[*]` Spark) because those are
 genuinely machine-local choices.
 
@@ -237,8 +316,8 @@ key in `conf/local/parameters.yml` is commented the same way.
 1. Copy `conf/local/` to `conf/<new-env>/`.
 2. In `<new-env>/catalog.yml`, change only the `filepath` values
    (keep dataset names and `type:` strings identical to base).
-3. In `<new-env>/parameters.yml` (optional), override only the
+3. In `<new-env>/parameters.yml` (optional single override file), override only the
    machine-specific keys you need (artifact store, Spark, MLflow).
-   Do not copy base `parameters.yml` — inherit it.
+   Do not copy base `parameters/` — inherit it.
 4. Run Kedro with `--env <new-env>` and confirm credentials come
    from the environment, never from YAML.

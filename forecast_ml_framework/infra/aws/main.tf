@@ -99,6 +99,29 @@ resource "aws_emr_cluster" "stub" {
   tags = var.tags
 }
 
+# --- Retraining EventBridge rule stub (Phase 3, COMMENTED OUT) ---------------
+# Provision note: this stack ships the retraining schedule as a
+# commented stub, not an applied resource. To provision it, uncomment
+# the rule below and set a real target (e.g. a Lambda / Step
+# Functions / CodeBuild retraining trigger). It mirrors the GCP
+# google_cloud_scheduler_job (retraining_params.schedule_days = 7,
+# weekly cron) and costs nothing while commented. COST NOTE: when
+# provisioned, each firing triggers a retraining run billed per run.
+#
+# resource "aws_cloudwatch_event_rule" "retraining" {
+#   name                = "forecast-ml-retraining"
+#   description         = "Phase 3 retraining scheduler stub (weekly, mirrors GCP Cloud Scheduler)."
+#   schedule_expression = "cron(0 6 ? * MON *)"  # weekly, matches retraining_params.schedule_days = 7
+#
+#   tags = var.tags
+# }
+#
+# # Target stub (uncomment with a real retraining target):
+# # resource "aws_cloudwatch_event_target" "retraining" {
+# #   rule = aws_cloudwatch_event_rule.retraining.name
+# #   arn  = "arn:aws:lambda:us-east-1:ACCOUNT_ID:function:forecast-ml-retraining"  # set a real ARN
+# # }
+
 # --- EMR autoscaling stub (100M-row cloud scaling, COMMENTED OUT) -----------
 # Provision note: this stack ships autoscaling as a commented stub,
 # not an applied resource. To provision it, uncomment the resource

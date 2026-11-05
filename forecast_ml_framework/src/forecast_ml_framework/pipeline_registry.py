@@ -6,8 +6,11 @@
 Display names map onto the real pipeline modules: ``data``,
 ``preprocessing`` and ``feature_selection`` are served by
 ``pipelines.data_prep``; ``modeling``, ``evaluation`` and
-``predict`` are served by ``pipelines.modeling``; and
-``scoring`` is served by ``pipelines.scoring``.
+``predict`` are served by ``pipelines.modeling``; ``scoring``
+is served by ``pipelines.scoring``; and ``eda``,
+``monitoring``, ``retraining``, ``cost_tracking`` and
+``interpretability`` are served by their eponymous modules
+under ``pipelines``.
 
 Imports are lazy and defensive so that this module imports
 cleanly even when a pipeline module is unavailable.
@@ -21,6 +24,11 @@ _PIPELINE_MODULES = {
   'evaluation': 'modeling',
   'predict': 'modeling',
   'scoring': 'scoring',
+  'eda': 'eda',
+  'monitoring': 'monitoring',
+  'retraining': 'retraining',
+  'cost_tracking': 'cost_tracking',
+  'interpretability': 'interpretability',
 }
 
 

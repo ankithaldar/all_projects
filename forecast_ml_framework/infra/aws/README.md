@@ -11,6 +11,7 @@ default, so the only always-on cost is the S3 bucket.
 | `aws_s3_bucket.artifacts` + versioning + SSE + public-access-block | Pipeline artifacts bucket | `s3://forecast-ml-artifacts/...` in `conf/aws/catalog.yml` |
 | `aws_athena_database.forecast` | Queryable staging/metrics tables | Athena over the artifacts bucket |
 | `aws_emr_cluster.stub` (`count = var.enable_emr ? 1 : 0`, default **false**) | EMR stub (config parity with GCP Dataproc) | Spark jobs, when enabled |
+| `aws_cloudwatch_event_rule.retraining` (**commented stub**, EventBridge) | Retraining scheduler stub (weekly cron) | Mirrors GCP `google_cloud_scheduler_job`; uncomment + set a real target to provision |
 
 Defaults match `conf/` (`artifacts_bucket = "forecast-ml-artifacts"`,
 `athena_database = "forecast_ml"`). No account IDs, credentials, or keys are
@@ -84,6 +85,22 @@ Local pandas is capped by `pandas_conversion_params.max_rows_for_pandas`
   when enabled (and autoscaling provisioned), instances are billed
   per instance-hour while the cluster runs — idle/destroy after a
   run.
+
+## Phase 3: retraining EventBridge stub
+
+The retraining schedule ships as a **commented stub** —
+`aws_cloudwatch_event_rule.retraining` in `main.tf` (search for
+`aws_cloudwatch_event_rule`, EventBridge). It mirrors the GCP
+`google_cloud_scheduler_job` (weekly, matching
+`retraining_params.schedule_days = 7` in
+`conf/base/parameters.yml`). To provision: uncomment the rule and the
+`aws_cloudwatch_event_target` stub, and set the target to a real
+retraining trigger (Lambda / Step Functions / CodeBuild ARN). While
+commented it creates nothing and costs nothing; when provisioned,
+each firing triggers a retraining run billed per run.
+Monitoring alerts on AWS land in the `alerts` catalog dataset
+(`artifacts/monitoring/alerts.parquet`); route them to SNS/email in
+a separate change if needed.
 
 ## State
 

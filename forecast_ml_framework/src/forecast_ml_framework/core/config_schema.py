@@ -324,6 +324,57 @@ def _load_merged(base_dir, env_dir, name):
   return cfg
 
 
+def _load_parameters_dir(directory):
+  '''Load parameters from one conf directory, or None.
+
+  Single-file layout wins: ``parameters.yml`` is used when it
+  exists. Otherwise ``parameters/`` is merged in sorted filename
+  order with OmegaConf.merge, later files winning. Non-yml
+  entries in the folder are ignored.
+
+  Args:
+    directory: Conf directory (base or env overlay).
+
+  Returns:
+    OmegaConf config, or None when neither layout is present.
+  '''
+  directory = Path(directory)
+  single = directory / 'parameters.yml'
+  if single.exists():
+    return OmegaConf.load(single)
+  folder = directory / 'parameters'
+  if folder.is_dir():
+    cfg = OmegaConf.create({})
+    for path in sorted(folder.glob('*.yml')):
+      cfg = OmegaConf.merge(cfg, OmegaConf.load(path))
+    return cfg
+  return None
+
+
+def _load_merged_parameters(base_dir, env_dir):
+  '''Load parameters merging env overlay over base.
+
+  Each side may use the single-file or per-bucket folder layout
+  (see _load_parameters_dir); env wins over base. Variables and
+  catalog loading are unchanged.
+
+  Args:
+    base_dir: Directory holding the base parameters.
+    env_dir: Overlay directory, or None.
+
+  Returns:
+    OmegaConf config, or empty config when absent on both sides.
+  '''
+  cfg = _load_parameters_dir(base_dir)
+  if cfg is None:
+    cfg = OmegaConf.create({})
+  if env_dir is not None:
+    overlay = _load_parameters_dir(env_dir)
+    if overlay is not None:
+      cfg = OmegaConf.merge(cfg, overlay)
+  return cfg
+
+
 def load_config(env_dir='base'):
   '''Load shipped config with env overlay, resolved.
 
@@ -360,7 +411,7 @@ def load_config(env_dir='base'):
   overlay = None if env_name == 'base' else conf_root / env_name
   merged = OmegaConf.create({
     'variables': _load_merged(base_dir, overlay, 'variables.yml'),
-    'parameters': _load_merged(base_dir, overlay, 'parameters.yml'),
+    'parameters': _load_merged_parameters(base_dir, overlay),
   })
   OmegaConf.resolve(merged)
   plain = OmegaConf.to_container(merged, resolve=True)

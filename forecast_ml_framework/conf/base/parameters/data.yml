@@ -1,0 +1,72 @@
+# parameters/data.yml — part of the split of the former base parameters.yml.
+# Data: sources, sampling, Spark->pandas conversion, train/test split, validation.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+
+# --- Data sources -------------------------------------------------------------
+data_params:
+  train_data: 'raw_data'          # catalog dataset name (see catalog.yml)
+  test_data: 'raw_data'
+  # Regression example: point prod at a continuous target column instead.
+  # train_data: 'raw_data_regression'
+
+# Sampling (classification): how the training set is subsampled.
+# stratify_col: column whose distribution is preserved
+# (valid: a column name; default: ${..global_params.target_col}).
+# fractions: {class: fraction to keep} e.g. {0: 1.0, 1: 0.5}
+# downsamples class 1 to half. sampling_type: 'stratified' |
+# 'random'. WARNING: fractions < 1 change class balance and metrics.
+# --- Sampling (classification) ------------------------------------------------
+# Code contract (modeling_params.sampling_params):
+# {method: stratified|random, test_size: float, stratify_col: str}
+sampling_params:
+  method: 'stratified'
+  test_size: 0.2
+  stratify_col: ${..global_params.target_col}
+
+# --- Sampling (regression) ----------------------------------------------------
+sampling_reg_params:
+  method: 'random'
+  test_size: 0.2
+  stratify_col: ${..global_params.target_col}
+
+# --- Spark -> pandas conversion ----------------------------------------------
+# Code contract (core.spark_factory.check_pandas_limits /
+# SparkSessionFactory.to_pandas): max_rows_for_pandas is the guard
+# threshold; a frame above it raises an error directing the caller to
+# the Spark-native / distributed path (scoring_params.spark_scoring).
+pandas_conversion_params:
+  # convert_to_pandas: true = collect Spark frames to pandas locally (example: true).
+  convert_to_pandas: true
+  # category_cols: columns to cast to category on conversion (example: []).
+  category_cols: []
+  # max_rows_for_pandas: guard threshold in rows; above it conversion raises and directs to Spark (example: 5000000). Local pandas default cap; matches the code default in check_pandas_limits.
+  max_rows_for_pandas: 5000000
+
+# Train/test split: training_split_ratio + test_split_ratio should
+# sum to 1. stratify_col preserves the target distribution
+# (classification only; set null for regression). shuffle: true is
+# required for stratified_random splits. random_state fixes the RNG.
+# WARNING: changing ratios changes every downstream metric.
+# --- Train / test split -------------------------------------------------------
+train_test_split_params:
+  training_split_ratio: 0.8
+  test_split_ratio: 0.2
+  stratify_col: ${..global_params.target_col}
+  shuffle: true
+  random_state: 42
+
+# Validation (validate_data node): enabled: true|false.
+# fail_on_missing_columns / fail_on_null_target: hard-fail instead
+# of warn. min_train_rows / min_test_rows: minimum sizes.
+# check_target_range {min, max}: expected target bounds.
+# drift_check: enable distribution drift checks (costs a pass).
+# --- Validation ---------------------------------------------------------------
+# Code contract (data_prep.nodes.validate_data):
+# {fail_fast, required_cols, max_null_ratio}
+validation_params:
+  fail_fast: false
+  required_cols: []
+  max_null_ratio: 0.5

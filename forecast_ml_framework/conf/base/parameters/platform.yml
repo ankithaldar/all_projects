@@ -1,0 +1,341 @@
+# parameters/platform.yml — part of the split of the former base parameters.yml.
+# Platform: spark, artifact store, mlflow, dvc, shap, chart, registry, scoring, infra, monitoring, retraining, feature_store, ab, cost, governance.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+
+# Spark: master 'local[*]' for local runs; app_name labels the app.
+# spark.* keys are passed as SparkConf entries (shuffle partitions,
+# driver memory). jar_packages lists extra JDBC jars. WARNING:
+# driver.memory too small OOMs large shuffles.
+# Scaling for 100M rows (cloud Dataproc/EMR): dynamic allocation
+# scales executors to the shuffle workload, adaptive query execution
+# (AQE) coalesces oversized shuffle partitions, and shufflePartitions
+# is sized so one partition holds ~100k rows at 100M rows (1000
+# partitions) instead of ~500k at the old 200. Local 'local[*]' runs
+# inherit these values harmlessly (no cluster billing).
+# --- Spark --------------------------------------------------------------------
+spark_params:
+  master: 'local[*]'
+  app_name: 'forecast-ml-framework'
+  spark:
+    # spark.sql.shuffle.partitions: shufflePartitions for 100M rows (example: 1000; ~100k rows/partition, AQE coalesces for small shuffles).
+    spark.sql.shuffle.partitions: 1000
+    # spark.driver.memory: driver heap for collectors (example: '4g'; raise on Dataproc/EMR for 100M-row shuffles).
+    spark.driver.memory: '4g'
+    # spark.dynamicAllocation.enabled: dynamicAllocation scales executors with load (example: 'true' on Dataproc/EMR; needs an external shuffle service there).
+    spark.dynamicAllocation.enabled: 'true'
+    # spark.dynamicAllocation.minExecutors: executor floor while scaling (example: 2).
+    spark.dynamicAllocation.minExecutors: 2
+    # spark.dynamicAllocation.maxExecutors: executor ceiling; bounds cost at 100M rows (example: 20).
+    spark.dynamicAllocation.maxExecutors: 20
+    # spark.sql.adaptive.enabled: adaptive query execution right-sizes partitions at runtime (example: 'true').
+    spark.sql.adaptive.enabled: 'true'
+    # spark.sql.adaptive.coalescePartitions.enabled: AQE coalescePartitions merges small partitions (example: 'true').
+    spark.sql.adaptive.coalescePartitions.enabled: 'true'
+  jar_packages: []
+
+# Artifact store: type local | gcp | s3 (env overlays override).
+# base_path (local) / bucket (gcp|s3) locate artifacts. versioning
+# enables dataset versioning. WARNING: bucket/base_path are shared
+# across runs in an env — point them at env-specific locations.
+# --- Artifact store (type overridden per env: local / gcp / aws) -------------
+artifact_store_params:
+  type: 'local'
+  base_path: 'artifacts'
+  # gcp: gs://forecast-ml-artifacts | aws: s3://forecast-ml-artifacts
+  bucket: ''
+  versioning: true
+
+# MLflow: tracking_uri (local 'mlruns' or a server URI),
+# experiment_name, registry_uri ('' = no registry). log_params /
+# log_metrics / log_artifacts toggle what is recorded.
+# --- MLflow -------------------------------------------------------------------
+mlflow_params:
+  tracking_uri: 'mlruns'
+  experiment_name: 'forecast-ml-framework'
+  registry_uri: ''
+  log_params: true
+  log_metrics: true
+  log_artifacts: true
+
+# DVC: enabled: true|false. remote: named DVC remote, remote_url:
+# its URL ('' = none). push_on_run pushes data after each run.
+# WARNING: push_on_run in CI needs credentials in the environment.
+# --- DVC ----------------------------------------------------------------------
+dvc_params:
+  enabled: true
+  remote: 'local'
+  remote_url: ''
+  push_on_run: false
+
+# SHAP: enabled: true|false. explainer: TreeExplainer (tree
+# models) | KernelExplainer (model-agnostic, slow). WARNING:
+# KernelExplainer on large data is very slow.
+# --- SHAP ---------------------------------------------------------------------
+shap_params:
+  enabled: true
+  explainer: 'TreeExplainer'
+  background_size: 100
+  top_k: 20
+  output_dir: 'artifacts/shap'
+
+# --- Charts -------------------------------------------------------------------
+chart_params:
+  enabled: true
+  output_dir: 'artifacts/charts'
+  figure_size:
+    - 10
+    - 6
+  dpi: 150
+  charts:
+    - 'confusion_matrix'
+    - 'roc_curve'
+    - 'feature_importance'
+    - 'calibration_curve'
+
+# --- Model registry (MLflow registry hooks) ----------------------------------
+# Code contract: registry worker reads registry_params to register a
+# trained model and (optionally) promote it under an alias.
+# registry_params.tracking_uri: MLflow tracking server / folder
+# (valid: local path like 'mlruns' or http(s) URI; env: MLFLOW_TRACKING_URI).
+# registry_params.registry_uri: registry backend ('' = no registry;
+# env: MLFLOW_REGISTRY_URI). registry_params.model_name: registered
+# model name (example: 'forecast_model'). registry_params.alias:
+# MLflow model alias to promote under (example: 'champion').
+# registry_params.promote_on_metric: metric that must improve to
+# promote (example: 'f1_weighted'; '' = promote unconditionally).
+# WARNING: promoting overwrites the alias target for consumers.
+# --- Model registry ---------------------------------------------------------
+registry_params:
+  # tracking_uri: MLflow tracking URI for the registry (example: 'mlruns').
+  tracking_uri: '${oc.env:MLFLOW_TRACKING_URI,mlruns}'
+  # registry_uri: MLflow registry URI ('' = no registry; example: '').
+  registry_uri: '${oc.env:MLFLOW_REGISTRY_URI,""}'
+  # model_name: registered model name (example: 'forecast_model').
+  model_name: 'forecast_model'
+  # alias: MLflow alias to promote under (example: 'champion').
+  alias: 'champion'
+  # promote_on_metric: metric gating promotion (example: 'f1_weighted').
+  promote_on_metric: 'f1_weighted'
+
+# --- Batch scoring ------------------------------------------------------------
+# Code contract (pipelines/scoring/{pipeline,nodes}.py): scoring_params
+# is passed as params:scoring_params to every scoring node.
+# scoring_params.input_dataset: catalog dataset name to score
+# (example: 'scoring_input'; pipeline input is hardcoded to the same
+# catalog name 'scoring_input', so keep them in sync).
+# scoring_params.output_dataset: catalog dataset name for scored output.
+# CHOSEN WIRING (documented in conf/README): output_dataset is set to
+# 'predictions' to match the pipeline default -- the scoring pipeline
+# hardcodes outputs='predictions' for write_predictions, so a different
+# value (e.g. legacy 'scoring_output') would silently diverge from the
+# catalog write. 'scoring_output' remains in the catalog only as a
+# legacy writable parquet alias, NOT the pipeline output.
+# scoring_params.score_model_id: model id recorded on every output row
+# (defaults to global_params.score_model_id; OmegaConf interpolation).
+# scoring_params.batch_size: rows per scoring batch (positive int;
+# example: 1000; larger batches use more memory).
+# scoring_params.max_rows: hard cap on rows scored per run (positive
+# int; example: 1000000; rows beyond the cap are not scored). null =
+# unbounded: the Spark path (spark_scoring) scores every row; the
+# local pandas path is capped instead by
+# pandas_conversion_params.max_rows_for_pandas (default 5000000).
+# scoring_params.spark_scoring: Spark-native scoring switch.
+# spark_scoring.enabled: false = local pandas path (safe default,
+# no cluster); true = distributed Spark path via mapPartitions.
+# spark_scoring.partition_batch_size: rows per Spark partition
+# sub-batch (example: 10000; bounds per-task memory at 100M rows
+# and >500 features). Mirrored at scoring_params.partition_batch_size
+# (top-level) which the scoring worker also reads -- keep in sync.
+# scoring_params.max_cols: hard cap on feature columns scored
+# (positive int; example: 1000; guards against scoring on runaway
+# one-hot expansions).
+# scoring_params.model_path: pickle path loaded via FileModelLoader
+# (example: 'artifacts/models/model.pkl'; '' = no file model, fall
+# back to model_loader/model/model_handle or the registry below).
+# scoring_params.model_name: registered model name for registry load
+# (example: 'forecast_model'; mirrors registry_params.model_name;
+# '' = unused when model_path/loader is set).
+# scoring_params.alias: MLflow registry alias for registry load
+# (example: 'champion'; mirrors registry_params.alias; '' = unused).
+# scoring_params.id_cols: identifier columns carried into the output
+# (example: ['id']; default ['id'] in nodes.predict).
+# scoring_params.feature_cols: feature columns to score on
+# (example: null = every column except id_cols/target_col; a list
+# restricts scoring to those columns present in the input).
+# scoring_params.task_type: 'classification' (default) or
+# 'regression'; controls whether proba is populated.
+# WARNING: batch_size / max_rows / max_cols too large can OOM; too
+# small is slow but safe. model_path vs registry model_name/alias:
+# nodes._resolve_loader prefers an injected model_loader, then
+# model_path (FileModelLoader), then model_handle; registry loading
+# (RegistryModelLoader) is via serving/model_loader, wired by the
+# caller passing model_name/alias -- keep them in sync with
+# registry_params.
+# --- Batch scoring ------------------------------------------------------------
+scoring_params:
+  # input_dataset: catalog name of the scoring input (example: 'scoring_input').
+  input_dataset: 'scoring_input'
+  # output_dataset: catalog name of the scored output; 'predictions' matches the pipeline default (example: 'predictions').
+  output_dataset: 'predictions'
+  # score_model_id: model id to score with (example: '${..global_params.score_model_id}').
+  score_model_id: ${..global_params.score_model_id}
+  # batch_size: rows per scoring batch, positive int (example: 1000).
+  batch_size: 1000
+  # max_rows: maximum rows scored per run; null = unbounded Spark path, local pandas capped by pandas_conversion_params.max_rows_for_pandas (example: null).
+  max_rows: null
+  # partition_batch_size: rows per Spark partition sub-batch, top-level mirror of spark_scoring.partition_batch_size (example: 10000).
+  partition_batch_size: 10000
+  # spark_scoring: Spark-native scoring switch (example: {enabled: false, partition_batch_size: 10000}).
+  spark_scoring:
+    # enabled: false = local pandas path, safe default with no cluster billing (example: false; true = distributed Spark path).
+    enabled: false
+    # partition_batch_size: rows per Spark partition sub-batch, bounds per-task memory at 100M rows (example: 10000).
+    partition_batch_size: 10000
+  # max_cols: maximum feature columns scored, positive int (example: 1000).
+  max_cols: 1000
+  # model_path: pickle path loaded via FileModelLoader (example: 'artifacts/models/model.pkl'; '' = none).
+  model_path: ''
+  # model_name: registered model name for registry load (example: 'forecast_model'; mirrors registry_params.model_name).
+  model_name: 'forecast_model'
+  # alias: MLflow registry alias for registry load (example: 'champion'; mirrors registry_params.alias).
+  alias: 'champion'
+  # id_cols: identifier columns carried into the output (example: ['id']).
+  id_cols: ['id']
+  # feature_cols: feature columns to score on, null = all except id/target (example: null).
+  feature_cols: null
+  # task_type: classification or regression (example: 'classification').
+  task_type: 'classification'
+
+# --- Infra hooks ---------------------------------------------------------------
+# Code contract: CI/infra hooks read infra_params for cloud locations.
+# Every leaf is an OmegaConf env-var placeholder (${oc.env:VAR,default})
+# so no bucket/project/database literal ever ships in YAML. Set the
+# env vars at runtime; credentials themselves come from the cloud
+# SDK environment (GOOGLE_APPLICATION_CREDENTIALS / AWS_PROFILE),
+# never from YAML. infra_params.gcp.project: GCP project id
+# (env: GCP_PROJECT). infra_params.gcp.bucket: GCS bucket name
+# (env: GCP_BUCKET). infra_params.gcp.dataset: BigQuery dataset
+# (env: GCP_DATASET). infra_params.gcp.cluster: Dataproc/GKE cluster
+# (env: GCP_CLUSTER). infra_params.aws.bucket: S3 bucket name
+# (env: AWS_BUCKET). infra_params.aws.database: Athena database
+# (env: AWS_DATABASE). WARNING: empty defaults mean unset — hooks
+# must fail fast when a required env var is missing.
+# --- Infra hooks (all env-var placeholders, no secrets) -----------------------
+infra_params:
+  gcp:
+    # project: GCP project id from env (example: '${oc.env:GCP_PROJECT,""}').
+    project: '${oc.env:GCP_PROJECT,""}'
+    # bucket: GCS bucket name from env (example: '${oc.env:GCP_BUCKET,""}').
+    bucket: '${oc.env:GCP_BUCKET,""}'
+    # dataset: BigQuery dataset from env (example: '${oc.env:GCP_DATASET,""}').
+    dataset: '${oc.env:GCP_DATASET,""}'
+    # cluster: Dataproc/GKE cluster from env (example: '${oc.env:GCP_CLUSTER,""}').
+    cluster: '${oc.env:GCP_CLUSTER,""}'
+  aws:
+    # bucket: S3 bucket name from env (example: '${oc.env:AWS_BUCKET,""}').
+    bucket: '${oc.env:AWS_BUCKET,""}'
+    # database: Athena database from env (example: '${oc.env:AWS_DATABASE,""}').
+    database: '${oc.env:AWS_DATABASE,""}'
+
+# --- Monitoring -----------------------------------------------------------------
+# Code contract: monitoring pipeline reads monitoring_params to compute
+# drift (PSI / KS) and emit alerts. monitoring_params.psi_threshold:
+# Population Stability Index alert threshold, 0 < v < 1 (example: 0.1;
+# PSI above it raises an alert). monitoring_params.ks_threshold:
+# Kolmogorov-Smirnov statistic alert threshold, 0 < v < 1 (example: 0.05).
+# monitoring_params.bins: histogram bins for PSI/KS, positive int
+# (example: 10; too few bins hides drift, too many is noisy).
+# monitoring_params.alert_severities: ordered severities, non-empty list
+# (example: ['warn', 'critical']; drives alert routing/sink severity).
+# WARNING: thresholds too low create alert noise; too high miss drift.
+# --- Monitoring ---------------------------------------------------------------
+monitoring_params:
+  # psi_threshold: PSI alert threshold, 0 < v < 1 (example: 0.1).
+  psi_threshold: 0.1
+  # ks_threshold: KS statistic alert threshold, 0 < v < 1 (example: 0.05).
+  ks_threshold: 0.05
+  # bins: histogram bins for PSI/KS, positive int (example: 10).
+  bins: 10
+  # alert_severities: ordered severities to emit (example: ['warn', 'critical']).
+  alert_severities: ['warn', 'critical']
+
+# --- Retraining -----------------------------------------------------------------
+# Code contract: retraining scheduler reads retraining_params.
+# retraining_params.schedule_days: retrain interval in days, positive int
+# (example: 7; weekly). retraining_params.drift_alert_threshold: drift
+# metric value that triggers retraining, 0 < v < 1 (example: 0.2).
+# retraining_params.decay_threshold: performance-decay metric that
+# triggers retraining, 0 < v < 1 (example: 0.05; e.g. F1 drop).
+# WARNING: aggressive (low) thresholds retrain often and cost compute.
+# --- Retraining ---------------------------------------------------------------
+retraining_params:
+  # schedule_days: retrain interval in days, positive int (example: 7).
+  schedule_days: 7
+  # drift_alert_threshold: drift value triggering retraining, 0 < v < 1 (example: 0.2).
+  drift_alert_threshold: 0.2
+  # decay_threshold: performance-decay value triggering retraining, 0 < v < 1 (example: 0.05).
+  decay_threshold: 0.05
+
+# --- Feature store --------------------------------------------------------------
+# Code contract: feature-store pipeline reads feature_store_params.
+# feature_store_params.offline_path: offline (batch) feature store
+# location/path (example: 'artifacts/feature_store/offline'; env overlays
+# override per cloud). feature_store_params.online_backend: online store
+# backend name (example: 'redis'; '' / 'none' = offline only).
+# feature_store_params.entity_key: key column joining entities to
+# features (example: 'id'; must match id_cols). WARNING: entity_key
+# mismatch between offline and online causes train/serve skew.
+# --- Feature store ------------------------------------------------------------
+feature_store_params:
+  # offline_path: offline feature store path (example: 'artifacts/feature_store/offline').
+  offline_path: 'artifacts/feature_store/offline'
+  # online_backend: online feature store backend (example: 'redis').
+  online_backend: 'redis'
+  # entity_key: entity join column (example: 'id').
+  entity_key: 'id'
+
+# --- A/B testing ----------------------------------------------------------------
+# Code contract: AB / serving code reads ab_params.
+# ab_params.traffic_split: share of traffic to the challenger/treatment,
+# 0 <= v <= 1 (example: 0.1 = 10% challenger). ab_params.mode: experiment
+# mode (example: 'shadow'; valid: shadow | canary | full). WARNING:
+# traffic_split > 0 in production exposes users to an unvalidated model.
+# --- A/B testing --------------------------------------------------------------
+ab_params:
+  # traffic_split: challenger traffic share, 0 <= v <= 1 (example: 0.1).
+  traffic_split: 0.1
+  # mode: experiment mode, shadow | canary | full (example: 'shadow').
+  mode: 'shadow'
+
+# --- Cost accounting ------------------------------------------------------------
+# Code contract: cost-logging reads cost_params unit prices (USD).
+# cost_params.compute_price_per_hour: USD per compute hour (example: 0.5).
+# cost_params.storage_price_per_gb: USD per GB stored (example: 0.02).
+# cost_params.scan_price_per_tb_scanned: USD per TB scanned
+# (example: 5.0; BigQuery/Athena-style scan pricing). WARNING: prices
+# are estimates for accounting only; actual billing is per cloud.
+# --- Cost accounting ----------------------------------------------------------
+cost_params:
+  # compute_price_per_hour: USD per compute hour (example: 0.5).
+  compute_price_per_hour: 0.5
+  # storage_price_per_gb: USD per GB stored (example: 0.02).
+  storage_price_per_gb: 0.02
+  # scan_price_per_tb_scanned: USD per TB scanned (example: 5.0).
+  scan_price_per_tb_scanned: 5.0
+
+# --- Governance -----------------------------------------------------------------
+# Code contract: governance/audit reads governance_params.
+# governance_params.retention_days: days to retain audit/lineage
+# records, positive int (example: 365). governance_params.
+# audit_actor_required: true = every audit record must carry an actor
+# identity (example: true; always true, never disable). WARNING:
+# lowering retention below compliance minimum violates policy.
+# --- Governance ---------------------------------------------------------------
+governance_params:
+  # retention_days: retention period for audit/lineage in days (example: 365).
+  retention_days: 365
+  # audit_actor_required: actors mandatory on audit records (example: true).
+  audit_actor_required: true

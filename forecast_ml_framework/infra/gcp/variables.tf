@@ -105,6 +105,41 @@ variable "autoscaling_max_workers" {
   default     = 10
 }
 
+# --- Retraining scheduler + alerts topic (Phase 3) ----------------------------
+# Off by default: no scheduler job (and no retraining runs) until
+# explicitly enabled. COST NOTE: when enabled, the scheduler triggers
+# retraining runs on schedule (retraining_params.schedule_days).
+
+variable "enable_retraining_scheduler" {
+  description = "Create the Cloud Scheduler retraining job. Default false (count = 0) so no scheduled retraining by default; set true only when needed."
+  type        = bool
+  default     = false
+}
+
+variable "retraining_schedule_cron" {
+  description = "Cron schedule for the retraining Cloud Scheduler job (e.g. \"0 6 * * 1\" weekly). Only used when enable_retraining_scheduler is true."
+  type        = string
+  default     = "0 6 * * 1"
+}
+
+variable "retraining_job_uri" {
+  description = "URI the retraining scheduler job invokes (e.g. a Cloud Run / Cloud Build trigger URL). Empty string means the job body is a stub placeholder and must be set before enabling."
+  type        = string
+  default     = ""
+}
+
+variable "alerts_topic_name" {
+  description = "Name of the Pub/Sub topic that receives monitoring alerts."
+  type        = string
+  default     = "forecast-ml-alerts"
+}
+
+variable "alerts_email" {
+  description = "Email address for the (commented) alerts email subscription stub. Empty = no subscription; set before uncommenting the stub."
+  type        = string
+  default     = ""
+}
+
 variable "labels" {
   description = "Labels applied to supported resources."
   type        = map(string)
