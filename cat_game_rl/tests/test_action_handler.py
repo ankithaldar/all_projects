@@ -8,12 +8,41 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 from src.core.items import ItemId, CraftingTree, NUM_CRAFTABLE
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.cost_calculator import CostCalculator
 from src.cat_game_env.action_handler import ActionHandler
+
+
+class TestMaxBatchBound:
+  '''Tests for the max_batch construction bound (F6).'''
+
+  def test_absurd_max_batch_raises(self, crafting_tree: CraftingTree):
+    '''A batch cap of 1e7 (190MB mask DoS) is rejected.'''
+    with pytest.raises(ValueError):
+      ActionHandler(crafting_tree, max_batch=10_000_000)
+
+  def test_max_batch_above_affordable_cap_raises(
+    self, crafting_tree: CraftingTree
+  ):
+    '''Any cap above MAX_AFFORDABLE_BATCH is rejected.'''
+    with pytest.raises(ValueError):
+      ActionHandler(crafting_tree, max_batch=10_000)
+
+  def test_nonpositive_max_batch_raises(self, crafting_tree: CraftingTree):
+    '''Zero and negative caps are rejected.'''
+    with pytest.raises(ValueError):
+      ActionHandler(crafting_tree, max_batch=0)
+    with pytest.raises(ValueError):
+      ActionHandler(crafting_tree, max_batch=-1)
+
+  def test_max_batch_at_cap_is_allowed(self, crafting_tree: CraftingTree):
+    '''The affordable cap itself is a valid bound.'''
+    handler = ActionHandler(crafting_tree, max_batch=9999)
+    assert handler.max_batch == 9999
 
 
 class TestDecode:

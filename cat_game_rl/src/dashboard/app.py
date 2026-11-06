@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import sys
 
+import yaml
+
 _root = os.path.dirname(
   os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
@@ -30,6 +32,41 @@ from src.dashboard.pages.pareto import render_pareto_page
 from src.dashboard.pages.targets import render_targets_page
 
 
+def _is_safe_path(
+  path: str,
+  allowed_dirs: 'list[str] | None' = None,
+) -> bool:
+  '''Check a path is within allowed directories, resolving symlinks.
+
+  Args:
+    path: Path to check.
+    allowed_dirs: Directories the path may live under. Defaults to
+      the ``output/`` and ``config/`` directories under the current
+      working directory.
+
+  Returns:
+    True if the fully resolved path is within an allowed directory.
+    Symlinks pointing outside (e.g. ``output/evil -> /etc``) are
+    rejected because the check runs on ``os.path.realpath`` of
+    both the path and each allowed directory, compared with
+    ``os.path.commonpath`` (F1/SEC-03).
+  '''
+  if allowed_dirs is None:
+    allowed_dirs = [
+      os.path.abspath('output'),
+      os.path.abspath('config'),
+    ]
+  real_path = os.path.realpath(path)
+  for allowed in allowed_dirs:
+    real_allowed = os.path.realpath(allowed)
+    try:
+      if os.path.commonpath([real_path, real_allowed]) == real_allowed:
+        return True
+    except ValueError:
+      continue
+  return False
+
+
 def main() -> None:
   '''Run the dashboard application.'''
   st.set_page_config(
@@ -43,9 +80,8 @@ def main() -> None:
   targets_path = 'config/targets.yaml'
   crafting_tree = CraftingTree.from_yaml(tree_path)
 
-  import yaml as yaml_module
   with open('config/training.yaml', 'r', encoding='utf-8') as f:
-    train_cfg = yaml_module.safe_load(f)
+    train_cfg = yaml.safe_load(f)
   env_cfg = train_cfg.get('environment', {})
   initial_coins = env_cfg.get('initial_coins', 0)
   initial_stash = env_cfg.get('initial_stash', {})
@@ -84,24 +120,11 @@ def main() -> None:
     os.path.abspath('config'),
   ]
 
-  def _is_safe_path(path: str) -> bool:
-    '''Check a path is within allowed directories.
-
-    Args:
-      path: Path to check.
-
-    Returns:
-      True if the path is within an allowed directory.
-    '''
-    abs_path = os.path.abspath(path)
-    return any(
-      abs_path.startswith(d + os.sep) or abs_path == d
-      for d in allowed_dirs
-    )
-
   rl_schedule_df = None
   rl_sim = None
-  if _is_safe_path(rl_schedule_path) and os.path.exists(rl_schedule_path):
+  if _is_safe_path(rl_schedule_path, allowed_dirs) and (
+    os.path.exists(rl_schedule_path)
+  ):
     rl_schedule_df = parse_batch_schedule(rl_schedule_path)
     rl_sim = simulate_schedule(
       rl_schedule_df, crafting_tree,
@@ -109,7 +132,7 @@ def main() -> None:
     )
   else:
     if page in ['Simulation', 'Bottleneck']:
-      if not _is_safe_path(rl_schedule_path):
+      if not _is_safe_path(rl_schedule_path, allowed_dirs):
         st.warning('Path must be within output/ or config/.')
       else:
         st.warning(f'RL schedule not found at {rl_schedule_path}')
@@ -118,14 +141,16 @@ def main() -> None:
   ga_sim = None
   ga_log = None
 
-  if _is_safe_path(ga_schedule_path) and os.path.exists(ga_schedule_path):
+  if _is_safe_path(ga_schedule_path, allowed_dirs) and (
+    os.path.exists(ga_schedule_path)
+  ):
     ga_schedule_df = parse_batch_schedule(ga_schedule_path)
     ga_sim = simulate_schedule(
       ga_schedule_df, crafting_tree,
       initial_coins=initial_coins, initial_stash=initial_stash,
     )
 
-  if _is_safe_path(ga_log_path) and os.path.exists(ga_log_path):
+  if _is_safe_path(ga_log_path, allowed_dirs) and os.path.exists(ga_log_path):
     ga_log = parse_ga_log(ga_log_path)
 
   active_sim = rl_sim or ga_sim

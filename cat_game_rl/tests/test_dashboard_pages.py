@@ -349,5 +349,169 @@ class TestDashboardApp:
       dashboard_app.main()
 
 
+class TestSymlinkPathSafety:
+  '''F1/SEC-03: symlinks escaping output/ must be rejected.'''
+
+  def test_symlink_to_etc_rejected(self, tmp_path, monkeypatch):
+    '''output/evil -> /etc is rejected even though it lives in output/.'''
+    from src.dashboard.app import _is_safe_path  # noqa: PLC0415
+
+    out_dir = os.path.join(str(tmp_path), 'output')
+    os.makedirs(out_dir)
+    evil = os.path.join(out_dir, 'evil')
+    os.symlink('/etc', evil)
+    monkeypatch.chdir(str(tmp_path))
+    assert not _is_safe_path(os.path.join(evil, 'passwd'))
+
+  def test_symlink_escape_via_main_warns(self, tmp_path, monkeypatch):
+    '''main() warns and does not load a symlinked escape path.'''
+    out_dir = os.path.join(str(tmp_path), 'output')
+    os.makedirs(out_dir)
+    evil = os.path.join(out_dir, 'evil')
+    os.symlink('/etc', evil)
+    cfg_dir = os.path.join(str(tmp_path), 'config')
+    os.makedirs(cfg_dir)
+    src_cfg = os.path.join(
+      os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+      'config',
+    )
+    import shutil  # noqa: PLC0415
+
+    shutil.copy(os.path.join(src_cfg, 'crafting_tree.yaml'), cfg_dir)
+    shutil.copy(os.path.join(src_cfg, 'targets.yaml'), cfg_dir)
+    with open(
+      os.path.join(cfg_dir, 'training.yaml'), 'w', encoding='utf-8'
+    ) as handle:
+      yaml.dump({'environment': {'initial_coins': 1000}}, handle)
+    monkeypatch.chdir(str(tmp_path))
+    _STUB.radio.return_value = 'Simulation'
+    _STUB.text_input.return_value = os.path.join(evil, 'passwd')
+    _STUB.warning.reset_mock()
+    dashboard_app.main()
+    _STUB.warning.assert_called()
+
+  def test_real_file_under_output_allowed(self, tmp_path, monkeypatch):
+    '''A genuine file under output/ is still allowed.'''
+    from src.dashboard.app import _is_safe_path  # noqa: PLC0415
+
+    out_dir = os.path.join(str(tmp_path), 'output')
+    os.makedirs(out_dir)
+    real = os.path.join(out_dir, 'schedule.txt')
+    with open(real, 'w', encoding='utf-8') as handle:
+      handle.write('h1\nh2\n0 0 string 1\n')
+    monkeypatch.chdir(str(tmp_path))
+    assert _is_safe_path(real)
+
+  def test_sibling_prefix_rejected(self, tmp_path, monkeypatch):
+    '''output_evil/ is not inside output/ despite the shared prefix.'''
+    from src.dashboard.app import _is_safe_path  # noqa: PLC0415
+
+    sibling = os.path.join(str(tmp_path), 'output_evil')
+    os.makedirs(sibling)
+    monkeypatch.chdir(str(tmp_path))
+    assert not _is_safe_path(os.path.join(sibling, 'passwd'))
+
+
+class TestParseRobustness:
+  '''F5/SEC-04: malformed lines are skipped, not fatal.'''
+
+  def test_malformed_schedule_line_skipped(self, tmp_path):
+    '''Non-integer fields are skipped with a warning, valid rows kept.'''
+    from src.dashboard.utils import parse_batch_schedule  # noqa: PLC0415
+
+    path = os.path.join(str(tmp_path), 'schedule.txt')
+    with open(path, 'w', encoding='utf-8') as handle:
+      handle.write('h1\nh2\n')
+      handle.write('0 0 string 5\n')
+      handle.write('x y string z\n')
+      handle.write('1 5 wood 3\n')
+    with pytest.warns(UserWarning):
+      frame = parse_batch_schedule(path)
+    assert len(frame) == 2
+    assert frame.iloc[0]['item_name'] == 'string'
+    assert frame.iloc[1]['item_name'] == 'wood'
+
+  def test_unknown_item_skipped(self, tmp_path):
+    '''Rows naming unknown items are skipped, not kept or fatal.'''
+    from src.dashboard.utils import parse_batch_schedule  # noqa: PLC0415
+
+    path = os.path.join(str(tmp_path), 'schedule.txt')
+    with open(path, 'w', encoding='utf-8') as handle:
+      handle.write('h1\nh2\n')
+      handle.write('0 0 nosuchitem 5\n')
+      handle.write('1 5 string 3\n')
+    with pytest.warns(UserWarning):
+      frame = parse_batch_schedule(path)
+    assert len(frame) == 1
+    assert frame.iloc[0]['item_name'] == 'string'
+
+  def test_malformed_ga_log_line_skipped(self, tmp_path):
+    '''Invalid JSON lines are skipped with a warning, valid kept.'''
+    from src.dashboard.utils import parse_ga_log  # noqa: PLC0415
+
+    path = os.path.join(str(tmp_path), 'log.jsonl')
+    with open(path, 'w', encoding='utf-8') as handle:
+      handle.write('{"gen": 0}\n')
+      handle.write('not json at all\n')
+      handle.write('{"gen": 1}\n')
+    with pytest.warns(UserWarning):
+      entries = parse_ga_log(path)
+    assert [entry['gen'] for entry in entries] == [0, 1]
+
+  def test_oversize_schedule_rejected(self, tmp_path):
+    '''Files above the size cap raise ValueError instead of OOM.'''
+    from src.dashboard.utils import (  # noqa: PLC0415
+      parse_batch_schedule, MAX_PARSE_FILE_BYTES,
+    )
+
+    path = os.path.join(str(tmp_path), 'big.txt')
+    with open(path, 'wb') as handle:
+      handle.write(b'x' * (MAX_PARSE_FILE_BYTES + 1))
+    with pytest.raises(ValueError):
+      parse_batch_schedule(path)
+
+  def test_oversize_ga_log_rejected(self, tmp_path):
+    '''Oversize GA logs raise ValueError instead of OOM.'''
+    from src.dashboard.utils import (  # noqa: PLC0415
+      parse_ga_log, MAX_PARSE_FILE_BYTES,
+    )
+
+    path = os.path.join(str(tmp_path), 'big.jsonl')
+    with open(path, 'wb') as handle:
+      handle.write(b'x' * (MAX_PARSE_FILE_BYTES + 1))
+    with pytest.raises(ValueError):
+      parse_ga_log(path)
+
+
+class TestSimulateTicksBound:
+  '''F6: simulate_schedule validates max_ticks.'''
+
+  def test_negative_max_ticks_raises(self, crafting_tree):
+    '''Negative tick bounds are rejected.'''
+    from src.dashboard.utils import simulate_schedule  # noqa: PLC0415
+
+    frame = pd.DataFrame(
+      [{
+        'tick_index': 0, 'elapsed_minutes': 0,
+        'item_name': 'string', 'batch_size_decided': 2,
+      }]
+    )
+    with pytest.raises(ValueError):
+      simulate_schedule(frame, crafting_tree, max_ticks=-1)
+
+  def test_absurd_max_ticks_raises(self, crafting_tree):
+    '''Tick bounds far beyond any real episode are rejected.'''
+    from src.dashboard.utils import simulate_schedule  # noqa: PLC0415
+
+    frame = pd.DataFrame(
+      [{
+        'tick_index': 0, 'elapsed_minutes': 0,
+        'item_name': 'string', 'batch_size_decided': 2,
+      }]
+    )
+    with pytest.raises(ValueError):
+      simulate_schedule(frame, crafting_tree, max_ticks=10**9)
+
+
 if __name__ == '__main__':
   pytest.main([__file__])

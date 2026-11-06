@@ -7,6 +7,8 @@ Top tiers place purchase orders on lower tiers. Lower tiers fulfill
 orders and push finished goods up. Two baselines:
   - Baseline Time (batch=1): minimum coins per unit, maximum time
   - Baseline Coins (batch=all): minimum production runs, shows true cost
+
+Runs both baselines and exports their schedules.
 '''
 
 from __future__ import annotations
@@ -26,12 +28,13 @@ import numpy as np
 
 from src.core.items import (
   CraftingTree, ItemId, ITEM_NAME_TO_ID,
-  CRAFTABLE_ITEM_IDS, BASE_ITEM_IDS, NUM_CRAFTABLE,
+  CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.cost_calculator import CostCalculator
+from src.cat_game_env.replenish import replenish_base_materials
 
 MAX_TICKS = 8064
 PENALTY_TICK = MAX_TICKS + 1
@@ -194,10 +197,7 @@ def run_simulation(
   for t in range(MAX_TICKS):
     coins.tick()
 
-    for base_id in BASE_ITEM_IDS:
-      deficit = max(0, 9999 - stash.get(base_id))
-      if deficit > 0:
-        stash.add(base_id, deficit)
+    replenish_base_materials(stash)
 
     actions = strategy_fn(
       t, crafting_tree, stash, slots, coins, targets, delivered

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 from datetime import datetime, timezone
@@ -15,8 +16,11 @@ import numpy as np
 from deap import base, creator, tools
 
 from src.core.items import CraftingTree, ItemId
-from src.ga.chromosome import Chromosome
+from src.ga.chromosome import Chromosome, validate_targets
 from src.ga.operators import GaOperators
+
+
+logger = logging.getLogger(__name__)
 
 
 if not hasattr(creator, 'FitnessMulti'):
@@ -59,7 +63,11 @@ class GaScheduler:
       targets: Mapping of item id to target quantity.
       initial_coins: Coins available at tick zero.
       initial_stash: Optional mapping of item name to quantity.
+
+    Raises:
+      ValueError: If a target quantity is negative.
     '''
+    validate_targets(targets)
     self._config = config
     self._tree = crafting_tree
     self._targets = targets
@@ -174,11 +182,9 @@ class GaScheduler:
       if gen % 50 == 0:
         best = hof[0] if hof else None
         best_fit = best.fitness.values if best is not None else None
-        print(
-          f'Gen {gen}/{n_gen} | '
-          f'Pop: {len(pop)} | '
-          f'Front: {len(hof)} | '
-          f'Best: {best_fit}'
+        logger.info(
+          'Gen %s/%s | Pop: %s | Front: %s | Best: %s',
+          gen, n_gen, len(pop), len(hof), best_fit,
         )
 
     return list(hof)

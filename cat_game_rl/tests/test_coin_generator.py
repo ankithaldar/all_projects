@@ -74,3 +74,12 @@ class TestCoinGenerator:
 
   def test_coins_per_tick_constant(self):
     assert CoinGenerator.COINS_PER_TICK == 210
+
+  def test_negative_initial_balance_raises(self):
+    with pytest.raises(ValueError, match='initial_balance'):
+      CoinGenerator(-1)
+
+  def test_reset_negative_raises(self):
+    cg = CoinGenerator(100)
+    with pytest.raises(ValueError, match='initial'):
+      cg.reset(-1)

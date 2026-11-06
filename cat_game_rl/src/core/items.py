@@ -43,12 +43,31 @@ class ItemId(IntEnum):
 
 NUM_ITEMS = 23
 NUM_CRAFTABLE = 19
+MAX_AFFORDABLE_BATCH = 9999
 BASE_ITEM_IDS = [ItemId.COTTON, ItemId.TREE, ItemId.ROCK, ItemId.QUARTZ]
-CRAFTABLE_ITEM_IDS = list(range(4, 23))
+CRAFTABLE_ITEM_IDS = list(range(int(ItemId.STRING), NUM_ITEMS))
 
 ITEM_NAME_TO_ID: Dict[str, ItemId] = {
   item.name.lower(): item for item in ItemId
 }
+
+
+def _lookup_item(name: str) -> ItemId:
+  '''Looks up an item by name.
+
+  Args:
+    name: Item name from YAML.
+
+  Returns:
+    Item identifier.
+
+  Raises:
+    ValueError: If the item name is unknown.
+  '''
+  try:
+    return ITEM_NAME_TO_ID[str(name).lower()]
+  except KeyError:
+    raise ValueError(f'Unknown item: {name}') from None
 
 
 @dataclass(frozen=True)
@@ -130,23 +149,37 @@ class CraftingTree:
     tier_map: Dict[ItemId, int] = {}
 
     for entry in data['items']:
-      item_id = ITEM_NAME_TO_ID[entry['id']]
+      item_id = _lookup_item(entry['id'])
       tier_map[item_id] = entry['tier']
 
       if entry['type'] == 'craftable':
+        item_name = entry['id']
         recipe_data = entry['recipe']
-        ingredients = tuple(
-          Ingredient(
-            item_id=ITEM_NAME_TO_ID[ing['item']],
-            quantity=ing['quantity'],
+        craft_time = recipe_data['craft_time']
+        if craft_time <= 0:
+          raise ValueError(
+            f'Invalid craft_time for item {item_name}: {craft_time}'
           )
-          for ing in recipe_data['ingredients']
-        )
+        ingredients_list = []
+        for ing in recipe_data['ingredients']:
+          quantity = ing['quantity']
+          if quantity <= 0:
+            raise ValueError(
+              f'Invalid ingredient quantity for item '
+              f'{item_name}: {quantity}'
+            )
+          ingredients_list.append(
+            Ingredient(
+              item_id=_lookup_item(ing['item']),
+              quantity=quantity,
+            )
+          )
+        ingredients = tuple(ingredients_list)
         recipes[item_id] = Recipe(
           output_id=item_id,
           ingredients=ingredients,
           coin_cost=recipe_data['coin_cost'],
-          craft_time=recipe_data['craft_time'],
+          craft_time=craft_time,
         )
 
     topo_order = cls._topological_sort(recipes)
@@ -202,8 +235,14 @@ class CraftingTree:
 
     Returns:
       Crafting time in ticks.
+
+    Raises:
+      ValueError: If craft_time is not positive.
     '''
-    return math.ceil(self.recipes[item_id].craft_time / 5)
+    craft_time = self.recipes[item_id].craft_time
+    if craft_time <= 0:
+      raise ValueError(f'Invalid craft_time for item {item_id}: {craft_time}')
+    return math.ceil(craft_time / 5)
 
   def get_recipe(self, item_id: ItemId) -> Recipe:
     '''Returns the recipe for an item.

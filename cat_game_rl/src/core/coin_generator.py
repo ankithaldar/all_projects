@@ -20,7 +20,14 @@ class CoinGenerator:
 
     Args:
       initial_balance: Starting coin balance.
+
+    Raises:
+      ValueError: If initial_balance is negative.
     '''
+    if initial_balance < 0:
+      raise ValueError(
+        f'Cannot set negative initial_balance: {initial_balance}'
+      )
     self._balance = initial_balance
 
   @property
@@ -69,5 +76,10 @@ class CoinGenerator:
 
     Args:
       initial: New starting balance.
+
+    Raises:
+      ValueError: If initial is negative.
     '''
+    if initial < 0:
+      raise ValueError(f'Cannot reset to negative initial_balance: {initial}')
     self._balance = initial

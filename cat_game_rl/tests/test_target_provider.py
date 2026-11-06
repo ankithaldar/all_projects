@@ -6,9 +6,18 @@
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from src.core.items import ItemId
 from src.core.target_provider import TargetProvider
+
+
+def _write_targets(tmp_path, targets):
+  path = tmp_path / 'targets.yaml'
+  path.write_text(
+    yaml.safe_dump({'targets': targets}), encoding='utf-8'
+  )
+  return str(path)
 
 
 class TestTargetProvider:
@@ -73,3 +82,18 @@ class TestTargetProvider:
     assert tp.targets[ItemId.STRING] == 5
     tp.deliver(ItemId.STRING, 5)
     assert tp.is_complete() is True
+
+  def test_negative_target_count_raises(self, tmp_path):
+    path = _write_targets(tmp_path, {'gold': -1})
+    with pytest.raises(ValueError, match='gold'):
+      TargetProvider(path)
+
+  def test_unknown_target_name_raises_value_error(self, tmp_path):
+    path = _write_targets(tmp_path, {'no_such_item': 5})
+    with pytest.raises(ValueError, match='no_such_item'):
+      TargetProvider(path)
+
+  def test_null_targets_raises_value_error(self, tmp_path):
+    path = _write_targets(tmp_path, None)
+    with pytest.raises(ValueError, match='targets'):
+      TargetProvider(path)

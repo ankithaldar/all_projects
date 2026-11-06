@@ -38,11 +38,16 @@ class TargetProvider:
     '''
     with open(path, 'r', encoding='utf-8') as f:
       data = yaml.safe_load(f)
-    if data is None or 'targets' not in data:
+    if data is None or 'targets' not in data or data['targets'] is None:
       raise ValueError(f'Invalid targets YAML: {path}')
     self._targets = {}
     for name, count in data['targets'].items():
-      item_id = ITEM_NAME_TO_ID[name.lower()]
+      try:
+        item_id = ITEM_NAME_TO_ID[str(name).lower()]
+      except KeyError:
+        raise ValueError(f'Unknown target item: {name}') from None
+      if count < 0:
+        raise ValueError(f'Invalid target count for {name}: {count}')
       self._targets[item_id] = count
 
   def reload(self, path: str | None = None) -> None:

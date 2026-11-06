@@ -9,6 +9,8 @@ import csv
 import io
 import json
 import math
+import os
+import warnings
 from typing import Any, Dict, List
 
 import numpy as np
@@ -16,12 +18,34 @@ import pandas as pd
 
 from src.core.items import (
   CraftingTree, ItemId, ITEM_NAME_TO_ID,
-  BASE_ITEM_IDS, NUM_ITEMS,
+  NUM_ITEMS,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.cost_calculator import CostCalculator
+from src.cat_game_env.replenish import replenish_base_materials
+
+# F5/SEC-04: refuse to read unbounded files into memory.
+MAX_PARSE_FILE_BYTES = 10_000_000
+# F6: bound simulation length so a hostile schedule cannot DoS the
+# dashboard (200k ticks took ~14s in the adversarial probe).
+MAX_SIMULATE_TICKS = 100_000
+
+
+def _check_file_size(path: str) -> None:
+  '''Reject files above the parse size cap.
+
+  Args:
+    path: Path of the file about to be read.
+
+  Raises:
+    ValueError: If the file exceeds MAX_PARSE_FILE_BYTES.
+  '''
+  if os.path.getsize(path) > MAX_PARSE_FILE_BYTES:
+    raise ValueError(
+      f'File {path} exceeds {MAX_PARSE_FILE_BYTES} byte parse cap'
+    )
 
 
 def parse_batch_schedule(path: str) -> pd.DataFrame:
@@ -33,18 +57,27 @@ def parse_batch_schedule(path: str) -> pd.DataFrame:
   Returns:
     DataFrame with one row per scheduled batch action.
   '''
+  _check_file_size(path)
   rows = []
   with open(path, 'r', encoding='utf-8') as f:
     lines = f.readlines()
   for line in lines[2:]:
     parts = line.split()
-    if len(parts) >= 4:
+    if len(parts) < 4:
+      continue
+    if parts[2].lower() not in ITEM_NAME_TO_ID:
+      warnings.warn(f'Skipping schedule line with unknown item: {line!r}')
+      continue
+    try:
       rows.append({
         'tick_index': int(parts[0]),
         'elapsed_minutes': int(parts[1]),
         'item_name': parts[2],
         'batch_size_decided': int(parts[3]),
       })
+    except ValueError:
+      warnings.warn(f'Skipping malformed schedule line: {line!r}')
+      continue
   return pd.DataFrame(rows)
 
 
@@ -57,12 +90,18 @@ def parse_ga_log(path: str) -> List[Dict[str, Any]]:
   Returns:
     List of log entries, one per generation.
   '''
+  _check_file_size(path)
   entries = []
   with open(path, 'r', encoding='utf-8') as f:
     for line in f:
-      line = line.strip()
-      if line:
-        entries.append(json.loads(line))
+      stripped = line.strip()
+      if not stripped:
+        continue
+      try:
+        entries.append(json.loads(stripped))
+      except (ValueError, json.JSONDecodeError):
+        warnings.warn(f'Skipping malformed GA log line: {line!r}')
+        continue
   return entries
 
 
@@ -78,13 +117,23 @@ def simulate_schedule(
   Args:
     schedule_df: DataFrame of scheduled batch actions.
     crafting_tree: Crafting tree used for recipes and slots.
-    max_ticks: Number of ticks to simulate.
+    max_ticks: Number of ticks to simulate. Must be in
+      ``[0, MAX_SIMULATE_TICKS]`` (F6 bound; the default episode
+      length is 8064).
     initial_coins: Coins available at tick zero.
     initial_stash: Optional mapping of item name to quantity.
 
   Returns:
     Mapping of stash, coin, and slot histories as arrays.
+
+  Raises:
+    ValueError: If ``max_ticks`` is negative or exceeds
+      MAX_SIMULATE_TICKS.
   '''
+  if not 0 <= max_ticks <= MAX_SIMULATE_TICKS:
+    raise ValueError(
+      f'max_ticks must be in [0, {MAX_SIMULATE_TICKS}], got {max_ticks}'
+    )
   stash = Stash()
   if initial_stash:
     for name, qty in initial_stash.items():
@@ -112,10 +161,7 @@ def simulate_schedule(
   for t in range(max_ticks):
     coins.tick()
 
-    for base_id in BASE_ITEM_IDS:
-      deficit = max(0, 9999 - stash.get(base_id))
-      if deficit > 0:
-        stash.add(base_id, deficit)
+    replenish_base_materials(stash)
 
     if t in schedule_by_tick:
       for action in schedule_by_tick[t]:

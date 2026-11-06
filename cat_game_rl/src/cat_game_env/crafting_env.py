@@ -12,13 +12,14 @@ import numpy as np
 from gymnasium import spaces
 
 from src.core.items import (
-  CraftingTree, ItemId, BASE_ITEM_IDS, NUM_CRAFTABLE,
+  CraftingTree, ItemId, NUM_CRAFTABLE,
   ITEM_NAME_TO_ID,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.target_provider import TargetProvider
+from src.cat_game_env.replenish import replenish_base_materials
 from src.cat_game_env.observation_builder import ObservationBuilder
 from src.cat_game_env.action_handler import ActionHandler
 from src.cat_game_env.reward_shaper import RewardShaper
@@ -129,10 +130,7 @@ class CraftingEnv(gym.Env):
 
   def _replenish_base_materials(self) -> None:
     '''Refill base materials to the cap.'''
-    for base_id in BASE_ITEM_IDS:
-      deficit = max(0, 9999 - self.stash.get(base_id))
-      if deficit > 0:
-        self.stash.add(base_id, deficit)
+    replenish_base_materials(self.stash)
 
   def _build_reward_state(self) -> Dict:
     '''Build state snapshot for reward shaping.'''

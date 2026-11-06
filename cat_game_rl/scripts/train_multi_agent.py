@@ -8,6 +8,8 @@ The TierEnv.step() delegates to the shared orchestrator, with other
 tiers using no-op actions during the focal agent's training. Agents
 are trained round-robin: each tier gets a training batch, then the
 next tier trains, cycling for the configured number of rounds.
+
+Creates and saves new tier models; it does not load one.
 '''
 
 from __future__ import annotations

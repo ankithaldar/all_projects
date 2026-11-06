@@ -113,6 +113,14 @@ class TestGaScheduler:
       assert best is not None
       assert best.shape == (MAX_TICKS, 19)
 
+  def test_negative_target_raises(
+    self, ga_config: dict, crafting_tree: CraftingTree
+  ):
+    with pytest.raises(ValueError, match='target'):
+      GaScheduler(
+        ga_config, crafting_tree, {ItemId.STRING: -1}
+      )
+
   def test_empty_hof(
     self,
     ga_config: dict,

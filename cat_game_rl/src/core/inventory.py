@@ -9,7 +9,9 @@ from typing import Tuple
 
 import numpy as np
 
-from src.core.items import NUM_ITEMS, ItemId, Ingredient
+from src.core.items import (
+  NUM_ITEMS, ItemId, Ingredient, MAX_AFFORDABLE_BATCH,
+)
 
 
 class Stash:
@@ -94,14 +96,16 @@ class Stash:
       Largest affordable batch size.
     '''
     if not ingredients:
-      return 9999
+      return MAX_AFFORDABLE_BATCH
     max_batch = float('inf')
     for ing in ingredients:
       if ing.quantity <= 0:
         continue
       available = self._counts[int(ing.item_id)]
       max_batch = min(max_batch, available // ing.quantity)
-    return int(max_batch) if max_batch != float('inf') else 9999
+    if max_batch == float('inf'):
+      return MAX_AFFORDABLE_BATCH
+    return int(max_batch)
 
   def as_array(self) -> np.ndarray:
     '''Returns a copy of the counts array.
@@ -120,5 +124,10 @@ class Stash:
 
     Args:
       counts: New counts array.
+
+    Raises:
+      ValueError: If any count is negative.
     '''
+    if np.any(counts < 0):
+      raise ValueError('Cannot set negative counts')
     self._counts[:] = counts

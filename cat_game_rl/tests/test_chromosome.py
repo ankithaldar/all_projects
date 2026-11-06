@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import unittest.mock
+
 import numpy as np
 import pytest
 
+import src.ga.chromosome as chromosome_module
 from src.core.items import CraftingTree, ItemId, CRAFTABLE_ITEM_IDS
 from src.ga.chromosome import Chromosome, MAX_TICKS
 
@@ -100,6 +103,22 @@ class TestChromosome:
     )
     assert result1 == result2
 
+  @pytest.mark.parametrize(
+    'bad_genes',
+    [
+      np.zeros((10, 19), dtype=np.uint8),
+      np.zeros((MAX_TICKS, 5), dtype=np.uint8),
+      np.zeros((MAX_TICKS, 20), dtype=np.uint8),
+      np.zeros((19,), dtype=np.uint8),
+      np.zeros((MAX_TICKS, 19, 1), dtype=np.uint8),
+    ],
+  )
+  def test_evaluate_wrong_shape_raises_value_error(
+    self, crafting_tree: CraftingTree, targets: dict, bad_genes: np.ndarray
+  ):
+    with pytest.raises(ValueError, match='gene shape'):
+      Chromosome.evaluate(bad_genes, crafting_tree, targets)
+
   def test_infeasible_craft_no_cost(self, crafting_tree: CraftingTree):
     custom_targets = {ItemId.RIBBON: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
@@ -117,3 +136,17 @@ class TestChromosome:
     )
     assert cost == 0.0
     assert time == MAX_TICKS + 1
+
+  def test_evaluate_uses_replenish_helper(
+    self, crafting_tree: CraftingTree, targets: dict
+  ):
+    assert hasattr(chromosome_module, 'replenish_base_materials')
+    genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
+    with unittest.mock.patch.object(
+      chromosome_module,
+      'replenish_base_materials',
+      wraps=chromosome_module.replenish_base_materials,
+    ) as spy:
+      result = Chromosome.evaluate(genes, crafting_tree, targets)
+    assert spy.call_count == MAX_TICKS
+    assert result[1] == float(MAX_TICKS + 1)

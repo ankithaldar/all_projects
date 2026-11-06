@@ -12,7 +12,7 @@ import numpy as np
 
 from src.core.items import (
   CraftingTree, ItemId, CRAFTABLE_ITEM_IDS,
-  NUM_CRAFTABLE,
+  MAX_AFFORDABLE_BATCH, NUM_CRAFTABLE,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
@@ -23,7 +23,24 @@ from src.core.cost_calculator import CostCalculator
 class ActionHandler:
   '''Decodes and applies crafting actions.'''
   def __init__(self, crafting_tree: CraftingTree, max_batch: int = 20):
-    '''Initialize with tree and per-item batch cap.'''
+    '''Initialize with tree and per-item batch cap.
+
+    Args:
+      crafting_tree: Crafting tree used for recipes and slots.
+      max_batch: Per-item batch cap. Must be in
+        ``[1, MAX_AFFORDABLE_BATCH]``; larger values would blow up
+        the action mask (one entry per batch size per item), so
+        absurd caps are rejected up front (F6).
+
+    Raises:
+      ValueError: If ``max_batch`` is not positive or exceeds
+        MAX_AFFORDABLE_BATCH.
+    '''
+    if not 1 <= max_batch <= MAX_AFFORDABLE_BATCH:
+      raise ValueError(
+        f'max_batch must be in [1, {MAX_AFFORDABLE_BATCH}], '
+        f'got {max_batch}'
+      )
     self._tree = crafting_tree
     self._max_batch = max_batch
 

@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.items import NUM_ITEMS, NUM_CRAFTABLE
+from src.core.items import (
+  ItemId, NUM_ITEMS, NUM_CRAFTABLE, MAX_AFFORDABLE_BATCH,
+)
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
 from src.core.target_provider import TargetProvider
 from src.cat_game_env.observation_builder import ObservationBuilder
+from src.cat_game_env import observation_builder as obs_module
 
 
 class TestObservationBuilder:
@@ -82,3 +85,32 @@ class TestObservationBuilder:
       fresh_stash, funded_coins, slot_scheduler, target_provider, tick=4032
     )
     assert obs['time_fraction'][0] == pytest.approx(0.5, rel=1e-3)
+
+  def test_space_bounds_use_max_affordable_batch(
+    self, obs_builder: ObservationBuilder
+  ):
+    assert obs_module.MAX_AFFORDABLE_BATCH == MAX_AFFORDABLE_BATCH
+    space = obs_builder.build_space()
+    assert int(space['stash'].high[0]) == MAX_AFFORDABLE_BATCH
+    assert int(space['targets_remaining'].low[0]) == -MAX_AFFORDABLE_BATCH
+    assert int(space['targets_remaining'].high[0]) == MAX_AFFORDABLE_BATCH
+    assert int(space['targets_total'].high[0]) == MAX_AFFORDABLE_BATCH
+
+  def test_obs_clips_use_max_affordable_batch(
+    self,
+    obs_builder: ObservationBuilder,
+    fresh_stash: Stash,
+    funded_coins: CoinGenerator,
+    slot_scheduler: SlotScheduler,
+    target_provider: TargetProvider,
+  ):
+    assert obs_module.MAX_AFFORDABLE_BATCH == MAX_AFFORDABLE_BATCH
+    fresh_stash.add(ItemId.COTTON, MAX_AFFORDABLE_BATCH + 5000)
+    target_provider.deliver(ItemId.GOLD, MAX_AFFORDABLE_BATCH + 10000)
+    obs = obs_builder.build_obs(
+      fresh_stash, funded_coins, slot_scheduler, target_provider, tick=0
+    )
+    assert int(obs['stash'][int(ItemId.COTTON)]) == MAX_AFFORDABLE_BATCH
+    assert int(obs['targets_remaining'][int(ItemId.GOLD)]) == (
+      -MAX_AFFORDABLE_BATCH
+    )

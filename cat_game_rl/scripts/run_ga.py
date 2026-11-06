@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Run the genetic-algorithm baseline for the crafting game.'''
+'''Run the genetic-algorithm baseline for the crafting game.
+
+Runs the GA scheduler and exports the best schedule found.
+'''
 
 from __future__ import annotations
 

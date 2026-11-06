@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import sys
 import tempfile
@@ -124,8 +126,6 @@ from src.agent.callbacks import (  # noqa: E402
 from src.agent.masked_agent import (  # noqa: E402
   MaskedAgent,
   TierAgent,
-  _mask_fn,
-  _tier_mask_fn,
 )
 
 
@@ -153,12 +153,18 @@ class TestComputeActionMask:
     assert np.array_equal(result, expected)
 
   def test_mask_fn_delegates_to_env(self, env):
-    '''The private _mask_fn also delegates to the env.'''
+    '''The single-source mask delegates to the env.'''
+    from src.agent import masked_agent  # noqa: PLC0415
+
+    assert not hasattr(masked_agent, '_mask_fn')
+    assert not hasattr(masked_agent, '_tier_mask_fn')
     env.reset()
-    assert np.array_equal(_mask_fn(env), env.action_masks())
+    assert np.array_equal(
+      compute_action_mask(env), env.action_masks()
+    )
 
   def test_tier_mask_fn_delegates(self, env_config):
-    '''_tier_mask_fn delegates to a tier env.'''
+    '''compute_action_mask delegates to a tier env.'''
     from src.cat_game_env.multi_agent import (  # noqa: PLC0415
       MultiAgentOrchestrator,
     )
@@ -167,7 +173,7 @@ class TestComputeActionMask:
     orch.reset()
     tier_env = orch.tier_envs[orch.tier_numbers[0]]
     assert np.array_equal(
-      _tier_mask_fn(tier_env), tier_env.action_masks()
+      compute_action_mask(tier_env), tier_env.action_masks()
     )
 
   def test_action_mask_fn_module_alias(self):
@@ -293,16 +299,31 @@ class TestCheckpointCallback:
       callback.model.save.assert_not_called()
 
   def test_verbose_prints_on_save(self):
-    '''Verbose mode prints the checkpoint path.'''
+    '''Verbose mode logs the checkpoint path via logging.'''
     with tempfile.TemporaryDirectory() as tmp:
       callback = CheckpointCallback(
         save_freq=1, save_path=tmp, verbose=1
       )
       callback.n_calls = 1
       callback.model = mock.MagicMock()
-      with mock.patch('builtins.print') as mock_print:
+      with mock.patch('src.agent.callbacks._LOGGER') as mock_log:
+        with mock.patch('builtins.print') as mock_print:
+          assert callback._on_step() is True
+      mock_print.assert_not_called()
+      mock_log.info.assert_called_once()
+      assert 'checkpoint_1' in mock_log.info.call_args[0][1]
+
+  def test_verbose_logs_on_save(self, caplog):
+    '''Verbose mode logs the checkpoint path via logging.'''
+    with tempfile.TemporaryDirectory() as tmp:
+      callback = CheckpointCallback(
+        save_freq=1, save_path=tmp, verbose=1
+      )
+      callback.n_calls = 1
+      callback.model = mock.MagicMock()
+      with caplog.at_level(logging.INFO, logger='src.agent.callbacks'):
         assert callback._on_step() is True
-      mock_print.assert_called_once()
+      assert 'checkpoint_1' in caplog.text
 
 
 def _agent_config():
@@ -330,7 +351,8 @@ class TestMaskedAgent:
   def test_predict_returns_action(self, env):
     '''predict returns the model's action.'''
     agent = MaskedAgent(env, _agent_config())
-    action = agent.predict({'obs': np.zeros(3)})
+    obs, _ = env.reset()
+    action = agent.predict(obs)
     assert np.array_equal(action, np.array([1]))
 
   def test_train_uses_default_callbacks(self, env):
@@ -392,7 +414,9 @@ class TestMaskedAgent:
   def test_mask_fn_used_by_wrapper(self, env):
     '''The wrapper mask function matches the env mask.'''
     env.reset()
-    assert np.array_equal(_mask_fn(env), env.action_masks())
+    assert np.array_equal(
+      compute_action_mask(env), env.action_masks()
+    )
 
 
 class TestTierAgent:
@@ -417,9 +441,10 @@ class TestTierAgent:
 
   def test_predict_returns_action(self, env_config):
     '''predict returns the model's action.'''
-    agent = TierAgent(self._tier_env(env_config), _agent_config())
+    tier_env = self._tier_env(env_config)
+    agent = TierAgent(tier_env, _agent_config())
     assert np.array_equal(
-      agent.predict({'obs': np.zeros(2)}), np.array([1])
+      agent.predict(tier_env.build_obs(0)), np.array([1])
     )
 
   def test_save_and_load(self, env_config):
@@ -438,6 +463,194 @@ class TestTierAgent:
       loaded = TierAgent.load('p', tier_env, _agent_config())
       assert loaded.tier == tier_env.tier
       assert loaded.model is mock_ppo.load.return_value
+
+
+class TestSingleSourceMask:
+  '''Tests that action masking has a single source of truth.'''
+
+  def test_mask_fn_is_compute_action_mask(self):
+    '''masked_agent defines no duplicate mask helpers.'''
+    from src.agent import masked_agent  # noqa: PLC0415
+
+    assert not hasattr(masked_agent, '_mask_fn')
+    assert not hasattr(masked_agent, '_tier_mask_fn')
+
+  def test_tier_mask_fn_is_compute_action_mask(self):
+    '''compute_action_mask serves both env kinds.'''
+    from src.agent import masked_agent  # noqa: PLC0415
+
+    assert masked_agent.compute_action_mask is compute_action_mask
+
+  def test_wrapper_uses_compute_action_mask(self, env):
+    '''The ActionMasker wrapper receives compute_action_mask.'''
+    from src.agent.masked_agent import (  # noqa: PLC0415
+      MaskablePPO,
+    )
+
+    instances_before = len(
+      getattr(MaskablePPO, 'instances', [])
+    )
+    MaskedAgent(env, _agent_config())
+    instance = MaskablePPO.instances[instances_before]
+    wrapped = instance.args[1]
+    mask_fn = getattr(wrapped, 'mask_fn', None)
+    if mask_fn is None:
+      mask_fn = getattr(wrapped, '_action_mask_fn', None)
+    assert mask_fn is compute_action_mask
+
+
+class TestSharedBase:
+  '''Tests that TierAgent reuses the MaskedAgent implementation.'''
+
+  def test_tier_agent_subclasses_masked_agent(self):
+    '''TierAgent and MaskedAgent share a common base class.'''
+    from src.agent.masked_agent import (  # noqa: PLC0415
+      BaseMaskedAgent,
+    )
+
+    assert issubclass(TierAgent, BaseMaskedAgent)
+    assert issubclass(MaskedAgent, BaseMaskedAgent)
+
+  def test_tier_agent_inherits_shared_methods(self):
+    '''TierAgent inherits predict, save and load unchanged.'''
+    assert TierAgent.predict is MaskedAgent.predict
+    assert TierAgent.save is MaskedAgent.save
+    assert TierAgent.load.__func__ is MaskedAgent.load.__func__
+
+  def test_masked_agent_default_n_steps(self, env):
+    '''MaskedAgent keeps its n_steps default of 2048.'''
+    from src.agent.masked_agent import (  # noqa: PLC0415
+      MaskablePPO,
+    )
+
+    before = len(getattr(MaskablePPO, 'instances', []))
+    MaskedAgent(env, _agent_config())
+    kwargs = MaskablePPO.instances[before].kwargs
+    assert kwargs['n_steps'] == 2048
+    assert kwargs['verbose'] == 1
+
+  def test_tier_agent_default_n_steps(self, env_config):
+    '''TierAgent keeps its n_steps default of 512.'''
+    from src.agent.masked_agent import (  # noqa: PLC0415
+      MaskablePPO,
+    )
+
+    orch = TestTierAgent()._tier_env(env_config)
+    before = len(getattr(MaskablePPO, 'instances', []))
+    TierAgent(orch, _agent_config())
+    kwargs = MaskablePPO.instances[before].kwargs
+    assert kwargs['n_steps'] == 512
+    assert kwargs['verbose'] == 0
+
+
+class TestDocstrings:
+  '''Tests that stub docstrings were expanded to Google style.'''
+
+  def test_masked_agent_docstrings(self):
+    '''MaskedAgent members document Args, Returns and Raises.'''
+    assert 'Args:' in MaskedAgent.__doc__
+    assert 'Args:' in MaskedAgent.__init__.__doc__
+    assert 'Args:' in MaskedAgent.train.__doc__
+    assert 'Returns:' in MaskedAgent.predict.__doc__
+    assert 'Raises:' in MaskedAgent.load.__doc__
+    assert 'trusted' in MaskedAgent.load.__doc__.lower()
+
+  def test_callback_docstrings(self):
+    '''Callbacks document Args and Returns.'''
+    assert 'Args:' in CheckpointCallback.__init__.__doc__
+    assert 'Returns:' in TensorBoardCallback._on_step.__doc__
+    assert 'Returns:' in CheckpointCallback._on_step.__doc__
+
+
+class TestSec01Integrity:
+  '''Tests for SEC-01 trusted-only model loading and sidecars.'''
+
+  def _writing_model(self):
+    '''Return a model mock whose save writes bytes to the path.'''
+
+    model = mock.MagicMock()
+
+    def _save(path):
+      '''Write deterministic bytes to the save path.'''
+      with open(path, 'wb') as handle:
+        handle.write(b'fake-model-bytes')
+
+    model.save.side_effect = _save
+    return model
+
+  def test_save_writes_sha256_sidecar(self, env):
+    '''save records a SHA256 sidecar next to the model.'''
+    agent = MaskedAgent(env, _agent_config())
+    agent._model = self._writing_model()
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, 'model')
+      agent.save(path)
+      sidecar = path + '.sha256'
+      assert os.path.isfile(sidecar)
+      expected = hashlib.sha256(b'fake-model-bytes').hexdigest()
+      with open(sidecar, encoding='utf-8') as handle:
+        assert handle.read().strip() == expected
+
+  def test_load_without_sidecar_warns_but_loads(
+    self, env, caplog
+  ):
+    '''load warns when no sidecar exists but still loads.'''
+    with mock.patch(
+      'src.agent.masked_agent.MaskablePPO'
+    ) as mock_ppo:
+      mock_ppo.load.return_value = mock.MagicMock()
+      with caplog.at_level(
+        logging.WARNING, logger='src.agent.masked_agent'
+      ):
+        agent = MaskedAgent.load('no/sidecar/here', env, _agent_config())
+      assert agent.model is mock_ppo.load.return_value
+      assert 'sidecar' in caplog.text.lower()
+
+  def test_load_verifies_valid_sidecar(self, env):
+    '''load succeeds when the sidecar digest matches.'''
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, 'model')
+      with open(path, 'wb') as handle:
+        handle.write(b'fake-model-bytes')
+      digest = hashlib.sha256(b'fake-model-bytes').hexdigest()
+      with open(path + '.sha256', 'w', encoding='utf-8') as handle:
+        handle.write(digest)
+      with mock.patch(
+        'src.agent.masked_agent.MaskablePPO'
+      ) as mock_ppo:
+        mock_ppo.load.return_value = mock.MagicMock()
+        agent = MaskedAgent.load(path, env, _agent_config())
+        assert agent.model is mock_ppo.load.return_value
+
+  def test_load_rejects_tampered_sidecar(self, env):
+    '''load raises when the sidecar digest does not match.'''
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, 'model')
+      with open(path, 'wb') as handle:
+        handle.write(b'tampered-bytes')
+      with open(path + '.sha256', 'w', encoding='utf-8') as handle:
+        handle.write('0' * 64)
+      with mock.patch(
+        'src.agent.masked_agent.MaskablePPO'
+      ):
+        with pytest.raises(ValueError, match='SHA256'):
+          MaskedAgent.load(path, env, _agent_config())
+
+  def test_tier_agent_save_and_load_sidecar(self, env_config):
+    '''TierAgent inherits sidecar save and verified load.'''
+    tier_env = TestTierAgent()._tier_env(env_config)
+    agent = TierAgent(tier_env, _agent_config())
+    agent._model = self._writing_model()
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, 'tiermodel')
+      agent.save(path)
+      assert os.path.isfile(path + '.sha256')
+      with mock.patch(
+        'src.agent.masked_agent.MaskablePPO'
+      ) as mock_ppo:
+        mock_ppo.load.return_value = mock.MagicMock()
+        loaded = TierAgent.load(path, tier_env, _agent_config())
+        assert loaded.model is mock_ppo.load.return_value
 
 
 if __name__ == '__main__':

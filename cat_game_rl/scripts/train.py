@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Train an RL agent for the crafting game.'''
+'''Train an RL agent for the crafting game.
+
+Creates and saves a new model; it does not load one.
+'''
 
 from __future__ import annotations
 

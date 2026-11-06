@@ -56,7 +56,9 @@ class TestParseBatchSchedule:
     '''Parsed rows contain tick, item and batch size.'''
     path = _write_schedule(tmp_path)
     frame = parse_batch_schedule(path)
-    assert len(frame) == 3
+    # F5: lines with an unknown item are skipped (with a warning),
+    # so only the two valid 'string' rows remain.
+    assert len(frame) == 2
     assert frame.iloc[0]['item_name'] == 'string'
     assert int(frame.iloc[0]['batch_size_decided']) == 5
     assert int(frame.iloc[1]['tick_index']) == 1

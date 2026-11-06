@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.core.items import ItemId, Ingredient
+from src.core.items import ItemId, Ingredient, MAX_AFFORDABLE_BATCH
 from src.core.inventory import Stash
 
 
@@ -103,3 +103,18 @@ class TestStash:
 
   def test_remove_zero(self, fresh_stash: Stash):
     assert fresh_stash.remove(ItemId.COTTON, 0) is True
+
+  def test_set_counts_negative_raises(self, fresh_stash: Stash):
+    counts = np.zeros(23, dtype=np.int32)
+    counts[0] = -1
+    with pytest.raises(ValueError, match='negative'):
+      fresh_stash.set_counts(counts)
+    assert fresh_stash.get(ItemId.COTTON) == 0
+
+  def test_max_affordable_uses_named_constant(
+    self, fresh_stash: Stash
+  ):
+    assert MAX_AFFORDABLE_BATCH == 9999
+    assert fresh_stash.max_affordable_batch_materials(
+      ()
+    ) == MAX_AFFORDABLE_BATCH

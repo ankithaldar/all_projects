@@ -9,10 +9,41 @@ import numpy as np
 import pytest
 
 from src.core.items import ItemId, NUM_CRAFTABLE
+from src.core.items import MAX_AFFORDABLE_BATCH
+from src.core.inventory import Stash
 from src.cat_game_env.crafting_env import CraftingEnv
+from src.cat_game_env.replenish import replenish_base_materials
 from src.cat_game_env.multi_agent import (
   OrderBoard, MultiAgentOrchestrator,
 )
+
+
+class TestReplenishBaseMaterials:
+  '''Tests for the shared base-replenish helper.'''
+
+  def test_refills_base_items_to_cap(self):
+    '''Every base item is topped up to MAX_AFFORDABLE_BATCH.'''
+    stash = Stash()
+    stash.add(ItemId.COTTON, 10)
+    replenish_base_materials(stash)
+    assert stash.get(ItemId.COTTON) == MAX_AFFORDABLE_BATCH
+    assert stash.get(ItemId.TREE) == MAX_AFFORDABLE_BATCH
+    assert stash.get(ItemId.ROCK) == MAX_AFFORDABLE_BATCH
+    assert stash.get(ItemId.QUARTZ) == MAX_AFFORDABLE_BATCH
+
+  def test_does_not_exceed_cap(self):
+    '''Items already above the cap are left untouched.'''
+    stash = Stash()
+    stash.add(ItemId.COTTON, MAX_AFFORDABLE_BATCH + 50)
+    replenish_base_materials(stash)
+    assert stash.get(ItemId.COTTON) == MAX_AFFORDABLE_BATCH + 50
+
+  def test_custom_cap(self):
+    '''A caller-supplied cap overrides the default.'''
+    stash = Stash()
+    replenish_base_materials(stash, cap=100)
+    assert stash.get(ItemId.COTTON) == 100
+    assert stash.get(ItemId.TREE) == 100
 
 
 class TestCraftingEnv:

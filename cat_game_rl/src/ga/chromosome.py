@@ -11,9 +11,10 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from src.core.items import (
-  CraftingTree, ItemId, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE, BASE_ITEM_IDS,
+  CraftingTree, ItemId, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE,
   ITEM_NAME_TO_ID,
 )
+from src.cat_game_env.replenish import replenish_base_materials
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
@@ -21,6 +22,23 @@ from src.core.cost_calculator import CostCalculator
 
 MAX_TICKS = 8064
 PENALTY_TICK = MAX_TICKS + 1
+
+
+def validate_targets(targets: Dict[ItemId, int]) -> None:
+  '''Validate target quantities are non-negative.
+
+  Args:
+    targets: Mapping of item id to target quantity.
+
+  Raises:
+    ValueError: If a target quantity is negative.
+  '''
+  for item_id, quantity in targets.items():
+    if quantity < 0:
+      raise ValueError(
+        f'target quantity for {item_id} must be non-negative, '
+        f'got {quantity}'
+      )
 
 
 class Chromosome:
@@ -82,7 +100,21 @@ class Chromosome:
 
     Returns:
       Tuple of (total_cost, completion_tick, waste, cost_per_item).
+
+    Raises:
+      ValueError: If genes do not have shape (MAX_TICKS, NUM_CRAFTABLE)
+        or a target quantity is negative.
     '''
+    expected_shape = (MAX_TICKS, NUM_CRAFTABLE)
+    actual_shape = (
+      getattr(genes, 'shape', None) if isinstance(genes, np.ndarray)
+      else None
+    )
+    if actual_shape != expected_shape:
+      raise ValueError(
+        f'gene shape must be {expected_shape}, got {actual_shape}'
+      )
+    validate_targets(targets)
     stash = Stash()
     if initial_stash:
       for name, qty in initial_stash.items():
@@ -100,10 +132,7 @@ class Chromosome:
     for t in range(MAX_TICKS):
       coins.tick()
 
-      for base_id in BASE_ITEM_IDS:
-        deficit = 9999 - stash.get(base_id)
-        if deficit > 0:
-          stash.add(base_id, deficit)
+      replenish_base_materials(stash)
 
       for i in range(NUM_CRAFTABLE):
         batch_size = int(genes[t, i])

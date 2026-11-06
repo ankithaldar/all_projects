@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Evaluate a trained RL agent and export its schedule to a file.'''
+'''Evaluate a trained RL agent and export its schedule to a file.
+
+Security:
+  Load trusted models only: SB3 load is pickle-equivalent (SEC-01).
+'''
 
 from __future__ import annotations
 
@@ -24,7 +28,12 @@ from src.agent.masked_agent import MaskedAgent
 def main() -> None:
   parser = argparse.ArgumentParser(description='Evaluate trained RL agent')
   parser.add_argument(
-    '--model', required=True, help='Path to saved model (.zip)'
+    '--model',
+    required=True,
+    help=(
+      'Path to saved model (.zip). trusted models only: '
+      'SB3 load is pickle-equivalent (SEC-01)'
+    )
   )
   parser.add_argument(
     '--config', default='config/training.yaml', help='Training config path'
