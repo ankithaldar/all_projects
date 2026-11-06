@@ -5,7 +5,10 @@ Baseline: 86 collected / 3 collection errors (missing
 truck_carton.env), 44 ruff errors, 47 pylint messages,
 48/48 files header-noncompliant. All audit teams FAIL.
 
-Final (Lead-verified, fresh runs): 237 passed,
+Final (Lead-verified, fresh runs): 277 passed
+(after fresh re-audit cycle found + fixed
+float-dims validation: models/placement/
+rotation now reject non-int dims),
 ruff check --ignore UP009 clean, pylint 9.95/10
 with 0 errors (.pylintrc untouched), 59/59 files
 match the mandated header spec exactly.
@@ -39,7 +42,8 @@ match the mandated header spec exactly.
 
 ## Team verdicts (final cycle, all 0-issue)
 
-- tester: PASS (237 passed, headers 59/59)
+- tester: PASS (277 passed, headers 60/60,
+  fresh cycle re-verified)
 - reviewer: PASS (0 blocker / 0 major)
 - security: PASS on High/Medium; anti-team
   security APPROVED

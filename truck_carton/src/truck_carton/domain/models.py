@@ -16,13 +16,19 @@ from truck_carton.packing.rotation import Rotation
 
 
 def _positive_dims(name: str, values: tuple) -> None:
-  '''Require every dim to be a positive number.'''
+  '''Require every dim to be a positive integer.
+
+  All non-int types are rejected, including bool and
+  float (even integral floats like 2.0), matching
+  Space3D._validate_place_args.'''
   for value in values:
     if isinstance(value, bool) or not isinstance(
-      value, (int, float, np.integer, np.floating),
+      value, (int, np.integer),
     ):
-      raise ValueError(f'{name} dims must be numbers')
-    if not math.isfinite(float(value)) or value <= 0:
+      raise ValueError(
+        f'{name} dims must be integers (got {value!r})'
+      )
+    if value <= 0:
       raise ValueError(f'{name} dims must be > 0 (got {value})')
 
 

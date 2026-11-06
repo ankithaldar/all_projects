@@ -19,6 +19,15 @@ from truck_carton.packing.rotation import (
 from truck_carton.packing.space3d import Space3D
 
 
+def _require_int_args(args: tuple) -> None:
+  '''Reject bool/non-int coords and dims with ValueError.'''
+  for value in args:
+    if isinstance(value, bool) or not isinstance(
+      value, (int, np.integer),
+    ):
+      raise ValueError(f'must be an integer (got {value!r})')
+
+
 @dataclass
 class PlacementCandidate:
   '''Placement Candidate.'''
@@ -59,6 +68,7 @@ class PlacementValidator:
     dh: int,
   ) -> bool:
     '''Check bounds.'''
+    _require_int_args((x, y, z, dl, dw, dh))
     return (
       dl > 0
       and dw > 0
@@ -213,6 +223,9 @@ class PlacementValidator:
     Returns:
       Tuple of (valid, violations).
     '''
+    _require_int_args(
+      (carton.length, carton.width, carton.height)
+    )
     self._carton_lookup = {}
     if all_cartons:
       self._carton_lookup = {c.carton_id: c for c in all_cartons}
@@ -256,6 +269,9 @@ class PlacementValidator:
     Returns:
       List of (x, y, z, rotation) positions.
     '''
+    _require_int_args(
+      (carton.length, carton.width, carton.height)
+    )
     self._carton_lookup = {}
     if all_cartons:
       self._carton_lookup = {c.carton_id: c for c in all_cartons}

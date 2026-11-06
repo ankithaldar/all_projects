@@ -37,6 +37,8 @@ def apply_rotation(
   length: int, w: int, h: int, rotation: Rotation
 ) -> tuple[int, int, int]:
   '''Apply rotation.'''
+  if isinstance(rotation, bool) or not isinstance(rotation, int):
+    raise ValueError(f'invalid rotation: {rotation!r}')
   dims = (length, w, h)
   try:
     perm = _ROTATION_PERMUTATIONS[rotation]
