@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 import types
+from contextlib import contextmanager
 from unittest import mock
 
 import numpy as np
@@ -127,6 +128,72 @@ from src.agent.masked_agent import (  # noqa: E402
   MaskedAgent,
   TierAgent,
 )
+
+
+class _RecordingMaskablePPO:
+  '''Recording stand-in for MaskablePPO.
+
+  Records every construction so tests can assert on the
+  arguments ``BaseMaskedAgent`` passes, whichever
+  ``MaskablePPO`` (stub or real) was imported.
+  '''
+
+  instances = []
+
+  def __init__(self, *args, **kwargs):
+    '''Record constructor arguments and predict state.'''
+    self.args = args
+    self.kwargs = kwargs
+    self.predict_calls = []
+    _RecordingMaskablePPO.instances.append(self)
+
+  def predict(self, obs, deterministic=True, action_masks=None):
+    '''Record the call and return a known action.
+
+    Args:
+      obs: Observation passed through from the agent.
+      deterministic: Determinism flag from the agent.
+      action_masks: Action masks passed through from the
+        agent.
+
+    Returns:
+      A known action array and an empty info dict.
+    '''
+    self.predict_calls.append(
+      {
+        'obs': obs,
+        'deterministic': deterministic,
+        'action_masks': action_masks,
+      }
+    )
+    return np.array([1]), {}
+
+
+class _RecordingActionMasker:
+  '''Recording stand-in for ActionMasker.'''
+
+  instances = []
+
+  def __init__(self, env, mask_fn):
+    '''Record the wrapped env and mask function.'''
+    self.env = env
+    self.mask_fn = mask_fn
+    _RecordingActionMasker.instances.append(self)
+
+
+@contextmanager
+def _patched_construction():
+  '''Patch model and wrapper with the recording fakes.
+
+  Yields:
+    Nothing; construction inside the block uses the fakes.
+  '''
+  with mock.patch(
+    'src.agent.masked_agent.MaskablePPO', _RecordingMaskablePPO
+  ), mock.patch(
+    'src.agent.masked_agent.ActionMasker', _RecordingActionMasker
+  ):
+    yield
 
 
 def _fake_logger():
@@ -349,11 +416,18 @@ class TestMaskedAgent:
     assert agent._config['policy'] == 'MultiInputPolicy'
 
   def test_predict_returns_action(self, env):
-    '''predict returns the model's action.'''
-    agent = MaskedAgent(env, _agent_config())
+    '''predict forwards obs and returns the model's action.'''
+    with _patched_construction():
+      agent = MaskedAgent(env, _agent_config())
     obs, _ = env.reset()
     action = agent.predict(obs)
     assert np.array_equal(action, np.array([1]))
+    assert agent.model is _RecordingMaskablePPO.instances[-1]
+    assert len(agent.model.predict_calls) == 1
+    call = agent.model.predict_calls[0]
+    assert call['obs'] is obs
+    assert call['deterministic'] is True
+    assert call['action_masks'] is None
 
   def test_train_uses_default_callbacks(self, env):
     '''train without callbacks builds the default list.'''
@@ -440,12 +514,19 @@ class TestTierAgent:
     assert agent.model is not None
 
   def test_predict_returns_action(self, env_config):
-    '''predict returns the model's action.'''
+    '''predict forwards obs and returns the model's action.'''
     tier_env = self._tier_env(env_config)
-    agent = TierAgent(tier_env, _agent_config())
-    assert np.array_equal(
-      agent.predict(tier_env.build_obs(0)), np.array([1])
-    )
+    with _patched_construction():
+      agent = TierAgent(tier_env, _agent_config())
+    obs = tier_env.build_obs(0)
+    action = agent.predict(obs)
+    assert np.array_equal(action, np.array([1]))
+    assert agent.model is _RecordingMaskablePPO.instances[-1]
+    assert len(agent.model.predict_calls) == 1
+    call = agent.model.predict_calls[0]
+    assert call['obs'] is obs
+    assert call['deterministic'] is True
+    assert call['action_masks'] is None
 
   def test_save_and_load(self, env_config):
     '''save delegates to the model and load rebuilds.'''
@@ -483,20 +564,16 @@ class TestSingleSourceMask:
 
   def test_wrapper_uses_compute_action_mask(self, env):
     '''The ActionMasker wrapper receives compute_action_mask.'''
-    from src.agent.masked_agent import (  # noqa: PLC0415
-      MaskablePPO,
-    )
-
-    instances_before = len(
-      getattr(MaskablePPO, 'instances', [])
-    )
-    MaskedAgent(env, _agent_config())
-    instance = MaskablePPO.instances[instances_before]
+    model_before = len(_RecordingMaskablePPO.instances)
+    wrapper_before = len(_RecordingActionMasker.instances)
+    with _patched_construction():
+      MaskedAgent(env, _agent_config())
+    instance = _RecordingMaskablePPO.instances[model_before]
+    assert instance.args[0] == 'MultiInputPolicy'
     wrapped = instance.args[1]
-    mask_fn = getattr(wrapped, 'mask_fn', None)
-    if mask_fn is None:
-      mask_fn = getattr(wrapped, '_action_mask_fn', None)
-    assert mask_fn is compute_action_mask
+    assert wrapped is _RecordingActionMasker.instances[wrapper_before]
+    assert wrapped.env is env
+    assert wrapped.mask_fn is compute_action_mask
 
 
 class TestSharedBase:
@@ -519,28 +596,24 @@ class TestSharedBase:
 
   def test_masked_agent_default_n_steps(self, env):
     '''MaskedAgent keeps its n_steps default of 2048.'''
-    from src.agent.masked_agent import (  # noqa: PLC0415
-      MaskablePPO,
-    )
-
-    before = len(getattr(MaskablePPO, 'instances', []))
-    MaskedAgent(env, _agent_config())
-    kwargs = MaskablePPO.instances[before].kwargs
-    assert kwargs['n_steps'] == 2048
-    assert kwargs['verbose'] == 1
+    before = len(_RecordingMaskablePPO.instances)
+    with _patched_construction():
+      agent = MaskedAgent(env, _agent_config())
+    instance = _RecordingMaskablePPO.instances[before]
+    assert agent.model is instance
+    assert instance.kwargs['n_steps'] == 2048
+    assert instance.kwargs['verbose'] == 1
 
   def test_tier_agent_default_n_steps(self, env_config):
     '''TierAgent keeps its n_steps default of 512.'''
-    from src.agent.masked_agent import (  # noqa: PLC0415
-      MaskablePPO,
-    )
-
     orch = TestTierAgent()._tier_env(env_config)
-    before = len(getattr(MaskablePPO, 'instances', []))
-    TierAgent(orch, _agent_config())
-    kwargs = MaskablePPO.instances[before].kwargs
-    assert kwargs['n_steps'] == 512
-    assert kwargs['verbose'] == 0
+    before = len(_RecordingMaskablePPO.instances)
+    with _patched_construction():
+      agent = TierAgent(orch, _agent_config())
+    instance = _RecordingMaskablePPO.instances[before]
+    assert agent.model is instance
+    assert instance.kwargs['n_steps'] == 512
+    assert instance.kwargs['verbose'] == 0
 
 
 class TestDocstrings:

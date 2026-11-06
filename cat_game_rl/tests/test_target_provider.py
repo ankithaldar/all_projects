@@ -3,6 +3,8 @@
 
 '''Tests for the target provider.'''
 
+# pylint: disable=redefined-outer-name
+
 from __future__ import annotations
 
 import pytest
@@ -10,6 +12,14 @@ import yaml
 
 from src.core.items import ItemId
 from src.core.target_provider import TargetProvider
+
+
+KNOWN_TARGETS = {
+  'gold': 14,
+  'amethyst': 65,
+  'necklace': 3,
+  'artifact': 6,
+}
 
 
 def _write_targets(tmp_path, targets):
@@ -20,12 +30,26 @@ def _write_targets(tmp_path, targets):
   return str(path)
 
 
+@pytest.fixture
+def target_provider(tmp_path) -> TargetProvider:
+  '''Provides a TargetProvider from known targets in a tmp file.
+
+  Local replacement for the conftest fixture so these tests do
+  not depend on the real config/targets.yaml values.
+  '''
+  path = _write_targets(tmp_path, KNOWN_TARGETS)
+  return TargetProvider(path)
+
+
 class TestTargetProvider:
   '''Tests for the target provider.'''
   def test_load(self, target_provider: TargetProvider):
     targets = target_provider.targets
     assert ItemId.GOLD in targets
     assert targets[ItemId.GOLD] == 14
+    assert targets[ItemId.AMETHYST] == 65
+    assert targets[ItemId.NECKLACE] == 3
+    assert targets[ItemId.ARTIFACT] == 6
 
   def test_deliver(self, target_provider: TargetProvider):
     target_provider.deliver(ItemId.GOLD, 5)

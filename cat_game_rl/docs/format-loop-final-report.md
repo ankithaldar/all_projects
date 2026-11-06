@@ -1,7 +1,8 @@
 # cat_game_rl Format Loop — Final Report
 
 **Date:** 2026-11-06
-**Verdict: PASS** — all gates Cycle 3 APPROVED/PASS, 0 blocking issues.
+**Verdict: PASS** — all gates Cycle 4 APPROVED/PASS, 0 blocking issues
+(Cycle 3 verdict below superseded; Cycle 4 evidence in §13).
 
 ## 1. What cat_game_rl does
 cat_game_rl is a crafting-game RL/GA experiment (`cat_game_rl/docs/architecture.md`): a Gymnasium `CraftingEnv` (obs via `ObservationBuilder`, actions via `ActionHandler`, 7-component `RewardShaper`) trains a MaskablePPO agent (`src/agent/`), a DEAP GA scheduler (`src/ga/`, NSGA-II, dense `(8064,19)` chromosome) optimizes the same core domain (`src/core/`: CraftingTree, Stash, CoinGenerator, SlotScheduler, CostCalculator, TargetProvider — numpy + pyyaml only), and a Streamlit dashboard (`src/dashboard/`) re-simulates schedules deterministically. Entry points: `scripts/train.py`, `scripts/evaluate.py`, `scripts/run_ga.py`, `scripts/launch_dashboard.py`. Multi-agent tier system (Tiers 1–8 via OrderBoard) is in `src/cat_game_env/multi_agent.py`.
@@ -91,3 +92,109 @@ Colab: open `cat_game_rl/notebooks/cat_game_rl_colab.ipynb`, follow cell 1 verif
 ## 12. Blind spots / assumptions
 - Evidence above is as reported by the Cycle 3 tester/adversarial gates and task context; this docs session did not re-run pytest/pylint/git (no shell access) and `.pylintrc` emptiness is taken from task context.
 - System python 3.14 / pytest 9.1.1 was used by tester (`.venv` has no pytest); pinned pytest 8.1.1 results may differ marginally.
+
+## 13. Cycle 4 — Colab fixes and final evidence
+
+**Verdict: PASS** — all gates Cycle 4 APPROVED/PASS, 0 blocking
+issues. Status: `.opencode/status.md` (Final PASS cycle4).
+
+### 13.1 Colab 11 failures — root causes
+
+The Colab run failed 11 tests that passed locally. Two root causes,
+both (test ↔ environment) mismatches, neither a production bug:
+
+1. **Real SB3 vs stub (`tests/test_agent_callbacks.py`).** Locally the
+   suite stubs `stable_baselines3` in `sys.modules` before importing
+   `masked_agent`; Colab runs the real SB3 2.3.2 stack, whose
+   constructor/`predict` wiring differs from the stub. Tests written
+   against the stub therefore failed under real SB3.
+2. **Remote config drift (`tests/test_target_provider.py`).**
+   Colab clones the remote branch, where `config/targets.yaml` on
+   commit `42c66e8` carries `gold: 13`. That config value is
+   intentional (user commit), but the test asserted against the
+   local config value, so it failed on the remote config. The
+   adversarial gate records the same baseline:
+   `git rev-parse --short HEAD` = `42c66e8`
+   (`.opencode/flaw-reports/cat_game_rl-adversarial-cycle4.md:2`).
+3. **Notebook cell 4 was a smoke pytest run**, not the full suite —
+   it surfaced the above failures as a subset, not a separate
+   notebook defect.
+
+### 13.2 Fixes (test-only)
+
+- `tests/test_agent_callbacks.py`: mock-based fakes
+  (`_RecordingMaskablePPO`, `_RecordingActionMasker`) replace only
+  the SB3 boundary; real `BaseMaskedAgent` code executes. New
+  assertions pin real wiring — `args[0]=='MultiInputPolicy'`,
+  `args[1] is wrapper`, `wrapped.env is env`,
+  `wrapped.mask_fn is compute_action_mask`,
+  `kwargs['n_steps']==2048/512`, `verbose==1/0`, predict forwarding
+  `call['obs'] is obs`, `deterministic is True`,
+  `action_masks is None` — replacing the old
+  `getattr(..., 'mask_fn', None) or getattr(..., '_action_mask_fn', None)`
+  fallback that could false-green. Diff: +111/-38.
+  (`.opencode/flaw-reports/cat_game_rl-adversarial-cycle4.md:18`)
+- `tests/test_target_provider.py`: config-independent fixture —
+  writes its own `KNOWN_TARGETS` YAML (gold 14, amethyst 65,
+  necklace 3, artifact 6) via `tmp_path`, decoupled from the real
+  `config/targets.yaml` (file-top `# pylint:
+  disable=redefined-outer-name` at line 6 allows the local
+  `target_provider` fixture to shadow `conftest.py:52`). Diff:
+  +24/-0. (ibid. `:18,22`)
+- No production, config, or dependency change:
+  `git diff -- src/ config/ pyproject.toml requirements.txt` = 0
+  lines; only the 2 test files changed. (ibid. `:6`)
+
+### 13.3 Gate verdicts Cycle 4
+
+| Gate | Verdict | File |
+|---|---|---|
+| anti-team-arch | APPROVED (lows A1/A2/T1) | `.opencode/critique-log/cat_game_rl-cycle-4-arch.md` |
+| anti-team-security | APPROVED | `.opencode/critique-log/cat_game_rl-cycle-4-security.md` |
+| reviewer | APPROVED (3 nits) | `.opencode/flaw-reports/cat_game_rl-reviewer-cycle4.md` |
+| tester | PASS (377 / 97.02% / 10.00) | `.opencode/flaw-reports/cat_game_rl-flaws-cycle4.md` |
+| security | APPROVED (3 Info) | `.opencode/flaw-reports/cat_game_rl-security-cycle4.md` |
+| adversarial | APPROVED (55 tests, test-only) | `.opencode/flaw-reports/cat_game_rl-adversarial-cycle4.md` |
+
+### 13.4 Final evidence (verbatim, from gate files)
+
+```bash
+cd cat_game_rl
+uv run pytest tests/ -q --cov=src --cov-report=term-missing --cov-fail-under=90
+# 377 passed, 1 warning in 63.94s, 0 failures/errors
+# TOTAL 1877 stmts, 56 miss, 97.02% — Required test coverage of 90% reached.
+
+python -m pytest tests/test_agent_callbacks.py tests/test_target_provider.py -q -p no:cacheprovider --no-cov
+# 55 passed in 1.68s (adversarial Cycle 4 subset)
+
+uv run --project cat_game_rl pylint --rcfile=.pylintrc cat_game_rl/src cat_game_rl/scripts cat_game_rl/tests
+# Your code has been rated at 10.00/10, exit 0, 0 messages
+```
+
+Sources: `.opencode/flaw-reports/cat_game_rl-flaws-cycle4.md:12-39`
+(tester), `.opencode/flaw-reports/cat_game_rl-adversarial-cycle4.md:7`
+(adversarial). The 1 warning is pre-existing and unrelated
+(`test_dashboard_utils.py` unknown-item schedule line).
+
+### 13.5 Push note (Colab)
+
+Colab clones the remote branch — it does not see local-only fixes.
+**Push the Cycle 4 test fixes before re-running the notebook**,
+otherwise Colab will reproduce the same 11 failures against the
+pre-fix remote (including the intentional `gold: 13` config on
+`42c66e8`).
+
+### 13.6 Assumptions / blind spots (Cycle 4 docs)
+
+- This docs session persisted verdicts from the task handoff summary
+  plus the two pre-existing gate files
+  (`.opencode/flaw-reports/cat_game_rl-{flaws,adversarial}-cycle4.md`,
+  preserved verbatim); it did not re-run pytest/pylint/git and did
+  not edit code/config/`.pylintrc`.
+- Reviewer 3 nits and security 3 Info items: counts and non-blocking
+  status are as reported in the handoff; per-item text was not in
+  the handoff and is recorded as tracked (not invented) in
+  `.opencode/flaw-reports/cat_game_rl-{reviewer,security}-cycle4.md`.
+- Anti-arch lows A1/A2/T1 and the Colab root-cause narrative are as
+  reported in the handoff, cross-checked against the adversarial
+  gate file (baseline `42c66e8`, test-only diff, 55 passed).
