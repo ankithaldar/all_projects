@@ -1027,3 +1027,27 @@ def test_audit_empty_quote_alone_is_not_a_value():
   from forecast_ml_framework.governance.audit import audit_log
   entry = audit_log('train', 'alice', {'note': 'password ""'})
   assert entry['details']['note'] == 'password ""'
+
+
+# --- high-fix: lineage set ordering determinism (RED) ---
+
+def test_config_hash_set_order_independent():
+  from forecast_ml_framework.governance.lineage import compute_config_hash
+  assert compute_config_hash({'s': {'b', 'a', 'c'}}, {}) == (
+    compute_config_hash({'s': {'c', 'a', 'b'}}, {}))
+  assert compute_config_hash({'s': {'b', 'a'}}, {}) == (
+    compute_config_hash({'s': ['a', 'b']}, {}))
+
+
+def test_config_hash_set_of_ints_sorted_numerically():
+  from forecast_ml_framework.governance.lineage import compute_config_hash
+  assert compute_config_hash({'s': {3, 1, 10, 2}}, {}) == (
+    compute_config_hash({'s': [1, 2, 3, 10]}, {}))
+
+
+def test_config_hash_nested_sets_in_lists_and_dicts():
+  from forecast_ml_framework.governance.lineage import compute_config_hash
+  left = {'a': [{'x', 'y'}], 'b': {'k': frozenset((2, 1))}}
+  assert compute_config_hash(left, {'p': {5, 4}}) == (
+    compute_config_hash({'a': [['x', 'y']], 'b': {'k': [1, 2]}},
+                        {'p': [4, 5]}))

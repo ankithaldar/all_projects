@@ -8,6 +8,15 @@ the EDA, monitoring, and interpretability nodes.
 '''
 
 
+def require_dict(value, label):
+  '''Return value as a dict, raising an informative ValueError.'''
+  if value is None:
+    return {}
+  if not isinstance(value, dict):
+    raise ValueError('%s must be a dict, got %r' % (label, value))
+  return value
+
+
 def flatten_params(params, key):
   '''Return params as a flat dict (None -> {}).
 

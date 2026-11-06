@@ -537,3 +537,18 @@ def test_no_local_params_dict_copies():
   for mod in (eda_nodes, mon_nodes, interp_nodes):
     assert not hasattr(mod, '_params_dict'), mod.__name__
     assert hasattr(mod, 'flatten_params'), mod.__name__
+
+
+# --- loop7 chart helpers dedupe (RED) ---
+
+def test_interpretability_chart_helpers_are_canonical():
+  '''_safe_fig/_new_fig/_pairs are modeling.charts objects.'''
+  from forecast_ml_framework.pipelines.interpretability import (
+    charts as interp_charts,
+  )
+  from forecast_ml_framework.pipelines.modeling import (
+    charts as modeling_charts,
+  )
+  assert interp_charts._safe_fig is modeling_charts._safe_fig
+  assert interp_charts._new_fig is modeling_charts._new_fig
+  assert interp_charts._pairs is modeling_charts._pairs

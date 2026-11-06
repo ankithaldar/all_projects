@@ -587,7 +587,8 @@ def test_settings_reject_oc_list_and_tuple_branches():
   assert cls is not None
   assert Path(settings.CONF_SOURCE).is_absolute()
   assert (Path(settings.CONF_SOURCE) / 'base' / 'catalog.yml').exists()
-  assert settings.HOOKS == ()
+  from forecast_ml_framework.hooks import ForecastHooks
+  assert ForecastHooks in settings.HOOKS
   assert settings.__all__ == [
     'CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']
   cls._reject_oc({'a': [1, 2], 'b': ('x', 'y'), 'c': 'plain'})

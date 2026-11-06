@@ -112,8 +112,9 @@ def test_main_entrypoint_fallback_to_kedro(monkeypatch):
 def test_settings_import_smoke():
   from pathlib import Path
   from forecast_ml_framework import settings
+  from forecast_ml_framework.hooks import ForecastHooks
   assert Path(settings.CONF_SOURCE).is_absolute()
-  assert settings.HOOKS == ()
+  assert ForecastHooks in settings.HOOKS
   assert settings.__all__ == ['CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']
   # Kedro is a declared dependency, so the loader class resolves.
   assert settings.CONFIG_LOADER_CLASS is not None

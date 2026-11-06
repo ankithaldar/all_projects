@@ -567,3 +567,185 @@ def test_health_caches_probe_on_app_instance():
             or getattr(app, '_health_cache', None)
             or getattr(app, 'health_cache', None))
   assert cached is not None
+
+
+# --- loop6 dict predictions (RED) ---
+
+def test_check_predictions_finite_dict_values():
+  import pytest
+  from forecast_ml_framework.serving.app import _check_predictions_finite
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite({'a': float('inf')})
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite({'a': [1.0, float('nan')]})
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite([{'a': float('-inf')}])
+  _check_predictions_finite({'a': [1.0, 2.0]})
+
+
+def test_predict_dict_nonfinite_output_500():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class DictInfModel:
+    def predict(self, rows):
+      return {'pred': [float('inf')]}
+
+  client = TestClient(create_app(lambda: DictInfModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}
+
+
+# --- loop7 serving finite (RED) ---
+
+def test_check_predictions_finite_numpy_decimal_complex():
+  import numpy as np
+  from decimal import Decimal
+  from forecast_ml_framework.serving.app import _check_predictions_finite
+  bad = [
+    np.float32(float('inf')),
+    np.float64(float('nan')),
+    np.array([1.0, np.float32(float('inf'))]),
+    np.array([Decimal('Infinity')], dtype=object),
+    Decimal('Infinity'),
+    Decimal('NaN'),
+    complex(float('inf'), 0.0),
+    complex(0.0, float('nan')),
+    np.complex128(complex(float('inf'), 0.0)),
+    {'a': np.float32(float('nan'))},
+    {'a': Decimal('-Infinity')},
+    {'a': [complex(0.0, float('inf'))]},
+    {'a': np.array([1.0, float('inf')])},
+    [np.float32(float('-inf'))],
+  ]
+  for value in bad:
+    with pytest.raises(ValueError, match='finite'):
+      _check_predictions_finite(value)
+  _check_predictions_finite(np.float32(1.0))
+  _check_predictions_finite(np.array([1.0, 2.0]))
+  _check_predictions_finite(Decimal('1.5'))
+  _check_predictions_finite(complex(1.0, 2.0))
+  _check_predictions_finite({'a': np.float32(1.0)})
+
+
+# --- loop8 None/pd.NA/non-string leaf (RED) ---
+
+def test_check_predictions_finite_none_and_pd_na():
+  import numpy as np
+  import pandas as pd
+  from forecast_ml_framework.serving.app import _check_predictions_finite
+  bad = [
+    None,
+    [None],
+    {'a': None},
+    [pd.NA],
+    {'a': pd.NA},
+    pd.NA,
+    np.array([None], dtype=object),
+    np.array([pd.NA], dtype=object),
+    [pd.NaT],
+    b'bytes',
+    [object()],
+  ]
+  for value in bad:
+    with pytest.raises(ValueError, match='finite'):
+      _check_predictions_finite(value)
+  _check_predictions_finite(['cat', 'dog'])
+  _check_predictions_finite({'a': 'cat'})
+  _check_predictions_finite('cat')
+
+
+def test_predict_none_output_500():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class NoneModel:
+    def predict(self, rows):
+      return [None for _ in rows]
+
+  client = TestClient(create_app(lambda: NoneModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}
+
+
+def test_predict_string_label_output_200():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class LabelModel:
+    def predict(self, rows):
+      return ['cat' for _ in rows]
+
+  client = TestClient(create_app(lambda: LabelModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 200
+  assert r.json() == {'predictions': ['cat']}
+
+
+# --- loop9 masked/generator (RED) ---
+
+def test_check_predictions_finite_masked_constant_raises():
+  import numpy as np
+  from forecast_ml_framework.serving.app import _check_predictions_finite
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite(np.ma.masked)
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite([np.ma.masked])
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite({'a': np.ma.masked})
+
+
+def test_check_predictions_finite_masked_array_raises_when_masked():
+  import numpy as np
+  from forecast_ml_framework.serving.app import _check_predictions_finite
+  masked = np.ma.array([1.0, 2.0], mask=[False, True])
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite(masked)
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite([masked])
+  clean = np.ma.array([1.0, 2.0], mask=[False, False])
+  _check_predictions_finite(clean)
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite(
+      np.ma.array([1.0, float('inf')], mask=[False, False]))
+
+
+def test_predict_generator_predictions_return_list():
+  from forecast_ml_framework.serving.app import _predict
+
+  class GenModel:
+    def predict(self, rows):
+      return (float(v) for v in [1.0, 2.0][:len(rows)])
+
+  assert _predict(GenModel(), [{'a': 1.0}, {'a': 2.0}]) == [1.0, 2.0]
+
+
+def test_predict_generator_http_200_not_empty():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class GenModel:
+    def predict(self, rows):
+      return (sum(row) for row in rows)
+
+  client = TestClient(create_app(lambda: GenModel()))
+  r = client.post('/predict', json={'features': {'a': 3.0}})
+  assert r.status_code == 200, r.text
+  assert r.json() == {'predictions': [3.0]}
+
+
+def test_predict_masked_output_500():
+  import numpy as np
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class MaskedModel:
+    def predict(self, rows):
+      return np.ma.masked
+
+  client = TestClient(create_app(lambda: MaskedModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}

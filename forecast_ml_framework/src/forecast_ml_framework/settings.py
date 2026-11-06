@@ -93,6 +93,12 @@ try:
 except ImportError:  # pragma: no cover - kedro optional at import
   CONFIG_LOADER_CLASS = None
 
+try:
+  from forecast_ml_framework.hooks import ForecastHooks
+
+  HOOKS = (ForecastHooks,)
+except ImportError:  # pragma: no cover - hooks optional at import
+  HOOKS = ()
+
 CONF_SOURCE = str(Path(__file__).resolve().parents[2] / 'conf')
-HOOKS = ()
 __all__ = ['CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']

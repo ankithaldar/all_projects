@@ -24,6 +24,9 @@ import logging
 import math
 import os
 
+from forecast_ml_framework.core.predictions import (
+  check_predictions_finite, materialize_predictions)
+
 try:
   from fastapi import FastAPI, HTTPException
   from pydantic import BaseModel, model_validator
@@ -81,9 +84,15 @@ else:
 
 def _to_list(value):
   '''Convert model output to a plain list.'''
+  if isinstance(value, dict):
+    return list(value.values())
   if hasattr(value, 'tolist'):
     return list(value.tolist())
   return list(value)
+
+
+_materialize_predictions = materialize_predictions
+_check_predictions_finite = check_predictions_finite
 
 
 def _records_from(request):
@@ -172,25 +181,6 @@ def _validate_records(model, records):
   return rows
 
 
-def _check_predictions_finite(predictions):
-  '''Raise ValueError when any numeric prediction is non-finite.'''
-  stack = list(predictions)
-  while stack:
-    value = stack.pop()
-    if isinstance(value, (list, tuple)):
-      stack.extend(value)
-    elif isinstance(value, bool):
-      continue
-    elif isinstance(value, (int, float)):
-      try:
-        number = float(value)
-      except OverflowError:
-        raise ValueError(
-            'predictions must be finite numbers') from None
-      if not math.isfinite(number):
-        raise ValueError('predictions must be finite numbers')
-
-
 def _predict(model, records):
   '''Run model prediction on records.
 
@@ -201,11 +191,14 @@ def _predict(model, records):
   '''
   rows = _validate_records(model, records)
   if hasattr(model, 'predict'):
-    predictions = _to_list(model.predict(rows))
+    raw = model.predict(rows)
   elif callable(model):
-    predictions = _to_list(model(records))
+    raw = model(records)
   else:
     raise TypeError('model must have predict() or be callable')
+  raw = _materialize_predictions(raw)
+  _check_predictions_finite(raw)
+  predictions = _to_list(raw)
   _check_predictions_finite(predictions)
   return predictions
 
@@ -475,11 +468,14 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
                           detail=str(exc)) from exc
     try:
       if hasattr(model, 'predict'):
-        predictions = _to_list(model.predict(rows))
+        raw = model.predict(rows)
       elif callable(model):
-        predictions = _to_list(model(records))
+        raw = model(records)
       else:
         raise TypeError('model must have predict() or be callable')
+      raw = _materialize_predictions(raw)
+      _check_predictions_finite(raw)
+      predictions = _to_list(raw)
       _check_predictions_finite(predictions)
     except Exception as exc:  # pylint: disable=broad-exception-caught
       # Log only; never leak model/internal detail to client.

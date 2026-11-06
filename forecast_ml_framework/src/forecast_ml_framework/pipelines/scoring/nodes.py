@@ -50,6 +50,7 @@ chunked-by-``batch_size`` path.
 import importlib
 import inspect
 import logging
+import math
 import os
 import warnings
 from datetime import datetime, timezone
@@ -58,6 +59,11 @@ import numpy as np
 import pandas as pd
 
 from forecast_ml_framework.core import spark_factory
+from forecast_ml_framework.core.predictions import (
+  check_predictions_finite, materialize_predictions)
+
+_check_predictions_finite = check_predictions_finite
+_materialize_predictions = materialize_predictions
 
 LOG = logging.getLogger(__name__)
 
@@ -561,6 +567,34 @@ def _calib_values(df, params):
   return None
 
 
+def _calibrate_probability(proba, real_rate, sample_rate):
+  '''Correct positive-class proba for prior-rate shift.
+
+  Prefers ``calibrate_probability`` from modeling.calibration
+  (vz-high Task 6); falls back to the same formula locally when
+  that module has not landed yet, so scoring still works.
+  Empty frames lack ``calib_proba`` (see :func:`_empty_predictions`).
+  '''
+  try:
+    from forecast_ml_framework.pipelines.modeling.calibration import (
+      calibrate_probability,
+    )
+    return np.asarray(
+        calibrate_probability(np.asarray(proba, dtype=float),
+                              float(real_rate), float(sample_rate)),
+        dtype=float)
+  except ImportError:
+    p = np.asarray(proba, dtype=float)
+    real_rate = float(real_rate)
+    sample_rate = float(sample_rate)
+    if real_rate == 0 or sample_rate == 0 or real_rate == sample_rate:
+      return p
+    numerator = p * real_rate / sample_rate
+    denominator = ((1.0 - p) * (1.0 - real_rate) / (1.0 - sample_rate)
+                   + numerator)
+    return np.clip(numerator / denominator, 0.0, 1.0)
+
+
 def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
                         defer_ntile=False):
   '''Score one pandas chunk, returning a predictions frame.
@@ -579,6 +613,17 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
   Returns:
     Predictions frame for this chunk (same schema as
     :func:`predict` output, minus tiles when deferred).
+
+  Threshold: when ``params['model_threshold']`` is present (not
+  None) and the task is classification, ``prediction`` is
+  ``(positive-class proba >= threshold).astype(int)`` for
+  binary ``predict_proba`` output; ``proba`` (positive-class
+  probability) is left unchanged. Multiclass or ``(n, 1)``
+  proba output warns and falls back to ``model.predict``.
+  When both ``real_rate`` and ``sample_rate`` are present, a
+  ``calib_proba`` column corrected via ``calibrate_probability``
+  is appended; ``proba``/``prediction`` are never mutated by
+  that correction.
   '''
   features = _feature_cols(df, params, id_cols)
   x = df[features] if features else df.drop(columns=id_cols)
@@ -609,7 +654,33 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
           'scoring input exceeds max_cols=%d: get_dummies '
           'expansion would produce %d columns'
           % (max_cols, expanded))
+    # Dummy-name collision check before expansion: distinct
+    # (column, category) pairs (or a dummy vs an existing
+    # column) can produce the same name, e.g. a/b_c and
+    # a_b/c both expand to a_b_c; get_dummies would then
+    # emit duplicate columns and silently misalign features.
+    expected_dummies = []
+    for col in cat_cols:
+      for cat in x[col].unique():
+        expected_dummies.append('%s_%s' % (col, cat))
+    seen_dummies = set()
+    for dummy in expected_dummies:
+      if dummy in seen_dummies:
+        raise ValueError(
+          'scoring OHE dummy name collision: duplicate dummy '
+          'column %r' % (dummy,))
+      seen_dummies.add(dummy)
+    existing = set(x.columns) - set(cat_cols)
+    for dummy in expected_dummies:
+      if dummy in existing:
+        raise ValueError(
+          'scoring OHE dummy name collision: dummy column %r '
+          'collides with existing column %r' % (dummy, dummy))
     x = pd.get_dummies(x, columns=cat_cols)
+    if len(set(x.columns)) != len(x.columns):
+      raise ValueError(
+        'scoring OHE dummy name collision: duplicate dummy '
+        'columns %r' % (list(x.columns),))
     # Re-check caps after expansion.
     if max_cols is not None and len(x.columns) > max_cols:
       raise ValueError(
@@ -621,22 +692,67 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
     if not np.isfinite(values).all():
       raise ValueError(
           'non-finite feature values in column %r' % (col,))
+  # Align to the model's fitted feature order when available:
+  # appearance order after get_dummies may differ from the
+  # order the model was fitted on, which would silently
+  # misalign features positionally. Missing fitted features
+  # are filled with 0; extra columns are dropped.
+  fitted_names = getattr(model, 'feature_names_in_', None)
+  if fitted_names is not None:
+    try:
+      fitted_list = list(fitted_names)
+    except TypeError:
+      fitted_list = None
+    if fitted_list:
+      x = x.reindex(columns=fitted_list, fill_value=0)
   pred_parts = []
   proba_parts = []
   is_classification = (
       _is_classification(params)
       and hasattr(model, 'predict_proba'))
+  params = params or {}
+  threshold_active = (
+      is_classification
+      and params.get('model_threshold') is not None)
+  threshold = _model_threshold(params) if threshold_active else None
   for start in range(0, len(x), chunk_size):
     chunk = x.iloc[start:start + chunk_size]
-    pred_parts.append(np.asarray(model.predict(chunk)))
     if is_classification:
-      proba_parts.append(_positive_class_proba(model.predict_proba(chunk)))
+      raw_proba = materialize_predictions(model.predict_proba(chunk))
+      _check_predictions_finite(raw_proba)
+      proba_parts.append(_positive_class_proba(raw_proba))
+      if threshold_active:
+        arr = np.asarray(raw_proba, dtype=float)
+        if arr.ndim == 2 and arr.shape[1] == 2:
+          pred_parts.append((arr[:, 1] >= threshold).astype(int))
+        elif arr.ndim == 1 and arr.size:
+          pred_parts.append((arr >= threshold).astype(int))
+        else:
+          warnings.warn(
+              'model_threshold is binary-only; predict_proba shape '
+              '%r is not binary, falling back to model.predict'
+              % (getattr(arr, 'shape', None),), stacklevel=2)
+          raw_pred = materialize_predictions(model.predict(chunk))
+          _check_predictions_finite(raw_pred)
+          pred_parts.append(np.asarray(raw_pred))
+      else:
+        raw_pred = materialize_predictions(model.predict(chunk))
+        _check_predictions_finite(raw_pred)
+        pred_parts.append(np.asarray(raw_pred))
+    else:
+      raw_pred = materialize_predictions(model.predict(chunk))
+      _check_predictions_finite(raw_pred)
+      pred_parts.append(np.asarray(raw_pred))
   preds = np.concatenate(pred_parts) if pred_parts else np.array([])
   proba = (np.concatenate(proba_parts) if proba_parts
            else np.full(len(df), np.nan, dtype=float))
   out = df[id_cols].copy() if id_cols else pd.DataFrame(index=df.index)
   out['prediction'] = preds
   out['proba'] = proba
+  if (is_classification and params.get('real_rate') is not None
+          and params.get('sample_rate') is not None):
+    out['calib_proba'] = _calibrate_probability(
+        proba, params['real_rate'], params['sample_rate'])
   score_values = proba if is_classification else preds
   try:
     score_arr = np.asarray(score_values, dtype=float)

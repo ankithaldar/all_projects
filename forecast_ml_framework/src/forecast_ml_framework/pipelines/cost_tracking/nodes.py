@@ -45,6 +45,10 @@ by model, env, and month; an empty list yields a zero summary.
 import logging
 import math
 
+from forecast_ml_framework.core.params import (
+  require_dict as _require_dict,
+)
+
 LOG = logging.getLogger(__name__)
 
 _BYTES_PER_GB = 1e9
@@ -64,15 +68,6 @@ _STORAGE_PRICE_KEYS = ('storage_price_per_gb_month',
                        'price_per_gb_month', 'storage_price_per_gb')
 _NESTED_KEYS = ('unit_prices', 'cost_tracking_params',
                 'cost_params')
-
-
-def _require_dict(value, label):
-  '''Return value as a dict, raising an informative ValueError.'''
-  if value is None:
-    return {}
-  if not isinstance(value, dict):
-    raise ValueError('%s must be a dict, got %r' % (label, value))
-  return value
 
 
 def _nested_params(params):

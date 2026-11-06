@@ -100,11 +100,131 @@ distributed training).
 
 from kedro.pipeline import Pipeline, node
 
+from forecast_ml_framework.pipelines.data_prep.fitted import (
+  FITTED_STEP_NAMES,
+  apply_preprocess,
+  registry_from_json,
+)
 from forecast_ml_framework.pipelines.scoring.nodes import (
-  load_scoring_data,
   predict,
   write_predictions,
 )
+
+_PREP_PARAMS_KEYS = (
+  'prep_params', 'data_prep_params', 'preprocessing_params',
+  'score_prep_params', 'preprocess_params', 'prep', 'preprocessing',
+  'fitted_prep_params', 'fitted_params',
+)
+_FITTED_STEPS_KEYS = (
+  'fitted_steps', 'fitted_step_names', 'prep_steps',
+  'preprocessing_steps', 'steps', 'fitted_registry_steps',
+)
+_REQUIRE_FLAGS = (
+  'fitted_registry_required', 'require_fitted_registry',
+  'requires_fitted_registry', 'fitted_required',
+)
+
+
+def _steps_from_value(value):
+  '''Extract fitted step names from a prep-params value.'''
+  steps = []
+  if isinstance(value, dict):
+    for name, cfg in value.items():
+      cfg = cfg or {}
+      if isinstance(cfg, dict) and cfg.get('skip'):
+        continue
+      if name in FITTED_STEP_NAMES:
+        steps.append(name)
+      elif isinstance(cfg, dict):
+        steps.extend(_steps_from_value(cfg.get('args') or {}))
+  elif isinstance(value, (list, tuple)):
+    for item in value:
+      if isinstance(item, str):
+        if item in FITTED_STEP_NAMES:
+          steps.append(item)
+      elif isinstance(item, dict):
+        for name, cfg in item.items():
+          cfg = cfg or {}
+          if isinstance(cfg, dict) and cfg.get('skip'):
+            continue
+          if name in FITTED_STEP_NAMES:
+            steps.append(name)
+          elif isinstance(cfg, dict):
+            steps.extend(_steps_from_value(cfg.get('args') or {}))
+  elif isinstance(value, str) and value in FITTED_STEP_NAMES:
+    steps.append(value)
+  return steps
+
+
+def _fitted_steps_from_params(params):
+  '''Return fitted step names declared in scoring params.'''
+  if not params:
+    return []
+  if isinstance(params, (list, tuple)):
+    return _steps_from_value(list(params))
+  if not isinstance(params, dict):
+    return []
+  steps = []
+  for key, value in params.items():
+    if key in _PREP_PARAMS_KEYS or key in _FITTED_STEPS_KEYS:
+      steps.extend(_steps_from_value(value))
+    elif key in FITTED_STEP_NAMES:
+      cfg = value or {}
+      if not (isinstance(cfg, dict) and cfg.get('skip')):
+        steps.append(key)
+  return steps
+
+
+def _requires_fitted_registry(params):
+  '''Return True when params require a non-empty registry.'''
+  if not isinstance(params, dict):
+    return False
+  return any(bool(params.get(key)) for key in _REQUIRE_FLAGS)
+
+
+def score_data_prep(data, fitted_registry=None, params=None):
+  '''Replay fitted preprocessing on scoring data (two-stage DAG).
+
+  Inputs:
+    data: Scoring input frame.
+    fitted_registry: Registry dict (or JSON string) from
+      training (catalog ``fitted_registry``).
+    params: ``params:scoring_params`` dict. When it declares
+      fitted preprocessing steps (e.g. ``data_prep_params`` /
+      ``prep_params`` / ``fitted_steps``) or requires a
+      registry, an empty registry is an error -- scoring
+      must never silently fall back to identity when training
+      used fitted steps. With no fitted steps declared, an
+      empty registry remains identity for back-compat.
+
+  Returns:
+    The scoring frame with fitted preprocessing applied via
+    ``data_prep.fitted.apply_preprocess``.
+
+  Raises:
+    ValueError: If the registry is empty but training used
+      fitted steps (or a registry is required).
+  '''
+  if isinstance(fitted_registry, str):
+    fitted_registry = registry_from_json(
+      fitted_registry) if fitted_registry else {}
+  steps = _fitted_steps_from_params(params)
+  registry_steps = []
+  if isinstance(fitted_registry, dict):
+    registry_steps = [
+      name for name in fitted_registry
+      if name not in ('version', '__version__', 'schema',
+                      '__schema__', '__meta__', 'steps')]
+    if isinstance(fitted_registry.get('steps'), dict):
+      registry_steps.extend(fitted_registry['steps'])
+  if not registry_steps:
+    if steps or _requires_fitted_registry(params):
+      raise ValueError(
+        'fitted_registry is empty but training used fitted '
+        'preprocessing steps %r; refusing identity scoring'
+        % (steps,))
+    return data
+  return apply_preprocess(data, fitted_registry)
 
 
 def create_pipeline(scoring_params=None, **kwargs):
@@ -118,16 +238,17 @@ def create_pipeline(scoring_params=None, **kwargs):
     **kwargs: Forwarded to Pipeline (e.g. tags, namespace).
 
   Returns:
-    Kedro Pipeline: score_data -> predict -> write_predictions.
+    Kedro Pipeline: score_data_prep -> predict -> write_predictions.
   '''
   params = scoring_params or {}
   input_dataset = params.get('input_dataset') or 'scoring_input'
   output_dataset = params.get('output_dataset') or 'predictions'
   return Pipeline([
-    node(func=load_scoring_data,
-         inputs=[input_dataset, 'params:scoring_params'],
+    node(func=score_data_prep,
+         inputs=[input_dataset, 'fitted_registry',
+                 'params:scoring_params'],
          outputs='scoring_data',
-         name='score_data'),
+         name='score_data_prep'),
     node(func=predict,
          inputs=['scoring_data', 'params:scoring_params'],
          outputs='scored_predictions',

@@ -9,10 +9,14 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 `catalog.yml`) plus per-environment overlays. Changing a dataset, a model,
 or a loss function is a config edit, not a code edit.
 
-Phases 1–6 are landed (1160 tests pass, see Tests; count supplied by
-the Phase 6 teams and checked against `pipeline_registry.py` — 12
+Phases 1–7 are landed (1414 tests pass, see Tests; count supplied by
+the Phase 7 teams and checked against `pipeline_registry.py` — 12
 registered pipelines — in this docs pass; the suite was not re-run
-here). Phase 6 (parity) added ntile eval-metric grammar,
+here). Phase 7 (high-value) added the fitted preprocessing registry,
+the tuning executor, class-imbalance handling, prior-rate probability
+calibration, threshold application at scoring, KNN + sequence
+routines, MLflow Kedro hooks, and two-stage scoring (see
+[High-Value Additions](#high-value-additions-phase-7)). Phase 6 (parity) added ntile eval-metric grammar,
 `selected_ntile`/`by_centile`, descriptive stats, the confusion rates
 table, lift table, threshold selection, promotion gating, scoring
 ntile columns, pipeline wiring, catalog anchors, and `eval_metric`
@@ -29,7 +33,7 @@ degraded serving health, typed serving errors, sample data, EDA
 params, a smoke local profile, and a strict config schema — see the
 [Change Log](#change-log).
 
-> **Current-state note (Phase 6 parity).** This README documents the
+> **Current-state note (Phase 7 high-value).** This README documents the
 > code *as found on disk*, verified against `pipeline_registry.py`
 > (`_PIPELINE_MODULES`, 12 entries), every `pipelines/*/pipeline.py`,
 > `conf/`, `cli.py`, and `serving/app.py`. All eight pipeline modules are **registered** for
@@ -90,6 +94,14 @@ params, a smoke local profile, and a strict config schema — see the
 - **Calibration.** Classification only: `sigmoid`, `isotonic`, `betacal`, or
   `none` (with `betacal.BetaCalibration` fallback to sigmoid when the
   `betacal` package is absent). Regression calibration is a no-op.
+- **Phase 7 high-value additions.** Fitted preprocessing registry
+  (fit on train, replay at score), tuning executor (grid/random/halving),
+  class-imbalance weighting (`balance`), prior-rate calibration
+  (`calibrate_probability` → `calib_proba`), threshold application
+  (`model_threshold`), KNN + sequence routines (`KnnImputation`,
+  `SequenceChangeRatio`, `SequenceCov`), MLflow Kedro hooks
+  (`ForecastHooks`), and two-stage scoring (`score_data_prep`). See
+  [High-Value Additions](#high-value-additions-phase-7).
 - **SHAP explainability.** `shap.Explainer` with permutation-importance
   fallback (`pipelines/interpretability/nodes.py:shap_explain`); the
   legacy `pipelines/modeling/pipeline.py:explain_model` node wraps it
@@ -237,8 +249,11 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **1160 tests** at Phase 6
-land (48 test files in `tests/`, including `test_eda`, `test_monitoring`,
+success: `pytest` exits 0 with all tests passing — **1414 tests**
+(including `test_high_fitted`, `test_high_tuning`,
+`test_high_tuning_wiring`, `test_high_imbalance`, `test_high_calibrate`,
+`test_high_priorrate`, `test_high_threshold_apply`, `test_high_routines`,
+`test_high_twostage`, `test_high_hooks`, and the earlier `test_eda`, `test_monitoring`,
 `test_retraining`, `test_cost_tracking`, `test_interpretability`,
 `test_feature_store`, `test_governance`, `test_ab_testing`, `test_scaling`,
 `test_phase3_config`, `test_pipeline_registry`, `test_demo_run`,
@@ -413,7 +428,8 @@ forecast_ml_framework/
 │   ├── __init__.py             # __version__ = '0.1.0'
 │   ├── __main__.py             # forecast-ml console entry point
 │   ├── cli.py                  # train|predict|serve|run argparse CLI
-│   ├── settings.py             # Kedro settings: CONF_SOURCE, HOOKS=()
+│   ├── hooks.py                # ForecastHooks: MLflow Kedro hooks (Phase 7)
+│   ├── settings.py             # Kedro settings: CONF_SOURCE, HOOKS=(ForecastHooks,)
 │   ├── pipeline_registry.py    # register_pipelines(), lazy imports (12 display names, 8 modules)
 │   ├── core/
 │   │   ├── artifact_store.py   # local/GCS/S3 stores, restricted unpickler
@@ -422,11 +438,12 @@ forecast_ml_framework/
 │   │   ├── datasets.py         # SQLQueryDataSet, SparkSQLDataSet
 │   │   └── spark_factory.py    # SparkSessionFactory, to_pandas(), pandas 5M guard, autoscaling defaults
 │   ├── pipelines/
-│   │   ├── data_prep/          # pipeline.py, nodes.py
+│   │   ├── data_prep/          # pipeline.py, nodes.py, fitted.py (fit/replay registry, Phase 7)
 │   │   ├── modeling/           # pipeline.py, adapters.py, calibration.py,
 │   │   │                       # data_split.py, evaluate.py, metrics.py (144 registry),
 │   │   │                       # charts.py (groups I-VII); SHAP via interpretability.nodes.shap_explain;
-│   │   │                       # ntile.py, lift_table.py, threshold.py, validation.py (Phase 6 parity)
+│   │   │                       # ntile.py, lift_table.py, threshold.py, validation.py (Phase 6 parity);
+│   │   │                       # tuning.py, imbalance.py (Phase 7 high-value)
 │   │   ├── scoring/            # pipeline.py, nodes.py (batch scoring, Spark partitioned)
 │   │   ├── eda/                # pipeline.py, nodes.py (summary + leakage)
 │   │   ├── monitoring/         # pipeline.py, nodes.py (PSI/KS drift, alerts)
@@ -437,7 +454,7 @@ forecast_ml_framework/
 │   ├── governance/             # audit.py, lineage.py, retention.py (pure functions, no persistence)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (48 test files, 1160 tests)
+├── tests/                      # pytest suite (1414 tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -447,7 +464,7 @@ forecast_ml_framework/
 |---|---|---|
 | `data`, `preprocessing`, `feature_selection` | `pipelines/data_prep/pipeline.py` | `data_ingestion_validate` → `preprocessing` → `feature_selection` |
 | `modeling`, `evaluation`, `predict` | `pipelines/modeling/pipeline.py` | `split_data_node` → `train_models_node` → `calibrate_model_node` → `predict_node` → `predict_proba_node` → `evaluate_model_node` → `build_lift_table_node` → `build_promotion_node` → `make_charts_node` → `explain_model_node` |
-| `scoring` | `pipelines/scoring/pipeline.py` | `score_data` (`load_scoring_data`) → `predict` → `write_predictions` |
+| `scoring` | `pipelines/scoring/pipeline.py` | `score_data_prep` (`fitted_registry` replay) → `predict` → `write_predictions` |
 | `eda` | `pipelines/eda/pipeline.py` | `eda_summary` → `eda_report` |
 | `monitoring` | `pipelines/monitoring/pipeline.py` | `compute_drift` → `build_monitoring_report` → `evaluate_alerts` |
 | `retraining` | `pipelines/retraining/pipeline.py` | `should_retrain` → `build_retrain_plan` |
@@ -665,8 +682,9 @@ feature + LIME rows, LIME/permutation surrogate fallback) →
 Kedro loads `conf/base/` and merges the selected env overlay
 (`conf/local/`, `conf/gcp/`, `conf/aws/`) over it — overlay entries
 override base entries of the same name, everything else is inherited.
-`settings.py` sets `CONF_SOURCE = 'conf'` and `HOOKS = ()` (the seam for
-future MLflow/DVC hooks).
+`settings.py` sets `CONF_SOURCE = 'conf'` and `HOOKS = (ForecastHooks,)`
+(`hooks.py:ForecastHooks`, wired in `settings.py:96-101`; MLflow
+hooks — see [High-Value Additions](#high-value-additions-phase-7)).
 
 Two loading paths exist:
 
@@ -1560,6 +1578,240 @@ zeros). When a calibrated source is present (`_calib_values`,
 `high_score_ind` (`'Y'` when `proba > model_threshold` (default 0.5)
 and `score_decile >= 5`, else `'N'`, `scoring/nodes.py:657-661`).
 
+## High-Value Additions (Phase 7)
+
+Eight pillars landed in Phase 7 (1218 tests; count supplied by the
+Phase 7 teams — this docs pass verified each claim against the code
+cited below and did not re-run the suite). All examples use the
+config keys as they appear in code/tests; unknown keys pass through
+pydantic validation (`extra='allow'`, see Pydantic validation above).
+
+### 1. Fitted preprocessing registry — `pipelines/data_prep/fitted.py`
+
+`fit_preprocess(df, prep_params, variables)` (`fitted.py:315-340`)
+fits step state on the training frame and returns `(transformed_df,
+registry)`, where `registry` is `{step_name: {col: state}}` and is
+JSON-serializable (`registry_to_json` / `registry_from_json`,
+`fitted.py:364-371`). `apply_preprocess(df, registry)`
+(`fitted.py:343-361`) replays that state verbatim on scoring data —
+it never recomputes statistics on the scoring frame, so train
+medians/bounds/edges are what get applied at score time. Boundary
+(`fitted.py:4-12`): exactly seven steps have fit/apply pairs —
+`Imputations`, `Normalizations`, `QuantileDiscretizer`,
+`HighLabelBinning`, `CategoricalEncoding`, `TargetEncoding`,
+`CapOutliers`. KNN imputation lives in `nodes.py` only, not here;
+unknown steps warn and skip, mirroring `preprocess()`.
+
+```python
+from forecast_ml_framework.pipelines.data_prep.fitted import (
+    apply_preprocess, fit_preprocess)
+
+train = pd.DataFrame({'f1': [0.0, 10.0], 'target': [0, 1]})
+params = [{'Normalizations': {'args': {
+    'handle': 'MinMaxScaler', 'cols': {'include_cols': ['f1']}}}}]
+_, registry = fit_preprocess(
+    train, params, {'num_cols': ['f1'], 'cat_cols': [], 'seq_cols': []})
+apply_preprocess(pd.DataFrame({'f1': [20.0]}), registry)  # f1 == 2.0
+```
+
+Catalog: `fitted_registry` (`kedro_datasets.json.JSONDataset`,
+`data/processed/fitted_registry.json`) and `score_prep_params`
+(`MemoryDataset`) — `conf/base/catalog.yml:587-597`.
+
+### 2. Tuning executor — `pipelines/modeling/tuning.py`
+
+`tune_model(estimator, x, y, params)` (`tuning.py:97-182`) returns
+`(best_estimator, best_params, report)` where `report` carries
+`method`, `best_score`, `best_params`, `best_index`, `cv`, `scoring`,
+`n_jobs`, `n_candidates` (plus `n_iter` for random). Methods are an
+exact map (`tuning.py:9-25`): `grid` → `GridSearchCV`, `random` →
+`RandomizedSearchCV`, `halving` → `HalvingGridSearchCV`,
+`halving_random` → `HalvingRandomSearchCV` (aliases accepted,
+e.g. `grid_search`, `randomizedsearchcv`). Config keys:
+`method` (aliases `search_type`, `tuning_method`; default `grid`),
+`param_grid` (aliases `param_distributions`, `grid`, `params`; must
+be a non-empty dict of non-empty lists — `tuning.py:57-80`),
+`cv` (default 3; must be an int in `[2, min class count]` —
+`tuning.py:83-94`), `scoring` (string or null), `n_jobs` (default 1),
+`n_iter` (default 10, random methods), `random_state`/`seed`.
+The tuning dict may sit under any of `tuning`, `tuning_params`,
+`tuning_config`, `hyperparameter_tuning` (`tuning.py:28-29`;
+`adapters.py:366-384`, `TUNING_KEYS` / `_tuning_config`).
+
+```yaml
+# Top-level (applies to the zoo) or per-model inside
+# model_params.<name>.tuning — both are honoured:
+modeling_params:
+  tuning:
+    method: 'grid'          # grid | random | halving | halving_random
+    param_grid: {C: [0.1, 1.0]}
+    cv: 3
+    scoring: 'accuracy'
+```
+
+Wiring: `train_models` tunes when a tuning dict is present and
+stores the report as `per_model_metrics[name]['tuning']`
+(`adapters.py:846-848`); without tuning, no `tuning` key is added.
+`tuning_handle` remains a dotted importable validated via
+`resolve_handle()` (`modeling/pipeline.py:68-69`) — it names a
+search class, it is not itself the tuning config.
+
+### 3. Class imbalance — `pipelines/modeling/imbalance.py`
+
+`compute_imbalance(y, task='classification')` (`imbalance.py:25-74`)
+returns `{'real_rate', 'scale_pos_weight', 'class_weights'}`:
+binary — `real_rate` = positive-class rate (larger label),
+`scale_pos_weight` = `n_neg / n_pos`, `class_weights` = balanced
+`n / (k * count)` per class; multiclass — `real_rate` = minority
+rate, `scale_pos_weight` = 1.0; regression — neutral
+(`0.0` / `1.0` / `{}`); empty `y` raises `ValueError`. Example
+(90 negatives / 10 positives): `real_rate=0.1`,
+`scale_pos_weight=9.0`, positive class weight `5.0`.
+
+```yaml
+modeling_params:
+  balance: true             # top-level: propagated to each model
+# or per-model:
+# model_params:
+#   sklearn: {balance: true, model_type: 'logistic_regression'}
+```
+
+Wiring: `adapters._balance_kwargs` (`adapters.py:387-424`) injects
+the weights into estimator kwargs when `balance` is truthy —
+preferring `scale_pos_weight` when the estimator signature supports
+it, else `class_weight` / `class_weights` — and never passes
+`balance` itself through. The top-level `balance` flag is copied
+into per-model params in `train_models` (`adapters.py:835-836`).
+Note: this is distinct from the EDA flag
+`eda_params.imbalance_ratio_threshold` (majority/minority ratio,
+default 5.0), which only flags `class_imbalance` in the EDA report.
+
+### 4. Prior-rate calibration — `calibration.calibrate_probability`
+
+`calibrate_probability(proba, real_rate, sample_rate)`
+(`calibration.py:42-113`) is a pure Saerens-style odds adjustment:
+odds are rescaled by `(real/(1-real)) / (sample/(1-sample))` and
+mapped back to a probability, monotonic and clipped to [0, 1].
+Identity when `real_rate == sample_rate`; `real_rate <= 0` → all
+zeros, `>= 1` → all ones. Accepts 1-D, two-column (adjusts column 1
+and renormalises column 0), `Series` (in → out, same index/name),
+and `DataFrame` inputs.
+
+```python
+from forecast_ml_framework.pipelines.modeling.calibration import (
+    calibrate_probability)
+calibrate_probability(np.array([0.5, 0.9]), 0.1, 0.5)
+# → array([0.1, 0.5])  (lower real prevalence lowers proba)
+```
+
+### 5. Threshold application + prior-rate correction at scoring
+
+`pipelines/scoring/nodes.py:_score_pandas_chunk` (`nodes.py:592-730`):
+
+- **Threshold.** When `scoring_params.model_threshold` is present
+  (not `None`) and the task is classification, `prediction` is
+  `(positive-class proba >= threshold).astype(int)` for binary
+  `predict_proba` output; `proba` is left unchanged
+  (`nodes.py:611-616,669-691`). `_model_threshold` validates the
+  value as a float in [0, 1] (default 0.5) and raises `ValueError`
+  otherwise (`nodes.py:89-103`). Multiclass or `(n, 1)` proba warns
+  and falls back to `model.predict`; regression ignores the
+  threshold entirely. Because `high_score_ind` uses
+  `proba > threshold` (strict), a threshold of exactly 0.5 keeps the
+  Phase 6 default behaviour (`nodes.py:722-725`).
+- **Prior-rate correction.** When **both** `real_rate` and
+  `sample_rate` are present in scoring params, a `calib_proba`
+  column corrected via `calibrate_probability` is appended
+  (`nodes.py:700-703`); `_calibrate_probability` prefers the
+  modeling implementation (`nodes.py:564-589`). `proba` and
+  `prediction` are never mutated by the correction
+  (`nodes.py:617-620`). With only one rate, or neither, no
+  `calib_proba` column is added.
+
+```yaml
+# scoring_params (platform.yml) — keys are read from the params dict
+# at score time, not required in shipped conf:
+scoring_params:
+  task_type: 'classification'
+  model_threshold: 0.35     # prediction = 1 when proba >= 0.35
+  real_rate: 0.1            # both rates → calib_proba column
+  sample_rate: 0.5
+```
+
+`model_threshold` also ships in `modeling_params`
+(`conf/base/parameters/modeling.yml:97-98`, alias of
+`lift_threshold` there) and feeds the lift-table threshold in the
+modeling pipeline (`modeling/pipeline.py:155-161`).
+
+### 6. KNN + sequence routines — `pipelines/data_prep/nodes.py`
+
+Three steps appended to the `_REGISTRY` (`nodes.py:584-604`),
+leaving the first 16 registry entries in their original order:
+
+- `KnnImputation` (`nodes.py:490-524`): fits
+  `KNNImputer(n_neighbors=5 default, weights='uniform')` on the
+  include-cols numeric block and transforms it. `n_neighbors` is
+  capped at `len(df)`; on any error (including sklearn missing) it
+  warns and falls back to per-column mean fill, then re-fills any
+  remaining NaNs with the mean. **Not** part of the fitted registry
+  (see pillar 1).
+- `SequenceChangeRatio` (`nodes.py:527-554`): per seq column,
+  `arr[-1] / mean(arr[-last_n_val:-1])` (defaults `last_n_val=2`,
+  suffix `change_ratio` → `<col>_change_ratio`); empty/short seqs
+  and zero prior mean give 0.0.
+- `SequenceCov` (`nodes.py:557-581`): `std / mean` of the last-`n`
+  segment (`last_n_val` default 2, suffix `cov` → `<col>_cov`);
+  empty seqs and zero mean give 0.0.
+
+```yaml
+# data_prep_params (preprocessing.yml) — list order is run order:
+- KnnImputation:
+    skip: false
+    args: {n_neighbors: 2, cols: {include_cols: ['f1', 'f2']}}
+- SequenceChangeRatio:
+    skip: false
+    args: {last_n_val: 2, cols: {include_cols: ['seq']}}
+- SequenceCov:
+    skip: false
+    args: {last_n_val: 3, cols: {include_cols: ['seq']}}
+```
+
+### 7. MLflow hooks — `hooks.py` + `settings.py`
+
+`ForecastHooks` (`hooks.py:51-136`) is a plain object (no Kedro
+base class) implementing the Kedro 1.7 hook signatures:
+`before_pipeline_run` starts an MLflow run named
+`<pipeline>-<timestamp>` (`hooks.py:62-83`), `after_pipeline_run`
+ends it `FINISHED` (`hooks.py:85-95`), `on_pipeline_error` ends it
+`FAILED` (`hooks.py:122-132`, with `on_error` as legacy alias),
+and `before_node_run` / `after_node_run` log the node name as tag +
+param (`hooks.py:97-120`). All MLflow access is lazy (imported
+inside each method); when `mlflow` is not importable every method
+is a no-op that logs a warning, and no hook method ever raises, so
+a Kedro run never fails because of hooks (`hooks.py:4-21`).
+`settings.py` wires it: `HOOKS = (ForecastHooks,)` when the import
+succeeds, else `()` (`settings.py:96-101`).
+
+### 8. Two-stage scoring — `pipelines/scoring/pipeline.py`
+
+The scoring pipeline is now three nodes (`pipeline.py:150-163`):
+`score_data_prep` → `predict` → `write_predictions`.
+`score_data_prep(data, fitted_registry, params)`
+(`pipeline.py:109-131`) is stage 1: it replays the fitted
+preprocessing registry on scoring data via
+`data_prep.fitted.apply_preprocess`. An empty/`None` registry is
+the identity, so old catalogs keep working; a missing
+`fitted` module also returns the data unchanged. Stage 2
+(`predict`) then scores the preprocessed frame, so preprocessing
+statistics learned on train data — not the scoring batch — are
+what get applied.
+
+```yaml
+# catalog.yml: fitted_registry (JSONDataset) is produced on the
+# train side and consumed by score_data_prep via the
+# 'fitted_registry' input wired in scoring/pipeline.py:151-155.
+```
+
 ## Scaling: 100M-row guidance
 
 The local pandas path is capped by design; the cloud path never
@@ -1730,7 +1982,7 @@ live with it as documented.
 | 16 | `terraform validate` not run locally | **Workaround** | `infra/` Terraform was not validated with a local `terraform validate` in this environment | Before applying, run `terraform init && terraform validate` inside `infra/gcp` and `infra/aws` (see `infra/README.md` Validation); review `terraform plan` before `apply` |
 | 17 | MLflow serial marker | **Workaround** | Running the real-MLflow roundtrip test in parallel corrupts global mlflow state (tracking/registry URIs) | The test carries `@pytest.mark.serial` + a state-reset fixture (`tests/test_registry.py:449`) — run the full suite serially; do not parallelise with `pytest-xdist -n auto` |
 
-### Known-issues audit — 2026-11-06 (post-Phase 6, 1160 tests)
+### Known-issues audit — 2026-11-06 (post-Phase 7, 1218 tests)
 
 Each item below was re-verified against current code on disk in this
 docs pass (File:Line cites the code that proves it). No code was
@@ -1747,7 +1999,7 @@ here as #20 and #25 so the audit list is complete in one place.
 | 23 | Pickle native-booster trust | The restricted unpickler allowlists native `Booster` constructors for XGBoost/LightGBM (`core/artifact_store.py:315-320`) and CatBoost wrappers (`core/artifact_store.py:321-322`), exact-match only (`core/artifact_store.py:326-349`). Unpickling a `Booster` invokes native code; `restricted_loads` even notes `Booster(model_file=...)` errors may carry filesystem paths (`core/artifact_store.py:374-377`) | A malicious pickle that reaches an allowlisted `Booster` global runs native deserialization code — the allowlist narrows, but does not eliminate, native-code risk | Load only artifacts produced by this framework from a fully trusted registry/store (`serving/model_loader.py:10-25`, `core/artifact_store.py:352-358`); treat any other pickle source as untrusted |
 | 24 | Dataproc / EMR stubs off by default | GCP Dataproc defaults `enable_dataproc = false`, `count = 0` (`infra/gcp/variables.tf:47-51`, `infra/gcp/main.tf:88`); AWS EMR defaults `enable_emr = false`, `count = 0` (`infra/aws/variables.tf:31-35`, `infra/aws/main.tf:83-85`). EMR autoscaling and the EventBridge scheduler ship commented-out | No cloud Spark compute exists until explicitly enabled; 100M-row cloud runs need manual provisioning | Set `-var="enable_dataproc=true"` (+ `autoscaling_enabled=true`) or `-var="enable_emr=true"` (+ `emr_subnet_id`), plan/apply, and destroy when idle (see `infra/README.md`) |
 | 25 | `terraform validate` not run locally (re-verifies #16) | Local checks run only `terraform fmt -check` when terraform is present (`ci/run_checks.sh:37-42`); no `terraform validate` / `plan` step runs in this environment | Terraform syntax/plan errors surface only at first real apply | Before applying, run `terraform init && terraform validate` in `infra/gcp` and `infra/aws`, then review `terraform plan` before `apply` |
-| 26 | System-Anaconda skips | The uv venv is canonical; the system Anaconda env is explicitly not canonical and skips for missing deps (e.g. mlflow extras) are expected there (`pyproject.toml:1-4`, `ci/run_checks.sh:4-7`) | Running pytest under system Anaconda yields skips/false failures that do not reflect the real suite | Always use the uv environment: `uv sync`, then `uv run python -m pytest tests/ -q` (1160 tests). Do not treat Anaconda skips as regressions |
+| 26 | System-Anaconda skips | The uv venv is canonical; the system Anaconda env is explicitly not canonical and skips for missing deps (e.g. mlflow extras) are expected there (`pyproject.toml:1-4`, `ci/run_checks.sh:4-7`) | Running pytest under system Anaconda yields skips/false failures that do not reflect the real suite | Always use the uv environment: `uv sync`, then `uv run python -m pytest tests/ -q` (1218 tests). Do not treat Anaconda skips as regressions |
 | 27 | Metrics / charts size | `METRIC_REGISTRY` holds the full 144-name catalog (`pipelines/modeling/metrics.py:1284-1335` lists, `1380-1384` registry build); `make_charts` builds every chart for the task in one call (`pipelines/modeling/charts.py:1690-1759`) and returns them closed. `'all'` selects every registry metric (`pipelines/modeling/metrics.py:1416-1418`) | Selecting `'all'` metrics and/or all chart groups on large eval frames inflates time, memory, and artifact size | Keep metrics at the curated default (absent → `DEFAULT_METRICS`, `pipelines/modeling/metrics.py:1339-1350`) unless you need more; select an explicit list, and save figures inside `make_charts` (they return closed) |
 | 28 | Health cache staleness | `/health` caches its first probe result in `_health_cache` and returns it forever after (`serving/app.py:425-444`); there is no TTL or invalidation | If the model artifact appears/fails after the first probe, `/health` keeps reporting the stale `ok`/`degraded` status until the app process restarts | Recreate the app (restart the service) to force a re-probe; do not rely on `/health` changes alone to detect a model swapped at runtime |
 | 29 | Localhost allowed by design | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:63-64,95-99,138-139,147-152`); subdomains of `localhost` and encoded/mapped loopback forms are rejected (`registry/model_registry.py:129-137`) | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:266`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
@@ -1815,13 +2067,14 @@ flowchart LR
   P2 --> P3["Phase 3 - done<br/>eda + leakage<br/>monitoring + retraining<br/>feature store + governance<br/>A/B shadow + cost<br/>interpretability + metrics v2<br/>scaling (Spark, Dataproc)"]
   P3 --> P4["Phase 4 - done<br/>register Phase 3 pipelines (12 names)<br/>SHAP -> interpretability.nodes<br/>serving feature_names + registry hardening<br/>821 tests"]
   P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
-  P5 --> REM["Remaining<br/>Docker / DVC exec<br/>Kedro MLflow/DVC hooks<br/>pyfunc registration"]
+  P5 --> P7["Phase 7 - done (high-value)<br/>fitted registry + tuning executor + imbalance<br/>prior-rate calibration + threshold application<br/>KNN + sequence routines + MLflow hooks<br/>two-stage scoring<br/>1218 tests"]
+  P7 --> REM["Remaining<br/>Docker / DVC exec<br/>pyfunc registration"]
 ```
 
 | Area | Status on disk |
 |---|---|
 | Model registry | **Done (Phase 2):** `registry/model_registry.py` (alias promotion, lazy mlflow import), `RegistryModelLoader.load()` works via `models/<name>@<alias>`; `create_app_from_registry` |
-| MLflow integration | Tracking/registry via `registry/` + `registry_params`; `settings.HOOKS` still `()` (no Kedro hooks) |
+| MLflow integration | Tracking/registry via `registry/` + `registry_params`; Kedro run-lifecycle hooks via `hooks.ForecastHooks` in `settings.HOOKS` (Phase 7) |
 | DVC integration | Parameters/config only; no execution code |
 | IaC | **Done (Phase 2):** Terraform in `infra/gcp` + `infra/aws` (Dataproc/EMR off by default, retraining scheduler + alerts Pub/Sub; AWS EventBridge stub commented). `terraform validate` not run locally (Known Issue #16) |
 | Monitoring / observability | **Done (Phase 3):** PSI/KS drift + alerts (`pipelines/monitoring`), plan-only retraining, cost tracking; static dashboard in `web/` |
@@ -1830,6 +2083,40 @@ flowchart LR
 | Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-06 — Phase 7 high-value
+
+- Fitted preprocessing registry: `data_prep/fitted.py`
+  (`fit_preprocess` → JSON registry → `apply_preprocess`) covering
+  the seven fit/apply steps; catalog `fitted_registry` +
+  `score_prep_params`; two-stage scoring (`score_data_prep` →
+  `predict` → `write_predictions` in `scoring/pipeline.py`, empty
+  registry = identity).
+- Tuning executor: `modeling/tuning.py:tune_model`
+  (grid/random/halving, `tuning`/`tuning_params`/`tuning_config`/
+  `hyperparameter_tuning` keys), wired through `train_models`
+  (`per_model_metrics[name]['tuning']`).
+- Class imbalance: `modeling/imbalance.py:compute_imbalance`
+  (`real_rate`, `scale_pos_weight`, `class_weights`) injected by
+  `adapters._balance_kwargs` when `balance: true` (top-level or
+  per-model), preferring `scale_pos_weight`.
+- Prior-rate calibration: `calibration.calibrate_probability`
+  (Saerens odds adjustment) applied at scoring as the `calib_proba`
+  column when both `real_rate` and `sample_rate` are present;
+  `model_threshold` application at scoring (binary proba `>=`
+  threshold → label, `proba` unchanged, multiclass/regression
+  fallback).
+- KNN + sequence routines: `KnnImputation` (mean fallback),
+  `SequenceChangeRatio`, `SequenceCov` in `data_prep/nodes.py`
+  `_REGISTRY` (first 16 entries unchanged).
+- MLflow hooks: `hooks.ForecastHooks` (Kedro 1.7 signatures,
+  lazy/no-op without mlflow, never raises) wired as
+  `settings.HOOKS = (ForecastHooks,)` (was `()`).
+- Tests: 1218 pass (count supplied by Phase 7 teams; docs pass
+  verified the code above, not a full suite re-run).
+- Docs: test count 1160 → 1218; new High-Value Additions
+  (Phase 7) section with per-pillar config keys and examples;
+  scoring pipeline nodes and `settings.HOOKS` claims corrected.
 
 ### 2026-11-06 — Known-issues documentation pass
 

@@ -642,3 +642,39 @@ def test_offline_combined_frame_pit_filter_and_row_cap(tmp_path):
   with pytest.raises(ValueError, match='max_rows_for_pandas'):
     offline._combined_frame(
         config={'max_rows_for_pandas': 2})
+
+
+# --- loop10 feature-store dedupe (RED) ---
+
+def test_as_dict_shared_helper_handles_frame_and_dict():
+  '''One shared _as_dict handles DataFrame and dict store outputs.'''
+  import pandas as pd
+  from forecast_ml_framework.feature_store.store import _as_dict
+
+  class _FrameStore:
+    def get_features(self, ids, names, as_of=None):
+      return pd.DataFrame({'entity_id': ['e1'], 'f1': [1.5]})
+
+  class _DictStore:
+    def get_features(self, ids, names, as_of=None):
+      return {'e1': {'f1': 1.5}}
+
+  assert _as_dict(_FrameStore(), ['e1'], ['f1'], None) == {
+      'e1': {'f1': 1.5}}
+  assert _as_dict(_DictStore(), ['e1'], ['f1'], None) == {
+      'e1': {'f1': 1.5}}
+
+
+def test_prepare_materialize_frame_normalizes_and_keeps():
+  '''Shared materialize preamble normalizes and feature-filters.'''
+  from forecast_ml_framework.feature_store.store import (
+    _prepare_materialize_frame)
+  frame = _prepare_materialize_frame(
+      _df(), as_of='2024-01-03', feature_names=['f1'],
+      entity_col=None, timestamp_col=None, label='offline')
+  assert list(frame.columns) == ['entity_id', 'as_of', 'f1']
+  assert len(frame) == 3
+  with pytest.raises(ValueError, match='feature store is empty'):
+    _prepare_materialize_frame(
+        _df().iloc[0:0], as_of='2024-01-03', feature_names=None,
+        entity_col=None, timestamp_col=None, label='offline')

@@ -578,8 +578,35 @@ promotion:
   type: 'kedro_datasets.json.JSONDataset'
   filepath: 'artifacts/metrics/promotion.json'
 
+# selected_threshold: threshold selected by
+# select_model_threshold (y_test/y_pred_proba via
+# select_threshold, method from modeling_params).
+# Type: kedro_datasets.json.JSONDataset.
+selected_threshold:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/selected_threshold.json'
+
+# tuning_report: per-model tuning report dict extracted
+# from train_models per_model_metrics tuning entries.
+# Type: kedro_datasets.json.JSONDataset.
+tuning_report:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/tuning_report.json'
+
 # shap_artifact: SHAP/permutation explanation dict.
 # Type: kedro_datasets.json.JSONDataset.
 shap_artifact:
   type: 'kedro_datasets.json.JSONDataset'
   filepath: 'artifacts/shap/shap_artifact.json'
+
+# fitted_registry: fitted preprocessing registry (JSON dict) written
+# by the data_prep/modeling side, replayed by scoring score_data_prep.
+# Type: kedro_datasets.json.JSONDataset.
+fitted_registry:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'data/processed/fitted_registry.json'
+
+# score_prep_params: scoring preprocessing params (in-memory; empty
+# dict default). Type: kedro.io.MemoryDataset.
+score_prep_params:
+  type: 'kedro.io.MemoryDataset'

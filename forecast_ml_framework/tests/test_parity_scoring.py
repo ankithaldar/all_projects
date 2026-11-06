@@ -4,6 +4,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from forecast_ml_framework.pipelines.scoring.nodes import (
   _score_pandas_chunk,
@@ -259,3 +260,245 @@ def test_task_alias_cls_scores_as_classification():
                             ['id'], 1000)
   assert 'high_score_ind' in out.columns
   assert not out['proba'].isna().all()
+
+
+# --- high-fix: OHE collision + feature_names_in_ alignment (RED) ---
+
+def test_ohe_dummy_name_collision_raises():
+  '''a/b_c vs a_b/c both expand to a_b_c -> ValueError.'''
+  import pytest
+  df = pd.DataFrame({'id': [1, 2], 'a': ['b_c', 'b_c'],
+                     'a_b': ['c', 'c']})
+  with pytest.raises(ValueError, match='a_b_c|collision|duplicate'):
+    _score_pandas_chunk(df, _FakeRegressor([0.0, 1.0]),
+                        {'task_type': 'regression'}, ['id'], 1000)
+
+
+def test_ohe_dummy_collides_with_existing_column_raises():
+  '''Dummy a_b collides with existing numeric column a_b.'''
+  import pytest
+  df = pd.DataFrame({'id': [1, 2], 'a': ['b', 'b'],
+                     'a_b': [1.0, 2.0]})
+  with pytest.raises(ValueError, match='a_b|collision|duplicate'):
+    _score_pandas_chunk(df, _FakeRegressor([0.0, 1.0]),
+                        {'task_type': 'regression'}, ['id'], 1000)
+
+
+class _RecordingRegressor:
+  '''Regressor recording column order it was called with.'''
+
+  def __init__(self, feature_names):
+    self.feature_names_in_ = list(feature_names)
+    self.seen_columns = []
+
+  def predict(self, x):
+    self.seen_columns.append(list(x.columns))
+    return np.zeros(len(x), dtype=float)
+
+
+def test_scoring_aligns_to_feature_names_in_order():
+  '''Expanded/present columns reordered to model fitted order.'''
+  df = pd.DataFrame({'id': [1, 2], 'f1': [10.0, 20.0],
+                     'f2': [1.0, 2.0]})
+  model = _RecordingRegressor(['f2', 'f1'])
+  _score_pandas_chunk(df, model, {'task_type': 'regression'},
+                      ['id'], 1000)
+  assert model.seen_columns
+  assert model.seen_columns[0] == ['f2', 'f1']
+
+
+def test_scoring_fills_missing_feature_names_in_with_zero():
+  '''Missing fitted feature is filled with 0, order preserved.'''
+  captured = {}
+
+  class _MissingRegressor:
+    feature_names_in_ = ('f2', 'f_missing', 'f1')
+
+    def predict(self, x):
+      captured['columns'] = list(x.columns)
+      captured['missing'] = list(x['f_missing'])
+      return np.zeros(len(x), dtype=float)
+
+  df = pd.DataFrame({'id': [1, 2], 'f1': [10.0, 20.0],
+                     'f2': [1.0, 2.0]})
+  _score_pandas_chunk(df, _MissingRegressor(),
+                      {'task_type': 'regression'}, ['id'], 1000)
+  assert captured['columns'] == ['f2', 'f_missing', 'f1']
+  assert captured['missing'] == [0, 0]
+
+
+def test_scoring_ohe_aligns_to_feature_names_in_order():
+  '''OHE expansion order follows feature_names_in_, not appearance.'''
+  captured = {}
+
+  class _OheRegressor:
+    feature_names_in_ = ('cat_b', 'f1', 'cat_a')
+
+    def predict(self, x):
+      captured['columns'] = list(x.columns)
+      return np.zeros(len(x), dtype=float)
+
+  df = pd.DataFrame({'id': [1, 2], 'cat': ['a', 'b'],
+                     'f1': [3.0, 4.0]})
+  _score_pandas_chunk(df, _OheRegressor(),
+                      {'task_type': 'regression'}, ['id'], 1000)
+  assert captured['columns'] == ['cat_b', 'f1', 'cat_a']
+
+
+# --- loop8 non-finite predictions (RED) ---
+
+class _BadPredictionRegressor:
+  '''Regressor returning a fixed non-finite / bad prediction.'''
+
+  def __init__(self, value):
+    self._value = value
+
+  def predict(self, x):
+    n = len(x)
+    value = self._value
+    if isinstance(value, dict):
+      return {'a': [value['a']] * n}
+    if isinstance(value, np.ndarray):
+      return np.full(n, value.flat[0], dtype=value.dtype)
+    return [value] * n
+
+
+def test_nonfinite_predictions_raise():
+  '''nan/inf/Decimal/complex/np predictions raise ValueError.'''
+  import pytest
+  from decimal import Decimal
+  bad = [
+    float('nan'),
+    float('inf'),
+    float('-inf'),
+    Decimal('Infinity'),
+    Decimal('NaN'),
+    complex(float('inf'), 0.0),
+    complex(0.0, float('nan')),
+    np.float32(float('nan')),
+    np.float64(float('inf')),
+    np.array([float('inf')]),
+    np.array([np.float32(float('nan'))], dtype=object),
+    {'a': float('inf')},
+    {'a': np.float32(float('nan'))},
+    [float('nan')],
+  ]
+  for value in bad:
+    with pytest.raises(ValueError, match='finite'):
+      _score_pandas_chunk(_frame(5), _BadPredictionRegressor(value),
+                          {'task_type': 'regression'}, ['id'], 1000)
+
+
+def test_nonfinite_proba_raises():
+  '''Non-finite predict_proba output raises ValueError.'''
+  import pytest
+
+  class _BadProbaClassifier:
+    def predict(self, x):
+      return np.zeros(len(x), dtype=int)
+
+    def predict_proba(self, x):
+      return np.column_stack(
+          [np.full(len(x), float('inf')), np.full(len(x), 0.0)])
+
+  with pytest.raises(ValueError, match='finite'):
+    _score_pandas_chunk(_frame(5), _BadProbaClassifier(),
+                        {'task_type': 'classification'}, ['id'], 1000)
+
+
+def test_string_predictions_pass():
+  '''String class-label predictions are finite-checked as labels.'''
+  class _StringClassifier:
+    def predict(self, x):
+      return ['yes', 'no'] * (len(x) // 2) + (['yes'] if len(x) % 2 else [])
+
+    def predict_proba(self, x):
+      pos = np.linspace(0.05, 0.95, len(x))
+      return np.column_stack([1 - pos, pos])
+
+  out = _score_pandas_chunk(_frame(4), _StringClassifier(),
+                            {'task_type': 'classification'}, ['id'], 1000)
+  assert out['prediction'].tolist() == ['yes', 'no', 'yes', 'no']
+
+
+# --- loop9 scoring masked (RED) ---
+
+def test_scoring_masked_predictions_raise():
+  import pytest
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _check_predictions_finite,
+  )
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite(np.ma.masked)
+  with pytest.raises(ValueError, match='finite'):
+    _check_predictions_finite(
+      np.ma.array([1.0, 2.0], mask=[False, True]))
+
+
+def test_scoring_masked_array_clean_passes_and_masked_model_raises():
+  import pytest
+
+  class _MaskedRegressor:
+    def predict(self, x):
+      return np.ma.array([1.0] * len(x))
+
+  class _MaskedBadRegressor:
+    def predict(self, x):
+      return np.ma.masked
+
+  out = _score_pandas_chunk(_frame(3), _MaskedRegressor(),
+                            {'task_type': 'regression'}, ['id'], 1000)
+  assert out['prediction'].tolist() == [1.0, 1.0, 1.0]
+  with pytest.raises(ValueError, match='finite'):
+    _score_pandas_chunk(_frame(3), _MaskedBadRegressor(),
+                        {'task_type': 'regression'}, ['id'], 1000)
+
+
+# --- loop10 generator scoring (RED) ---
+
+def test_scoring_generator_predict_regression():
+  '''Generator predict output is materialized once, not consumed.'''
+
+  class _GenRegressor:
+    def predict(self, x):
+      return (float(v) for v in [1.0, 2.0, 3.0][:len(x)])
+
+  out = _score_pandas_chunk(_frame(3), _GenRegressor(),
+                            {'task_type': 'regression'}, ['id'], 1000)
+  assert out['prediction'].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_scoring_generator_proba_and_predict_classification():
+  '''Generator proba+predict outputs are materialized once.'''
+
+  class _GenClassifier:
+    def predict(self, x):
+      return (int(v) for v in [0, 1, 0][:len(x)])
+
+    def predict_proba(self, x):
+      rows = [[0.9, 0.1], [0.2, 0.8], [0.7, 0.3]][:len(x)]
+      return (row for row in rows)
+
+  out = _score_pandas_chunk(_frame(3), _GenClassifier(),
+                            {'task_type': 'classification'}, ['id'], 1000)
+  assert out['prediction'].tolist() == [0, 1, 0]
+  assert out['proba'].tolist() == [0.1, 0.8, 0.3]
+
+
+def test_predictions_canonical_home_in_core():
+  '''Serving and scoring share the single core predictions check.'''
+  from forecast_ml_framework.core import predictions as core_pred
+  from forecast_ml_framework.pipelines.scoring import nodes as scoring
+  from forecast_ml_framework.serving import app as serving
+
+  assert serving._check_predictions_finite is (
+      core_pred.check_predictions_finite)
+  assert scoring._check_predictions_finite is (
+      core_pred.check_predictions_finite)
+  assert serving._materialize_predictions is (
+      core_pred.materialize_predictions)
+  assert core_pred.materialize_predictions(
+      (v for v in [1.0, 2.0])) == [1.0, 2.0]
+  core_pred.check_predictions_finite([1.0, 2.0])
+  with pytest.raises(ValueError, match='finite'):
+    core_pred.check_predictions_finite([float('inf')])

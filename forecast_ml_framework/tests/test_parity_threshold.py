@@ -144,3 +144,78 @@ def test_threshold_unknown_method_warns():
       y_true, proba, 'not_a_method') == 0.5
   assert caught
   assert issubclass(caught[0].category, UserWarning)
+
+
+def test_threshold_2d_binary_proba_extracts_positive_column():
+  '''(n, 2) proba extracts column 1 like 1-D proba.'''
+  y_true, proba = _separable()
+  proba2 = np.column_stack([1 - proba, proba])
+  for method in ('pr_curve', 'roc_curve', 'mcc_curve',
+                 'ks_statistics'):
+    assert select_threshold(y_true, proba2, method) == (
+        select_threshold(y_true, proba, method))
+
+
+def test_threshold_2d_single_column_proba_squeezes():
+  '''(n, 1) proba is treated as 1-D proba.'''
+  y_true, proba = _separable()
+  assert select_threshold(y_true, proba.reshape(-1, 1),
+                          'pr_curve') == select_threshold(
+                              y_true, proba, 'pr_curve')
+
+
+def test_threshold_multiclass_proba_returns_half_and_warns():
+  '''Multiclass (n, k>2) proba returns 0.5 with a warning.'''
+  import warnings
+  y_true, proba = _separable()
+  proba3 = np.column_stack([proba * 0.3, proba * 0.3, proba * 0.4])
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter('always')
+    assert select_threshold(y_true, proba3, 'pr_curve') == 0.5
+  assert caught
+  assert issubclass(caught[0].category, UserWarning)
+
+
+def test_threshold_multiclass_y_returns_half_and_warns():
+  '''Multiclass y_true returns 0.5 with a warning, never crashes.'''
+  import warnings
+  y_true = np.array([0, 1, 2] * 20)
+  proba = np.linspace(0.1, 0.9, 60)
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter('always')
+    assert select_threshold(y_true, proba, 'roc_curve') == 0.5
+  assert caught
+  assert issubclass(caught[0].category, UserWarning)
+
+
+def test_threshold_2d_length_mismatch_raises():
+  '''(n, 2) proba with mismatched rows raises ValueError.'''
+  import pytest
+  y_true, proba = _separable()
+  proba2 = np.column_stack([1 - proba, proba])
+  with pytest.raises(ValueError, match='length'):
+    select_threshold(y_true[:-1], proba2, 'pr_curve')
+
+
+def test_threshold_string_labels_return_half_and_warn():
+  '''Non-numeric binary labels return 0.5 with warning, not crash.'''
+  import warnings
+  y_true = np.array(['a', 'b'] * 25)
+  proba = np.linspace(0.1, 0.9, 50)
+  for method in ('pr_curve', 'roc_curve', 'mcc_curve',
+                 'ks_statistics'):
+    with warnings.catch_warnings(record=True) as caught:
+      warnings.simplefilter('always')
+      assert select_threshold(y_true, proba, method) == 0.5
+    assert caught
+
+
+def test_threshold_y_row_vector_returns_half_and_warn():
+  '''y_true shaped (1, n) returns 0.5 with warning, not crash.'''
+  import warnings
+  y_true, proba = _separable()
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter('always')
+    assert select_threshold(y_true.reshape(1, -1), proba,
+                            'ks_statistics') == 0.5
+  assert caught

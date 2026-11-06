@@ -33,6 +33,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from forecast_ml_framework.pipelines.modeling.charts import (
+  _new_fig,
+  _pairs,
+  _safe_fig,
   cooks_distance,
   cv_scores_box,
   decision_boundary,
@@ -86,56 +89,6 @@ __all__ = [
   'tree_plot',
   'validation_curve',
 ]
-
-
-def _safe_fig(fn):
-  '''Wrap a chart fn: never raise, always close figure.
-
-  Returns the (closed) Figure or None; only figures
-  created by a failing call are closed on exception.
-  '''
-  def wrapper(*args, **kwargs):
-    '''Call the wrapped chart function safely.
-
-    Args:
-      *args: Positional arguments forwarded to fn.
-      **kwargs: Keyword arguments forwarded to fn.
-
-    Returns:
-      The (closed) Figure from fn, or None on error.
-    '''
-    before = set(plt.get_fignums())
-    fig = None
-    try:
-      fig = fn(*args, **kwargs)
-      return fig
-    except Exception:  # noqa: BLE001 - charts skip bad data
-      for num in set(plt.get_fignums()) - before:
-        plt.close(num)
-      return None
-    finally:
-      if fig is not None:
-        plt.close(fig)
-  return wrapper
-
-
-def _new_fig(title):
-  '''Create a figure with a title.'''
-  fig, ax = plt.subplots()
-  ax.set_title(title)
-  return fig, ax
-
-
-def _pairs(y_true, y_pred):
-  '''Return finite (true, pred) arrays of size >= 5.'''
-  yt = np.asarray(y_true, dtype=float).ravel()
-  yp = np.asarray(y_pred, dtype=float).ravel()
-  if yt.size != yp.size or yt.size < 5:
-    return None
-  mask = np.isfinite(yt) & np.isfinite(yp)
-  if mask.sum() < 5:
-    return None
-  return yt[mask], yp[mask]
 
 
 def _matrix(shap_values, feature_names=None):

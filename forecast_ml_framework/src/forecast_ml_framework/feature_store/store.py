@@ -177,10 +177,58 @@ def _check_not_empty(dataframe):
         'feature store is empty')
 
 
-def _offline_as_dict(offline, entity_ids, feature_names, when):
-  '''Read offline features as ``{entity: {feature: value}}``.'''
-  out = offline.get_features(
-      entity_ids, feature_names, as_of=when)
+def _prepare_materialize_frame(dataframe, as_of=None,
+                               feature_names=None, entity_col=None,
+                               timestamp_col=None, label=''):
+  '''Shared materialize preamble for offline/online stores.
+
+  Checks non-empty, normalizes to canonical ``entity_id`` /
+  ``as_of`` columns (naive UTC), re-checks emptiness, and
+  feature-filters. ``label`` names the store in the empty
+  error (``'offline'`` / ``'online'``).
+
+  Args:
+    dataframe: Source DataFrame.
+    as_of: Fallback timestamp when the frame has none.
+    feature_names: Optional feature columns to keep.
+    entity_col: Entity column override.
+    timestamp_col: Timestamp column override.
+    label: Store label for the empty-frame error.
+
+  Returns:
+    Normalized frame with only entity/as_of/requested columns.
+
+  Raises:
+    ValueError: When the frame is empty before or after
+      normalization.
+  '''
+  _check_not_empty(dataframe)
+  frame = _naive_utc_frame(_normalize_frame(
+      dataframe, as_of=as_of, entity_col=entity_col,
+      timestamp_col=timestamp_col))
+  if frame.empty:
+    store_label = f'{label} ' if label else ''
+    raise ValueError(
+        'cannot materialize empty dataframe: '
+        f'{store_label}feature store is empty')
+  if feature_names is not None:
+    keep = [ENTITY_COL, 'as_of'] + [
+        name for name in feature_names if name in frame.columns]
+    frame = frame[keep].copy()
+  return frame
+
+
+def _as_dict(store, entity_ids, feature_names, when):
+  '''Read features from ``store`` as ``{entity: {feature: value}}``.
+
+  Handles both store shapes: a dict return is copied with
+  stringified keys; a DataFrame return is row-mapped on
+  ``entity_id``. This is the single implementation behind
+  :func:`_offline_as_dict` and :func:`_online_as_dict`.
+  '''
+  out = store.get_features(entity_ids, feature_names, as_of=when)
+  if isinstance(out, dict):
+    return {str(k): dict(v) for k, v in out.items()}
   result = {}
   try:
     import pandas as pd
@@ -188,30 +236,19 @@ def _offline_as_dict(offline, entity_ids, feature_names, when):
       for _, row in out.iterrows():
         result[str(row[ENTITY_COL])] = {
             name: row[name] for name in feature_names}
-      return result
   except Exception:
     pass
-  if isinstance(out, dict):
-    return {str(k): dict(v) for k, v in out.items()}
   return result
+
+
+def _offline_as_dict(offline, entity_ids, feature_names, when):
+  '''Read offline features as ``{entity: {feature: value}}``.'''
+  return _as_dict(offline, entity_ids, feature_names, when)
 
 
 def _online_as_dict(online, entity_ids, feature_names, when):
   '''Read online features as ``{entity: {feature: value}}``.'''
-  out = online.get_features(
-      entity_ids, feature_names, as_of=when)
-  if isinstance(out, dict):
-    return {str(k): dict(v) for k, v in out.items()}
-  result = {}
-  try:
-    import pandas as pd
-    if isinstance(out, pd.DataFrame):
-      for _, row in out.iterrows():
-        result[str(row[ENTITY_COL])] = {
-            name: row[name] for name in feature_names}
-  except Exception:
-    pass
-  return result
+  return _as_dict(online, entity_ids, feature_names, when)
 
 
 def check_consistency(offline, online, entity_ids, feature_names,

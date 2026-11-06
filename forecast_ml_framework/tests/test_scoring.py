@@ -233,15 +233,52 @@ def test_write_predictions_empty_warns_not_crashes(caplog):
   assert any('empty' in r.message.lower() for r in caplog.records)
 
 
+def test_score_data_prep_empty_registry_with_fitted_steps_raises():
+  from forecast_ml_framework.pipelines.scoring.pipeline import (
+    score_data_prep,
+  )
+  params = {'data_prep_params': [{'Normalizations': {'args': {}}}]}
+  with pytest.raises(ValueError, match='fitted_registry'):
+    score_data_prep(_frame(), {}, params)
+  with pytest.raises(ValueError, match='fitted_registry'):
+    score_data_prep(_frame(), None, params)
+
+
+def test_score_data_prep_empty_registry_no_fitted_steps_identity():
+  from forecast_ml_framework.pipelines.scoring.pipeline import (
+    score_data_prep,
+  )
+  frame = _frame()
+  out = score_data_prep(frame, {}, _params())
+  pd.testing.assert_frame_equal(out, frame)
+
+
+def test_score_data_prep_applies_non_empty_registry():
+  from forecast_ml_framework.pipelines.scoring.pipeline import (
+    score_data_prep,
+  )
+  from forecast_ml_framework.pipelines.data_prep.fitted import (
+    fit_preprocess,
+  )
+  train = pd.DataFrame({'f1': [0.0, 10.0], 'f2': [0.0, 0.0],
+                        'target': [0, 1]})
+  params = [{'Normalizations': {'args': {
+    'handle': 'MinMaxScaler', 'cols': {'include_cols': ['f1']}}}}]
+  _, registry = fit_preprocess(train, params, {'num_cols': ['f1']})
+  out = score_data_prep(_frame(), registry, _params())
+  assert abs(out['f1'].iloc[0] - 0.1) < 1e-9
+
+
 def test_pipeline_has_three_named_nodes():
-  '''Pipeline wires score_data -> predict -> write_predictions.'''
+  '''Pipeline wires score_data_prep -> predict -> write_predictions.'''
   pipe = create_pipeline()
   names = [n.name for n in pipe.nodes]
-  assert names == ['score_data', 'predict', 'write_predictions']
+  assert names == ['score_data_prep', 'predict', 'write_predictions']
   assert len(pipe.nodes) == 3
   nodes = {n.name: n for n in pipe.nodes}
-  assert 'scoring_input' in nodes['score_data'].inputs
-  assert 'params:scoring_params' in nodes['score_data'].inputs
+  assert 'scoring_input' in nodes['score_data_prep'].inputs
+  assert 'fitted_registry' in nodes['score_data_prep'].inputs
+  assert 'params:scoring_params' in nodes['score_data_prep'].inputs
   assert 'params:scoring_params' in nodes['predict'].inputs
   assert 'params:scoring_params' in nodes['write_predictions'].inputs
 
@@ -249,7 +286,7 @@ def test_pipeline_has_three_named_nodes():
 def test_pipeline_end_to_end_via_node_funcs():
   '''Node funcs chain load -> predict -> write without catalog.'''
   nodes = {n.name: n for n in create_pipeline().nodes}
-  data = nodes['score_data'].func(_frame(), _params())
+  data = nodes['score_data_prep'].func(_frame(), {}, _params())
   preds = nodes['predict'].func(
       data, _params(), model_loader=lambda: _FakeModel())
   out = nodes['write_predictions'].func(preds, _params())
@@ -278,14 +315,14 @@ def test_pipeline_uses_params_io():
   pipe = create_pipeline(scoring_params={
     'input_dataset': 'my_in', 'output_dataset': 'my_out'})
   nodes = {n.name: n for n in pipe.nodes}
-  assert 'my_in' in nodes['score_data'].inputs
+  assert 'my_in' in nodes['score_data_prep'].inputs
   assert nodes['write_predictions'].outputs == ['my_out']
 
 
 def test_pipeline_defaults_backcompat_io():
   '''Without params, pipeline defaults to scoring_input/predictions.'''
   nodes = {n.name: n for n in create_pipeline().nodes}
-  assert 'scoring_input' in nodes['score_data'].inputs
+  assert 'scoring_input' in nodes['score_data_prep'].inputs
   assert nodes['write_predictions'].outputs == ['predictions']
 
 

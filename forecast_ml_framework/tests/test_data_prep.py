@@ -631,3 +631,48 @@ def test_encode_cat_ohe_env_cap_raises(monkeypatch, env_key):
   with pytest.raises(ValueError, match='max_cols'):
     _encode_cat(frame, {'ohe_flag': True,
                         'cols': {'include_cols': ['cat']}}, _vars())
+
+
+def test_encode_cat_ohe_dummy_name_collision_pair():
+  '''a/b_c vs a_b/c both expand to a_b_c raising ValueError.'''
+  frame = pd.DataFrame({'a': ['b_c', 'x'], 'a_b': ['c', 'y']})
+  variables = dict(_vars(), cat_cols=['a', 'a_b'])
+  steps = [{'CategoricalEncoding': {'skip': False, 'args': {
+    'ohe_flag': True, 'max_cols': 100,
+    'cols': {'include_cols': ['a', 'a_b'], 'exclude_cols': []}}}}]
+  with pytest.raises(ValueError, match='collision|a_b_c'):
+    preprocess(frame, steps, variables)
+
+
+def test_encode_cat_ohe_dummy_collides_with_existing_column():
+  '''Dummy cat_a colliding with existing cat_a column raises.'''
+  frame = pd.DataFrame({
+    'cat': ['a', 'b'], 'cat_a': [1, 0]})
+  steps = [{'CategoricalEncoding': {'skip': False, 'args': {
+    'ohe_flag': True, 'max_cols': 100,
+    'cols': {'include_cols': ['cat'], 'exclude_cols': []}}}}]
+  with pytest.raises(ValueError, match='collision|cat_a'):
+    preprocess(frame, steps, _vars())
+
+
+# --- loop4 dedupe (RED) ---
+
+def test_knn_mean_fill_helper_fills_cols():
+  '''_mean_fill helper fills NaN with per-column mean.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _mean_fill
+  frame = pd.DataFrame({'x1': [0.0, 10.0, None],
+                        'x2': [1.0, None, 3.0]})
+  out = _mean_fill(frame, ['x1', 'x2'])
+  assert out['x1'].iloc[2] == pytest.approx(5.0)
+  assert out['x2'].iloc[1] == pytest.approx(2.0)
+
+
+def test_seq_change_ratio_zero_prior_is_exact_zero():
+  '''Change-ratio zero prior mean gives exact 0.0 (no eps offset).'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _seq_change_ratio)
+  frame = pd.DataFrame({'seq': [[1.0, 0.0, 0.0], [1.0, 1.0, 5.0]]})
+  out = _seq_change_ratio(
+    frame, {'last_n_val': 2, 'cols': {'include_cols': ['seq']}}, _vars())
+  assert out['seq_change_ratio'].iloc[0] == 0.0
+  assert out['seq_change_ratio'].iloc[1] == pytest.approx(5.0)

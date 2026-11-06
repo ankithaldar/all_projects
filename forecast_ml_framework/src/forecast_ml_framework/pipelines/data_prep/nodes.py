@@ -30,9 +30,6 @@ import pandas as pd
 
 from forecast_ml_framework.core import spark_factory
 from forecast_ml_framework.core.config_loader import ConfigLoader
-from forecast_ml_framework.pipelines.scoring.nodes import (
-  _resolve_handle_strict as _resolve_handle_strict,
-)
 
 LOG = logging.getLogger(__name__)
 
@@ -68,6 +65,35 @@ def _resolve_ohe_max_cols(args):
   return DEFAULT_MAX_OHE_COLS
 
 
+def _resolve_cols(args, default):
+  '''Resolve include minus exclude columns.'''
+  cols = args.get('cols', {}) if isinstance(args, dict) else {}
+  include = cols.get('include_cols') or list(default)
+  exclude = set(cols.get('exclude_cols') or [])
+  return [c for c in include if c not in exclude]
+
+
+def _iter_steps(prep_params):
+  '''Yield (name, skip, args) from list or dict config.'''
+  if isinstance(prep_params, dict):
+    items = [{k: v} for k, v in prep_params.items()]
+  else:
+    items = list(prep_params or [])
+  for item in items:
+    for name, cfg in item.items():
+      cfg = cfg or {}
+      yield name, bool(cfg.get('skip', False)), cfg.get('args', {}) or {}
+
+
+# Imported after _resolve_ohe_max_cols/_resolve_cols/_iter_steps
+# so that fitted.py, which imports those helpers, can load while
+# this module is still initializing (scoring -> fitted ->
+# data_prep.nodes).
+from forecast_ml_framework.pipelines.scoring.nodes import (  # noqa: E402
+  _resolve_handle_strict as _resolve_handle_strict,
+)
+
+
 def resolve_handle(handle):
   '''Resolve a dotted handle under the allowlist (reused).
 
@@ -91,14 +117,6 @@ def resolve_handle(handle):
       resolved, or is not an estimator-like class.
   '''
   return _resolve_handle_strict(handle)
-
-
-def _resolve_cols(args, default):
-  '''Resolve include minus exclude columns.'''
-  cols = args.get('cols', {}) if isinstance(args, dict) else {}
-  include = cols.get('include_cols') or list(default)
-  exclude = set(cols.get('exclude_cols') or [])
-  return [c for c in include if c not in exclude]
 
 
 def _seq_list(val):
@@ -334,9 +352,35 @@ def _encode_cat(df, args, variables):
         'data_prep input exceeds max_cols=%d: get_dummies '
         'expansion would produce %d columns for categorical '
         'columns %r' % (max_cols, expanded, present))
+  # Dummy-name collision check before expansion: distinct
+  # (column, category) pairs (or a dummy vs an existing column)
+  # can produce the same name, e.g. a/b_c and a_b/c both expand
+  # to a_b_c; get_dummies would then emit duplicate columns and
+  # silently misalign features.
+  expected_dummies = []
+  for col in present:
+    for cat in df[col].unique():
+      expected_dummies.append('%s_%s' % (col, cat))
+  seen_dummies = set()
+  for dummy in expected_dummies:
+    if dummy in seen_dummies:
+      raise ValueError(
+        'data_prep OHE dummy name collision: duplicate dummy '
+        'column %r' % (dummy,))
+    seen_dummies.add(dummy)
+  existing = set(df.columns) - set(present)
+  for dummy in expected_dummies:
+    if dummy in existing:
+      raise ValueError(
+        'data_prep OHE dummy name collision: dummy column %r '
+        'collides with existing column %r' % (dummy, dummy))
   for col in present:
     dummies = pd.get_dummies(df[col], prefix=col)
     df = pd.concat([df.drop(columns=[col]), dummies], axis=1)
+    if len(set(df.columns)) != len(df.columns):
+      raise ValueError(
+        'data_prep OHE dummy name collision: duplicate dummy '
+        'columns %r' % (list(df.columns),))
   if max_cols is not None and len(df.columns) > max_cols:
     raise ValueError(
       'data_prep input exceeds max_cols=%d: got %d columns '
@@ -487,6 +531,103 @@ def _seq_normalize(df, args, variables):
   return df
 
 
+def _mean_fill(df, cols):
+  '''Fill NaN in cols with each column's mean.'''
+  for col in cols:
+    df[col] = df[col].fillna(df[col].mean())
+  return df
+
+
+def _knn_impute(df, args, variables):
+  '''Apply KNN imputation step.
+
+  Fits ``KNNImputer(n_neighbors=5 default, weights='uniform')``
+  on the include-cols block and transforms it. On error,
+  warns and falls back to per-column mean fill.
+  '''
+  cols = _resolve_cols(args, variables.get('num_cols', []))
+  present = [c for c in cols if c in df.columns]
+  if not present:
+    return df
+  n_neighbors = int(args.get('n_neighbors', 5))
+  try:
+    from sklearn.impute import KNNImputer
+  except Exception as exc:
+    LOG.warning('KnnImputation fallback to mean: %s' % exc)
+    return _mean_fill(df, present)
+  try:
+    block = df[present].apply(pd.to_numeric, errors='coerce')
+    imputer = KNNImputer(
+      n_neighbors=min(n_neighbors, len(df)) or 1,
+      weights='uniform')
+    filled = imputer.fit_transform(block)
+    for i, col in enumerate(present):
+      df[col] = filled[:, i]
+  except Exception as exc:
+    LOG.warning('KnnImputation fallback to mean: %s' % exc)
+  remaining = [c for c in present if df[c].isna().any()]
+  return _mean_fill(df, remaining)
+
+
+def _seq_change_ratio(df, args, variables):
+  '''Apply sequence change-ratio step.
+
+  Value is ``arr[-1] / mean(arr[-last_n_val:-1])`` with an
+  exact zero-mean guard (no eps offset); empty/short seqs
+  and zero prior mean give 0.0.
+  Suffix is ``_change_ratio``.
+  '''
+  cols = _resolve_cols(args, variables.get('seq_cols', []))
+  last_n = int(args.get('last_n_val', 2))
+  suffix = args.get('suffix', 'change_ratio')
+  for col in cols:
+    if col not in df.columns:
+      continue
+
+    def _cr(seq):
+      '''Compute last / mean prior of seq.'''
+      if len(seq) < 2:
+        return 0.0
+      prior = seq[-last_n:-1] if last_n else seq[:-1]
+      if not prior:
+        return 0.0
+      mean_prior = float(np.mean(prior))
+      if mean_prior == 0.0:
+        return 0.0
+      return float(seq[-1] / mean_prior)
+
+    df['%s_%s' % (col, suffix)] = _seq_series(df, col).apply(_cr)
+  return df
+
+
+def _seq_cov(df, args, variables):
+  '''Apply sequence coefficient-of-variation step.
+
+  Value is ``std / mean`` of the last_n segment; empty
+  seqs and zero mean give 0.0 (exact zero guard, no eps
+  offset). Suffix is ``_cov``.
+  '''
+  cols = _resolve_cols(args, variables.get('seq_cols', []))
+  last_n = int(args.get('last_n_val', 2))
+  suffix = args.get('suffix', 'cov')
+  for col in cols:
+    if col not in df.columns:
+      continue
+
+    def _cov(seq):
+      '''Compute std / mean of last segment of seq.'''
+      seg = _last_n(seq, last_n)
+      if not seg:
+        return 0.0
+      mean = float(np.mean(seg))
+      if mean == 0.0:
+        return 0.0
+      return float(np.std(seg) / mean)
+
+    df['%s_%s' % (col, suffix)] = _seq_series(df, col).apply(_cov)
+  return df
+
+
 _REGISTRY = {
   'Imputations': _impute,
   'CapOutliers': _cap,
@@ -504,19 +645,10 @@ _REGISTRY = {
   'SequenceLast': _seq_last,
   'SequenceDelta': _seq_delta,
   'SequenceNormalize': _seq_normalize,
+  'KnnImputation': _knn_impute,
+  'SequenceChangeRatio': _seq_change_ratio,
+  'SequenceCov': _seq_cov,
 }
-
-
-def _iter_steps(prep_params):
-  '''Yield (name, skip, args) from list or dict config.'''
-  if isinstance(prep_params, dict):
-    items = [{k: v} for k, v in prep_params.items()]
-  else:
-    items = list(prep_params or [])
-  for item in items:
-    for name, cfg in item.items():
-      cfg = cfg or {}
-      yield name, bool(cfg.get('skip', False)), cfg.get('args', {}) or {}
 
 
 def preprocess(df, prep_params, variables,
@@ -557,6 +689,37 @@ def preprocess(df, prep_params, variables,
   if return_report:
     return df, {'warnings': warnings, 'unknown_steps': unknown}
   return df
+
+
+def fit_preprocess(df, prep_params, variables,
+                   pandas_conversion_params=None):
+  '''Fit fitted preprocessing and return frame + registry.
+
+  Kedro node wrapper around
+  ``data_prep.fitted.fit_preprocess``: converts Spark input
+  via ``spark_factory`` like :func:`preprocess`, then fits
+  the seven fitted steps once so the training frame and the
+  persisted ``fitted_registry`` come from the same fit.
+
+  Args:
+    df: Pandas or Spark dataframe.
+    prep_params: List of step dicts as in preprocessing.yml.
+    variables: Dict with column groups and target.
+    pandas_conversion_params: Optional Spark conversion dict.
+
+  Returns:
+    Tuple of (preprocessed df, fitted_registry dict).
+  '''
+  pandas_conversion_params = pandas_conversion_params or {}
+  if (not isinstance(df, pd.DataFrame)
+      and pandas_conversion_params.get('convert_to_pandas', True)
+      is False):
+    raise TypeError('Spark input requires convert_to_pandas=True')
+  df = spark_factory.to_pandas(df, pandas_conversion_params).copy()
+  from forecast_ml_framework.pipelines.data_prep.fitted import (
+    fit_preprocess as _fitted_fit_preprocess,
+  )
+  return _fitted_fit_preprocess(df, prep_params, variables)
 
 
 def select_features(train_df, params, variables):

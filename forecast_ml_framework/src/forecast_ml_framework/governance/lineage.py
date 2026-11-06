@@ -70,6 +70,28 @@ def _catalog_names(catalog_entries, role):
   return names
 
 
+def _canonical(obj):
+  '''Recursively canonicalize sets/frozensets to sorted lists.
+
+  Sets have hash-seed-dependent iteration order, so dumping
+  them via ``default=str`` is nondeterministic. Converting
+  every set/frozenset to a sorted list (natural ordering,
+  falling back to a repr-based ordering for mixed types)
+  makes the JSON -- and therefore the hash -- stable.
+  '''
+  if isinstance(obj, dict):
+    return {key: _canonical(value) for key, value in obj.items()}
+  if isinstance(obj, (set, frozenset)):
+    items = [_canonical(value) for value in obj]
+    try:
+      return sorted(items)
+    except TypeError:
+      return sorted(items, key=lambda v: (type(v).__name__, repr(v)))
+  if isinstance(obj, (list, tuple)):
+    return [_canonical(value) for value in obj]
+  return obj
+
+
 def compute_config_hash(variables, parameters):
   '''Return sha256 of canonical JSON of variables+parameters.
 
@@ -78,10 +100,12 @@ def compute_config_hash(variables, parameters):
     parameters: Mapping of pipeline parameters.
 
   Returns:
-    Hex sha256 digest. Stable across key ordering.
+    Hex sha256 digest. Stable across key ordering and
+    set/frozenset iteration order.
   '''
   canonical = json.dumps(
-    {'variables': variables or {}, 'parameters': parameters or {}},
+    _canonical({'variables': variables or {},
+                'parameters': parameters or {}}),
     sort_keys=True, separators=(',', ':'), default=str)
   return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 

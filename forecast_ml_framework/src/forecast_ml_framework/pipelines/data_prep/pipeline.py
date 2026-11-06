@@ -12,15 +12,22 @@ Note: ``conf/base/parameters/*.yml`` bucket naming
 - ``variables`` (catalog) -> variables dict
 - ``train_data`` (catalog) -> validate_data df input
 - ``validated_data`` / ``validation_report`` outputs
-- ``preprocessed_data`` output of preprocess
+- ``preprocessed_data`` output of fit_preprocess
+- ``fitted_registry`` output of fit_preprocess (catalog
+  ``fitted_registry`` dataset, persisted for scoring replay)
 - ``train_data_selected`` / ``selected_features`` /
   ``selection_report`` outputs of select_features
+
+The stateless ``preprocess`` node function is kept in
+``nodes.py`` for back-compat imports, but the pipeline no
+longer uses it: training must go through ``fit_preprocess``
+so a fitted registry is produced from the same fit.
 '''
 
 from kedro.pipeline import Pipeline, node
 
 from forecast_ml_framework.pipelines.data_prep.nodes import (
-  preprocess,
+  fit_preprocess,
   select_features,
   validate_data,
 )
@@ -42,11 +49,11 @@ def create_pipeline(**kwargs):
     name='data_ingestion_validate',
   )
   preprocess_node = node(
-    func=preprocess,
+    func=fit_preprocess,
     inputs=['validated_data', 'params:data_prep_params',
             'variables', 'params:pandas_conversion_params'],
-    outputs='preprocessed_data',
-    name='preprocessing',
+    outputs=['preprocessed_data', 'fitted_registry'],
+    name='fit_preprocess',
   )
   select_node = node(
     func=select_features,

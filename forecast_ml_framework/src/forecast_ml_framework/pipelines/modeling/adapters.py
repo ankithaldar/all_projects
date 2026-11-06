@@ -3,6 +3,7 @@
 
 '''Model adapter ABC, zoo adapters and the train node.'''
 
+import inspect
 import pickle
 from abc import ABC, abstractmethod
 
@@ -336,7 +337,10 @@ def _estimator_kwargs(params):
     Dict of kwargs safe to pass to an estimator constructor.
   '''
   skip = set(HANDLE_KEYS) | {'task_type', 'model_type',
-                             'loss_function'}
+                             'loss_function', 'tuning',
+                             'tuning_params', 'tuning_config',
+                             'hyperparameter_tuning', 'balance',
+                             'class_balancing'}
   return {k: v for k, v in params.items() if k not in skip}
 
 
@@ -359,6 +363,92 @@ def _validated_handle_kwargs(params):
   return _estimator_kwargs(params)
 
 
+#: Param keys that may carry a tuning config dict.
+TUNING_KEYS = ('tuning', 'tuning_params', 'tuning_config',
+               'hyperparameter_tuning')
+
+
+def _tuning_config(params):
+  '''Return the tuning config dict in params, or None.
+
+  Args:
+    params: Adapter hyperparameters (never mutated).
+
+  Returns:
+    Tuning dict if present, else None.
+  '''
+  for key in TUNING_KEYS:
+    value = (params or {}).get(key)
+    if isinstance(value, dict):
+      return value
+  return None
+
+
+def _balance_kwargs(cls, params, y, kwargs, task):
+  '''Inject balance kwargs into estimator kwargs if enabled.
+
+  Args:
+    cls: Estimator class to inspect for supported kwargs.
+    params: Adapter hyperparameters (never mutated).
+    y: Training target used to compute imbalance.
+    kwargs: Estimator kwargs (updated in place).
+    task: Task kind string.
+
+  Returns:
+    Tuple (kwargs, imbalance dict or None). Prefers
+    ``scale_pos_weight`` when the estimator signature
+    supports it, else ``class_weight`` / ``class_weights``.
+    The ``balance`` flag itself is never passed through.
+  '''
+  if not (params or {}).get('balance'):
+    return kwargs, None
+  from forecast_ml_framework.pipelines.modeling.imbalance import (
+    compute_imbalance,
+  )
+  info = compute_imbalance(y, task)
+  try:
+    signature = inspect.signature(cls)
+  except (TypeError, ValueError):
+    signature = None
+  names = set(signature.parameters) if signature is not None else set()
+  has_var_kw = signature is not None and any(
+    p.kind == inspect.Parameter.VAR_KEYWORD
+    for p in signature.parameters.values())
+  if 'scale_pos_weight' in names or has_var_kw:
+    kwargs.setdefault('scale_pos_weight',
+                      info['scale_pos_weight'])
+  elif 'class_weight' in names:
+    kwargs.setdefault('class_weight', info['class_weights'])
+  elif 'class_weights' in names:
+    kwargs.setdefault('class_weights', info['class_weights'])
+  return kwargs, info
+
+
+def _check_zoo_tuning(adapter_name, params):
+  '''Raise ValueError if tuning is set for a zoo adapter.
+
+  Tuning is only supported for 'sklearn' (and handle
+  adapters wrapping a sklearn-style estimator, which tune
+  via tune_model). Zoo adapters (xgboost / lightgbm /
+  catboost / h2o_automl) never tune silently: a tuning
+  config must fail loud instead of being ignored.
+
+  Args:
+    adapter_name: Zoo adapter name.
+    params: Adapter hyperparameters (never mutated).
+
+  Raises:
+    ValueError: If a tuning config dict is present.
+  '''
+  if _tuning_config(params) is not None:
+    raise ValueError(
+      f'tuning is not supported for {adapter_name!r} adapter: '
+      'tuning config is only supported for sklearn and handle '
+      'adapters; remove the tuning config or switch '
+      'models_to_use to sklearn/handle (fail loud, never '
+      'silently ignore tuning)')
+
+
 def _missing(lib, name):
   '''Build the informative missing-library error.'''
   return RuntimeError(
@@ -366,6 +456,41 @@ def _missing(lib, name):
     f'Disable it by removing {name!r} from '
     'params.modeling_params.models_to_use '
     '(params.models_to_use).')
+
+
+def _fit_zoo(adapter, x, y, cls):
+  '''Fit a zoo adapter (xgboost/lightgbm/catboost) and return it.
+
+  Shared body of the zoo ``fit`` methods: fail loud on a
+  tuning config, resolve task/kwargs/balance, build ``cls``
+  and fit it. Lazy library imports stay in each adapter so
+  importing this module never requires a zoo library.
+
+  Args:
+    adapter: Zoo adapter instance (its ``name``/``params``
+      drive task, loss and balance handling).
+    x: Training features.
+    y: Training target.
+    cls: Estimator class to build and fit.
+
+  Returns:
+    The same adapter, with ``model`` fitted and
+    ``imbalance_`` recorded.
+
+  Raises:
+    ValueError: If a tuning config is present, or the
+      loss/balance handling rejects the params.
+  '''
+  _check_zoo_tuning(adapter.name, adapter.params)
+  task = normalize_task_kind(
+    adapter.params.get('task_type', 'classification'))
+  kwargs, info = _balance_kwargs(
+    cls, adapter.params, y,
+    _loss_kwargs(adapter.name, adapter.params), task)
+  adapter.imbalance_ = info
+  adapter.model = cls(**kwargs)
+  adapter.model.fit(x, y)
+  return adapter
 
 
 class ModelAdapter(ABC):
@@ -386,6 +511,9 @@ class ModelAdapter(ABC):
     '''
     self.params = dict(params or {})
     self.model = None
+    self.tuning_report = None
+    self.tuning_best_params = None
+    self.imbalance_ = None
 
   @abstractmethod
   def fit(self, x, y):
@@ -445,7 +573,7 @@ class SklearnAdapter(ModelAdapter):
 
   name = 'sklearn'
 
-  def _build(self, task_type=None):
+  def _build(self, task_type=None, y=None):
     '''Build the underlying sklearn estimator.'''
     from sklearn.ensemble import (GradientBoostingClassifier,
                                   GradientBoostingRegressor,
@@ -464,6 +592,13 @@ class SklearnAdapter(ModelAdapter):
     }
     cls = table.get(kind, LogisticRegression)
     kwargs = _loss_kwargs(self.name, self.params)
+    if y is not None:
+      task = normalize_task_kind(
+        self.params.get('task_type', 'classification'))
+      kwargs, info = _balance_kwargs(
+        cls, self.params, y, kwargs, task)
+      if info is not None:
+        self.imbalance_ = info
     try:
       return cls(**kwargs)
     except TypeError as exc:
@@ -473,8 +608,20 @@ class SklearnAdapter(ModelAdapter):
         'model hyperparameters for this model_type.') from exc
 
   def fit(self, x, y):
-    '''Fit the sklearn model. Returns self.'''
-    self.model = self._build()
+    '''Fit the sklearn model, tuning first if configured.'''
+    tuning = _tuning_config(self.params)
+    base = self._build(y=y)
+    if tuning is not None:
+      from forecast_ml_framework.pipelines.modeling.tuning import (
+        tune_model,
+      )
+      best, best_params, report = tune_model(
+        base, x, y, tuning)
+      self.model = best
+      self.tuning_best_params = best_params
+      self.tuning_report = report
+      return self
+    self.model = base
     self.model.fit(x, y)
     return self
 
@@ -493,9 +640,7 @@ class XGBoostAdapter(ModelAdapter):
     task = normalize_task_kind(
         self.params.get('task_type', 'classification'))
     cls = xgb.XGBClassifier if task == 'classification' else xgb.XGBRegressor
-    self.model = cls(**_loss_kwargs(self.name, self.params))
-    self.model.fit(x, y)
-    return self
+    return _fit_zoo(self, x, y, cls)
 
 
 class LightGBMAdapter(ModelAdapter):
@@ -512,9 +657,7 @@ class LightGBMAdapter(ModelAdapter):
     task = normalize_task_kind(
         self.params.get('task_type', 'classification'))
     cls = lgb.LGBMClassifier if task == 'classification' else lgb.LGBMRegressor
-    self.model = cls(**_loss_kwargs(self.name, self.params))
-    self.model.fit(x, y)
-    return self
+    return _fit_zoo(self, x, y, cls)
 
 
 class CatBoostAdapter(ModelAdapter):
@@ -532,9 +675,7 @@ class CatBoostAdapter(ModelAdapter):
         self.params.get('task_type', 'classification'))
     cls = (CatBoostClassifier if task == 'classification'
            else CatBoostRegressor)
-    self.model = cls(**_loss_kwargs(self.name, self.params))
-    self.model.fit(x, y)
-    return self
+    return _fit_zoo(self, x, y, cls)
 
 
 class H2OAutoMLAdapter(ModelAdapter):
@@ -544,6 +685,14 @@ class H2OAutoMLAdapter(ModelAdapter):
 
   def fit(self, x, y):
     '''Fit the H2O AutoML model. Returns self.'''
+    _check_zoo_tuning(self.name, self.params)
+    if (self.params or {}).get('balance'):
+      raise ValueError(
+        'balance is not supported for h2o_automl adapter: '
+        'class balancing cannot be applied to H2O AutoML; '
+        'remove balance or switch models_to_use to '
+        'sklearn/handle (fail loud, never silently ignore '
+        'balance)')
     try:
       import h2o
     except ImportError as exc:
@@ -605,14 +754,30 @@ class HandleAdapter(ModelAdapter):
         'HandleAdapter requires a model_handle dotted '
         'importable string.')
     cls = resolve_handle(self.handle)
-    kwargs = _loss_kwargs(self.handle, self.params)
+    task = normalize_task_kind(
+      self.params.get('task_type', 'classification'))
+    kwargs, info = _balance_kwargs(
+      cls, self.params, y,
+      _loss_kwargs(self.handle, self.params), task)
+    self.imbalance_ = info
     try:
-      self.model = cls(**kwargs)
+      base = cls(**kwargs)
     except TypeError as exc:
       raise ValueError(
         f'Estimator {cls.__name__} rejected kwargs {kwargs!r} '
         f'(including loss): {exc}. Check loss_function and '
         'model hyperparameters for this handle.') from exc
+    tuning = _tuning_config(self.params)
+    if tuning is not None:
+      from forecast_ml_framework.pipelines.modeling.tuning import (
+        tune_model,
+      )
+      best, best_params, report = tune_model(base, x, y, tuning)
+      self.model = best
+      self.tuning_best_params = best_params
+      self.tuning_report = report
+      return self
+    self.model = base
     self.model.fit(x, y)
     return self
 
@@ -724,6 +889,11 @@ def train_models(x_train, y_train, x_test, y_test, params):
       mp.setdefault('model_handle', params['model_handle'])
     if params.get('loss_function') is not None:
       mp.setdefault('loss_function', params['loss_function'])
+    for key in TUNING_KEYS:
+      if isinstance(params.get(key), dict):
+        mp.setdefault(key, params[key])
+    if params.get('balance') is not None:
+      mp.setdefault('balance', params['balance'])
     mp.setdefault('task_type', task)
     adapter = create_adapter(name, mp)
     adapter.fit(x_train, y_train)
@@ -733,6 +903,9 @@ def train_models(x_train, y_train, x_test, y_test, params):
       proba = adapter.predict_proba(x_test)
     per_model[name] = compute_metrics(
         y_test, y_pred, proba, task)
+    tuning_report = getattr(adapter, 'tuning_report', None)
+    if tuning_report is not None:
+      per_model[name]['tuning'] = tuning_report
     fitted[name] = adapter
   best = _pick_best(per_model, params) or names[0]
   return fitted[best], per_model, best

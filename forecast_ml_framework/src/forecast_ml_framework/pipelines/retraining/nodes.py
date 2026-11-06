@@ -45,6 +45,10 @@ import logging
 import math
 from datetime import date, datetime, timezone
 
+from forecast_ml_framework.core.params import (
+  require_dict as _require_dict,
+)
+
 LOG = logging.getLogger(__name__)
 
 DEFAULT_DRIFT_ALERT_THRESHOLD = 1
@@ -53,15 +57,6 @@ DEFAULT_SCHEDULE_DAYS = 30
 DEFAULT_DATA_VOLUME_GROWTH_THRESHOLD = 0.20
 DEFAULT_PIPELINE_NAME = 'modeling'
 DEFAULT_ENV = 'local'
-
-
-def _require_dict(value, label):
-  '''Return value as a dict, raising an informative ValueError.'''
-  if value is None:
-    return {}
-  if not isinstance(value, dict):
-    raise ValueError('%s must be a dict, got %r' % (label, value))
-  return value
 
 
 def _get(mapping, *keys):

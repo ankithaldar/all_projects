@@ -156,6 +156,29 @@ data_prep_params:
         cols:
           exclude_cols: []
           include_cols: ['monthly_spend_seq']
+  # Note: KNN imputation + sequence change-ratio / CoV feats;
+  # implemented in data_prep nodes, off by default (skip: true).
+  - KnnImputation:
+      skip: true
+      args:
+        n_neighbors: 5
+        cols:
+          exclude_cols: []
+          include_cols: []
+  - SequenceChangeRatio:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
+  - SequenceCov:
+      skip: true
+      args:
+        last_n_val: 2
+        cols:
+          exclude_cols: []
+          include_cols: ['monthly_spend_seq']
 
 # Feature selection: methods run in order; each method has
 # name (variance_threshold | mutual_info | rf_importance |

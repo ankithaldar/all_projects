@@ -115,6 +115,9 @@ from forecast_ml_framework.pipelines.modeling.lift_table import (
 from forecast_ml_framework.pipelines.modeling.ntile import (
   normalize_task_kind,
 )
+from forecast_ml_framework.pipelines.modeling.threshold import (
+  select_threshold,
+)
 from forecast_ml_framework.pipelines.modeling.validation import (
   should_promote,
 )
@@ -242,6 +245,70 @@ def explain_model(model, x, y, params):
           'shap_available': method == 'shap'}
 
 
+def _threshold_method(params):
+  '''Extract the threshold method from modeling_params.'''
+  if isinstance(params, str):
+    return params or 'pr_curve'
+  if not isinstance(params, dict):
+    return 'pr_curve'
+  for key in ('threshold_method', 'threshold_select_method',
+              'select_threshold_method'):
+    if params.get(key):
+      return params[key]
+  nested = params.get('threshold_params')
+  if isinstance(nested, dict) and nested.get('method'):
+    return nested['method']
+  threshold = params.get('threshold')
+  if isinstance(threshold, dict) and threshold.get('method'):
+    return threshold['method']
+  return 'pr_curve'
+
+
+def select_model_threshold(y_test, y_proba, params=None):
+  '''Select a classification threshold from test proba.
+
+  Args:
+    y_test: True labels.
+    y_proba: Probabilities (2 columns, 1 column, 1-D) or
+      None for regression (returns the 0.5 default).
+    params: modeling_params dict; the method comes from
+      ``threshold_method`` (aliases/nested forms accepted,
+      default 'pr_curve'). A plain string is taken as method.
+
+  Returns:
+    Selected threshold as float via ``select_threshold``.
+  '''
+  if y_proba is None:
+    return 0.5
+  proba = np.asarray(y_proba, dtype=float)
+  if proba.ndim == 2:
+    proba = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+  return float(select_threshold(y_test, proba,
+                                _threshold_method(params)))
+
+
+# Alias matching the node name.
+build_selected_threshold = select_model_threshold
+
+
+def build_tuning_report(per_model_metrics):
+  '''Extract per-model tuning reports from per_model_metrics.
+
+  Args:
+    per_model_metrics: Dict from ``train_models``; models
+      with a ``tuning`` entry contribute it to the report.
+
+  Returns:
+    Dict mapping model name to its tuning report dict
+    (empty when no model was tuned).
+  '''
+  report = {}
+  for name, metrics in (per_model_metrics or {}).items():
+    if isinstance(metrics, dict) and metrics.get('tuning') is not None:
+      report[str(name)] = metrics['tuning']
+  return report
+
+
 def create_pipeline(**kwargs):
   '''Create the modeling Kedro pipeline.
 
@@ -292,6 +359,15 @@ def create_pipeline(**kwargs):
          inputs=['evaluation_metrics', 'params:modeling_params'],
          outputs='promotion',
          name='build_promotion_node'),
+    node(func=select_model_threshold,
+         inputs=['y_test', 'y_pred_proba',
+                 'params:modeling_params'],
+         outputs='selected_threshold',
+         name='select_model_threshold_node'),
+    node(func=build_tuning_report,
+         inputs='per_model_metrics',
+         outputs='tuning_report',
+         name='build_tuning_report_node'),
     node(func=make_charts,
          inputs=['y_test', 'y_pred', 'y_pred_proba', 'x_test',
                  'params:modeling_params'],

@@ -50,8 +50,12 @@ def select_threshold(y_true, proba, method):
   '''Select a classification threshold by the given method.
 
   Args:
-    y_true: Binary target (0/1).
-    proba: Predicted probability of the positive class.
+    y_true: Binary target (0/1), 1-D.
+    proba: Predicted probability of the positive class, 1-D,
+      or (n, 2) binary predict_proba output (column 1 is
+      used), or (n, 1) output (column 0 is used). Multiclass
+      proba (n, k>2), other shapes, and multiclass y_true
+      warn and return 0.5 instead of crashing.
     method: One of pr_curve, roc_curve, mcc_curve,
       ks_statistics. Unknown methods return 0.5.
 
@@ -59,17 +63,96 @@ def select_threshold(y_true, proba, method):
     Selected threshold as float, rounded per parity.
   '''
   y_true = np.asarray(y_true)
-  proba = np.asarray(proba, dtype=float)
-  if len(y_true) != len(proba):
+  try:
+    proba_raw = np.asarray(proba, dtype=float)
+  except (TypeError, ValueError):
+    warnings.warn(
+      'proba must be numeric probabilities; using default 0.5',
+      stacklevel=2)
+    return 0.5
+  if proba_raw.ndim == 0 or y_true.ndim == 0:
     raise ValueError(
       'length mismatch: y_true and proba must have equal lengths')
+  # Shape validation precedes the length check so invalid
+  # shapes (e.g. y_true (1, n), proba (2, n), multiclass
+  # proba (n, k>2)) warn and fall back to 0.5 instead of
+  # crashing downstream in sklearn / IndexError paths.
+  if y_true.ndim == 2 and y_true.shape[1] == 1:
+    y_true = y_true.ravel()
+  elif y_true.ndim != 1:
+    warnings.warn(
+      'y_true must be 1-D binary; using default 0.5',
+      stacklevel=2)
+    return 0.5
+  if proba_raw.ndim == 1:
+    proba = proba_raw
+  elif proba_raw.ndim == 2 and proba_raw.shape[1] == 2:
+    # Binary predict_proba output: use the positive class (col 1).
+    proba = proba_raw[:, 1]
+  elif proba_raw.ndim == 2 and proba_raw.shape[1] == 1:
+    proba = proba_raw[:, 0]
+  else:
+    warnings.warn(
+      'proba must be 1-D binary (or (n, 2) binary predict_proba); '
+      'multiclass or other shapes fall back to 0.5',
+      stacklevel=2)
+    return 0.5
+  if len(y_true) != len(proba_raw):
+    raise ValueError(
+      'length mismatch: y_true and proba must have equal lengths')
+  # Non-numeric (e.g. string) labels cannot be scored by
+  # sklearn curves / ks as floats: warn and fall back.
+  try:
+    y_numeric = y_true.astype(float)
+  except (TypeError, ValueError):
+    warnings.warn(
+      'y_true must be numeric binary for threshold selection; '
+      'using default 0.5', stacklevel=2)
+    return 0.5
+  if not np.isfinite(y_numeric).all():
+    warnings.warn(
+      'y_true must be finite for threshold selection; '
+      'using default 0.5', stacklevel=2)
+    return 0.5
+  y_true = y_numeric
   if len(y_true) == 0 or len(np.unique(y_true)) < 2:
+    return 0.5
+  if len(np.unique(y_true)) > 2:
+    warnings.warn(
+      'y_true must be binary for threshold selection; '
+      'multiclass targets fall back to 0.5', stacklevel=2)
     return 0.5
   if not np.isfinite(proba).all():
     return 0.5
   if proba.size and (proba.min() < 0 or proba.max() > 1):
     return 0.5
   method_name = str(method or '').strip().lower()
+  try:
+    return _select_threshold_method(
+      y_true, proba, method_name, method)
+  except (IndexError, TypeError, ValueError):
+    warnings.warn(
+      'threshold selection failed for method '
+      f'{method!r}; using default 0.5', stacklevel=2)
+    return 0.5
+
+
+def _select_threshold_method(y_true, proba, method_name, method):
+  '''Dispatch threshold selection for validated binary data.
+
+  Args:
+    y_true: Numeric binary target, 1-D.
+    proba: Positive-class probabilities, 1-D.
+    method_name: Normalised method name.
+    method: Original method (for warnings).
+
+  Returns:
+    Selected threshold as float, rounded per parity.
+
+  Raises:
+    ValueError: Propagated from sklearn metrics, caught by
+      select_threshold which warns and returns 0.5.
+  '''
   if method_name == 'pr_curve':
     precision, recall, thresholds = precision_recall_curve(
       y_true, proba)

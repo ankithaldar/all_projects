@@ -132,6 +132,55 @@ def test_build_lift_table_threshold_kwarg_filters_cumsum():
     (proba >= 0.6).sum())
 
 
+def test_pipeline_has_selected_threshold_and_tuning_report_nodes():
+  '''Pipeline registers threshold + tuning_report persistence nodes.'''
+  pipe = create_pipeline()
+  names = {node.name for node in pipe.nodes}
+  assert 'select_model_threshold_node' in names
+  assert 'build_tuning_report_node' in names
+  outputs = set()
+  for node in pipe.nodes:
+    outputs.update(node.outputs)
+  assert 'selected_threshold' in outputs
+  assert 'tuning_report' in outputs
+
+
+def test_select_model_threshold_uses_select_threshold():
+  '''select_model_threshold wraps select_threshold on y_test/proba.'''
+  from forecast_ml_framework.pipelines.modeling.pipeline import (
+    select_model_threshold,
+  )
+  from forecast_ml_framework.pipelines.modeling.threshold import (
+    select_threshold,
+  )
+  y_true, _y_pred, y_proba = _cls_data()
+  proba = y_proba[:, 1]
+  expected = select_threshold(y_true, proba, 'roc_curve')
+  got = select_model_threshold(
+    y_true, y_proba, {'threshold_method': 'roc_curve'})
+  assert got == expected
+  # 1-D proba and default method also work.
+  assert 0.0 <= select_model_threshold(y_true, proba, {}) <= 1.0
+  assert select_model_threshold(y_true, None, {}) == 0.5
+
+
+def test_build_tuning_report_extracts_per_model_tuning():
+  '''build_tuning_report pulls tuning dicts out of per_model_metrics.'''
+  from forecast_ml_framework.pipelines.modeling.pipeline import (
+    build_tuning_report,
+  )
+  per_model = {
+    'sklearn': {'f1': 0.9, 'tuning': {'method': 'grid',
+                                      'best_params': {'C': 1.0}}},
+    'xgboost': {'f1': 0.8},
+  }
+  out = build_tuning_report(per_model)
+  assert out == {'sklearn': {'method': 'grid',
+                             'best_params': {'C': 1.0}}}
+  assert build_tuning_report({}) == {}
+  assert build_tuning_report(None) == {}
+
+
 def test_lift_node_wired_with_modeling_params():
   '''Lift node is wired with modeling_params for threshold.'''
   pipe = create_pipeline()
