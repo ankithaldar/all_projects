@@ -97,3 +97,70 @@ def test_modeling_pipeline_explain_artifact_shape():
   assert artifact['global_importance']
   assert 'method' in artifact and 'per_row' in artifact
   assert 'shap_available' in artifact
+
+
+# --- loop4: _predict/_predict_proba/explain_model branches ---
+
+
+class _StubModel:
+  '''Stub model for predict helpers.'''
+
+  def predict(self, x):
+    '''Return fixed labels.'''
+    return np.asarray([1, 0])
+
+  def predict_proba(self, x):
+    '''Return fixed proba.'''
+    return np.asarray([[0.2, 0.8], [0.9, 0.1]])
+
+
+def test_predict_helpers_regression_and_classification():
+  '''_predict delegates; _predict_proba is None for regression.'''
+  from forecast_ml_framework.pipelines.modeling.pipeline import (
+    _predict, _predict_proba)
+  model = _StubModel()
+  assert list(_predict(model, None)) == [1, 0]
+  assert _predict_proba(model, None, 'regression') is None
+  assert _predict_proba(model, None, 'classification').shape == (2, 2)
+  names = [n.name for n in create_pipeline().nodes]
+  assert 'predict_node' in names and 'predict_proba_node' in names
+
+
+def test_explain_model_skips_bad_rows_and_maps_permutation(
+    monkeypatch):
+  '''explain_model skips non-dict rows and maps permutation.'''
+  import forecast_ml_framework.pipelines.modeling.pipeline as pipe_mod
+
+  def fake_explain(model, x, params):
+    '''Return canned interpretability output.'''
+    assert params == {
+      'max_rows': 7, 'n_repeats': 3, 'random_state': 9}
+    return {
+      'method': 'permutation_fallback',
+      'global_importance': [
+        {'feature': 'f1', 'importance': 2}, 'bad', {'x': 1}],
+      'per_row': [
+        'bad', {'row': 3, 'shap_values': {'f1': 0.5}},
+        {'shap_values': {}}],
+    }
+  monkeypatch.setattr(pipe_mod, 'shap_explain', fake_explain)
+  params = {'shap_params': {
+    'sample_rows': 7, 'n_repeats': 3, 'random_state': 9}}
+  out = pipe_mod.explain_model(object(), object(), object(), params)
+  assert out['method'] == 'permutation'
+  assert out['shap_available'] is False
+  assert out['global_importance'] == {'f1': 2.0}
+  assert out['per_row'] == {'3': {'f1': 0.5}, '1': {}}
+
+
+def test_explain_model_shap_available_and_none_params(monkeypatch):
+  '''explain_model reports shap_available for shap method.'''
+  import forecast_ml_framework.pipelines.modeling.pipeline as pipe_mod
+  monkeypatch.setattr(
+    pipe_mod, 'shap_explain',
+    lambda m, x, p: {'method': 'shap', 'global_importance': [],
+                     'per_row': []})
+  out = pipe_mod.explain_model(object(), object(), object(), None)
+  assert out == {
+    'method': 'shap', 'global_importance': {}, 'per_row': {},
+    'shap_available': True}

@@ -1,3 +1,8 @@
+# Environment parity: the uv venv (`uv sync`, including the dev
+# dependency-group below) is canonical — it installs all deps.
+# The system Anaconda env is not canonical; skips for deps it lacks
+# (e.g. mlflow optional extras) are expected there.
+
 [build-system]
 requires = ['hatchling']
 build-backend = 'hatchling.build'
@@ -15,9 +20,11 @@ dependencies = [
   'kedro-datasets',
   'scikit-learn',
   'pandas',
+  'numpy',
   'scipy',
   'pyarrow',
   'pydantic',
+  'sqlalchemy',
   'omegaconf',
   'matplotlib',
   'fastapi',
@@ -52,6 +59,9 @@ maximal = ['h2o']  # lazy: modeling adapters (h2o_automl) only
 [dependency-groups]
 dev = [
   'pytest',
+  # Coverage gate: CI and ci/run_checks.sh run pytest with
+  # --cov=src/forecast_ml_framework --cov-fail-under=85.
+  'pytest-cov',
   # pyyaml is used only by tests (yaml.safe_load), not by src/.
   'pyyaml',
   # starlette TestClient (fastapi.testclient) requires httpx at test
@@ -69,6 +79,9 @@ packages = ['src/forecast_ml_framework']
 [tool.pytest.ini_options]
 testpaths = ['tests']
 pythonpath = ['src']
+markers = [
+  'serial: must run serially (mutates global state, not parallel-safe)',
+]
 
 [tool.ruff]
 line-length = 80

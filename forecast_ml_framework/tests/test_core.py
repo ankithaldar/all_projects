@@ -477,6 +477,61 @@ def test_restricted_loads_rejects_chained_os_system():
     restricted_loads(pickle.dumps(Evil()))
 
 
+def test_restricted_loads_rejects_tzfile_global():
+  from forecast_ml_framework.core.artifact_store import (
+    _SAFE_GLOBALS, restricted_loads)
+  assert ('dateutil.tz.tz', 'tzfile') not in _SAFE_GLOBALS
+  assert ('dateutil.tz._tzfile', 'tzfile') not in _SAFE_GLOBALS
+  # Handcrafted protocol-0 pickle naming the allowlisted alias:
+  # c<module>\n<name>\n then REDUCE on the probed path.
+  raw = (b"cdateutil.tz.tz\ntzfile\n"
+         b"(S'/tmp/definitely_missing_tz_xyz'\ntR.")
+  with pytest.raises(ValueError, match='Forbidden pickle global'):
+    restricted_loads(raw)
+
+
+def test_restricted_loads_booster_path_errors_are_generic():
+  import pickle
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from xgboost import Booster
+  probe = '/tmp/definitely_missing_secret_path_12345.model'
+
+  class Evil:
+    def __reduce__(self):
+      return (Booster, (None, None, probe))
+
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(pickle.dumps(Evil()))
+  assert probe not in str(excinfo.value)
+  cause = excinfo.value.__cause__ or excinfo.value.__context__
+  assert cause is None or probe not in str(cause)
+
+
+def test_restricted_loads_lightgbm_booster_path_errors_generic():
+  import pickle
+  import pytest as _pytest
+  _pytest.importorskip('lightgbm')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from lightgbm import Booster
+  probe = '/tmp/definitely_missing_secret_path_12345.txt'
+
+  class Evil:
+    def __reduce__(self):
+      return (Booster, (None, None, probe))
+
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(pickle.dumps(Evil()))
+  assert probe not in str(excinfo.value)
+  seen = set()
+  cause = excinfo.value.__cause__ or excinfo.value.__context__
+  while cause is not None and id(cause) not in seen:
+    seen.add(id(cause))
+    assert probe not in str(cause)
+    cause = cause.__cause__ or cause.__context__
+
+
 def test_decode_payload_pickle_text_and_raw():
   import pickle
   from forecast_ml_framework.core.artifact_store import _decode_payload
@@ -842,3 +897,196 @@ def os_system_payload():
       return (os.system, ('echo pwned',))
 
   return Evil()
+
+
+# --- loop4: spark_factory coverage ---
+
+
+def test_spark_section_and_enabled_variants():
+  from forecast_ml_framework.core.spark_factory import (
+    _spark_enabled, _spark_section)
+  assert _spark_section(None) == {}
+  assert _spark_section('x') == {}
+  assert _spark_section({'spark': True}) == {'enabled': True}
+  assert _spark_section({'spark': {'a': 1}}) == {'a': 1}
+  assert _spark_enabled(None) is False
+  assert _spark_enabled({'spark_enabled': True}) is True
+  assert _spark_enabled({'use_spark': True}) is True
+  assert _spark_enabled({'spark': {'enabled': True}}) is True
+  assert _spark_enabled({'spark': {'master': 'local'}}) is True
+  assert _spark_enabled({'spark': True}) is True
+  assert _spark_enabled({'other': 1}) is False
+  assert _spark_enabled({'enabled': False}) is False
+  assert _spark_enabled({'enabled': True,
+    'spark': {'master': 'local'}}) is True
+  assert _spark_enabled({'spark_enabled': False,
+    'spark': {'master': 'local'}}) is False
+
+
+def test_spark_builder_config_variants():
+  from forecast_ml_framework.core.spark_factory import (
+    spark_builder_config)
+  cfg = spark_builder_config({'spark': {
+    'dynamic_allocation': False, 'shuffle_partitions': 7,
+    'config': {'spark.executor.memory': '2g', 'master': 'yarn',
+               'enabled': True, 'app_name': 'x',
+               'shuffle_partitions': 9}}})
+  assert cfg['spark.sql.shuffle.partitions'] == 7
+  assert cfg['spark.dynamicAllocation.enabled'] == 'false'
+  assert cfg['spark.executor.memory'] == '2g'
+  assert 'master' not in cfg and 'enabled' not in cfg
+  assert spark_builder_config({'spark_params': {'a': 1}})['a'] == 1
+  cfg_b = spark_builder_config({'spark_parameters': {'b': 2}})
+  assert cfg_b['b'] == 2
+  cfg13 = spark_builder_config({'spark': {'spark_params': {
+    'spark.sql.shuffle.partitions': 13}}})
+  assert cfg13['spark.sql.shuffle.partitions'] == 13
+  cfg14 = spark_builder_config({'spark': {'spark_parameters': {
+    'shuffle_partitions': 14}}})
+  assert cfg14['spark.sql.shuffle.partitions'] == 14
+  assert spark_builder_config({'spark': {'dynamic_allocation': True,
+    'spark_params': {'extra': '1'}}})['extra'] == '1'
+  default = spark_builder_config(None)
+  assert default['spark.sql.shuffle.partitions'] == 200
+  assert default['spark.dynamicAllocation.enabled'] == 'true'
+  assert default['spark.sql.adaptive.enabled'] == 'true'
+
+
+def test_pandas_limit_from_config_variants(monkeypatch):
+  from forecast_ml_framework.core.spark_factory import (
+    _pandas_limit_from_config)
+  assert _pandas_limit_from_config(None) == 5000000
+  assert _pandas_limit_from_config({'max_rows': 5}) == 5
+  assert _pandas_limit_from_config(
+    {'max_rows_for_pandas': None, 'max_rows': 6}) == 6
+  assert _pandas_limit_from_config(
+    {'pandas_conversion_params': {'max_rows': 9}}) == 9
+  assert _pandas_limit_from_config(
+    {'pandas_conversion_params': {}}) == 5000000
+  assert _pandas_limit_from_config(
+    {'pandas_conversion': {'max_rows_for_pandas': 8}}) == 8
+  assert _pandas_limit_from_config({'spark': {'max_rows': 7}}) == 7
+  monkeypatch.setenv('PANDAS_MAX_ROWS', '123')
+  assert _pandas_limit_from_config({}) == 123
+  assert _pandas_limit_from_config({'spark': {}}) == 123
+  monkeypatch.setenv('PANDAS_MAX_ROWS', 'abc')
+  assert _pandas_limit_from_config({}) == 5000000
+
+
+def test_frame_counts_and_pandas_limits(monkeypatch):
+  import sys
+  import types
+  import pandas as pd
+  from forecast_ml_framework.core.spark_factory import (
+    SparkSessionFactory, _frame_col_count, _frame_row_count,
+    check_pandas_limits)
+  frame = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
+  assert _frame_row_count(frame) == 2
+  assert _frame_col_count(frame) == 2
+
+  class Countable:
+    def count(self):
+      return 3
+  assert _frame_row_count(Countable()) == 3
+
+  class BadCount:
+    def count(self):
+      raise RuntimeError('no')
+    def __len__(self):
+      return 4
+  assert _frame_row_count(BadCount()) is None
+
+  class LenOnly:
+    def __len__(self):
+      return 4
+  assert _frame_row_count(LenOnly()) == 4
+
+  class BadCountNoLen:
+    def count(self):
+      raise RuntimeError('no')
+  assert _frame_row_count(BadCountNoLen()) is None
+  assert _frame_row_count(object()) is None
+
+  fake_pd = types.ModuleType('pandas')
+  monkeypatch.setitem(sys.modules, 'pandas', fake_pd)
+  assert _frame_row_count(Countable()) == 3
+  monkeypatch.undo()
+  import pandas as pd  # noqa: E402
+
+  class BadCols:
+    columns = object()
+  assert _frame_col_count(BadCols()) is None
+  assert _frame_col_count(object()) is None
+  assert check_pandas_limits(frame, {}) is None
+  assert check_pandas_limits(object(), {}) is None
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    check_pandas_limits(frame, {'max_rows_for_pandas': 1})
+
+  class CountNoCols:
+    def count(self):
+      return 10
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    check_pandas_limits(CountNoCols(), {'max_rows_for_pandas': 1})
+  assert SparkSessionFactory.check_pandas_limits(frame, {}) is None
+  sentinel = object()
+  assert SparkSessionFactory.to_pandas(sentinel) is sentinel
+
+  class WithPandas:
+    def toPandas(self):
+      return 'converted'
+  assert SparkSessionFactory.to_pandas(WithPandas()) == 'converted'
+
+
+def _install_fake_builder(monkeypatch, builder):
+  import sys
+  import types
+  pyspark = types.ModuleType('pyspark')
+  sql = types.ModuleType('pyspark.sql')
+
+  class SparkSession:
+    pass
+  SparkSession.builder = builder
+  sql.SparkSession = SparkSession
+  pyspark.sql = sql
+  monkeypatch.setitem(sys.modules, 'pyspark', pyspark)
+  monkeypatch.setitem(sys.modules, 'pyspark.sql', sql)
+
+
+def test_get_spark_with_fake_builder(monkeypatch):
+  from forecast_ml_framework.core.spark_factory import (
+    SparkSessionFactory)
+
+  class Builder:
+    def __init__(self):
+      self.calls = []
+    def master(self, value):
+      self.calls.append(('master', value))
+      return self
+    def appName(self, value):
+      self.calls.append(('appName', value))
+      return self
+    def config(self, key, value):
+      self.calls.append(('config', key, value))
+      return self
+    def getOrCreate(self):
+      return 'session'
+  builder = Builder()
+  _install_fake_builder(monkeypatch, builder)
+  assert SparkSessionFactory.get_spark(
+    {'spark': {'enabled': True, 'master': 'yarn',
+               'app_name': 'app'}}) == 'session'
+  assert ('master', 'yarn') in builder.calls
+  assert ('appName', 'app') in builder.calls
+  assert any(c[0] == 'config' for c in builder.calls)
+
+
+def test_get_spark_builder_failure_returns_none(monkeypatch):
+  from forecast_ml_framework.core.spark_factory import (
+    SparkSessionFactory)
+
+  class Builder:
+    def master(self, value):
+      raise RuntimeError('boom')
+  _install_fake_builder(monkeypatch, Builder())
+  assert SparkSessionFactory.get_spark(
+    {'spark': {'enabled': True}}) is None

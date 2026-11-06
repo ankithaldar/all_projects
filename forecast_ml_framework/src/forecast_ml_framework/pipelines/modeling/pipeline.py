@@ -40,8 +40,9 @@ Params (params:modeling_params, a dict):
     squared_error/mse/rmse, mae, poisson, ...); native
     values accepted as-is. Custom loss: dotted importable
     string resolving to a callable, e.g.
-    'my_pkg.losses.my_loss', resolved via resolve_handle()
-    and passed through as the adapter's loss kwarg.
+    'forecast_ml_framework.losses.huber_loss' or
+    'sklearn.metrics.mean_absolute_error', resolved via
+    resolve_handle() and passed through as loss kwarg.
     Unknown loss -> ValueError listing valid losses.
     Explicit loss_function overrides a per-model
     'objective' (xgboost/lightgbm) or 'loss' (sklearn);

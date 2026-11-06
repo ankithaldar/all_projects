@@ -8,7 +8,8 @@ Usage: forecast-ml train|predict|serve|run --env local
 Delegates to ``kedro run`` when kedro is available, otherwise
 prints the planned command. Stdlib argparse only.
 
-No auth or Docker is provided (out of scope for Phase 1).
+Optional API-key auth is supported via FORECAST_API_KEY in the
+serving app (see README Serving API); no Docker is provided.
 '''
 
 import argparse

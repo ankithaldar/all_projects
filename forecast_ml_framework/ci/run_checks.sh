@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Local equivalent of .github/workflows/forecast-ml-ci.yml.
 # Run from anywhere: bash forecast_ml_framework/ci/run_checks.sh
+# Environment parity: the uv venv (`uv sync`) is canonical — it
+# installs all deps, including the dev group (pytest, pytest-cov).
+# The system Anaconda env is not canonical; skips for deps it lacks
+# (e.g. mlflow optional extras) are expected there.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,8 +17,13 @@ echo "==> lint (pylint, root .pylintrc on forecast_ml_framework/src) <=="
 uv run --project "${PROJECT_DIR}" --with pylint \
   pylint --rcfile=.pylintrc --fail-under=9.0 forecast_ml_framework/src
 
-echo "==> test (uv sync + pytest) <=="
-(cd "${PROJECT_DIR}" && uv sync --frozen && uv run pytest -q)
+echo "==> test (uv sync + pytest, coverage gate >=85%) <=="
+# Mirror of the CI test job: total coverage of
+# src/forecast_ml_framework must be >= 85%.
+(cd "${PROJECT_DIR}" && uv sync --frozen && uv run pytest -q \
+  --cov=src/forecast_ml_framework \
+  --cov-report=term-missing \
+  --cov-fail-under=85)
 
 echo "==> demo (registry / import smoke) <=="
 (cd "${PROJECT_DIR}" && uv run python -c \

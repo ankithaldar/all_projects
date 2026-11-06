@@ -185,9 +185,54 @@ def test_registry_loader_alias_not_found_no_pyfunc_fallback(
   assert caplog.records
 
 
-def test_registry_loader_flavour_error_falls_back_to_pyfunc(
+def test_registry_loader_flavour_error_rejected_by_default(
     monkeypatch, caplog):
-  '''Flavour MlflowException falls back to pyfunc loading.'''
+  '''Flavour error must NOT fall back to arbitrary pyfunc code.'''
+  import logging
+  _calls, exceptions = _install_fake_mlflow(monkeypatch)
+  from forecast_ml_framework.serving.model_loader import (
+    RegistryModelLoader,
+  )
+  flavour = exceptions.MlflowException(
+      'The model does not have the specified flavour')
+  calls, _exc = _install_fake_mlflow(
+      monkeypatch, sklearn_exc=flavour)
+  with caplog.at_level(logging.WARNING):
+    with pytest.raises(RuntimeError, match='model unavailable'):
+      RegistryModelLoader(
+          'sqlite:///registry.db', 'my-model',
+          alias='production')()
+  assert calls['pyfunc'] == []
+  assert caplog.records
+
+
+def test_registry_loader_malicious_pyfunc_rejected(monkeypatch):
+  '''Malicious pyfunc payload is never executed by default.'''
+  executed = []
+  _calls, exceptions = _install_fake_mlflow(monkeypatch)
+  from forecast_ml_framework.serving.model_loader import (
+    RegistryModelLoader,
+  )
+  flavour = exceptions.MlflowException(
+      'The model does not have the specified flavour')
+  calls, _exc = _install_fake_mlflow(
+      monkeypatch, sklearn_exc=flavour,
+      pyfunc_result=None)
+  # Even if pyfunc would return a model, loader must not call it.
+  import sys as _sys
+  _sys.modules['mlflow.pyfunc'].load_model = lambda uri: executed.append(
+      uri) or Dummy()
+  with pytest.raises(RuntimeError, match='model unavailable'):
+    RegistryModelLoader(
+        'sqlite:///registry.db', 'my-model',
+        alias='production')()
+  assert calls['pyfunc'] == []
+  assert executed == []
+
+
+def test_registry_loader_allow_pyfunc_explicit_warns(
+    monkeypatch, caplog):
+  '''Opt-in pyfunc requires explicit flag and startup warning.'''
   import logging
   _calls, exceptions = _install_fake_mlflow(monkeypatch)
   from forecast_ml_framework.serving.model_loader import (
@@ -199,11 +244,12 @@ def test_registry_loader_flavour_error_falls_back_to_pyfunc(
       monkeypatch, sklearn_exc=flavour)
   with caplog.at_level(logging.WARNING):
     loaded = RegistryModelLoader(
-        'sqlite:///registry.db', 'my-model',
-        alias='production')()
+        'sqlite:///registry.db', 'my-model', alias='production',
+        allow_pyfunc=True)()
   assert calls['pyfunc'] == ['models:/my-model@production']
   assert loaded.predict([[1.0, 2.0]]) == [3.0]
-  assert caplog.records
+  assert any('pyfunc' in r.getMessage().lower()
+             for r in caplog.records)
 
 
 def test_registry_loader_failure_generic_no_leak(monkeypatch):

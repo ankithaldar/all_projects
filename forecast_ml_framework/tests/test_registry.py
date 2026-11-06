@@ -282,6 +282,68 @@ def test_validate_registry_uri_rejects_unicode_dot_hosts(uri):
     validate_registry_uri(uri)
 
 
+@pytest.mark.parametrize('uri', [
+  'http://[::ffff:169.254.169.254]/',
+  'http://[::ffff:a9fe:a9fe]/',
+  'http://[::ffff:127.0.0.1]/',
+  'http://[::ffff:10.0.0.1]/',
+  'http://[::ffff:192.168.1.1]/',
+  'http://[::ffff:172.16.0.1]/',
+  '//[::ffff:169.254.169.254]/',
+  'http://10.0.0.1/',
+  'http://192.168.1.1/',
+  'http://172.16.0.1/',
+  'http://172.31.255.255/',
+  'http://127.0.0.2/',
+  # Loopback via mapped / 6to4 / teredo forms (except explicit
+  # canonical 127.0.0.1 and localhost, which stay allowed per
+  # pre-existing good-URI contract)
+  'http://[2002:a9fe:a9fe::1]/',
+  'http://[2002:7f00:1::1]/',
+  'http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/',
+  'http://240.0.0.1/',
+  'http://255.255.255.255/',
+  'http://0.0.0.0/',
+  'http://[fe80::1]/',
+  'http://[fd00::1]/',
+])
+def test_validate_registry_uri_rejects_private_mapped_6to4_teredo(uri):
+  '''Mapped/6to4/Teredo/private/reserved SSRF forms are rejected.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  with pytest.raises(ValueError):
+    validate_registry_uri(uri)
+
+
+@pytest.mark.parametrize('uri', [
+  'http://100.64.0.1/',
+  'http://100.127.255.255/',
+  'http://100.64.0.1:5000/path',
+  '//100.64.0.1',
+  'http://[::ffff:100.64.0.1]/',
+  'http://[::ffff:100.127.0.1]/',
+])
+def test_validate_registry_uri_rejects_cgnat_100_64_10(uri):
+  '''CGNAT 100.64.0.0/10 is not global (is_private False,
+  is_global False) and must be rejected like other non-public
+  IPs, except explicit canonical localhost.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  with pytest.raises(ValueError):
+    validate_registry_uri(uri)
+
+
+@pytest.mark.parametrize('uri', [
+  'http://localhost:5000', 'http://127.0.0.1:5000',
+  'http://[::1]:5000',
+])
+def test_validate_registry_uri_explicit_localhost_allowed(uri):
+  '''Explicit localhost (name/canonical) stays allowed.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  assert validate_registry_uri(uri) == uri
+
+
 def test_model_registry_rejects_bad_tracking_uri():
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -474,3 +536,50 @@ def test_real_mlflow_roundtrip_sqlite(tmp_path, monkeypatch):
   assert len(models) >= 1
   ranked = registry.compare_runs(metric='rmse', higher_better=False)
   assert ranked and ranked[0]['run_id'] == result['run_id']
+
+
+# --- loop4: *.localhost / localhost.localdomain (RED) ---
+
+@pytest.mark.parametrize('uri', [
+  'http://foo.localhost:5000',
+  'http://sub.localhost/',
+  'https://foo.localhost:5000/path',
+  '//foo.localhost:5000',
+  'http://foo.localhost./',
+  'http://localhost.localdomain:5000',
+  'http://localhost.localdomain./',
+])
+def test_validate_registry_uri_rejects_localhost_subdomains(uri):
+  '''*.localhost and localhost.localdomain are rejected.
+
+  They resolve to ::1 via getaddrinfo, so only the exact
+  canonical ``localhost`` hostname stays allowed by design.
+  ``localhost.localdomain`` is the RFC6761 alias for localhost
+  and is rejected for the same reason (documented here).
+  '''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  with pytest.raises(ValueError):
+    validate_registry_uri(uri)
+
+
+# --- loop5: *.localhost.localdomain bypass (RED) ---
+
+@pytest.mark.parametrize('uri', [
+  'http://foo.localhost.localdomain:5000',
+  'http://a.b.localhost.localdomain:5000',
+  'https://foo.localhost.localdomain/path',
+  '//foo.localhost.localdomain:5000',
+  'http://foo.localhost.localdomain./',
+])
+def test_validate_registry_uri_rejects_localhost_localdomain_subdomains(uri):
+  '''*.localhost.localdomain is rejected like *.localhost.
+
+  Only the exact ``localhost`` hostname stays allowed; any
+  subdomain chaining via ``localhost.localdomain`` resolves
+  to loopback and must not bypass the allowance.
+  '''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  with pytest.raises(ValueError):
+    validate_registry_uri(uri)

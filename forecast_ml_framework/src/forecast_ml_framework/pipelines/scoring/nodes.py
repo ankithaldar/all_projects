@@ -412,8 +412,37 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size):
   try:
     x = x.astype(float)
   except (TypeError, ValueError):
-    x = pd.get_dummies(x, columns=[
-      c for c in x.columns if not pd.api.types.is_numeric_dtype(x[c])])
+    cat_cols = [
+      c for c in x.columns if not pd.api.types.is_numeric_dtype(x[c])]
+    max_cols = _cap_value(
+      params or {}, 'max_cols', 'SCORING_MAX_COLS', DEFAULT_MAX_COLS)
+    if cat_cols and max_cols is not None:
+      # Cardinality cap before expansion: get_dummies would
+      # otherwise expand e.g. 2000 distinct categories into 2000
+      # columns, bypassing the max_cols check done on the
+      # pre-expansion frame (DoS amplification).
+      numeric_cols = len(x.columns) - len(cat_cols)
+      expanded = numeric_cols
+      for col in cat_cols:
+        distinct = int(x[col].nunique(dropna=False))
+        if distinct > max_cols:
+          raise ValueError(
+            'scoring input exceeds max_cols=%d: categorical '
+            'column %r has %d distinct values'
+            % (max_cols, col, distinct))
+        expanded += distinct
+      if expanded > max_cols:
+        raise ValueError(
+          'scoring input exceeds max_cols=%d: get_dummies '
+          'expansion would produce %d columns'
+          % (max_cols, expanded))
+    x = pd.get_dummies(x, columns=cat_cols)
+    # Re-check caps after expansion.
+    if max_cols is not None and len(x.columns) > max_cols:
+      raise ValueError(
+        'scoring input exceeds max_cols=%d: got %d columns '
+        'after get_dummies expansion'
+        % (max_cols, len(x.columns)))
   for col in x.columns:
     values = np.asarray(x[col], dtype=float)
     if not np.isfinite(values).all():

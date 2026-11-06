@@ -3,7 +3,8 @@
 
 '''Kedro pipeline wiring for data preparation.
 
-TODO parameters.yml naming (documented for catalog wiring):
+Note: ``conf/base/parameters/*.yml`` bucket naming
+(documented for catalog wiring):
 - ``params:data_prep_params`` -> preprocess prep_params
 - ``params:validation_params`` -> validate_data params
 - ``params:feature_selection_params`` -> select_features params

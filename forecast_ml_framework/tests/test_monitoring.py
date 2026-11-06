@@ -310,3 +310,165 @@ def test_performance_decay_inf_is_nan_not_passthrough(caplog):
       _params(baseline_metrics={'accuracy': 0.9}))
   assert np.isnan(report['accuracy']['delta'])
   assert np.isnan(report['accuracy']['decay'])
+
+
+# --- loop4: uncovered branches in monitoring nodes ---
+
+
+def test_bins_variants_and_errors():
+  '''_bins handles aliases, float ints, and bad values.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import _bins
+  assert _bins({'n_bins': 5}) == 5
+  assert _bins({'num_bins': 6}) == 6
+  assert _bins({'bins': 5.0}) == 5
+  assert _bins({}) == 10
+  for bad in (True, 5.5, float('inf'), 'abc', 0, -1):
+    with pytest.raises(ValueError, match='bins must be'):
+      _bins({'bins': bad})
+
+
+def test_epsilon_variants_and_errors():
+  '''_epsilon clamps/bad values as documented.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import _epsilon
+  assert _epsilon({'epsilon': 0.01}) == pytest.approx(0.01)
+  assert _epsilon({'epsilon': -1}) == pytest.approx(1e-9)
+  assert _epsilon({'epsilon': float('inf')}) == pytest.approx(1e-9)
+  for bad in (True, 'abc'):
+    with pytest.raises(ValueError, match='epsilon must be'):
+      _epsilon({'epsilon': bad})
+
+
+def test_min_rows_bad_value():
+  '''_min_rows rejects non-int values.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import _min_rows
+  assert _min_rows({'min_rows': '20'}) == 20
+  with pytest.raises(ValueError, match='min_rows must be'):
+    _min_rows({'min_rows': 'abc'})
+
+
+def test_psi_helpers_edge_cases():
+  '''PSI helpers handle bad epsilon, inf, constant ref.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _numeric_psi, _psi_from_props)
+  assert _psi_from_props([0.5, 0.5], [0.5, 0.5], 'bad') == pytest.approx(
+    0.0, abs=1e-9)
+  assert _psi_from_props([0.5], [0.5], -1) == pytest.approx(0.0, abs=1e-9)
+  assert np.isnan(_psi_from_props(
+    [float('inf')], [float('inf')], 1e-4))
+  const = np.ones(100)
+  assert np.isfinite(_numeric_psi(const, const * 2, 10, 1e-4))
+
+
+def test_compute_drift_empty_no_columns():
+  '''Empty frames with no columns return empty report.'''
+  assert compute_drift(pd.DataFrame(), pd.DataFrame(),
+                       _params()) == {}
+
+
+def test_prediction_drift_series_forms_and_kwargs():
+  '''prediction_drift accepts proba/first-col/dict/kwargs forms.'''
+  ref_proba = pd.DataFrame({'proba': [0.1, 0.9] * 50})
+  cur_proba = pd.DataFrame({'proba': [0.9, 0.1] * 50})
+  assert 'psi' in prediction_drift(ref_proba, cur_proba, _params())
+  ref_other = pd.DataFrame({'other': [0, 1] * 50})
+  assert 'psi' in prediction_drift(ref_other, ref_other, _params())
+  assert 'psi' in prediction_drift(
+    pd.DataFrame(), pd.DataFrame(), _params())
+  assert 'psi' in prediction_drift(
+    {'prediction': [0, 1] * 50}, {'prediction': [1, 0] * 50},
+    _params())
+  assert 'psi' in prediction_drift(
+    reference_predictions=[0, 1] * 50,
+    current_predictions=[1, 0] * 50, params=_params())
+  assert 'psi' in prediction_drift(
+    ref=[0, 1] * 50, cur=[1, 0] * 50, params=_params())
+  assert 'psi' in prediction_drift(
+    pd.Series([0, 1] * 50), None, _params())
+
+
+def test_performance_decay_signature_variants():
+  '''performance_decay handles wrapped/callable/kwargs forms.'''
+  rep = performance_decay(
+    {'current_metrics': {'accuracy': 0.8}},
+    {'baseline_metrics': {'accuracy': 0.9}})
+  assert rep['accuracy']['delta'] == pytest.approx(-0.1)
+  rep2 = performance_decay(lambda: None, {'accuracy': 0.8},
+                           _params(baseline_metrics={
+                             'accuracy': 0.9}))
+  assert np.isnan(rep2['accuracy']['delta'])
+  rep2b = performance_decay({'accuracy': 0.8}, None,
+                            _params(baseline_metrics={
+                              'accuracy': 0.9}))
+  assert rep2b['accuracy']['delta'] == pytest.approx(-0.1)
+  rep3 = performance_decay(current={'accuracy': 0.8},
+                           baseline={'accuracy': 0.9})
+  assert rep3['accuracy']['delta'] == pytest.approx(-0.1)
+  rep4 = performance_decay({'accuracy': 0.8},
+                           _params(baseline_metrics={
+                             'accuracy': 0.9}))
+  assert rep4['accuracy']['delta'] == pytest.approx(-0.1)
+
+
+def test_performance_decay_missing_and_bad_types():
+  '''performance_decay handles missing metrics and bad types.'''
+  rep = performance_decay({'accuracy': 0.9, 'extra': 0.5},
+                          _params(baseline_metrics={'accuracy': 0.9}))
+  assert np.isnan(rep['extra']['delta'])
+  with pytest.raises(ValueError, match='current_metrics must be'):
+    performance_decay('bad', {})
+  with pytest.raises(ValueError, match='baseline_metrics must be'):
+    performance_decay({'accuracy': 0.9}, 'bad')
+
+
+def test_performance_decay_nonfinite_delta_and_relative():
+  '''performance_decay returns NaN for non-finite delta/relative.'''
+  rep = performance_decay({'accuracy': 1e308},
+                          _params(baseline_metrics={
+                            'accuracy': -1e308}))
+  assert np.isnan(rep['accuracy']['delta'])
+  rep2 = performance_decay({'accuracy': 1e308},
+                           _params(baseline_metrics={
+                             'accuracy': 1e-308}))
+  assert np.isnan(rep2['accuracy']['relative_delta'])
+
+
+def test_threshold_pair_and_resolve_variants():
+  '''Threshold helpers handle scalar/None/alias/bare maps.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _resolve_thresholds, _threshold_pair)
+  assert _threshold_pair(0.2) == (0.2, None)
+  assert _threshold_pair(None) == (None, None)
+  assert _threshold_pair({'low': 0.1, 'high': 0.3}) == (0.1, 0.3)
+  assert _threshold_pair({'medium': 0.15}) == (0.15, None)
+  merged = _resolve_thresholds({'thresholds': {
+    'warning': 0.2, 'critical': 0.3}, 'psi_threshold': 0.33})
+  assert merged['psi']['warning'] == pytest.approx(0.33)
+  assert merged['ks']['warning'] == pytest.approx(0.2)
+  assert merged['ks']['critical'] == pytest.approx(0.3)
+  assert merged['missing_delta'] == merged['missing_rate_delta']
+
+
+def test_evaluate_alerts_invalid_and_skipped_sections(caplog):
+  '''evaluate_alerts handles invalid reports and bad stats.'''
+  assert evaluate_alerts({'num': 'bad'}, _params()) == []
+  with caplog.at_level(logging.WARNING):
+    assert evaluate_alerts('bad-report', _params()) == []
+  assert evaluate_alerts(report={'num': {'psi': 0.5}},
+                         params=_params())
+  combined = {'prediction': 'bad', 'performance': {
+    'accuracy': 'bad', 'rmse': {'delta': -0.5}}}
+  alerts = evaluate_alerts(combined, _params())
+  assert any(a['feature'] == 'rmse' for a in alerts)
+
+
+def test_build_monitoring_report_kwargs_forms():
+  '''build_monitoring_report accepts predictions/metrics kwargs.'''
+  ref, cur = _frames(shift=0.0)
+  report = build_monitoring_report(
+    compute_drift(ref, cur, _params()),
+    params=_params(baseline_metrics={'accuracy': 0.9}),
+    predictions=(np.zeros(100), np.ones(100)),
+    metrics={'accuracy': 0.8})
+  assert report['performance']['accuracy']['delta'] == pytest.approx(
+    -0.1)
+  assert 'prediction' in report

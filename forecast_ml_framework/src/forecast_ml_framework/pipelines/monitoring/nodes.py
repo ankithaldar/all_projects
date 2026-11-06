@@ -87,7 +87,8 @@ def _bins(params):
 
 def _epsilon(params):
   '''Resolve the PSI smoothing epsilon from params.'''
-  raw = flatten_params(params, 'monitoring_params').get('epsilon', DEFAULT_EPSILON)
+  raw = flatten_params(
+      params, 'monitoring_params').get('epsilon', DEFAULT_EPSILON)
   if isinstance(raw, bool):
     raise ValueError('epsilon must be a positive number, got %r'
                      % (raw,))
@@ -105,7 +106,8 @@ def _epsilon(params):
 
 def _min_rows(params):
   '''Resolve the small-input row threshold from params.'''
-  raw = flatten_params(params, 'monitoring_params').get('min_rows', DEFAULT_MIN_ROWS)
+  raw = flatten_params(
+      params, 'monitoring_params').get('min_rows', DEFAULT_MIN_ROWS)
   try:
     return int(raw)
   except (TypeError, ValueError, OverflowError) as exc:
@@ -377,7 +379,8 @@ def _prediction_stats(ref, cur, params):
       'prediction_drift: empty/small predictions (ref=%d, cur=%d);'
       ' returning NaN stats' % (len(ref_clean), len(cur_clean)))
     return stats
-  ptype = flatten_params(params, 'monitoring_params').get('prediction_type', 'auto')
+  ptype = flatten_params(
+      params, 'monitoring_params').get('prediction_type', 'auto')
   numeric = pd.api.types.is_numeric_dtype(ref_clean)
   if ptype == 'auto':
     numeric = numeric and ref_clean.nunique() > 10

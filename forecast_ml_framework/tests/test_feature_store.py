@@ -618,3 +618,27 @@ def test_offline_load_unparseable_key_via_text_match(tmp_path):
   offline.artifact_store.save('features/custom.pkl', _df())
   frame = offline.load(as_of='custom')
   assert not frame.empty
+
+
+def test_feature_helpers_canonical_in_store():
+  '''Offline/online helpers are the store.py canonical copies.'''
+  from forecast_ml_framework.feature_store import offline, online, store
+  for name in ('_naive_utc', '_naive_utc_frame', '_check_not_empty'):
+    assert getattr(offline, name) is getattr(store, name)
+    assert getattr(online, name) is getattr(store, name)
+
+
+def test_offline_combined_frame_pit_filter_and_row_cap(tmp_path):
+  offline = _offline(tmp_path)
+  offline.materialize(_df(), as_of='2024-01-01')
+  offline.materialize(_df(), as_of='2024-01-03')
+  # PIT: only rows at/before when enter the combined frame.
+  pit = offline._combined_frame(when='2024-01-02')
+  assert len(pit) == 4
+  import pandas as pd
+  assert (pit['as_of'] <= pd.Timestamp('2024-01-02')).all()
+  assert len(offline._combined_frame()) == 6
+  # Row cap via check_pandas_limits reuse.
+  with pytest.raises(ValueError, match='max_rows_for_pandas'):
+    offline._combined_frame(
+        config={'max_rows_for_pandas': 2})

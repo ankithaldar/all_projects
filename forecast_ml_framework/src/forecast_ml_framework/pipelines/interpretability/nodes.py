@@ -148,7 +148,9 @@ def _sorted_importance(scores, top_k=None):
 def _pred_change_importance(model, frame, params):
   '''Permutation importance via prediction change (no y).'''
   rng = np.random.RandomState(_seed(params))
-  repeats = max(_int(flatten_params(params, 'interpretability_params').get('n_repeats', 5), 5), 1)
+  repeats = max(_int(flatten_params(
+      params, 'interpretability_params').get(
+          'n_repeats', 5), 5), 1)
   base = _predict(model, frame)
   scores = []
   for col in frame.columns:
@@ -358,7 +360,8 @@ def _calibration_bins(preds, y, n_bins):
 
 def _segments(frame, preds, params):
   '''Return segment labels for each row.'''
-  segment_col = flatten_params(params, 'interpretability_params').get('segment_col')
+  segment_col = flatten_params(
+      params, 'interpretability_params').get('segment_col')
   if segment_col and segment_col in frame.columns:
     return frame[segment_col].astype(str).to_numpy()
   labels = np.full(len(frame), 'segment_0', dtype=object)

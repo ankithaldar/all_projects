@@ -67,16 +67,16 @@ def test_cli_train_prints_planned_command(capsys, monkeypatch):
 # --- Coverage: __main__ entry point + settings smoke ---
 
 
-def test_main_entrypoint_parser_and_version():
+def test_main_entrypoint_parser_and_version(capsys):
   import pytest
-  from forecast_ml_framework.__main__ import _build_parser, main
+  from forecast_ml_framework.__main__ import main as entry_main
+  from forecast_ml_framework.cli import _build_parser
   parser = _build_parser()
   assert parser.prog == 'forecast-ml'
+  assert entry_main(['--version']) == 0
+  assert 'forecast-ml' in capsys.readouterr().out
   with pytest.raises(SystemExit) as exc:
-    parser.parse_args(['--version'])
-  assert exc.value.code == 0
-  with pytest.raises(SystemExit) as exc:
-    main(['--help'])
+    entry_main(['--help'])
   assert exc.value.code == 0
 
 

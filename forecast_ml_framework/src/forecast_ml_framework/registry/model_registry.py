@@ -60,18 +60,61 @@ def _is_numeric_host(host):
   return all(_NUMERIC_PART_RE.fullmatch(part) for part in parts)
 
 
-def _validate_uri_host(uri, host):
-  '''Reject metadata/encoded hosts for ``uri``.
+#: Canonical loopback forms treated as explicit localhost.
+_EXPLICIT_LOCALHOST_IPS = frozenset({'127.0.0.1', '::1'})
 
-  Canonical 127.0.0.1 (and localhost) remain allowed by
-  design. Encoded forms of any IP are rejected unless the
-  host IS the canonical string of a parsed IP
-  (``str(ip) == host``), which the ``ipaddress`` check below
-  and the link-local/blocked checks then judge.
+
+def _embedded_ip_blocked(ip):
+  '''Return True when ``ip`` must be rejected as non-public.
+
+  Unwraps IPv4-mapped IPv6 (``ipv4_mapped``) and checks the
+  embedded IPv4; rejects 6to4/teredo transitions outright
+  (their embedded IPv4 could otherwise smuggle a private /
+  metadata address past IPv6 checks); and rejects any
+  address that is not global (e.g. CGNAT 100.64.0.0/10,
+  where is_private is False but is_global is False),
+  private, loopback, link-local, reserved, multicast,
+  or unspecified. Explicit canonical localhost
+  (``127.0.0.1``/``::1``) is handled by the caller, not here,
+  so mapped/encoded loopback forms are still blocked.
+  '''
+  if isinstance(ip, ipaddress.IPv6Address):
+    mapped = ip.ipv4_mapped
+    if mapped is not None:
+      return _embedded_ip_blocked(mapped)
+    # 6to4 (2002::/16) and Teredo (2001::/32) embed an IPv4
+    # address that may be private/metadata; reject them all.
+    if ip.sixtofour is not None or ip.teredo is not None:
+      return True
+  return bool(
+      not ip.is_global or ip.is_private or ip.is_loopback
+      or ip.is_link_local or ip.is_reserved or ip.is_multicast
+      or ip.is_unspecified or str(ip) == '100.100.100.200')
+
+
+def _validate_uri_host(uri, host):
+  '''Reject metadata/encoded/non-public hosts for ``uri``.
+
+  Canonical 127.0.0.1/::1 (and the ``localhost`` hostname)
+  remain allowed by design as explicit localhost. Encoded
+  forms of any IP are rejected unless the host IS the
+  canonical string of a parsed IP (``str(ip) == host``).
+  Subdomains of localhost (``*.localhost``, e.g.
+  ``foo.localhost``), ``localhost.localdomain`` and its
+  subdomains (``*.localhost.localdomain``, e.g.
+  ``foo.localhost.localdomain`` -- the RFC6761 alias for
+  localhost) are rejected: they also
+  resolve to ::1 via getaddrinfo, so allowing them would
+  let a non-canonical spelling bypass the explicit-
+  localhost allowance. IPv4-mapped IPv6 is unwrapped and
+  its embedded IPv4 is judged; 6to4/Teredo forms are
+  rejected; any other private/loopback/link-local/
+  reserved/multicast/unspecified IP is rejected (SSRF
+  guard).
 
   Raises:
     ValueError: When the host contains non-ASCII characters,
-      is %-encoded, blocked, link-local, or numeric in a
+      is %-encoded, blocked, non-public, or numeric in a
       non-canonical form.
   '''
   if host and not host.isascii():
@@ -83,7 +126,16 @@ def _validate_uri_host(uri, host):
   if host in _BLOCKED_HOSTS:
     raise ValueError(
       f'Invalid registry URI {uri!r}: metadata host.')
-  if not host:
+  # *.localhost, localhost.localdomain and
+  # *.localhost.localdomain resolve to ::1 just like
+  # localhost, but only the exact canonical 'localhost'
+  # hostname is allowed by design; every other localhost
+  # spelling is rejected.
+  if host == 'localhost.localdomain' or host.endswith(
+          ('.localhost', '.localhost.localdomain')):
+    raise ValueError(
+      f'Invalid registry URI {uri!r}: metadata host.')
+  if not host or host == 'localhost':
     return
   try:
     ip = ipaddress.ip_address(host)
@@ -92,8 +144,13 @@ def _validate_uri_host(uri, host):
   if _is_numeric_host(host) and (ip is None or str(ip) != host):
     raise ValueError(
       f'Invalid registry URI {uri!r}: metadata host.')
-  if ip is not None and (
-      ip.is_link_local or str(ip) == '100.100.100.200'):
+  if ip is not None and str(ip) in _EXPLICIT_LOCALHOST_IPS:
+    # Explicit canonical localhost only; mapped/encoded
+    # loopback (e.g. ::ffff:127.0.0.1) does not reach here
+    # because str(ip) is the mapped form, and is blocked by
+    # the unwrapping check below.
+    return
+  if ip is not None and _embedded_ip_blocked(ip):
     raise ValueError(
       f'Invalid registry URI {uri!r}: metadata host.')
 
@@ -180,6 +237,12 @@ def validate_registry_uri(uri):
   ('user:pass@host'), whitespace/control characters, and
   cloud metadata hosts (169.254.0.0/16 link-local IPs,
   'metadata.google.internal', 'metadata', 100.100.100.200).
+  Also rejected: any non-public IP literal -- private
+  (10/8, 172.16/12, 192.168/16, ...), loopback other than
+  explicit localhost/127.0.0.1/::1, link-local, reserved,
+  multicast or unspecified -- including IPv4-mapped IPv6
+  (embedded IPv4 unwrapped and checked), 6to4 and Teredo
+  transition forms.
   Also rejected: %-encoded hostnames, non-ASCII hostnames
   (e.g. unicode dots U+3002/U+FF0E/U+FF61/U+2024 that
   ``getaddrinfo`` normalises to '.'), and IPs encoded as a
@@ -187,6 +250,10 @@ def validate_registry_uri(uri):
   'http://0xA9FEA9FE/' or '//169.254.169.254', which
   ``getaddrinfo`` resolves to the metadata IP. Canonical
   127.0.0.1/localhost stay allowed; encoded forms do not.
+  ``*.localhost`` hosts, ``localhost.localdomain`` and
+  ``*.localhost.localdomain`` hosts (which also resolve
+  to ::1) are rejected; only the exact ``localhost``
+  hostname is allowed.
 
   Args:
     uri: Tracking/registry URI, or ''/None for ambient.

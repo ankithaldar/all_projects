@@ -5,43 +5,9 @@
 # pylint: disable=import-outside-toplevel, broad-exception-caught
 
 from forecast_ml_framework.feature_store.store import (
-    ENTITY_COL, FeatureStore, _normalize_frame, _resolve_time,
+    ENTITY_COL, FeatureStore, _check_not_empty, _naive_utc,
+    _naive_utc_frame, _normalize_frame, _resolve_time,
     _snapshot_timestamp, _version_key)
-
-
-def _naive_utc(value):
-  '''Parse ``value`` to a naive UTC Timestamp (or None).'''
-  if value is None:
-    return None
-  import pandas as pd
-  stamp = pd.Timestamp(value)
-  if getattr(stamp, 'tzinfo', None) is not None:
-    stamp = stamp.tz_convert('UTC').tz_localize(None)
-  return stamp
-
-
-def _naive_utc_frame(frame):
-  '''Return ``frame`` with tz-aware as_of converted to naive UTC.'''
-  import pandas as pd
-  frame = frame.copy()
-  if 'as_of' in frame.columns and len(frame):
-    converted = pd.to_datetime(frame['as_of'])
-    if getattr(converted.dtype, 'tz', None) is not None:
-      converted = converted.dt.tz_convert('UTC').dt.tz_localize(None)
-    frame['as_of'] = converted
-  return frame
-
-
-def _check_not_empty(dataframe):
-  '''Raise an informative ValueError for an empty dataframe.'''
-  try:
-    empty = dataframe is None or len(dataframe) == 0
-  except TypeError:
-    empty = False
-  if empty:
-    raise ValueError(
-        'cannot materialize empty dataframe: '
-        'offline feature store is empty')
 
 
 class OfflineFeatureStore(FeatureStore):
@@ -213,18 +179,46 @@ class OfflineFeatureStore(FeatureStore):
     raise FileNotFoundError(
         f'No offline feature snapshot for as_of={as_of!r}')
 
-  def _combined_frame(self):
-    '''Concatenate all snapshots, or return an empty frame.'''
+  def _combined_frame(self, when=None, config=None):
+    '''Concatenate snapshots PIT-filtered to ``when``, or empty.
+
+    Each loaded frame is row-filtered to ``as_of <= when``
+    before concatenation, so future rows never enter the
+    combined frame. Each loaded frame and the combined
+    frame are guarded by ``check_pandas_limits`` against
+    a row cap instead of growing unbounded.
+
+    Args:
+      when: Point-in-time cutoff; None loads every row.
+      config: Optional ``check_pandas_limits`` config.
+
+    Returns:
+      Concatenated frame, or an empty frame when no snapshot
+      is eligible.
+    '''
     import pandas as pd
+    from forecast_ml_framework.core.spark_factory import (
+      check_pandas_limits)
+    when_ts = _naive_utc(when) if when is not None else None
     frames = []
+    seen_columns = [ENTITY_COL, 'as_of']
     for key in self._all_keys():
       frame = self._load_frame(key)
       if frame is not None and not frame.empty:
+        for col in frame.columns:
+          if col not in seen_columns:
+            seen_columns.append(col)
+        if when_ts is not None and 'as_of' in frame.columns:
+          frame = frame[frame['as_of'] <= when_ts]
+        if frame.empty:
+          continue
+        check_pandas_limits(frame, config)
         frames.append(frame)
     if not frames:
-      return pd.DataFrame(
-          columns=[ENTITY_COL, 'as_of'])
-    return pd.concat(frames, ignore_index=True)
+      return pd.DataFrame(columns=seen_columns)
+    combined = pd.concat(frames, ignore_index=True)
+    check_pandas_limits(combined, config)
+    return combined
 
   def get_features(self, entity_ids, feature_names=None, as_of=None,
                    request_time=None):
@@ -258,7 +252,7 @@ class OfflineFeatureStore(FeatureStore):
           'available features; pass as_of/request_time for '
           'point-in-time correctness (future leakage risk)',
           UserWarning, stacklevel=2)
-    frame = self._combined_frame()
+    frame = self._combined_frame(when=when)
     available = [c for c in frame.columns
                  if c not in (ENTITY_COL, 'as_of')]
     names = list(feature_names) if feature_names is not None \

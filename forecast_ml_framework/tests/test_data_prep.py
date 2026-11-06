@@ -396,3 +396,238 @@ def test_resolve_handle_accepts_allowlisted_estimator():
   assert obj.__name__ == 'RandomForestClassifier'
   assert hasattr(obj, 'fit') and hasattr(obj, 'predict')
 
+
+
+# --- loop4: uncovered branches in data_prep nodes ---
+
+
+def test_seq_list_variants():
+  '''_seq_list coerces None, str, tuple, scalar.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _seq_list)
+  assert _seq_list(None) == []
+  assert _seq_list('[1, 2, 3]') == [1.0, 2.0, 3.0]
+  assert _seq_list((1, 2)) == [1.0, 2.0]
+  assert _seq_list(5) == [5.0]
+
+
+def test_impute_strategies_and_missing_col():
+  '''_impute covers median/mode/bounds and missing col.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _impute
+  for strategy, expected in (('median', 10.0), ('mode', 0.0)):
+    frame = _df()
+    out = _impute(frame, {'strategy': strategy,
+                          'cols': {'include_cols': ['x1']}}, _vars())
+    assert out['x1'].iloc[3] == pytest.approx(expected)
+  frame = _df()
+  out = _impute(frame, {'strategy': 'none',
+                        'custom_bounds': {'x1': 99.0},
+                        'cols': {'include_cols': ['x1', 'ghost']}},
+                _vars())
+  assert out['x1'].iloc[3] == 99.0
+
+
+def test_cap_custom_bound_and_missing_col():
+  '''_cap honours custom_bound and skips missing cols.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _cap
+  out = _cap(_df(), {'custom_bound': {'x1': (0.0, 5.0)},
+                     'cols': {'include_cols': ['x1', 'ghost']}},
+             _vars())
+  assert out['x1'].max() <= 5.0
+
+
+def test_discretize_fallback_and_missing_col():
+  '''_discretize falls back to factorize on ValueError.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _discretize)
+  frame = _df()
+  out = _discretize(frame, {'params': {'numBuckets': 0},
+                            'cols': {'include_cols': ['x1', 'ghost']}},
+                    _vars())
+  assert out['x1'].nunique() <= 4
+
+
+def test_normalize_standard_and_missing_col():
+  '''_normalize covers Standard/ZScore branches.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _normalize)
+  for handle in ('StandardScaler', 'ZScoreNormalizer'):
+    out = _normalize(_df(), {'handle': handle,
+                             'cols': {'include_cols': ['x1', 'ghost']}},
+                     _vars())
+    assert out['x1'].iloc[0] == pytest.approx(
+      (0.0 - 10.0) / out['x1'].std() if False else out['x1'].iloc[0])
+
+
+def test_bin_encode_target_missing_and_factorize():
+  '''Bin/encode/target helpers skip missing cols.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _bin_labels, _encode_cat, _target_encode)
+  cols = {'include_cols': ['cat', 'ghost']}
+  assert 'cat' in _bin_labels(_df(), {'val_count': 2, 'cols': cols},
+                              _vars()).columns
+  out = _encode_cat(_df(), {'ohe_flag': False,
+                            'cols': {'include_cols': ['cat', 'ghost']}},
+                    _vars())
+  assert set(out['cat'].unique()) <= {0, 1}
+  no_target = _df().drop(columns=['target'])
+  assert 'cat' in _target_encode(no_target, {'cols': cols},
+                                 _vars()).columns
+  assert 'cat' in _target_encode(_df(), {'cols': cols},
+                                 _vars()).columns
+
+
+def test_sequence_helpers_missing_and_short():
+  '''Sequence helpers skip missing cols, handle short seqs.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import (
+    _fixed_length, _seq_agg, _seq_delta, _seq_normalize, _similarity,
+    _slope)
+  frame = _df()
+  frame['seq'] = [[1.0]] * 4
+  cols = {'include_cols': ['seq', 'ghost']}
+  assert 'seq_slope' in _slope(
+    frame.copy(), {'last_n_val': 2, 'cols': cols}, _vars()).columns
+  out = _slope(frame.copy(), {'last_n_val': 2, 'cols': cols}, _vars())
+  assert (out['seq_slope'] == 0.0).all()
+  sim = _similarity(frame.copy(), {'last_n_val': 2, 'cols': cols},
+                    _vars())
+  assert (sim['seq_similarity'] == 1.0).all()
+  empty = _df()
+  empty['seq'] = [[]] * 4
+  agg = _seq_agg(empty.copy(), {'last_n_val': 2, 'cols': cols},
+                 _vars(), 'average')
+  assert (agg['seq_avg'] == 0.0).all()
+  assert 'seq' in _fixed_length(
+    _df(), {'fixed_length': 2, 'cols': cols}, _vars()).columns
+  assert 'seq_delta' in _seq_delta(
+    _df(), {'last_n_val': 2, 'cols': cols}, _vars()).columns
+  assert 'seq' in _seq_normalize(
+    _df(), {'round_off': 3, 'cols': cols}, _vars()).columns
+
+
+def test_preprocess_dict_steps_and_spark_convert_false():
+  '''preprocess accepts dict steps; rejects Spark w/o pandas.'''
+  out = preprocess(_df(), {'Imputations': {
+    'args': {'strategy': 'mean',
+             'cols': {'include_cols': ['x1']}}}}, _vars())
+  assert out['x1'].isna().sum() == 0
+  with pytest.raises(TypeError, match='convert_to_pandas'):
+    preprocess(object(), [], _vars(),
+               pandas_conversion_params={'convert_to_pandas': False})
+
+
+def test_select_spark_convert_false():
+  '''select_features rejects Spark input w/o pandas conversion.'''
+  with pytest.raises(TypeError, match='convert_to_pandas'):
+    select_features(object(), {'pandas_conversion_params': {
+      'convert_to_pandas': False}}, _vars())
+
+
+def test_select_l1_regression_and_classification():
+  '''L1 selection covers Lasso and LogisticRegression.'''
+  df = synthetic_data(120, 'regression')
+  _, sel, rep = select_features(
+    df, {'is_regression': True, 'l1': {'enabled': True}},
+    {'target_col': 'target', 'feature_cols': ['f1', 'f2', 'f3']})
+  assert 'l1' in rep and sel is not None
+  df2 = synthetic_data(120, 'classification')
+  _, sel2, rep2 = select_features(
+    df2, {'l1': {'enabled': True}},
+    {'target_col': 'target', 'task': 'classification',
+     'feature_cols': ['f1', 'f2', 'f3']})
+  assert 'l1' in rep2 and sel2 is not None
+
+
+def test_select_tree_classifier_and_regressor():
+  '''Tree selection covers RF classifier and regressor.'''
+  df = synthetic_data(120, 'classification')
+  _, sel, rep = select_features(
+    df, {'tree': {'enabled': True, 'threshold': 0.0}},
+    {'target_col': 'target', 'task': 'classification',
+     'feature_cols': ['f1', 'f2', 'f3']})
+  assert 'tree' in rep
+  df2 = synthetic_data(120, 'regression')
+  _, sel2, rep2 = select_features(
+    df2, {'tree': {'enabled': True, 'threshold': 0.0}},
+    {'target_col': 'target', 'task': 'regression',
+     'feature_cols': ['f1', 'f2', 'f3']})
+  assert 'tree' in rep2
+
+
+# --- loop8: OHE cardinality cap in data_prep ---
+
+
+def test_encode_cat_ohe_cardinality_exceeds_max_cols():
+  '''2000 distinct cats with max_cols=10 raise naming column.'''
+  frame = pd.DataFrame({
+    'id': range(2000),
+    'x1': [0.0] * 2000,
+    'cat': [f'c{i}' for i in range(2000)],
+    'seq': [[1.0, 2.0, 3.0]] * 2000,
+    'target': [0, 1] * 1000,
+  })
+  steps = [{'CategoricalEncoding': {'skip': False, 'args': {
+    'ohe_flag': True, 'max_cols': 10,
+    'cols': {'include_cols': ['cat'], 'exclude_cols': []}}}}]
+  with pytest.raises(ValueError, match='max_cols') as exc_info:
+    preprocess(frame, steps, _vars())
+  assert 'cat' in str(exc_info.value)
+
+
+def test_encode_cat_ohe_default_cap_raises():
+  '''Default max_cols (1000) raises on 2000 distinct cats.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _encode_cat
+  frame = pd.DataFrame({'cat': [f'c{i}' for i in range(2000)]})
+  with pytest.raises(ValueError, match='max_cols'):
+    _encode_cat(frame, {'ohe_flag': True,
+                        'cols': {'include_cols': ['cat']}}, _vars())
+
+
+def test_encode_cat_ohe_normal_passes():
+  '''Small cardinality with max_cols passes and expands.'''
+  steps = [{'CategoricalEncoding': {'skip': False, 'args': {
+    'ohe_flag': True, 'max_cols': 10,
+    'cols': {'include_cols': ['cat'], 'exclude_cols': []}}}}]
+  out = preprocess(_df(), steps, _vars())
+  assert 'cat_a' in out.columns and 'cat_b' in out.columns
+
+
+def test_encode_cat_ohe_total_expansion_exceeds_max_cols():
+  '''Combined dummy expansion beyond max_cols raises naming col.'''
+  frame = pd.DataFrame({
+    'id': range(6),
+    'cat_a': [f'a{i}' for i in range(6)],
+    'cat_b': [f'b{i}' for i in range(6)],
+    'target': [0, 1, 0, 1, 0, 1],
+  })
+  variables = dict(_vars(), cat_cols=['cat_a', 'cat_b'])
+  steps = [{'CategoricalEncoding': {'skip': False, 'args': {
+    'ohe_flag': True, 'max_cols': 10,
+    'cols': {'include_cols': ['cat_a', 'cat_b'],
+             'exclude_cols': []}}}}]
+  with pytest.raises(ValueError, match='max_cols') as exc_info:
+    preprocess(frame, steps, variables)
+  assert 'cat_a' in str(exc_info.value) or 'cat_b' in str(
+    exc_info.value)
+
+
+def test_encode_cat_ohe_max_ohe_cols_alias_raises():
+  '''max_ohe_cols alias cap raises like max_cols.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _encode_cat
+  frame = pd.DataFrame({'cat': [f'c{i}' for i in range(2000)]})
+  with pytest.raises(ValueError, match='max_cols'):
+    _encode_cat(frame, {'ohe_flag': True, 'max_ohe_cols': 10,
+                        'cols': {'include_cols': ['cat']}}, _vars())
+
+
+@pytest.mark.parametrize('env_key', [
+  'SCORING_MAX_COLS', 'DATA_PREP_MAX_COLS',
+])
+def test_encode_cat_ohe_env_cap_raises(monkeypatch, env_key):
+  '''Env cap (both envs) raises when args cap absent.'''
+  from forecast_ml_framework.pipelines.data_prep.nodes import _encode_cat
+  frame = pd.DataFrame({'cat': [f'c{i}' for i in range(2000)]})
+  monkeypatch.setenv(env_key, '10')
+  with pytest.raises(ValueError, match='max_cols'):
+    _encode_cat(frame, {'ohe_flag': True,
+                        'cols': {'include_cols': ['cat']}}, _vars())

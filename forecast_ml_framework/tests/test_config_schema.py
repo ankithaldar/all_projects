@@ -379,3 +379,361 @@ def test_cost_params_new_names_and_old_alias():
   shipped = validate_parameters(_shipped_parameters_raw())
   assert shipped.cost_params.storage_price_per_gb_month == 0.02
   assert shipped.cost_params.data_scan_price_per_gb == 0.005
+
+
+# --- loop3: cross-key recombined oc.env (RED) ---
+
+def test_load_config_blocks_cross_key_oc_env(tmp_path, monkeypatch):
+  '''Cross-key ${a}${b} recombining into ${oc.env:...} is blocked.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  conf = _write_conf(
+    tmp_path,
+    "a: '$'\n"
+    "b: '{oc.env:SECRET_ENV}'\n"
+    "x: '${parameters.a}${parameters.b}'\n")
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_load_config_blocks_cross_key_oc_env_list(
+    tmp_path, monkeypatch):
+  '''Cross-key recombination inside a list is blocked.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  conf = _write_conf(
+    tmp_path,
+    "a: '$'\n"
+    "b: '{oc.env:SECRET_ENV}'\n"
+    "items: ['${parameters.a}${parameters.b}']\n")
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_load_config_blocks_cross_key_oc_env_nested(
+    tmp_path, monkeypatch):
+  '''Cross-key recombination in a nested mapping is blocked.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  conf = _write_conf(
+    tmp_path,
+    "a: '$'\n"
+    "b: '{oc.env:SECRET_ENV}'\n"
+    "nested:\n"
+    "  x: '${parameters.a}${parameters.b}'\n")
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_load_config_blocks_cross_key_oc_env_variables(
+    tmp_path, monkeypatch):
+  '''Fragments in variables, interpolation in parameters, blocked.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  conf = tmp_path / 'conf'
+  base = conf / 'base'
+  base.mkdir(parents=True)
+  (base / 'variables.yml').write_text(
+    "target_col: target\n"
+    "a: '$'\n"
+    "b: '{oc.env:SECRET_ENV}'\n")
+  (base / 'parameters.yml').write_text(
+    "x: '${variables.a}${variables.b}'\n")
+  (base / 'catalog.yml').write_text('{}\n')
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_config_loader_blocks_cross_key_oc_env(monkeypatch):
+  '''ConfigLoader rejects cross-key recombined oc.env DictConfig.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  variables = OmegaConf.create({
+    'a': '$', 'b': '{oc.env:SECRET_ENV}', 'x': '${a}${b}'})
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    ConfigLoader(variables=variables, parameters={})
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_config_loader_blocks_cross_key_oc_env_list(monkeypatch):
+  '''ConfigLoader rejects cross-key recombination in a list.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  variables = OmegaConf.create({
+    'a': '$', 'b': '{oc.env:SECRET_ENV}',
+    'items': ['${a}${b}']})
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    ConfigLoader(variables=variables, parameters={})
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_kedro_loader_blocks_cross_key_oc_env(
+    tmp_path, monkeypatch):
+  '''Kedro loader rejects cross-key recombined oc.env.'''
+  monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
+  pytest.importorskip('kedro')
+  from forecast_ml_framework import settings
+  loader_cls = settings.CONFIG_LOADER_CLASS
+  assert loader_cls is not None
+  conf = tmp_path / 'conf'
+  base = conf / 'base'
+  base.mkdir(parents=True)
+  (base / 'parameters.yml').write_text(
+    "a: '$'\n"
+    "b: '{oc.env:SECRET_ENV}'\n"
+    "x: '${a}${b}'\n")
+  (base / 'catalog.yml').write_text('{}\n')
+  try:
+    loader = loader_cls(str(conf), env='base', base_env='base')
+    with pytest.raises(ValueError, match='oc\\.') as excinfo:
+      loader['parameters']
+    assert 'leaked-secret-value' not in str(excinfo.value)
+  finally:
+    from omegaconf import OmegaConf as _OC
+    from omegaconf.resolvers import oc as _oc_resolvers
+    if not _OC.has_resolver('oc.env'):
+      _OC.register_new_resolver('oc.env', _oc_resolvers.env)
+
+
+def test_load_config_legit_oc_env_default_still_substitutes(
+    tmp_path, monkeypatch):
+  '''Canonical oc.env:VAR,default still substitutes, no leak.'''
+  monkeypatch.setenv('MY_TRACKING', 'leaked-secret-value')
+  conf = _write_conf(
+    tmp_path,
+    "registry_params:\n"
+    "  tracking_uri: '${oc.env:MY_TRACKING,mlruns}'\n")
+  cfg = load_config(conf / 'base')
+  assert cfg['parameters']['registry_params']['tracking_uri'] == 'mlruns'
+  assert 'leaked-secret-value' not in str(cfg)
+
+
+# --- loop2: nested/recombined oc.env (RED) ---
+
+@pytest.mark.parametrize('expr', [
+  '${oc.env:FOO,$}{oc.env:SECRET}',
+  '${oc.env:FOO,$}{oc.env:SECRET,fallback}',
+  '${oc.env:FOO,${oc.env:SECRET}}',
+  '${oc.env:FOO,${oc.env:SECRET,bar}}',
+])
+def test_load_config_blocks_recombined_oc_env(
+    tmp_path, monkeypatch, expr):
+  '''Recombined oc.env after substitution never leaks env.'''
+  monkeypatch.setenv('SECRET', 'leaked-secret-value')
+  monkeypatch.setenv('FOO', 'foo-value')
+  conf = _write_conf(tmp_path, "x: '%s'\n" % expr)
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+  assert 'foo-value' not in str(excinfo.value)
+
+
+# --- loop4: bracket-index cross-key recombined oc.env (RED) ---
+
+def test_assert_no_cross_key_oc_bracket_index():
+  '''Bracket indexing lst[0] recombining into oc.env is blocked.'''
+  from forecast_ml_framework.core.config_schema import (
+    assert_no_cross_key_oc)
+  plain = {'parameters': {
+    'lst': ['$','{oc.env:SECRET}'],
+    'x': '${parameters.lst[0]}${parameters.lst[1]}'}}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain)
+
+
+def test_assert_no_cross_key_oc_bracket_nested_and_relative():
+  '''Nested / relative bracket indexing is expanded and blocked.'''
+  from forecast_ml_framework.core.config_schema import (
+    assert_no_cross_key_oc)
+  plain = {'parameters': {
+    'a': {'lst': ['$','{oc.env:SECRET}']},
+    'x': '${parameters.a.lst[0]}${parameters.a.lst[1]}'}}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain)
+  plain2 = {'lst': ['$','{oc.env:SECRET}'],
+            'x': '${.lst[0]}${.lst[1]}'}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain2)
+
+
+def test_load_config_blocks_cross_key_oc_bracket(tmp_path, monkeypatch):
+  '''load_config blocks bracket-index recombination, no env leak.'''
+  monkeypatch.setenv('SECRET', 'leaked-secret-value')
+  conf = _write_conf(
+    tmp_path,
+    "lst: ['$','{oc.env:SECRET}']\n"
+    "x: '${parameters.lst[0]}${parameters.lst[1]}'\n")
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    load_config(conf / 'base')
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+def test_config_loader_blocks_cross_key_oc_bracket(monkeypatch):
+  '''ConfigLoader rejects bracket-index recombined oc.env.'''
+  monkeypatch.setenv('SECRET', 'leaked-secret-value')
+  variables = OmegaConf.create({
+    'lst': ['$','{oc.env:SECRET}'],
+    'x': '${lst[0]}${lst[1]}'})
+  with pytest.raises(ValueError, match='oc\\.') as excinfo:
+    ConfigLoader(variables=variables, parameters={})
+  assert 'leaked-secret-value' not in str(excinfo.value)
+
+
+# --- loop4: settings.RestrictedOmegaConfigLoader branches ---
+
+
+def test_settings_reject_oc_list_and_tuple_branches():
+  '''_reject_oc recurses lists/tuples and ignores plain values.'''
+  from forecast_ml_framework import settings
+  cls = settings.CONFIG_LOADER_CLASS
+  assert cls is not None
+  assert settings.CONF_SOURCE == 'conf'
+  assert settings.HOOKS == ()
+  assert settings.__all__ == [
+    'CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']
+  cls._reject_oc({'a': [1, 2], 'b': ('x', 'y'), 'c': 'plain'})
+  cls._reject_oc(['plain', ('also', 1)])
+  with pytest.raises(ValueError, match='oc\\.'):
+    cls._reject_oc(['ok', '${oc.env:SECRET}'])
+  with pytest.raises(ValueError, match='oc\\.'):
+    cls._reject_oc(('ok', {'x': '${ OC.env:SECRET}'}))
+  with pytest.raises(ValueError, match='oc\\.'):
+    cls._reject_oc({'a': ['${oc.create:dict}']})
+
+
+def test_settings_resolve_environment_variables_clean_and_blocked():
+  '''_resolve_environment_variables allows clean, blocks oc.'''
+  from forecast_ml_framework import settings
+  cls = settings.CONFIG_LOADER_CLASS
+  assert cls is not None
+  assert cls._resolve_environment_variables(
+    OmegaConf.create({'x': 'y', 'lst': ['a']})) is None
+  with pytest.raises(ValueError, match='oc\\.'):
+    cls._resolve_environment_variables(
+      OmegaConf.create({'x': '${oc.env:SECRET}'}))
+  with pytest.raises(ValueError, match='oc\\.'):
+    plain = {'a': '$', 'b': '{oc.env:SECRET}', 'x': '${a}${b}'}
+    cls._resolve_environment_variables(OmegaConf.create(plain))
+
+
+# --- loop5: unquoted bracket keys in cross-key expansion (RED) ---
+
+def test_assert_no_cross_key_oc_unquoted_bracket_key():
+  '''Unquoted bracket key d[k1] recombining into oc.env is blocked.'''
+  from forecast_ml_framework.core.config_schema import (
+    assert_no_cross_key_oc)
+  plain = {'parameters': {
+    'd': {'k1': '$', 'k2': '{oc.env:SECRET}'},
+    'x': '${parameters.d[k1]}${parameters.d[k2]}'}}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain)
+
+
+def test_assert_no_cross_key_oc_unquoted_bracket_hyphen_key():
+  '''Unquoted bracket key d[k-1] recombining into oc.env is blocked.'''
+  from forecast_ml_framework.core.config_schema import (
+    assert_no_cross_key_oc)
+  plain = {'parameters': {
+    'd': {'k-1': '$', 'k-2': '{oc.env:SECRET}'},
+    'x': '${parameters.d[k-1]}${parameters.d[k-2]}'}}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain)
+
+
+def test_assert_no_cross_key_oc_unquoted_bracket_nested():
+  '''Nested unquoted bracket keys d[a][b] are expanded and blocked.'''
+  from forecast_ml_framework.core.config_schema import (
+    assert_no_cross_key_oc)
+  plain = {'parameters': {
+    'd': {'a': {'b': '$', 'c': '{oc.env:SECRET}'}},
+    'x': '${parameters.d[a][b]}${parameters.d[a][c]}'}}
+  with pytest.raises(ValueError, match='oc\\.'):
+    assert_no_cross_key_oc(plain)
+
+
+# --- loop7: _blocked_oc_resolvers thread race (RED) ---
+
+def test_blocked_oc_resolvers_threaded_no_leak_no_crash(monkeypatch):
+  '''Concurrent _blocked_oc_resolvers entries never leak env.'''
+  import threading
+
+  from forecast_ml_framework.core.config_schema import _blocked_oc_resolvers
+  monkeypatch.setenv('SECRET', 'leaked-secret-value')
+  errors = []
+  leaks = []
+  barrier = threading.Barrier(4)
+
+  def _worker():
+    try:
+      barrier.wait(timeout=10)
+      for _ in range(25):
+        with _blocked_oc_resolvers():
+          cfg = OmegaConf.create({'x': '${oc.env:SECRET}'})
+          try:
+            OmegaConf.resolve(cfg)
+          except ValueError:
+            pass
+          else:
+            leaks.append(OmegaConf.to_container(cfg, resolve=True))
+    except Exception as exc:  # noqa: BLE001 - record any crash
+      errors.append(exc)
+
+  threads = [threading.Thread(target=_worker) for _ in range(4)]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join(timeout=30)
+  assert errors == []
+  assert leaks == []
+  assert 'leaked-secret-value' not in str(leaks)
+  # Resolvers restored after all exits: oc.env resolves again.
+  cfg = OmegaConf.create({'x': '${oc.env:SECRET}'})
+  OmegaConf.resolve(cfg)
+  assert OmegaConf.to_container(cfg, resolve=True)['x'] == (
+    'leaked-secret-value')
+
+
+def test_blocked_oc_resolvers_interleaved_no_leak(monkeypatch):
+  '''Thread A exit must not restore resolvers while B is inside.'''
+  import threading
+
+  from forecast_ml_framework.core.config_schema import _blocked_oc_resolvers
+  monkeypatch.setenv('SECRET', 'leaked-secret-value')
+  entered_a = threading.Event()
+  entered_b = threading.Event()
+  exit_a = threading.Event()
+  exit_b = threading.Event()
+  results = {}
+
+  def _thread_a():
+    with _blocked_oc_resolvers():
+      entered_a.set()
+      exit_a.wait(timeout=10)
+    results['a_done'] = True
+
+  def _thread_b():
+    with _blocked_oc_resolvers():
+      entered_b.set()
+      exit_b.wait(timeout=10)
+      cfg = OmegaConf.create({'x': '${oc.env:SECRET}'})
+      try:
+        OmegaConf.resolve(cfg)
+        results['b'] = OmegaConf.to_container(cfg, resolve=True)
+      except ValueError as exc:
+        results['b_error'] = str(exc)
+
+  thread_a = threading.Thread(target=_thread_a)
+  thread_b = threading.Thread(target=_thread_b)
+  thread_a.start()
+  assert entered_a.wait(timeout=10)
+  thread_b.start()
+  # Fixed code: B blocks on the lock until A exits, so entered_b
+  # times out; old code: B enters immediately. Either way,
+  # release A first, then B resolves only while blocked.
+  entered_b.wait(timeout=1)
+  exit_a.set()
+  thread_a.join(timeout=10)
+  assert entered_b.wait(timeout=10)
+  exit_b.set()
+  thread_b.join(timeout=10)
+  assert 'b' not in results
+  assert 'oc.' in results.get('b_error', '')
+  assert 'leaked-secret-value' not in str(results)

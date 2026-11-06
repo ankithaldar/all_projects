@@ -384,3 +384,21 @@ def test_eda_report_wires_leakage_findings():
   for finding in leakage:
     _assert_leakage_finding(finding)
   assert 'drop or investigate' in report['recommendations']
+
+
+def test_eda_report_includes_data_charts_when_df_given():
+  '''eda_report merges make_data_charts output when df given.'''
+  df = _synthetic()
+  summary = eda_summary(df, _params(), _variables())
+  report = eda_report(summary, _params(), df=df,
+                      variables=_variables())
+  assert report.get('data_charts')
+  assert isinstance(report['data_charts'], dict)
+  assert any(report['data_charts'].values())
+
+
+def test_eda_report_no_data_charts_without_df():
+  '''eda_report without df has empty data_charts.'''
+  summary = eda_summary(_synthetic(), _params(), _variables())
+  report = eda_report(summary, _params())
+  assert report.get('data_charts') == {}

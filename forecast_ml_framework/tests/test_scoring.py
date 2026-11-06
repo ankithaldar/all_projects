@@ -458,3 +458,294 @@ def test_scoring_fake_spark_over_pandas_limit_raises():
   with pytest.raises(ValueError, match='max_rows_for_pandas'):
     load_scoring_data(spark_df, _params(spark_scoring={'enabled': False}))
   assert spark_df.to_pandas_calls == 0
+
+
+# --- loop4: uncovered branches in scoring nodes ---
+
+
+def test_pandas_conversion_and_spark_enabled_variants():
+  '''Conversion/spark_enabled helpers cover aliases.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _pandas_conversion_params, _spark_scoring_enabled)
+  assert _pandas_conversion_params(
+    {'pandas_conversion_params': {'a': 1}}) == {'a': 1}
+  assert _pandas_conversion_params(
+    {'pandas_conversion': {'b': 2}}) == {'b': 2}
+  assert _pandas_conversion_params({}) == {}
+  assert _spark_scoring_enabled({'spark_scoring': True}) is True
+  assert _spark_scoring_enabled(
+    {'spark_scoring_enabled': True}) is True
+  assert _spark_scoring_enabled({}) is False
+
+
+def test_partition_batch_size_variants():
+  '''_partition_batch_size covers candidates and errors.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _partition_batch_size)
+  assert _partition_batch_size({'partition_batch_size': 5}) == 5
+  assert _partition_batch_size(
+    {'spark_scoring': {'partition_batch_size': 6}}) == 6
+  assert _partition_batch_size({'batch_size': 7}) == 7
+  assert _partition_batch_size({}) == 10000
+  with pytest.raises(ValueError, match='partition_batch_size'):
+    _partition_batch_size({'partition_batch_size': 0})
+
+
+class _Rdd:
+  '''Fake RDD exposing mapPartitions.'''
+
+  def __init__(self, frame):
+    self._frame = frame
+
+  def mapPartitions(self, func):
+    '''Apply func to the wrapped frame.'''
+    return func(self._frame)
+
+
+class _SparkPartitionable:
+  '''Fake Spark frame with mapPartitions.'''
+
+  def __init__(self, frame):
+    self._frame = frame
+    self.columns = list(frame.columns)
+
+  def count(self):
+    '''Return row count.'''
+    return len(self._frame)
+
+  def mapPartitions(self, func):
+    '''Apply func to the wrapped frame.'''
+    return func(self._frame)
+
+
+def test_partitionable_variants():
+  '''_is_spark_partitionable covers mapPartitions/rdd forms.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _is_spark_partitionable)
+
+  class ViaRdd:
+    def __init__(self, frame):
+      self.rdd = _Rdd(frame)
+  assert _is_spark_partitionable(_SparkPartitionable(_frame())) is True
+  assert _is_spark_partitionable(ViaRdd(_frame())) is True
+  assert _is_spark_partitionable(_frame()) is False
+  assert _is_spark_partitionable(object()) is False
+
+
+def test_cap_value_env_variants(monkeypatch):
+  '''_cap_value covers env int/unbounded and params.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import _cap_value
+  assert _cap_value({'max_rows': 5}, 'max_rows', 'X', 9) == 5
+  assert _cap_value({'max_rows': None}, 'max_rows', 'X', 9) is None
+  monkeypatch.setenv('SCORING_TEST_CAP', '42')
+  assert _cap_value({}, 'max_rows', 'SCORING_TEST_CAP', 9) == 42
+  for text in ('', 'null', 'none', ' NULL '):
+    monkeypatch.setenv('SCORING_TEST_CAP', text)
+    assert _cap_value({}, 'max_rows', 'SCORING_TEST_CAP', 9) is None
+  monkeypatch.delenv('SCORING_TEST_CAP', raising=False)
+  assert _cap_value({}, 'max_rows', 'SCORING_TEST_CAP', 9) == 9
+
+
+def test_row_count_variants():
+  '''_row_count covers count() and len() forms.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import _row_count
+  assert _row_count(_frame()) == 3
+  assert _row_count(_SparkPartitionable(_frame())) == 3
+
+  class LenOnly:
+    def __len__(self):
+      return 2
+  assert _row_count(LenOnly()) == 2
+
+
+def test_resolve_handle_strict_errors():
+  '''_resolve_handle_strict rejects bad/non-importable handles.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _resolve_handle_strict)
+  for bad in (123, 'nodot', 'sklearn.no_such_module.Foo',
+              'sklearn.ensemble.NoSuchAttr'):
+    with pytest.raises(ValueError):
+      _resolve_handle_strict(bad)
+
+
+def test_registry_loader_model_uri_parsing(monkeypatch):
+  '''_registry_loader parses models:/ URIs and aliases.'''
+  import forecast_ml_framework.serving.model_loader as loader_mod
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _registry_loader)
+  monkeypatch.setattr(
+    loader_mod, 'RegistryModelLoader', _FakeRegistryLoader)
+  loader = _registry_loader({'model_uri': 'models:/my-model@prod'})
+  assert loader.model_name == 'my-model'
+  assert loader.alias == 'prod'
+  loader2 = _registry_loader({'registered_model_name': 'm2',
+                              'model_alias': 'staging',
+                              'tracking_uri': 'mlruns'})
+  assert loader2.model_name == 'm2' and loader2.alias == 'staging'
+  assert loader2.registry_uri == 'mlruns'
+
+
+def test_registry_loader_signature_fallbacks(monkeypatch):
+  '''_registry_loader falls back across loader signatures.'''
+  import forecast_ml_framework.serving.model_loader as loader_mod
+  from forecast_ml_framework.pipelines.scoring.nodes import (
+    _registry_loader)
+
+  class TwoArg:
+    def __init__(self, model_name, alias='production'):
+      self.args = (model_name, alias)
+  monkeypatch.setattr(loader_mod, 'RegistryModelLoader', TwoArg)
+  assert _registry_loader({'model_name': 'm'}).args == (
+    'm', 'production')
+
+  class ThreePositional:
+    def __init__(self, uri, name, alias, /):
+      self.args = (uri, name, alias)
+  monkeypatch.setattr(
+    loader_mod, 'RegistryModelLoader', ThreePositional)
+  out = _registry_loader({'model_name': 'm', 'alias': 'a'})
+  assert out.args == (None, 'm', 'a')
+
+
+def test_resolve_loader_path_load_and_errors(monkeypatch):
+  '''_resolve_loader covers model_path, load(), and errors.'''
+  import forecast_ml_framework.serving.model_loader as loader_mod
+
+  class FakeFileLoader:
+    def __init__(self, path):
+      self.path = path
+    def __call__(self):
+      return _FakeModel()
+  monkeypatch.setattr(loader_mod, 'FileModelLoader', FakeFileLoader)
+  assert isinstance(_resolve_loader({'model_path': '/tmp/m'}, None),
+                    _FakeModel)
+
+  class Loadable:
+    def load(self):
+      return _FakeModel()
+  assert isinstance(_resolve_loader({}, Loadable()), _FakeModel)
+
+  class BadLoadable:
+    def load(self):
+      return object()
+  with pytest.raises(TypeError):
+    _resolve_loader({}, BadLoadable())
+  with pytest.raises(TypeError):
+    _resolve_loader({}, lambda: object())
+  with pytest.raises(TypeError):
+    _resolve_loader({}, 123)
+  with pytest.raises(ValueError):
+    _resolve_loader({}, None)
+  resolved = _resolve_loader(
+    {}, 'sklearn.ensemble.RandomForestClassifier')
+  assert resolved.__name__ == 'RandomForestClassifier'
+
+
+def test_feature_cols_requested_filtering():
+  '''_feature_cols filters requested cols to present ones.'''
+  from forecast_ml_framework.pipelines.scoring.nodes import _feature_cols
+  assert _feature_cols(_frame(), {'feature_cols': ['f1', 'ghost']},
+                       ['id']) == ['f1']
+  assert _feature_cols(_frame(), {}, ['id']) == ['f1', 'f2']
+
+
+def test_predict_non_numeric_feature_dummies():
+  '''Non-numeric features are dummy-encoded before predict.'''
+  frame = pd.DataFrame({'id': [1, 2], 'cat': ['a', 'b'],
+                        'f1': [1.0, -1.0]})
+  out = predict(frame, _params(feature_cols=['cat', 'f1']),
+                model_loader=lambda: _FakeModel())
+  assert out['prediction'].tolist() == [1, 0]
+
+
+def test_load_and_predict_spark_partitionable():
+  '''Spark scoring load/predict run via mapPartitions.'''
+  spark = _SparkPartitionable(_frame())
+  params = _params(spark_scoring={'enabled': True})
+  assert load_scoring_data(spark, params) is spark
+  out = predict(spark, params, model_loader=lambda: _FakeModel())
+  assert out['prediction'].tolist() == [1, 0, 1]
+
+
+def test_predict_spark_via_rdd_and_empty(caplog):
+  '''Spark predict works via rdd and warns on empty.'''
+  class ViaRdd:
+    def __init__(self, frame):
+      self._frame = frame
+      self.columns = list(frame.columns)
+      self.rdd = _Rdd(frame)
+    def count(self):
+      return len(self._frame)
+  params = _params(spark_scoring=True)
+  out = predict(ViaRdd(_frame()), params,
+                model_loader=lambda: _FakeModel())
+  assert out['prediction'].tolist() == [1, 0, 1]
+  empty_spark = _SparkPartitionable(pd.DataFrame({
+    'id': pd.Series([], dtype=int),
+    'f1': pd.Series([], dtype=float),
+    'f2': pd.Series([], dtype=float)}))
+  with caplog.at_level(logging.WARNING):
+    empty_out = predict(empty_spark, params,
+                        model_loader=lambda: _FakeModel())
+  assert len(empty_out) == 0
+  assert load_scoring_data(empty_spark, params) is empty_spark
+
+
+def test_write_predictions_spark_partitionable_passthrough():
+  '''write_predictions passes Spark frames through unchanged.'''
+  spark = _SparkPartitionable(_frame())
+  params = _params(spark_scoring={'enabled': True})
+  assert write_predictions(spark, params) is spark
+
+
+def test_predict_spark_empty_and_non_df_results():
+  '''Spark predict handles empty partitions and non-DF results.'''
+
+  class EmptyPartition:
+    def __init__(self):
+      self.columns = ['id', 'f1', 'f2']
+    def count(self):
+      return 3
+    def mapPartitions(self, func):
+      empty = pd.DataFrame({'id': pd.Series([], dtype=int),
+                            'f1': pd.Series([], dtype=float)})
+      return func(empty)
+
+  class NonDfResult:
+    def __init__(self):
+      self.columns = ['id', 'f1', 'f2']
+    def count(self):
+      return 3
+    def mapPartitions(self, func):
+      return 'spark-result'
+  params = _params(spark_scoring={'enabled': True})
+  assert len(predict(EmptyPartition(), params,
+                     model_loader=lambda: _FakeModel())) == 0
+  assert predict(NonDfResult(), params,
+                 model_loader=lambda: _FakeModel()) == 'spark-result'
+
+
+# --- loop7: get_dummies cardinality bypasses max_cols (RED) ---
+
+def test_predict_dummies_cardinality_exceeds_max_cols():
+  '''2000 distinct cats with max_cols=10 raise ValueError.'''
+  frame = pd.DataFrame({
+    'id': range(2000),
+    'cat': [f'c{i}' for i in range(2000)],
+  })
+  with pytest.raises(ValueError, match='max_cols'):
+    predict(frame, _params(feature_cols=['cat'], max_cols=10),
+            model_loader=lambda: _FakeModel())
+
+
+def test_predict_dummies_total_expansion_exceeds_max_cols():
+  '''Combined dummy expansion beyond max_cols raises ValueError.'''
+  frame = pd.DataFrame({
+    'id': range(6),
+    'cat_a': [f'a{i}' for i in range(6)],
+    'cat_b': [f'b{i}' for i in range(6)],
+  })
+  with pytest.raises(ValueError, match='max_cols'):
+    predict(frame, _params(feature_cols=['cat_a', 'cat_b'],
+                           max_cols=10),
+            model_loader=lambda: _FakeModel())

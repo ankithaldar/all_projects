@@ -3,9 +3,10 @@
 
 '''Pipeline registry for the forecast ML framework.
 
-Display names map onto the real pipeline modules: ``data``,
-``preprocessing`` and ``feature_selection`` are served by
-``pipelines.data_prep``; ``modeling``, ``evaluation`` and
+Twelve display names map onto the real pipeline modules:
+``data``, ``preprocessing`` and ``feature_selection`` are
+served by ``pipelines.data_prep``; ``modeling``,
+``evaluation`` and
 ``predict`` are served by ``pipelines.modeling``; ``scoring``
 is served by ``pipelines.scoring``; and ``eda``,
 ``monitoring``, ``retraining``, ``cost_tracking`` and
@@ -39,8 +40,8 @@ def _load_pipeline(module_name):
     module_name: Real module suffix, e.g. 'data_prep'.
 
   Returns:
-    The ``create_pipeline`` factory, or None when its module
-    is not yet implemented (scaffold phase).
+    The ``create_pipeline`` factory, or None when the named
+    pipeline module is unavailable.
   '''
   full_name = 'forecast_ml_framework.pipelines.' + module_name
   try:
@@ -49,7 +50,7 @@ def _load_pipeline(module_name):
       fromlist=['create_pipeline'],
     )
   except ModuleNotFoundError as exc:
-    # Only a missing pipeline module itself is a scaffold gap.
+    # Only a missing pipeline module itself is unavailable.
     # Any other missing module is an internal dependency of an
     # existing pipeline and must surface, not be swallowed.
     if exc.name == full_name:

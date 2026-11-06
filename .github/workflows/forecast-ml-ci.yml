@@ -1,5 +1,11 @@
 name: forecast-ml-ci
 
+# Environment parity: the uv venv (`uv sync --frozen` in each job) is
+# canonical — it installs all deps, including the dev group
+# (pytest, pytest-cov). The system Anaconda env is not canonical;
+# skips for deps it lacks (e.g. mlflow optional extras) are expected
+# there and are not CI failures.
+
 # Quoted "on" so YAML 1.1 parsers (e.g. Python yaml.safe_load) keep the
 # literal string key instead of boolean True. GitHub Actions accepts it.
 "on":
@@ -76,9 +82,15 @@ jobs:
         working-directory: forecast_ml_framework
         run: uv sync --frozen
 
+      # Coverage gate: total coverage of src/forecast_ml_framework
+      # must be >= 85% (pytest-cov, dev dependency-group).
       - name: Run tests
         working-directory: forecast_ml_framework
-        run: uv run pytest -q
+        run: >-
+          uv run pytest -q
+          --cov=src/forecast_ml_framework
+          --cov-report=term-missing
+          --cov-fail-under=85
 
   demo:
     name: demo

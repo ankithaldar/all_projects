@@ -3,7 +3,6 @@
 
 '''Model adapter ABC, zoo adapters and the train node.'''
 
-import importlib
 import pickle
 from abc import ABC, abstractmethod
 
@@ -183,11 +182,17 @@ def resolve_handle(handle):
 
 
 def _resolve_loss_callable(loss):
-  '''Resolve a dotted custom-loss under the allowlist.
+  '''Resolve a dotted custom loss by exact allowlist match.
 
-  Only callables whose top-level module is allowlisted
-  (same list as ``_resolve_handle_strict``) are accepted;
-  arbitrary callables such as ``os.system`` are rejected.
+  Only exact dotted names registered in
+  ``forecast_ml_framework.losses`` (standard scikit-learn metric
+  losses and registered custom losses under
+  ``forecast_ml_framework.losses``) are accepted. A top-level
+  module allowlist is not sufficient: arbitrary callables from
+  allowlisted modules such as
+  ``forecast_ml_framework.cli._run_kedro`` or
+  ``forecast_ml_framework.core.datasets.SQLQueryDataSet`` must
+  not resolve as losses.
 
   Args:
     loss: Dotted importable string naming a callable.
@@ -196,36 +201,15 @@ def _resolve_loss_callable(loss):
     The resolved callable.
 
   Raises:
-    ValueError: If not allowlisted, unresolvable, or
-      non-callable.
+    ValueError: If ``loss`` is not an exact registered loss
+      callable.
   '''
-  from forecast_ml_framework.pipelines.scoring.nodes import (
-    _ALLOWED_MODEL_MODULES,
-  )
-  top_level = loss.split('.', 1)[0]
-  if top_level not in _ALLOWED_MODEL_MODULES:
-    raise ValueError(
-      f'loss_function {loss!r} is not allowlisted: top-level '
-      f'module {top_level!r} is not one of '
-      + ', '.join(_ALLOWED_MODEL_MODULES))
-  module_path, _, attr = loss.rpartition('.')
+  from forecast_ml_framework.losses import get_loss_callable
   try:
-    module = importlib.import_module(module_path)
-  except ImportError as exc:
+    return get_loss_callable(loss)
+  except ValueError as exc:
     raise ValueError(
-      f'Cannot resolve loss_function {loss!r}: module '
-      f'{module_path!r} could not be imported ({exc}).') from exc
-  try:
-    resolved = getattr(module, attr)
-  except AttributeError as exc:
-    raise ValueError(
-      f'Cannot resolve loss_function {loss!r}: module '
-      f'{module_path!r} has no attribute {attr!r}.') from exc
-  if not callable(resolved):
-    raise ValueError(
-      f'loss_function {loss!r} resolved to a non-callable '
-      'object; a custom loss must be callable.')
-  return resolved
+      f'loss_function {loss!r} is not allowlisted: {exc}') from exc
 
 
 def _canonical_adapter(adapter_name):
@@ -258,7 +242,8 @@ def get_loss(adapter_name, loss):
       'logloss', 'squared_error', 'poisson'), an already
       native value (e.g. 'binary:logistic', 'Logloss'), a
       callable, or a dotted importable string resolving
-      to a callable (e.g. 'my_pkg.losses.my_loss').
+      to a callable (e.g. 'forecast_ml_framework.losses.'
+      'huber_loss' / 'sklearn.metrics.mean_absolute_error').
 
   Returns:
     Native loss value for the adapter: a string, or the
@@ -276,7 +261,9 @@ def get_loss(adapter_name, loss):
       f'Unknown loss_function {loss!r} for adapter '
       f'{adapter_name!r}: expected a plain string such as '
       "'logloss' / 'squared_error', or a dotted callable "
-      "string such as 'my_pkg.losses.my_loss'.")
+      "string such as 'forecast_ml_framework.losses.'"
+      "huber_loss' / 'sklearn.metrics.'"
+      "'mean_absolute_error'.")
   if '.' in loss:
     try:
       return _resolve_loss_callable(loss)
@@ -296,7 +283,9 @@ def get_loss(adapter_name, loss):
       f'Unknown loss_function {loss!r} for adapter '
       f'{adapter_name!r}. Valid losses for {canonical}: '
       f'{sorted(registry)}. Or pass a dotted callable '
-      "string such as 'my_pkg.losses.my_loss'.")
+      "string such as 'forecast_ml_framework.losses.'"
+      "huber_loss' / 'sklearn.metrics.'"
+      "'mean_absolute_error'.")
   return registry[key]
 
 
@@ -473,13 +462,11 @@ class SklearnAdapter(ModelAdapter):
     kwargs = _loss_kwargs(self.name, self.params)
     try:
       return cls(**kwargs)
-    except TypeError:
-      fallback = {'linear_regression': LinearRegression,
-                  'random_forest_regressor':
-                  RandomForestRegressor,
-                  'gradient_boosting_regressor':
-                  GradientBoostingRegressor}
-      return fallback.get(kind, LogisticRegression)()
+    except TypeError as exc:
+      raise ValueError(
+        f'Estimator {cls.__name__} rejected kwargs {kwargs!r} '
+        f'(including loss): {exc}. Check loss_function and '
+        'model hyperparameters for this model_type.') from exc
 
   def fit(self, x, y):
     '''Fit the sklearn model. Returns self.'''
@@ -614,8 +601,11 @@ class HandleAdapter(ModelAdapter):
     kwargs = _loss_kwargs(self.handle, self.params)
     try:
       self.model = cls(**kwargs)
-    except TypeError:
-      self.model = cls()
+    except TypeError as exc:
+      raise ValueError(
+        f'Estimator {cls.__name__} rejected kwargs {kwargs!r} '
+        f'(including loss): {exc}. Check loss_function and '
+        'model hyperparameters for this handle.') from exc
     self.model.fit(x, y)
     return self
 

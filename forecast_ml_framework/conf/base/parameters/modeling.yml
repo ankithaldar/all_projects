@@ -48,7 +48,8 @@ h2o_automl_params:
 # - objective: native xgboost/lightgbm key (adapter maps
 #   loss_function onto it; both are shipped below as examples).
 # - Custom callable: a dotted importable string, e.g.
-#   loss_function: 'my_losses.my_weighted_logloss' (commented
+#   loss_function: 'forecast_ml_framework.losses.huber_loss'
+#   or 'sklearn.metrics.mean_absolute_error' (commented
 #   example; must be importable via importlib and callable).
 # Valid sets (aliases logloss / squared_error|mse|rmse / mae /
 # poisson / gamma / tweedie / huber / quantile / binary are

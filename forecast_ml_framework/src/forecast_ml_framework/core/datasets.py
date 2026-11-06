@@ -175,16 +175,17 @@ class SQLQueryDataSet(_KedroDataset):
 
     Raises:
       ImportError: When SQLAlchemy is not installed.
+      ValueError: When no connection is configured.
     '''
     if hasattr(self.connection, 'connect'):
       return self.connection
+    if not self.connection:
+      raise ValueError('SQLQueryDataSet requires a connection')
     try:
       from sqlalchemy import create_engine
     except ImportError as exc:
       raise ImportError(
           'sqlalchemy is required for SQLQueryDataSet') from exc
-    if not self.connection:
-      raise ValueError('SQLQueryDataSet requires a connection')
     return create_engine(self.connection)
 
   def _load(self):

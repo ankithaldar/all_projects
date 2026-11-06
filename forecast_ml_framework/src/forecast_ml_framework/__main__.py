@@ -3,32 +3,16 @@
 
 '''Console entry point for the forecast ML framework.
 
-Declared in pyproject.toml as both ``forecast-ml`` and
-``forecastin-ml``. Delegates to
+Declared in pyproject.toml as the sole console script,
+``forecast-ml``. Delegates to
 ``forecast_ml_framework.cli.main`` (train/predict/serve/run);
-falls back to Kedro, then to help text, when the CLI is
-unavailable. Importing this module is side-effect free.
+``--version`` and ``--help`` are preserved. Importing this
+module is side-effect free.
 '''
 
-import argparse
+import sys
 
-
-def _build_parser():
-  '''Build the fallback argument parser.
-
-  Returns:
-    Configured argparse.ArgumentParser with --help support.
-  '''
-  parser = argparse.ArgumentParser(
-    prog='forecast-ml',
-    description='Forecast ML framework console.',
-  )
-  parser.add_argument(
-    '--version',
-    action='version',
-    version='forecast-ml 0.1.0',
-  )
-  return parser
+_VERSION = 'forecast-ml 0.1.0'
 
 
 def main(argv=None):
@@ -40,17 +24,19 @@ def main(argv=None):
   Returns:
     Exit code as int; 0 on success.
   '''
+  args = list(sys.argv[1:] if argv is None else argv)
+  if '--version' in args:
+    print(_VERSION)
+    return 0
   try:
     from forecast_ml_framework.cli import main as cli_main
   except ImportError:
-    parser = _build_parser()
-    parser.parse_args(argv)
     try:
       from kedro.framework.cli import main as kedro_main
 
       return kedro_main()
     except ImportError:
-      parser.print_help()
+      print('forecast-ml: train, predict, serve, run')
       return 0
   return cli_main(argv)
 

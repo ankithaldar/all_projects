@@ -4,10 +4,11 @@
 '''Exploratory data analysis nodes (Phase 3).
 
 Standalone summary statistics computed in pure pandas/numpy.
-Chart helpers from ``pipelines.modeling.charts`` are probed via
-a defensive import in :func:`eda_report`; when no data-chart
-function is available the standalone summary is used as-is, so
-this pipeline never depends on the charts worker's module.
+When a dataframe is given to :func:`eda_report`,
+``make_data_charts`` from ``pipelines.modeling.charts`` is
+called directly and its charts are merged into the report
+as ``data_charts``, so this pipeline uses the charts
+worker's module without a defensive probe.
 
 Params keys (``params:eda_params`` dict, all optional):
 
@@ -613,27 +614,6 @@ def detect_leakage(df, target, params=None):
   return findings
 
 
-def _try_data_charts(summary):
-  '''Probe for a data-chart helper; return None when absent.
-
-  Defensive import only: any import or lookup failure is
-  swallowed and the caller falls back to the standalone
-  summary stats, so the EDA pipeline has no hard dependency
-  on the modeling charts module.
-  '''
-  try:
-    from forecast_ml_framework.pipelines.modeling import (
-      charts as charts_module,
-    )
-  except Exception:  # noqa: BLE001 - defensive import
-    return None
-  for name in ('generate_data_charts', 'create_data_charts',
-               'data_charts'):
-    if callable(getattr(charts_module, name, None)):
-      return name
-  return None
-
-
 def eda_report(summary, params=None, df=None, variables=None):
   '''Build the EDA report from a summary.
 
@@ -642,32 +622,38 @@ def eda_report(summary, params=None, df=None, variables=None):
     params: Optional dict; see module docstring for keys.
     df: Optional raw dataframe; when given, leakage
       findings are recomputed via :func:`detect_leakage`
-      and merged into the report findings.
+      and merged into the report findings, and
+      ``make_data_charts(df, target, params)`` charts are
+      merged into the report as ``data_charts``.
     variables: Optional dict with ``target_col`` used
       when ``df`` is given.
 
   Returns:
     Dict with ``summary``, ``findings`` (from
     :func:`eda_quality_checks` plus leakage findings),
-    ``recommendations`` (list of strings), and
-    ``warnings``. Empty summaries return empty
-    findings/recommendations plus the summary warning.
+    ``recommendations`` (list of strings), ``warnings``,
+    and ``data_charts`` (chart name to Figure from
+    ``make_data_charts`` when ``df`` is given, else {}).
+    Empty summaries return empty findings/recommendations
+    plus the summary warning.
   '''
   params = flatten_params(params, 'eda_params')
   summary = summary or {}
-  _try_data_charts(summary)
   findings = eda_quality_checks(summary, params)
+  data_charts = {}
   if df is not None:
-    target = _target_col(params, variables or {},
-                         df if isinstance(df, pd.DataFrame)
-                         else pd.DataFrame())
-    if target is not None:
+    frame = df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    target = _target_col(params, variables or {}, frame)
+    if target is not None and not frame.empty:
       seen = {(f.get('feature'), f.get('detail')) for f in findings}
       for entry in detect_leakage(df, target, params):
         key = (entry.get('feature'), entry.get('detail'))
         if key not in seen:
           findings.append(entry)
           seen.add(key)
+      from forecast_ml_framework.pipelines.modeling.charts import (
+        make_data_charts)
+      data_charts = make_data_charts(df, target, params) or {}
   recommendations = []
   for finding in findings:
     if finding['check'] == 'leakage':
@@ -684,4 +670,5 @@ def eda_report(summary, params=None, df=None, variables=None):
     'findings': findings,
     'recommendations': recommendations,
     'warnings': warnings,
+    'data_charts': data_charts,
   }

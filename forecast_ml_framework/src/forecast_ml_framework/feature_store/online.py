@@ -7,48 +7,14 @@
 import json
 
 from forecast_ml_framework.feature_store.store import (
-    ENTITY_COL, FeatureStore, _normalize_frame, _resolve_time)
-
-
-def _naive_utc(value):
-  '''Parse ``value`` to a naive UTC Timestamp (or None).'''
-  if value is None:
-    return None
-  import pandas as pd
-  stamp = pd.Timestamp(value)
-  if getattr(stamp, 'tzinfo', None) is not None:
-    stamp = stamp.tz_convert('UTC').tz_localize(None)
-  return stamp
+    ENTITY_COL, FeatureStore, _check_not_empty, _naive_utc,
+    _naive_utc_frame, _normalize_frame, _resolve_time)
 
 
 def _resolve_naive(as_of=None, request_time=None):
   '''Resolve cutoff to a naive UTC Timestamp (or None).'''
   raw = _resolve_time(as_of=as_of, request_time=request_time)
   return _naive_utc(raw) if raw is not None else None
-
-
-def _naive_utc_frame(frame):
-  '''Return ``frame`` with tz-aware as_of converted to naive UTC.'''
-  import pandas as pd
-  frame = frame.copy()
-  if 'as_of' in frame.columns and len(frame):
-    converted = pd.to_datetime(frame['as_of'])
-    if getattr(converted.dtype, 'tz', None) is not None:
-      converted = converted.dt.tz_convert('UTC').dt.tz_localize(None)
-    frame['as_of'] = converted
-  return frame
-
-
-def _check_not_empty(dataframe):
-  '''Raise an informative ValueError for an empty dataframe.'''
-  try:
-    empty = dataframe is None or len(dataframe) == 0
-  except TypeError:
-    empty = False
-  if empty:
-    raise ValueError(
-        'cannot materialize empty dataframe: '
-        'online feature store is empty')
 
 
 class OnlineFeatureStore(FeatureStore):

@@ -295,8 +295,12 @@ _SAFE_GLOBALS = {
   ('sklearn.neural_network._stochastic_gradient', 'SGDRegressor'),
   ('sklearn.utils._array_api', 'ArrayAPIWrapper'),
   ('sklearn.utils._tags', 'Tags'),
-  # date/time helpers embedded in pandas/sklearn pickles
-  ('dateutil.tz.tz', 'tzfile'),
+  # date/time helpers embedded in pandas/sklearn pickles.
+  # NOTE: dateutil tzfile is deliberately NOT allowlisted: its
+  # constructor opens the path it is given, so allowing it would
+  # be a file-existence oracle (and its real pickle global is
+  # dateutil.tz._tzfile.tzfile / _unpickle, neither of which is
+  # needed -- modern pandas uses zoneinfo/pytz, both covered).
   ('dateutil.tz.tz', 'tzutc'),
   ('dateutil.tz.tz', 'tzoffset'),
   ('pytz.tzinfo', 'DstTzInfo'),
@@ -365,12 +369,26 @@ def restricted_loads(raw):
   '''
   if not isinstance(raw, (bytes, bytearray)):
     raise ValueError('restricted_loads requires bytes')
+  # Preserve only our own forbidden-global error (its message
+  # names the attacker-supplied module/attribute, not a probed
+  # path). Every other error -- including ValueError subclasses
+  # from allowlisted constructors such as XGBoostError (a
+  # ValueError) from Booster(model_file=...) and LightGBMError
+  # from Booster(model_file=...) -- may embed a probed filesystem
+  # path, so it is genericized. The generic error is raised
+  # after the except blocks so neither __cause__ nor __context__
+  # chains the original (path-bearing) exception.
+  generic = None
   try:
     return _RestrictedUnpickler(io.BytesIO(bytes(raw))).load()
-  except ValueError:
-    raise
-  except Exception as exc:
-    raise ValueError('Invalid or forbidden pickle payload') from exc
+  except ValueError as exc:
+    if str(exc).startswith('Forbidden pickle global:'):
+      raise
+    generic = 'Forbidden pickle payload'
+  except Exception:  # pylint: disable=broad-exception-caught
+    generic = 'Invalid or forbidden pickle payload'
+  if generic is not None:
+    raise ValueError(generic)
 
 
 def _decode_payload(raw):

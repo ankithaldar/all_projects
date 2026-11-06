@@ -142,6 +142,41 @@ def _strip_tz(stamp):
   return stamp
 
 
+def _naive_utc(value):
+  '''Parse ``value`` to a naive UTC Timestamp (or None).'''
+  if value is None:
+    return None
+  import pandas as pd
+  stamp = pd.Timestamp(value)
+  if getattr(stamp, 'tzinfo', None) is not None:
+    stamp = stamp.tz_convert('UTC').tz_localize(None)
+  return stamp
+
+
+def _naive_utc_frame(frame):
+  '''Return ``frame`` with tz-aware as_of converted to naive UTC.'''
+  import pandas as pd
+  frame = frame.copy()
+  if 'as_of' in frame.columns and len(frame):
+    converted = pd.to_datetime(frame['as_of'])
+    if getattr(converted.dtype, 'tz', None) is not None:
+      converted = converted.dt.tz_convert('UTC').dt.tz_localize(None)
+    frame['as_of'] = converted
+  return frame
+
+
+def _check_not_empty(dataframe):
+  '''Raise an informative ValueError for an empty dataframe.'''
+  try:
+    empty = dataframe is None or len(dataframe) == 0
+  except TypeError:
+    empty = False
+  if empty:
+    raise ValueError(
+        'cannot materialize empty dataframe: '
+        'feature store is empty')
+
+
 def _offline_as_dict(offline, entity_ids, feature_names, when):
   '''Read offline features as ``{entity: {feature: value}}``.'''
   out = offline.get_features(

@@ -219,3 +219,6 @@ forecast_ml_framework/demo_outputs/
 
 # CatBoost training artifacts
 forecast_ml_framework/catboost_info/
+
+# opencode plans/decisions - not committed
+forecast_ml_framework/.opencode/

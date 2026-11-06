@@ -439,3 +439,137 @@ def test_retention_dict_input_returns_names():
   }
   out = check_retention(artifacts, params=10, now=now)
   assert out == {'keep': ['new'], 'delete': ['old', 'epoch']}
+
+
+# --- cycle3 bare-secret audit (RED) ---
+
+def test_audit_scrubs_bare_aws_access_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train AKIAIOSFODNN7EXAMPLE', 'alice',
+      {'note': 'key is AKIAIOSFODNN7EXAMPLE here'})
+  blob = json.dumps(entry)
+  assert 'AKIAIOSFODNN7EXAMPLE' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_audit_scrubs_bare_openai_sk_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  for raw in ('sk-1234567890abcdefghij', 'sk-proj-1234567890abcdefghij'):
+    entry = audit_log('train', 'alice', {'note': raw})
+    assert raw not in json.dumps(entry)
+    assert '***REDACTED***' in json.dumps(entry)
+
+
+def test_audit_scrubs_pem_private_key_block():
+  from forecast_ml_framework.governance.audit import audit_log
+  pem = ('-----BEGIN PRIVATE KEY-----\n'
+         'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n'
+         '-----END PRIVATE KEY-----')
+  entry = audit_log('train', 'alice', {'cert': pem})
+  blob = json.dumps(entry)
+  assert 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC' not in blob
+  assert 'PRIVATE KEY' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_audit_scrubs_space_separated_secret():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('password hunter2', 'secret hunter2', 'api_key hunter2'):
+    entry = audit_log(f'train {text}', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+def test_audit_scrubs_bare_secrets_in_sets():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details(
+      {'tags': {'AKIAIOSFODNN7EXAMPLE', 'sk-1234567890abcdefghij'}})
+  blob = json.dumps(out, default=str)
+  assert 'AKIAIOSFODNN7EXAMPLE' not in blob
+  assert 'sk-1234567890abcdefghij' not in blob
+
+
+def test_audit_scrubs_bare_aws_asia_session_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train ASIAIOSFODNN7EXAMPLE', 'alice',
+      {'note': 'key is ASIAIOSFODNN7EXAMPLE here'})
+  blob = json.dumps(entry)
+  assert 'ASIAIOSFODNN7EXAMPLE' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_audit_scrubs_space_secret_with_copula():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('password is hunter2', 'password was hunter2',
+               'secret is hunter2', 'token was tok-123'):
+    entry = audit_log(f'train {text}', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, text
+    assert 'tok-123' not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+def test_audit_scrubs_api_key_space_and_hyphen_variants():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('api key hunter2', 'api-key hunter2',
+               'api key is hunter2', 'api-key was hunter2',
+               'access key hunter2', 'private key hunter2'):
+    entry = audit_log(f'train {text}', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+def test_audit_scrubs_space_secret_quoted_and_separators():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('password "hunter2"', "password 'hunter2'",
+               'secret is: hunter2', 'password is "hunter2"',
+               'password - hunter2', 'secret was: hunter2',
+               'secret is: "hunter2"', 'password - "hunter2"',
+               'password is= hunter2', 'token was: tok-123'):
+    entry = audit_log(f'train {text}', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, text
+    assert 'tok-123' not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+# --- loop4: quoted multi-word / comma / api-separator audit (RED) ---
+
+def test_audit_scrubs_quoted_multiword_secret():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('password "hunter2 secret phrase"',
+               "password 'hunter2 secret phrase'",
+               'password="hunter2 secret phrase"',
+               'password is "hunter2 secret phrase"',
+               '{"password": "hunter2 secret phrase"}'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    for raw in ('hunter2', 'secret', 'phrase'):
+      assert raw not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+def test_audit_scrubs_quoted_comma_semicolon_secret():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('token: "abc,def"', "token: 'abc,def'",
+               'token: "abc;def"', 'token="abc,def;ghi"'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    for raw in ('abc', 'def', 'ghi'):
+      assert raw not in blob, text
+    assert '***REDACTED***' in blob, text
+
+
+def test_audit_scrubs_api_key_multi_space_and_tab():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('api  key   abc123', 'api\tkey abc123',
+               'api \t key abc123', 'api   key is abc123',
+               'access  key abc123', 'private\tkey abc123'):
+    entry = audit_log(f'train {text}', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'abc123' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)

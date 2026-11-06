@@ -60,9 +60,21 @@ class ConfigLoader:
     # OmegaConf DictConfig/ListConfig (lazy import).
     from omegaconf import OmegaConf  # pylint: disable=import-outside-toplevel
     if OmegaConf.is_config(value):
-      ConfigLoader._reject_oc_interpolations(
-        OmegaConf.to_container(value, resolve=False))
-      plain = OmegaConf.to_container(value, resolve=True)
+      from forecast_ml_framework.core.config_schema import (  # pylint: disable=import-outside-toplevel
+        _blocked_oc_resolvers,
+        assert_no_cross_key_oc,
+        reject_oc_in_resolved,
+      )
+      unresolved = OmegaConf.to_container(value, resolve=False)
+      ConfigLoader._reject_oc_interpolations(unresolved)
+      # Fragments split across keys recombine only during
+      # resolve(); reject them before resolving, resolve with
+      # oc.* resolvers blocked, then re-scan the fully
+      # resolved container (every key and value).
+      assert_no_cross_key_oc(unresolved)
+      with _blocked_oc_resolvers():
+        plain = OmegaConf.to_container(value, resolve=True)
+      reject_oc_in_resolved(plain)
       return dict(plain) if isinstance(plain, dict) else {}
     return dict(value)
 

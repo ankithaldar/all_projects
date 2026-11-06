@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Kedro settings stub for the forecast ML framework.
+'''Kedro settings for the forecast ML framework.
 
-Hooks are empty in the scaffold phase. Future phases may add
-hooks here; do not add business logic to this module.
+Hooks are empty by design in the landed Phase 4 framework;
+do not add business logic to this module.
 
 ``CONFIG_LOADER_CLASS`` is
 ``RestrictedOmegaConfigLoader``, a Kedro
@@ -56,16 +56,37 @@ try:
 
     def _merge_and_resolve(self, key, config_per_file):
       '''Reject ``oc.*`` in raw configs, then resolve.'''
+      from forecast_ml_framework.core.config_schema import (  # pylint: disable=import-outside-toplevel
+        _blocked_oc_resolvers,
+        assert_no_cross_key_oc,
+        reject_oc_in_resolved,
+      )
       for _cfg in config_per_file.values():
         self._reject_oc(
           OmegaConf.to_container(_cfg, resolve=False))
-      return super()._merge_and_resolve(key, config_per_file)
+      # Fragments split across keys or files recombine only
+      # during resolve(); check the merged unresolved
+      # container, resolve with oc.* resolvers blocked, then
+      # re-scan the fully resolved result.
+      _cfgs = list(config_per_file.values())
+      if _cfgs:
+        _merged = OmegaConf.unsafe_merge(*_cfgs)
+        assert_no_cross_key_oc(
+          OmegaConf.to_container(_merged, resolve=False))
+      with _blocked_oc_resolvers():
+        _result = super()._merge_and_resolve(key, config_per_file)
+      reject_oc_in_resolved(_result)
+      return _result
 
     @staticmethod
     def _resolve_environment_variables(config):
       '''Refuse ``oc.env`` resolution for credentials.'''
+      from forecast_ml_framework.core.config_schema import (  # pylint: disable=import-outside-toplevel
+        assert_no_cross_key_oc,
+      )
       plain = OmegaConf.to_container(config, resolve=False)
       RestrictedOmegaConfigLoader._reject_oc(plain)
+      assert_no_cross_key_oc(plain)
 
   CONFIG_LOADER_CLASS = RestrictedOmegaConfigLoader
 except ImportError:  # pragma: no cover - kedro optional at import

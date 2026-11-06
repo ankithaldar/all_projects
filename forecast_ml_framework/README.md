@@ -9,19 +9,24 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 `catalog.yml`) plus per-environment overlays. Changing a dataset, a model,
 or a loss function is a config edit, not a code edit.
 
-Phases 1–3 are landed (549 tests pass, see Tests). Phase 2 added the MLflow
-model registry, batch scoring, Terraform IaC (`infra/`), and the static
-dashboard (`web/`). Phase 3 added EDA/leakage, monitoring/retraining, the
-feature store, A/B shadow serving, cost tracking, governance,
-interpretability, metrics v2, the full chart catalog, and Spark scaling.
+Phases 1–4 are landed (821 tests pass, see Tests; count supplied by
+the Phase 4 teams and checked against `pipeline_registry.py` — 12
+registered pipelines — in this docs pass; the suite was not re-run
+here). Phase 2 added the MLflow model registry, batch scoring,
+Terraform IaC (`infra/`), and the static dashboard (`web/`). Phase 3
+added EDA/leakage, monitoring/retraining, the feature store, A/B
+shadow serving, cost tracking, governance, interpretability, metrics
+v2, the full chart catalog, and Spark scaling. Phase 4 (hardening,
+final) registered the Phase 3 pipelines, moved SHAP explanation to
+`interpretability.nodes.shap_explain`, and tightened serving/registry
+validation — see the [Change Log](#change-log).
 
-> **Current-state note.** This README documents the code *as found on disk*,
-> verified against `pipeline_registry.py`, every `pipelines/*/pipeline.py`,
-> and `conf/`. One verified gap remains: `pipeline_registry.py` registers
-> only `data_prep`, `modeling`, and `scoring`; the Phase 3 pipelines
-> (`eda`, `monitoring`, `retraining`, `cost_tracking`, `interpretability`)
-> exist as `create_pipeline()` modules but are **not yet registered** for
-> `kedro run --pipeline <name>` (Known Issue #12).
+> **Current-state note (Phase 4 final).** This README documents the
+> code *as found on disk*, verified against `pipeline_registry.py`
+> (`_PIPELINE_MODULES`, 12 entries), every `pipelines/*/pipeline.py`,
+> and `conf/`. All eight pipeline modules are **registered** for
+> `kedro run --pipeline <name>` (12 display names; former Known
+> Issue #12 is fixed).
 
 ## Features
 
@@ -34,10 +39,11 @@ interpretability, metrics v2, the full chart catalog, and Spark scaling.
   `modeling`, `scoring`, `eda`, `monitoring`, `retraining`, `cost_tracking`,
   `interpretability` — each with `create_pipeline()` in
   `pipelines/<name>/pipeline.py`. `pipeline_registry.register_pipelines()`
-  currently exposes only `data`, `preprocessing`, `feature_selection`
-  (`data_prep`), `modeling`, `evaluation`, `predict` (`modeling`), and
-  `scoring` (`scoring`); the five Phase 3 modules are **not registered
-  yet** (Known Issue #12).
+  exposes 12 display names: `data`, `preprocessing`, `feature_selection`
+  (`data_prep`), `modeling`, `evaluation`, `predict` (`modeling`),
+  `scoring` (`scoring`), `eda`, `monitoring`, `retraining`,
+  `cost_tracking`, and `interpretability` (Phase 4 registration;
+  former Known Issue #12 fixed).
 - **EDA + leakage** (`pipelines/eda/`): `eda_summary` → `eda_report`
   (summary statistics, `eda_quality_checks`, `detect_leakage` — correlation,
   AUC, near-duplicate, near-constant, post-outcome name keywords — wired
@@ -77,8 +83,10 @@ interpretability, metrics v2, the full chart catalog, and Spark scaling.
   `none` (with `betacal.BetaCalibration` fallback to sigmoid when the
   `betacal` package is absent). Regression calibration is a no-op.
 - **SHAP explainability.** `shap.Explainer` with permutation-importance
-  fallback (`pipelines/modeling/shap_explain.py`); `method: auto` tries
-  SHAP then falls back, `method: shap` raises if SHAP is unavailable.
+  fallback (`pipelines/interpretability/nodes.py:shap_explain`); the
+  legacy `pipelines/modeling/pipeline.py:explain_model` node wraps it
+  for the modeling pipeline. `method: auto` tries SHAP then falls
+  back, `method: shap` raises if SHAP is unavailable.
 - **Metrics and charts, global and per-bucket/per-decile.** Full metric
   catalogues for classification and regression (below), evaluated globally,
   by `bucket_segment_col`, and by prediction decile
@@ -91,16 +99,29 @@ interpretability, metrics v2, the full chart catalog, and Spark scaling.
   `pipelines/data_prep/nodes.py:select_features`).
 - **Configurable loss functions per model.** A top-level `loss_function`
   default with per-model overrides, mapped per adapter through a loss
-  registry (aliases accepted, custom dotted callables supported);
-  unknown losses raise `ValueError` listing valid losses
+  registry (aliases accepted; exact-allowlist callables only —
+  `forecast_ml_framework.losses.huber_loss` and
+  `sklearn.metrics.mean_absolute_error` and other names in
+  `losses.LOSS_CALLABLES`); any other dotted name raises `ValueError`
+  listing valid losses
   (`pipelines/modeling/adapters.py:get_loss`,
-  `LOSS_REGISTRY`, `LOSS_KWARGS`).
+  `LOSS_REGISTRY`, `LOSS_KWARGS`; see
+  [Loss functions per model](#loss-functions-per-model)).
 - **FastAPI serving + registry.** `GET /health`, `POST /predict` with strict
   input validation and payload caps (`serving/app.py`); `create_app()`
   accepts an injected loader or registry config (env `MODEL_REGISTRY_URI` /
   `MODEL_NAME` / `MODEL_ALIAS`), and `RegistryModelLoader`
   (`serving/model_loader.py`) loads via the MLflow registry
-  (`registry/model_registry.py`, alias promotion). No auth or Docker.
+  (`registry/model_registry.py`, alias promotion). Serving validation
+  uses the model's `feature_names_in_` when present (required feature
+  set + order), otherwise the first record's keys; unknown/missing
+  features return 422. Registration uses
+  `mlflow.sklearn.log_model` (sklearn flavor only, no pyfunc flavor);
+  loading defaults to `mlflow.sklearn.load_model`, with the pyfunc
+  fallback gated behind `allow_pyfunc=True` (opt-in only), and there
+  is still no Docker. Serving auth is optional: when `FORECAST_API_KEY`
+  is set, `/predict` requires it (see
+  [Serving API](#serving-api)).
 - **MLflow / DVC.** `mlflow_params` / `dvc_params` in `parameters/platform.yml`
   are validated by the schema; MLflow tracking/registry runs through
   `registry/model_registry.py` (lazy import — importing the module never
@@ -154,11 +175,11 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **549 tests** at Phase 3
-land (28 test files in `tests/`, including `test_eda`, `test_monitoring`,
+success: `pytest` exits 0 with all tests passing — **821 tests** at Phase 4
+land (30 test files in `tests/`, including `test_eda`, `test_monitoring`,
 `test_retraining`, `test_cost_tracking`, `test_interpretability`,
 `test_feature_store`, `test_governance`, `test_ab_testing`, `test_scaling`,
-`test_phase3_config`). Note: the real-MLflow roundtrip test carries
+`test_phase3_config`, `test_pipeline_registry`, `test_demo_run`). Note: the real-MLflow roundtrip test carries
 `@pytest.mark.serial` and resets global mlflow state (Known Issue #17) —
 run the full suite serially; do not parallelise it. `pyproject.toml` now
 sets `testpaths = ['tests']` and `pythonpath = ['src']`, so a bare
@@ -176,12 +197,10 @@ uv run kedro run --env local
 `--env local` selects the `conf/local/` overlay (local paths, local
 artifact store, local MLflow tracking URI, DVC disabled). `--env gcp` and
 `--env aws` select the GCS/BigQuery and S3/Athena overlays. Run a single
-pipeline family with `--pipeline <name>` (registered names only: `data`,
-`preprocessing`, `feature_selection`, `modeling`, `evaluation`, `predict`,
-`scoring`). The Phase 3 pipelines (`eda`, `monitoring`, `retraining`,
-`cost_tracking`, `interpretability`) are **not registered** yet — invoke
-their `create_pipeline()` factories programmatically until
-`pipeline_registry.py` is extended (Known Issue #12).
+pipeline family with `--pipeline <name>` (registered names, 12 total:
+`data`, `preprocessing`, `feature_selection`, `modeling`, `evaluation`,
+`predict`, `scoring`, `eda`, `monitoring`, `retraining`, `cost_tracking`,
+`interpretability`).
 
 ### Console usage
 
@@ -251,8 +270,8 @@ modeling pipeline consumes it as `modeling_reg_params`.
 > **Diagrams.** All diagrams in this README are Mermaid fenced
 > blocks and render natively on GitHub. Node names
 > match `pipeline_registry.py` and the `name=` values in
-> `pipelines/*/pipeline.py`. Dashed boxes mark modules that exist on disk
-> but are **not yet registered** in `pipeline_registry.py`.
+> `pipelines/*/pipeline.py`. All eight modules are registered
+> (12 display names, Phase 4 final).
 
 ### System architecture
 
@@ -274,10 +293,14 @@ flowchart TD
   ART --> LOCAL["local overlay<br/>./data ./artifacts"]
   ART --> GCP["gcp overlay<br/>BigQuery + GCS<br/>Dataproc via Spark"]
   ART --> AWS["aws overlay<br/>Athena + S3<br/>EMR via Spark"]
-  EDA["eda pipeline<br/>eda_summary -> eda_report<br/>NOT registered"] -.-> DP
-  MON["monitoring pipeline<br/>compute_drift -> build_monitoring_report<br/>-> evaluate_alerts<br/>NOT registered"] -.-> RET["retraining pipeline<br/>should_retrain -> build_retrain_plan<br/>NOT registered"]
-  COST["cost_tracking pipeline<br/>estimate_cost -> track_run_cost<br/>-> summarize_costs<br/>NOT registered"] -.-> ART
-  INTERP["interpretability pipeline<br/>explain_model -> interpret_features<br/>-> run_diagnostics + charts<br/>NOT registered"] -.-> ART
+  REG --> EDA["eda pipeline<br/>eda_summary -> eda_report"]
+  EDA -.-> DP
+  REG --> MON["monitoring pipeline<br/>compute_drift -> build_monitoring_report<br/>-> evaluate_alerts"]
+  MON -.-> RET["retraining pipeline<br/>should_retrain -> build_retrain_plan"]
+  REG --> COST["cost_tracking pipeline<br/>estimate_cost -> track_run_cost<br/>-> summarize_costs"]
+  COST -.-> ART
+  REG --> INTERP["interpretability pipeline<br/>explain_model -> interpret_features<br/>-> run_diagnostics + charts"]
+  INTERP -.-> ART
   FS["feature_store/<br/>governance/<br/>offline+online, audit/lineage"] -.-> DP
   FS -.-> SERVE
 ```
@@ -317,7 +340,7 @@ forecast_ml_framework/
 │   ├── __main__.py             # forecast-ml console entry point
 │   ├── cli.py                  # train|predict|serve|run argparse CLI
 │   ├── settings.py             # Kedro settings: CONF_SOURCE, HOOKS=()
-│   ├── pipeline_registry.py    # register_pipelines(), lazy imports (data_prep/modeling/scoring only)
+│   ├── pipeline_registry.py    # register_pipelines(), lazy imports (12 display names, 8 modules)
 │   ├── core/
 │   │   ├── artifact_store.py   # local/GCS/S3 stores, restricted unpickler
 │   │   ├── config_loader.py    # ConfigLoader: lookup, task_type, feature merge
@@ -328,7 +351,7 @@ forecast_ml_framework/
 │   │   ├── data_prep/          # pipeline.py, nodes.py
 │   │   ├── modeling/           # pipeline.py, adapters.py, calibration.py,
 │   │   │                       # data_split.py, evaluate.py, metrics.py (144 registry),
-│   │   │                       # charts.py (groups I-VII), shap_explain.py
+│   │   │                       # charts.py (groups I-VII); SHAP via interpretability.nodes.shap_explain
 │   │   ├── scoring/            # pipeline.py, nodes.py (batch scoring, Spark partitioned)
 │   │   ├── eda/                # pipeline.py, nodes.py (summary + leakage)
 │   │   ├── monitoring/         # pipeline.py, nodes.py (PSI/KS drift, alerts)
@@ -339,7 +362,7 @@ forecast_ml_framework/
 │   ├── governance/             # audit.py, lineage.py, retention.py (pure functions, no persistence)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (28 test files, 549 tests)
+├── tests/                      # pytest suite (30 test files, 821 tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -350,19 +373,18 @@ forecast_ml_framework/
 | `data`, `preprocessing`, `feature_selection` | `pipelines/data_prep/pipeline.py` | `data_ingestion_validate` → `preprocessing` → `feature_selection` |
 | `modeling`, `evaluation`, `predict` | `pipelines/modeling/pipeline.py` | `split_data_node` → `train_models_node` → `calibrate_model_node` → `predict_node` → `predict_proba_node` → `evaluate_model_node` → `make_charts_node` → `explain_model_node` |
 | `scoring` | `pipelines/scoring/pipeline.py` | `score_data` (`load_scoring_data`) → `predict` → `write_predictions` |
-| *(not registered)* `eda` | `pipelines/eda/pipeline.py` | `eda_summary` → `eda_report` |
-| *(not registered)* `monitoring` | `pipelines/monitoring/pipeline.py` | `compute_drift` → `build_monitoring_report` → `evaluate_alerts` |
-| *(not registered)* `retraining` | `pipelines/retraining/pipeline.py` | `should_retrain` → `build_retrain_plan` |
-| *(not registered)* `cost_tracking` | `pipelines/cost_tracking/pipeline.py` | `estimate_cost` → `track_run_cost` → `summarize_costs` |
-| *(not registered)* `interpretability` | `pipelines/interpretability/pipeline.py` | `explain_model` → `interpret_features` → `run_diagnostics` → `make_interpretability_charts` → `make_diagnostics_charts` |
+| `eda` | `pipelines/eda/pipeline.py` | `eda_summary` → `eda_report` |
+| `monitoring` | `pipelines/monitoring/pipeline.py` | `compute_drift` → `build_monitoring_report` → `evaluate_alerts` |
+| `retraining` | `pipelines/retraining/pipeline.py` | `should_retrain` → `build_retrain_plan` |
+| `cost_tracking` | `pipelines/cost_tracking/pipeline.py` | `estimate_cost` → `track_run_cost` → `summarize_costs` |
+| `interpretability` | `pipelines/interpretability/pipeline.py` | `explain_model` → `interpret_features` → `run_diagnostics` → `make_interpretability_charts` → `make_diagnostics_charts` |
 
-`pipeline_registry.register_pipelines()` maps each display name to one
-cached pipeline object (aliases for the same module share one object) and
-imports lazily, so an unavailable pipeline module is skipped instead of
-breaking the registry. The five Phase 3 modules are missing from
-`_PIPELINE_MODULES` in `pipeline_registry.py:16` — `kedro run --pipeline
-eda` (etc.) will fail with "pipeline not found" until they are added;
-call `create_pipeline()` directly in Python meanwhile (Known Issue #12).
+`pipeline_registry.register_pipelines()` maps each of the 12 display
+names to one cached pipeline object (aliases for the same module share
+one object) and imports lazily, so an unavailable pipeline module is
+skipped instead of breaking the registry. `_PIPELINE_MODULES`
+(`pipeline_registry.py:19`) covers all eight modules; `kedro run
+--pipeline eda` (etc.) works (Phase 4; former Known Issue #12 fixed).
 
 ### How data flows
 
@@ -448,8 +470,8 @@ flowchart LR
 
 All five Phase 3 pipelines are plain pandas/numpy modules under
 `src/forecast_ml_framework/pipelines/<name>/` with `create_pipeline()` +
-`nodes.py`. **None is registered** in `pipeline_registry.py` yet, so they
-cannot be run via `kedro run --pipeline <name>` — see Known Issue #12.
+`nodes.py`. All five are **registered** in `pipeline_registry.py`
+(Phase 4) and run via `kedro run --pipeline <name>`.
 Params and catalog datasets are documented in each `pipeline.py` docstring.
 
 ### EDA + leakage — `pipelines/eda/`
@@ -593,7 +615,7 @@ flowchart TD
   CL --> DP["data_prep pipeline<br/>data preprocessing feature_selection"]
   CL --> MP["modeling pipeline<br/>modeling evaluation predict"]
   CL --> SC["scoring pipeline<br/>scoring"]
-  CL -.-> P3["Phase 3 pipelines<br/>eda monitoring retraining<br/>cost_tracking interpretability<br/>NOT registered"]
+  CL --> P3["Phase 3 pipelines<br/>eda monitoring retraining<br/>cost_tracking interpretability<br/>registered (Phase 4)"]
   subgraph ENV["env overlays - override base by name"]
     L["conf/local<br/>catalog + parameters"]
     G["conf/gcp<br/>catalog - GCS BigQuery"]
@@ -660,11 +682,6 @@ parameters come from base.
 ### `parameters/*.yml` — every section
 
 Base defaults below (section → bucket mapping in the table above).
-`conf/local/parameters.yml` overrides only
-`artifact_store_params`, `mlflow_params`, `dvc_params`, and
-`spark_params` (local paths, local MLflow URI, DVC off, `local[*]`
-master). `conf/gcp/` and `conf/aws/` ship `catalog.yml` only, so all their
-parameters come from base.
 
 #### Runtime params (catalog interpolations)
 
@@ -893,10 +910,12 @@ The regression twin uses `task_type: 'regression'`,
 
 ##### Loss functions per model
 
-`loss_function` is a plain string naming a built-in loss **or** a dotted
-importable string for a custom callable (e.g.
-`'my_losses.my_weighted_logloss'`), resolved by `LOSS_REGISTRY` via
-`get_loss()`. The top-level `loss_function` is the default for every
+`loss_function` is a plain string. It is first normalised through the
+per-adapter `LOSS_REGISTRY` in `pipelines/modeling/adapters.py`
+(`get_loss()`) — aliases (case-insensitive) and native values map to
+the adapter's native kwarg (`LOSS_KWARGS`: `objective` for xgboost /
+lightgbm, `loss_function` for catboost / h2o_automl, `loss` for
+sklearn). The top-level `loss_function` is the default for every
 model; `model_params.<model>.loss_function` overrides it. XGBoost and
 LightGBM also ship a native `objective` key; an explicit
 `loss_function` overrides `objective`/`loss`, a recognised `objective`
@@ -904,6 +923,31 @@ is normalised, and an unrecognised native objective passes through
 unchanged. No `loss_function` means estimator defaults are unchanged.
 Unknown losses raise `ValueError` listing the valid losses for the
 adapter.
+
+**Exact-allowlist callables.** In addition to aliases, an exact dotted
+name from the allowlist in `losses.py` (`LOSS_CALLABLES`, resolved by
+`losses.get_loss_callable()`) is accepted and passed as the callable
+itself. The allowlist is exactly:
+
+- `sklearn.metrics.{mean_squared_error, mean_absolute_error,
+  mean_squared_log_error, root_mean_squared_error,
+  root_mean_squared_log_error, median_absolute_error,
+  mean_absolute_percentage_error, log_loss, hinge_loss,
+  brier_score_loss, mean_poisson_deviance, mean_gamma_deviance,
+  mean_tweedie_deviance, mean_pinball_loss, zero_one_loss}` —
+  e.g. `sklearn.metrics.mean_absolute_error`;
+- `forecast_ml_framework.losses.huber_loss`,
+  `forecast_ml_framework.losses.quantile_loss`,
+  `forecast_ml_framework.losses.pinball_loss`.
+
+Any other dotted name — including an arbitrary callable from an
+allowlisted top-level module such as `forecast_ml_framework.cli` or
+`sklearn.metrics.accuracy_score` — is rejected with `ValueError`
+listing the valid callables. Config strings cannot register a new
+loss: trusted code may add one only by calling
+`forecast_ml_framework.losses.register_loss('forecast_ml_framework.losses.<name>', func)`
+in code (name must be under that prefix, be callable, and not already
+registered); that is a code-only extension point, not a config edit.
 
 Valid built-in examples per adapter:
 
@@ -917,13 +961,16 @@ Valid built-in examples per adapter:
 
 Aliases are accepted case-insensitively (`logloss`, `squared_error`/`mse`/`rmse`,
 `mae`, `poisson`, …) and native values map to themselves. The full
-registry is `LOSS_REGISTRY` in `pipelines/modeling/adapters.py`.
+registry is `LOSS_REGISTRY` in `pipelines/modeling/adapters.py` and
+the callable allowlist is `LOSS_CALLABLES` in `losses.py`.
 
 ```yaml
 # Change the optimisation objective for one model only:
 modeling_params.model_params.xgboost.loss_function: 'binary:logitraw'
-# Or install a custom loss (callable must be importable):
-modeling_params.model_params.sklearn.loss_function: 'my_pkg.losses.my_custom_loss'
+# Or use an allowlisted callable (exact dotted name only):
+modeling_params.model_params.sklearn.loss_function: 'sklearn.metrics.mean_absolute_error'
+# Framework custom loss (also exact-allowlisted):
+modeling_params.model_params.sklearn.loss_function: 'forecast_ml_framework.losses.huber_loss'
 ```
 
 #### Per-model params (multi-model fallback)
@@ -1151,11 +1198,14 @@ it becomes a `HandleAdapter`. Loss: set
 callable).
 
 **Add a loss function.** Either use an existing alias/native value from
-`LOSS_REGISTRY` (see the [loss table](#loss-functions-per-model)), or
-write a callable, make it importable (e.g. `my_pkg.losses.my_loss`),
-and reference it as a dotted `loss_function` string. To extend the
-built-in map, add entries to `LOSS_REGISTRY[adapter]` in
-`pipelines/modeling/adapters.py`.
+`LOSS_REGISTRY` or an exact dotted name from the allowlist
+`LOSS_CALLABLES` in `losses.py` (see the
+[loss table](#loss-functions-per-model)) — e.g.
+`forecast_ml_framework.losses.huber_loss` or
+`sklearn.metrics.mean_absolute_error`. Any other dotted name is
+rejected. To add a genuinely new callable, trusted code calls
+`forecast_ml_framework.losses.register_loss('forecast_ml_framework.losses.<name>', func)`
+in code (code-only extension; config strings cannot register a loss).
 
 ## Feature selection + business/override rule
 
@@ -1330,6 +1380,9 @@ curl http://127.0.0.1:8000/health
 # → {"status": "ok"}
 ```
 
+`/health` is always public (no API key required), for probes and
+load-balancer health checks.
+
 ### `POST /predict`
 
 Request schema: `{"features": {name: number, ...}}` (single record) or
@@ -1337,8 +1390,48 @@ Request schema: `{"features": {name: number, ...}}` (single record) or
 Validation is strict: every feature must be a finite number (booleans,
 nested values, non-finite floats, missing features → HTTP 422 naming
 the offending field); payload caps (`MAX_RECORDS = 10000`,
-`MAX_FEATURE_KEYS = 1000`) → HTTP 413; model load failures → HTTP 500
-without leaking the server filesystem path.
+`MAX_FEATURE_KEYS = 1000`) → HTTP 413; request bodies are capped at
+**10 MB** by a streaming byte counter — chunked bodies without
+`Content-Length` are rejected mid-stream with HTTP 413 as soon as the
+running total passes `MAX_BODY_BYTES = 10 * 1024 * 1024`, not only by
+header check; model load failures → HTTP 500
+without leaking the server filesystem path. Feature-name contract
+(Phase 4): when the model carries `feature_names_in_` (e.g. a fitted
+sklearn estimator), that list is the required feature set and order;
+otherwise the first record's keys are used. Unknown features → 422.
+
+**Authentication (optional).** Auth is off by default. When the
+`FORECAST_API_KEY` environment variable is set, every path except
+`/health` requires the matching key, else the app returns
+`401 {"detail": "unauthorized"}`:
+
+```bash
+export FORECAST_API_KEY='...'   # set before starting uvicorn
+curl http://127.0.0.1:8000/health          # public, no key
+curl -X POST http://127.0.0.1:8000/predict \
+  -H 'Content-Type: application/json' -H 'X-API-Key: ...' -d '...'
+# or: -H 'Authorization: Bearer ...'
+```
+
+The key is accepted via `X-API-Key` or `Authorization: Bearer ...`
+and compared in constant time. A missing or wrong key gets 401.
+
+**Security headers.** Every response (including 401/413 errors)
+carries `x-content-type-options: nosniff`,
+`x-frame-options: DENY`, `referrer-policy: no-referrer`,
+`cache-control: no-store`, a restrictive
+`content-security-policy` (`default-src 'none'; frame-ancestors 'none'`),
+and `x-permitted-cross-domain-policies: none`.
+
+Registry note (Phase 4 final, verified in
+`registry/model_registry.py`): registration uses
+`mlflow.sklearn.log_model` with `registered_model_name` + alias
+promotion — sklearn flavor only, no pyfunc flavor, no model
+signature/input-example wiring. Loading defaults to
+`mlflow.sklearn.load_model`; the pyfunc fallback is opt-in only via
+`RegistryModelLoader(..., allow_pyfunc=True)` (a startup warning is
+logged; pyfunc executes arbitrary code shipped with the model, so
+only enable it for fully trusted registries). No Docker is provided.
 
 ```bash
 # Single record
@@ -1390,7 +1483,7 @@ live with it as documented.
 | 9 | H2O `predict_proba` | **Fixed** | H2O `predict()` returns labels, not probabilities; substituting them as proba silently corrupts metrics | `H2OAutoMLAdapter.predict_proba()` (`pipelines/modeling/adapters.py`) raises `NotImplementedError` when the fitted model has no callable `predict_proba`; labels are never used as a proba substitute. Use `predict()` for labels |
 | 10 | Params mutation | **Fixed** | Mutating shared param dicts across models in the zoo | Adapters never mutate input params: `_loss_kwargs()` / `_estimator_kwargs()` build fresh kwargs, and `train_models()` copies each model's params (`mp = dict(source)`). `ConfigLoader` normalises inputs to plain dicts on construction |
 | 11 | Console script name | **Fixed** | Old scaffold README invoked a non-existent `forecastin-ml` script | Only `forecast-ml` is declared (`pyproject.toml`); `__main__.py` delegates to `cli.main`. Use `uv run forecast-ml ...` |
-| 12 | Phase 3 pipelines not registered | **Workaround** | `kedro run --pipeline eda|monitoring|retraining|cost_tracking|interpretability` fails — "pipeline not found" | `pipeline_registry._PIPELINE_MODULES` (`pipeline_registry.py:16`) maps only `data_prep`/`modeling`/`scoring`. The five Phase 3 modules exist with `create_pipeline()` — call them programmatically (`from forecast_ml_framework.pipelines.eda.pipeline import create_pipeline; create_pipeline()`) until they are registered |
+| 12 | Phase 3 pipelines not registered | **Fixed (Phase 4)** | `kedro run --pipeline eda|monitoring|retraining|cost_tracking|interpretability` failed — "pipeline not found" | `pipeline_registry._PIPELINE_MODULES` (`pipeline_registry.py:19`) now maps all 12 display names across 8 modules; verified by `tests/test_pipeline_registry.py` (12 keys) |
 | 13 | `parameters.yml` split migration | **Workaround** | Code/scripts reading `conf/base/parameters.yml` break — the file no longer exists | Edit the bucket that owns your section under `conf/base/parameters/` (see [Parameters split](#parameters-split-6-buckets)); Kedro/OmegaConf merges all `*.yml` there, so `params:<section>` references are unchanged. `conf/local/parameters.yml` still exists |
 | 14 | Metrics default-subset semantics | **Workaround (documented)** | Setting only `evaluation_params.metrics_to_calculate` in `evaluation.yml` has no effect on a Kedro `modeling` run — `evaluate_model_node` receives `params:modeling_params`, not `evaluation_params` (`pipelines/modeling/pipeline.py:151`) | Put `metrics`/`metrics_to_calculate` inside `modeling_params` for Kedro runs (absent → curated `DEFAULT_METRICS` subset; `'all'` → all 144; list → only those). See [Metrics selection](#metrics-selection-metrics_to_calculate) |
 | 15 | Spark scoring model broadcast | **Workaround** | Partitioned Spark scoring fails on executors with a pickling error for an unpicklable model object | The partition function closes over / broadcasts the model (`pipelines/scoring/pipeline.py:82`) — use a picklable sklearn/XGBoost/LightGBM/CatBoost estimator; keep batch sizes bounded |
@@ -1430,7 +1523,7 @@ dependency in the core set.
 | Question | Answer |
 |---|---|
 | `pytest` collects no tests | `testpaths = ['tests']` is now set, so bare `pytest` works; the explicit `PYTHONPATH=src python -m pytest tests/ -q` form also works (Known Issue #8, fixed) |
-| `kedro run --pipeline eda` (etc.) fails | Phase 3 pipelines are not registered yet — call their `create_pipeline()` factories programmatically (Known Issue #12) |
+| `kedro run --pipeline eda` (etc.) fails | All 12 names are registered (Phase 4); check the name against `pipeline_registry._PIPELINE_MODULES` — only those 12 work (former Known Issue #12, fixed) |
 | FileNotFound: `conf/base/parameters.yml` | The file was split into `conf/base/parameters/*.yml` (6 buckets) — edit the owning bucket; `params:<section>` references are unchanged (Known Issue #13) |
 | My `metrics_to_calculate` had no effect | `evaluate_model_node` reads `modeling_params`, not `evaluation_params` — set `metrics`/`metrics_to_calculate` in `modeling_params` (Known Issue #14) |
 | Spark scoring fails with a pickling error | The model must be broadcast/picklable for partitioned scoring (Known Issue #15) |
@@ -1439,7 +1532,7 @@ dependency in the core set.
 | `terraform validate` / first apply | Run `terraform init && terraform validate` in each stack first; it was not run in the docs environment (Known Issue #16) |
 | Dashboard shows a fallback message | Browsers block `fetch()` under `file://` — serve it: `cd web && python3 -m http.server 8000` (see `web/README.md`) |
 | `ImportError: ... requires the 'xgboost' library` | Remove `xgboost` from `models_to_use` / `modeling_params.models_to_use`, or install the library |
-| `ValueError: Unknown loss_function ...` | The loss name is not in `LOSS_REGISTRY` for that adapter. Use a valid alias/native value, or a dotted callable string like `'my_pkg.losses.my_loss'`. The error lists valid losses |
+| `ValueError: Unknown loss_function ...` | The loss name is not in `LOSS_REGISTRY` for that adapter (or, for a dotted callable, not in the exact allowlist `LOSS_CALLABLES` in `losses.py` — e.g. use `'forecast_ml_framework.losses.huber_loss'` or `'sklearn.metrics.mean_absolute_error'`). The error lists valid losses |
 | MLflow prints a banner on import | Harmless. Silence with `MLFLOW_DISABLE_AGENT_HINT=1` |
 | PySpark `FutureWarning` on pandas >= 3 | Expected with PySpark 4.3 + pandas 3.x; harmless and ignored by the pipeline |
 | `SQLQueryDataSet` rejects my query | Only a single `SELECT`/`WITH` statement is allowed. Multi-statement queries or writes raise `ValueError`. The query must come from trusted config |
@@ -1457,7 +1550,8 @@ dependency in the core set.
 flowchart LR
   P1["Phase 1 - done<br/>scaffold configs pipelines serving<br/>2026-11-05"] --> P2["Phase 2 - done<br/>MLflow registry<br/>batch scoring (scoring)<br/>Terraform IaC (infra/)<br/>web dashboard (web/)"]
   P2 --> P3["Phase 3 - done<br/>eda + leakage<br/>monitoring + retraining<br/>feature store + governance<br/>A/B shadow + cost<br/>interpretability + metrics v2<br/>scaling (Spark, Dataproc)"]
-  P3 --> REM["Remaining<br/>register Phase 3 pipelines<br/>serve CLI wiring<br/>auth / Docker / DVC exec<br/>Kedro MLflow/DVC hooks"]
+  P3 --> P4["Phase 4 - done (final)<br/>register Phase 3 pipelines (12 names)<br/>SHAP -> interpretability.nodes<br/>serving feature_names + registry hardening<br/>821 tests"]
+  P4 --> REM["Remaining<br/>serve CLI wiring<br/>Docker / DVC exec<br/>Kedro MLflow/DVC hooks<br/>pyfunc registration"]
 ```
 
 | Area | Status on disk |
@@ -1467,10 +1561,41 @@ flowchart LR
 | DVC integration | Parameters/config only; no execution code |
 | IaC | **Done (Phase 2):** Terraform in `infra/gcp` + `infra/aws` (Dataproc/EMR off by default, retraining scheduler + alerts Pub/Sub; AWS EventBridge stub commented). `terraform validate` not run locally (Known Issue #16) |
 | Monitoring / observability | **Done (Phase 3):** PSI/KS drift + alerts (`pipelines/monitoring`), plan-only retraining, cost tracking; static dashboard in `web/` |
-| Serving | FastAPI + registry + A/B shadow (`ABRouter`); no end-to-end `serve` CLI wiring, no auth/Docker |
-| Phase 3 pipelines | Modules on disk (`eda`, `monitoring`, `retraining`, `cost_tracking`, `interpretability`) but **not registered** in `pipeline_registry.py` (Known Issue #12) |
+| Serving | FastAPI + optional API-key auth (`FORECAST_API_KEY`) + registry + A/B shadow (`ABRouter`); no end-to-end `serve` CLI wiring, no Docker |
+| Phase 3 pipelines | **Registered (Phase 4):** all 12 display names in `pipeline_registry.py`; `tests/test_pipeline_registry.py` asserts 12 keys (former Known Issue #12 fixed) |
+| Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-06 — Phase 4 hardening (final, all-teams pass)
+
+- Pipelines registered: `pipeline_registry._PIPELINE_MODULES` now
+  covers 12 display names across 8 modules (`data_prep`, `modeling`,
+  `scoring`, `eda`, `monitoring`, `retraining`, `cost_tracking`,
+  `interpretability`); former Known Issue #12 dropped as fixed.
+  Verified against `pipeline_registry.py:19` and
+  `tests/test_pipeline_registry.py` (asserts 12 keys).
+- SHAP path corrected: `pipelines/interpretability/nodes.py:shap_explain`
+  is the implementation; `pipelines/modeling/pipeline.py:explain_model`
+  remains as the legacy modeling-pipeline wrapper node.
+- Serving: `feature_names_in_` contract documented — required feature
+  set/order comes from the model when present, else the first record's
+  keys; unknown/missing features → 422 (`serving/app.py:_validate_records`).
+- Registry (Phase 4 final, verified unchanged by docs pass):
+  `mlflow.sklearn.log_model` + alias promotion, no pyfunc flavor;
+  pyfunc loading is opt-in only via `RegistryModelLoader(allow_pyfunc=True)`.
+  No Docker added.
+- Docs: stale 549-test count corrected to 821, duplicated Parameters
+  override paragraph removed, all "not registered" diagram/table text
+  updated. Tests: 821 pass (count from Phase 4 teams; docs pass
+  verified the 12-pipeline registry, not a full suite re-run).
+- Dead code reported to Lead only (not fixed in this docs pass):
+  `pipelines/eda/nodes.py:_try_data_charts` (return value ignored at
+  call site), `__main__.py:_build_parser` duplicating `cli.py` parser,
+  scipy `spearmanr` import in `pipelines/modeling/metrics.py:_spearman`
+  (manual fallback exists), `feature_store/` offline/online
+  copy-paste, and the `TODO parameters.yml` docstring in
+  `pipelines/data_prep/pipeline.py:6`.
 
 ### 2026-11-05 — Phase 3
 

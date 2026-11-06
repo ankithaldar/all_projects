@@ -5,14 +5,25 @@
 
 Public handle helper: :func:`resolve_handle` resolves dotted
 importable strings used as ``handle`` / ``*_handle`` values in
-``conf/base/parameters.yml`` (e.g. ``model_handle``,
-``calibration_handle``, ``tuning_handle``) under the same
+the ``conf/base/parameters/*.yml`` buckets (e.g.
+``model_handle``, ``calibration_handle``,
+``tuning_handle``) under the same
 allowlist as scoring (sklearn / xgboost / lightgbm / catboost /
 h2o / forecast_ml_framework roots, estimator-like classes
 with ``fit`` and ``predict`` only).
+
+One-hot cap: ``CategoricalEncoding`` with ``ohe_flag: true``
+expands via ``get_dummies``. The cap key is ``max_cols`` in
+the step args (alias ``max_ohe_cols``), resolved with scoring
+semantics: args win, then ``DATA_PREP_MAX_COLS`` /
+``SCORING_MAX_COLS`` env, then default 1000; ``null`` means
+unbounded. Pre-expansion per-column and total-expansion
+estimates are checked against the cap (``ValueError`` naming
+the column) and the result is re-checked after expansion.
 '''
 
 import logging
+import os
 
 import numpy as np
 import pandas as pd
@@ -24,6 +35,37 @@ from forecast_ml_framework.pipelines.scoring.nodes import (
 )
 
 LOG = logging.getLogger(__name__)
+
+DEFAULT_MAX_OHE_COLS = 1000
+
+
+def _resolve_ohe_max_cols(args):
+  '''Resolve OHE column cap with scoring semantics.
+
+  Args win (``max_cols``, alias ``max_ohe_cols``), then
+  ``DATA_PREP_MAX_COLS`` / ``SCORING_MAX_COLS`` env, then
+  :data:`DEFAULT_MAX_OHE_COLS`. ``None`` / ``null`` means
+  unbounded.
+
+  Args:
+    args: CategoricalEncoding step args dict.
+
+  Returns:
+    Int cap, or None when unbounded.
+  '''
+  args = args or {}
+  for key in ('max_cols', 'max_ohe_cols'):
+    if key in args:
+      value = args[key]
+      return None if value is None else int(value)
+  for env_key in ('DATA_PREP_MAX_COLS', 'SCORING_MAX_COLS'):
+    env = os.environ.get(env_key)
+    if env is not None:
+      text = str(env).strip().lower()
+      if text in ('', 'null', 'none'):
+        return None
+      return int(text)
+  return DEFAULT_MAX_OHE_COLS
 
 
 def resolve_handle(handle):
@@ -256,16 +298,50 @@ def _bin_labels(df, args, variables):
 
 
 def _encode_cat(df, args, variables):
-  '''Apply categorical encoding step.'''
+  '''Apply categorical encoding step.
+
+  With ``ohe_flag``, per-column cardinality and total
+  expansion estimates are checked against the cap from
+  :func:`_resolve_ohe_max_cols` before ``get_dummies`` and
+  the expanded frame is re-checked after, mirroring scoring.
+
+  Raises:
+    ValueError: If expansion would exceed the cap, naming
+      the offending categorical column(s).
+  '''
   cols = _resolve_cols(args, variables.get('cat_cols', []))
-  for col in cols:
-    if col not in df.columns:
-      continue
-    if args.get('ohe_flag'):
-      dummies = pd.get_dummies(df[col], prefix=col)
-      df = pd.concat([df.drop(columns=[col]), dummies], axis=1)
-    else:
-      df[col] = pd.factorize(df[col])[0]
+  if not args.get('ohe_flag'):
+    for col in cols:
+      if col in df.columns:
+        df[col] = pd.factorize(df[col])[0]
+    return df
+  present = [c for c in cols if c in df.columns]
+  if not present:
+    return df
+  max_cols = _resolve_ohe_max_cols(args)
+  if max_cols is not None:
+    expanded = len(df.columns) - len(present)
+    for col in present:
+      distinct = int(df[col].nunique(dropna=False))
+      if distinct > max_cols:
+        raise ValueError(
+          'data_prep input exceeds max_cols=%d: categorical '
+          'column %r has %d distinct values'
+          % (max_cols, col, distinct))
+      expanded += distinct
+    if expanded > max_cols:
+      raise ValueError(
+        'data_prep input exceeds max_cols=%d: get_dummies '
+        'expansion would produce %d columns for categorical '
+        'columns %r' % (max_cols, expanded, present))
+  for col in present:
+    dummies = pd.get_dummies(df[col], prefix=col)
+    df = pd.concat([df.drop(columns=[col]), dummies], axis=1)
+  if max_cols is not None and len(df.columns) > max_cols:
+    raise ValueError(
+      'data_prep input exceeds max_cols=%d: got %d columns '
+      'after get_dummies expansion for categorical columns %r'
+      % (max_cols, len(df.columns), present))
   return df
 
 
@@ -450,7 +526,8 @@ def preprocess(df, prep_params, variables,
 
   Args:
     df: Pandas or Spark dataframe.
-    prep_params: List of step dicts as in parameters.yml.
+    prep_params: List of step dicts as in the
+      ``conf/base/parameters/*.yml`` buckets.
     variables: Dict with column groups and target.
     pandas_conversion_params: Optional Spark conversion dict.
     return_report: If True, return ``(df, report)`` where

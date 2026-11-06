@@ -96,7 +96,7 @@ def test_get_loss_custom_bogus_string_raises():
 
 def test_get_loss_custom_non_callable_raises():
   '''Dotted loss resolving to non-callable raises.'''
-  with pytest.raises(ValueError, match='non-callable'):
+  with pytest.raises(ValueError, match='not allowlisted'):
     get_loss('sklearn', 'sklearn.__version__')
 
 
@@ -235,3 +235,141 @@ def test_train_models_top_level_loss_function():
   model, _, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
   assert model.model.get_params()['loss'] == 'absolute_error'
+
+
+# --- cycle3 loss audit (RED) ---
+
+@pytest.mark.parametrize('dotted', [
+  'forecast_ml_framework.cli._run_kedro',
+  'forecast_ml_framework.core.datasets.SQLQueryDataSet',
+  'forecast_ml_framework.pipelines.modeling.adapters.get_loss',
+  'sklearn.metrics.accuracy_score',
+  'sklearn.linear_model.LogisticRegression',
+  'sklearn.ensemble.RandomForestClassifier',
+])
+def test_get_loss_rejects_non_loss_allowlisted_top_level(dotted):
+  '''Only exact loss callables resolve, not any allowlisted module.'''
+  with pytest.raises(ValueError, match='not allowlisted'):
+    get_loss('sklearn', dotted)
+
+
+def test_get_loss_registered_custom_loss_resolves():
+  '''Registered custom loss under forecast_ml_framework.losses resolves.'''
+  from forecast_ml_framework.losses import huber_loss
+  assert get_loss(
+      'sklearn', 'forecast_ml_framework.losses.huber_loss') is huber_loss
+  assert huber_loss([0.0], [1.0]) == pytest.approx(0.5)
+  assert get_loss(
+      'sklearn',
+      'forecast_ml_framework.losses.quantile_loss') is not None
+
+
+def test_get_loss_standard_sklearn_metric_resolves():
+  '''Standard sklearn metric losses resolve by exact dotted name.'''
+  from sklearn.metrics import mean_squared_error
+  assert get_loss(
+      'sklearn',
+      'sklearn.metrics.mean_squared_error') is mean_squared_error
+
+
+def test_sklearn_adapter_unsupported_loss_kwarg_fails_loudly():
+  '''Estimator rejecting loss kwarg raises, not silent default.'''
+  x, y = _data()
+  adapter = SklearnAdapter(
+      {'model_type': 'linear_regression',
+       'loss_function': 'squared_error'})
+  with pytest.raises(ValueError, match='rejected|loss'):
+    adapter.fit(x, y)
+
+
+def test_handle_adapter_unsupported_loss_kwarg_fails_loudly():
+  '''HandleAdapter does not silently fall back to cls().'''
+  x, y = _data()
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    create_adapter,
+  )
+  adapter = create_adapter(
+      'sklearn.linear_model.LinearRegression',
+      {'loss_function': 'squared_error'})
+  with pytest.raises(ValueError, match='rejected|loss'):
+    adapter.fit(x, y)
+
+
+# --- losses.py coverage: quantile/pinball math + register_loss ---
+
+@pytest.mark.parametrize('y_true,y_pred,quantile,expected', [
+  ([1.0, 2.0, 3.0], [1.0, 1.0, 1.0], 0.5, 0.5),
+  ([1.0, 2.0, 3.0], [1.0, 1.0, 1.0], 0.9, 0.9),
+  ([1.0, 2.0, 3.0], [1.0, 1.0, 1.0], 0.1, 0.1),
+  ([0.0, 0.0], [1.0, 2.0], 0.5, 0.75),
+  ([0.0, 0.0], [1.0, 2.0], 0.9, 0.15),
+  ([2.0, 2.0], [2.0, 2.0], 0.5, 0.0),
+])
+def test_quantile_loss_math(y_true, y_pred, quantile, expected):
+  '''quantile_loss matches hand-computed pinball values.'''
+  from forecast_ml_framework.losses import quantile_loss
+  assert quantile_loss(
+      y_true, y_pred, quantile=quantile) == pytest.approx(expected)
+
+
+def test_pinball_loss_is_quantile_alias_and_matches_sklearn():
+  '''pinball_loss is quantile_loss and matches sklearn.'''
+  from sklearn.metrics import mean_pinball_loss
+
+  from forecast_ml_framework.losses import pinball_loss, quantile_loss
+  assert pinball_loss is quantile_loss
+  y_true = [1.0, 2.0, 3.0, 0.0]
+  y_pred = [1.0, 1.0, 1.0, 1.0]
+  for quantile in (0.1, 0.5, 0.9):
+    expected = mean_pinball_loss(y_true, y_pred, alpha=quantile)
+    assert pinball_loss(
+        y_true, y_pred, quantile=quantile) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize('bad_name', [
+  'my_losses.my_loss',
+  'forecast_ml_framework.losses.bad-name',
+  'forecast_ml_framework.losses.',
+  'forecast_ml_framework.losses.has space',
+  'sklearn.metrics.mean_squared_error',
+  '',
+  123,
+  None,
+])
+def test_register_loss_invalid_name_raises(bad_name):
+  '''register_loss rejects names outside the losses namespace.'''
+  from forecast_ml_framework.losses import register_loss
+  with pytest.raises(ValueError, match='must be'):
+    register_loss(bad_name, lambda y_true, y_pred: 0.0)
+
+
+@pytest.mark.parametrize('not_callable', [42, None, 'loss', []])
+def test_register_loss_non_callable_raises(not_callable):
+  '''register_loss rejects non-callable func values.'''
+  from forecast_ml_framework.losses import register_loss
+  with pytest.raises(ValueError, match='not callable'):
+    register_loss(
+        'forecast_ml_framework.losses.not_callable_loss', not_callable)
+
+
+def test_register_loss_duplicate_raises():
+  '''register_loss rejects a duplicate dotted name.'''
+  from forecast_ml_framework.losses import (
+    LOSS_CALLABLES,
+    register_loss,
+  )
+  name = 'forecast_ml_framework.losses.duplicate_loss'
+  try:
+    register_loss(name, lambda y_true, y_pred: 0.0)
+    with pytest.raises(ValueError, match='already'):
+      register_loss(name, lambda y_true, y_pred: 1.0)
+  finally:
+    LOSS_CALLABLES.pop(name, None)
+
+
+def test_register_loss_duplicate_same_callable_raises():
+  '''register_loss raises even when re-registering the same callable.'''
+  from forecast_ml_framework.losses import huber_loss, register_loss
+  with pytest.raises(ValueError, match='already'):
+    register_loss(
+        'forecast_ml_framework.losses.huber_loss', huber_loss)

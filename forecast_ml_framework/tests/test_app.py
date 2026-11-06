@@ -282,6 +282,100 @@ def test_predict_body_too_large_413():
                'Content-Length': str(len(body))})
   assert r.status_code == 413
 
+def test_predict_second_record_unknown_feature_422():
+  '''Unknown feature in 2nd record rejected (not only first).'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  payload = {'records': [{'a': 1.0, 'b': 2.0},
+                         {'a': 3.0, 'b': 4.0, 'evil': 5.0}]}
+  r = client.post('/predict', json=payload)
+  assert r.status_code == 422
+  assert 'evil' in r.text
+
+
+def test_predict_second_record_unknown_vs_model_features_422():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class StrictModel:
+    feature_names_in_ = ['a', 'b']
+
+    def predict(self, rows):
+      return [sum(row) for row in rows]
+
+  client = TestClient(create_app(lambda: StrictModel()))
+  payload = {'records': [{'a': 1.0, 'b': 2.0},
+                         {'a': 3.0, 'b': 4.0, 'c': 9.0}]}
+  r = client.post('/predict', json=payload)
+  assert r.status_code == 422
+  assert 'c' in r.text
+
+
+def test_predict_chunked_body_over_cap_413_no_content_length():
+  '''Chunked stream >10MB rejected by streaming counter.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+
+  def chunks():
+    yield b'{"features": {"a": 1.0}, "pad": "'
+    yield b'x' * (6 * 1024 * 1024)
+    yield b'x' * (6 * 1024 * 1024)
+    yield b'"}'
+
+  r = client.post('/predict', content=chunks(),
+                  headers={'Content-Type': 'application/json'})
+  assert r.status_code == 413
+
+
+def test_api_key_auth_401_without_and_200_with(monkeypatch):
+  '''FORECAST_API_KEY set: missing/wrong key 401, correct 200.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.setenv('FORECAST_API_KEY', 's3cret-test-key')
+  client = TestClient(create_app(dummy_loader))
+  payload = {'features': {'a': 1.0}}
+  assert client.post('/predict', json=payload).status_code == 401
+  assert client.post('/predict', json=payload,
+                     headers={'X-API-Key': 'wrong'}).status_code == 401
+  r = client.post('/predict', json=payload,
+                  headers={'X-API-Key': 's3cret-test-key'})
+  assert r.status_code == 200
+  r2 = client.post('/predict', json=payload,
+                   headers={'Authorization': 'Bearer s3cret-test-key'})
+  assert r2.status_code == 200
+  # Health stays public for probes.
+  assert client.get('/health').status_code == 200
+
+
+def test_api_key_not_set_means_no_auth(monkeypatch):
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  client = TestClient(create_app(dummy_loader))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 200
+
+
+def test_security_headers_present():
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  for resp in (client.get('/health'),
+               client.post('/predict',
+                           json={'features': {'a': 1.0}})):
+    assert resp.headers.get('x-content-type-options') == 'nosniff'
+    assert resp.headers.get('x-frame-options') == 'DENY'
+    assert 'no-referrer' in resp.headers.get('referrer-policy', '')
+    assert resp.headers.get('cache-control') == 'no-store'
+    assert "default-src 'none'" in resp.headers.get(
+        'content-security-policy', '')
+  # Also on error responses.
+  r = client.post('/predict', json={})
+  assert r.headers.get('x-content-type-options') == 'nosniff'
+
+
 # --- cycle2 real sklearn ndarray feature_names_in_ (RED) ---
 def test_predict_real_sklearn_logreg():
   '''Real sklearn LogisticRegression (ndarray feature_names_in_) serves 200.'''

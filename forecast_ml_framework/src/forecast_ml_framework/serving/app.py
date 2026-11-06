@@ -8,7 +8,15 @@ Endpoints: GET /health, POST /predict.
 Models come from an injected loader (preferred) or from the
 MLflow registry via explicit config or MODEL_* env vars.
 
-No auth or Docker is provided (out of scope for Phase 1).
+Security: request bodies are capped at 10MB by a streaming
+byte counter (chunked bodies without Content-Length are
+rejected mid-stream, not only header-checked). When the
+FORECAST_API_KEY env var is set, /predict requires the
+matching key via X-API-Key or Authorization: Bearer ...
+(401 otherwise); /health stays public for probes. API-key
+and security headers (nosniff, DENY, no-referrer,
+no-store, restrictive CSP) are applied to every response.
+No Docker is provided.
 '''
 # pylint: disable=import-outside-toplevel, broad-exception-raised
 
@@ -125,10 +133,19 @@ def _validate_records(model, records):
   if _names is None or len(_names) == 0:
     required = keys
   else:
-    required = list(_names)
-  unknown = [name for name in keys if name not in required]
-  if unknown:
-    raise ValueError(f'unknown feature: {unknown}')
+    # feature_names_in_ may be a numpy array / list.
+    required = list(_names.tolist() if hasattr(
+        _names, 'tolist') else _names)
+    required = [str(name) for name in required]
+  # Validate EVERY record against required, not only the
+  # first: a later record carrying an unknown key must be
+  # rejected even when the first record is clean.
+  for record in records:
+    if not record:
+      raise ValueError('features or records is required')
+    unknown = [name for name in record if name not in required]
+    if unknown:
+      raise ValueError(f'unknown feature: {unknown}')
   rows = []
   for record in records:
     for name in required:
@@ -205,6 +222,117 @@ def _resolve_loader(model_loader, registry_uri, model_name, alias):
   return RegistryModelLoader(registry_uri, model_name, alias=alias)
 
 
+SECURITY_HEADERS = {
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'no-referrer',
+    'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+    'x-permitted-cross-domain-policies': 'none',
+}
+
+
+def _header_map(scope):
+  '''Return lower-cased header dict from an ASGI scope.'''
+  return {
+      key.decode('latin-1').lower(): value.decode('latin-1')
+      for key, value in scope.get('headers', [])
+  }
+
+
+async def _send_json(send, status_code, detail):
+  '''Send a JSON error response (with security headers).'''
+  import json as _json
+  body = _json.dumps({'detail': detail}).encode('utf-8')
+  headers = [(b'content-type', b'application/json'),
+             (b'content-length', str(len(body)).encode('latin-1'))]
+  headers.extend(
+      (k.encode('latin-1'), v.encode('latin-1'))
+      for k, v in SECURITY_HEADERS.items())
+  await send({
+      'type': 'http.response.start',
+      'status': status_code,
+      'headers': headers,
+  })
+  await send({'type': 'http.response.body', 'body': body})
+
+
+class _CapAuthHeadersMiddleware:
+  '''Pure ASGI: streaming body cap, optional API key, headers.
+
+  The body cap counts bytes as ``http.request`` messages
+  stream in (works for chunked bodies with no
+  Content-Length) and aborts with 413 as soon as the
+  running total passes MAX_BODY_BYTES, instead of
+  buffering the whole body. Bodies within the cap are
+  replayed to the app unchanged. When FORECAST_API_KEY
+  is set, every path except /health requires it (401).
+  '''
+
+  def __init__(self, app):
+    self.app = app
+
+  async def __call__(self, scope, receive, send):
+    if scope.get('type') != 'http':
+      await self.app(scope, receive, send)
+      return
+    expected = os.environ.get('FORECAST_API_KEY')
+    if expected and scope.get('path') != '/health':
+      headers = _header_map(scope)
+      provided = headers.get('x-api-key', '')
+      auth = headers.get('authorization', '')
+      if not provided and auth.lower().startswith('bearer '):
+        provided = auth[7:].strip()
+      import secrets
+      if not provided or not secrets.compare_digest(
+              provided, expected):
+        await _send_json(send, 401, 'unauthorized')
+        return
+    total = 0
+    chunks = []
+    while True:
+      message = await receive()
+      if message.get('type') == 'http.disconnect':
+        return
+      if message.get('type') != 'http.request':
+        break
+      chunk = message.get('body') or b''
+      total += len(chunk)
+      if total > MAX_BODY_BYTES:
+        await _send_json(send, 413, 'request body too large')
+        return
+      chunks.append(chunk)
+      if not message.get('more_body'):
+        break
+    body = b''.join(chunks)
+    replayed = False
+
+    async def _replay_receive():
+      nonlocal replayed
+      if not replayed:
+        replayed = True
+        return {
+            'type': 'http.request', 'body': body,
+            'more_body': False,
+        }
+      return {'type': 'http.disconnect'}
+
+    async def _send_with_headers(message):
+      if message.get('type') == 'http.response.start':
+        existing = [
+            (k, v) for k, v in message.get('headers', [])
+            if k.decode('latin-1').lower() not in SECURITY_HEADERS
+        ]
+        existing.extend(
+            (k.encode('latin-1'), v.encode('latin-1'))
+            for k, v in SECURITY_HEADERS.items())
+        message = dict(message)
+        message['headers'] = existing
+      await send(message)
+
+    await self.app(scope, _replay_receive, _send_with_headers)
+
+
 def create_app(model_loader=None, registry_uri=None, model_name=None,
                alias=None):
   '''Create FastAPI app with injected or registry model loader.
@@ -233,22 +361,7 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
       'with pip install fastapi pydantic'
     ) from _IMPORT_ERROR
   app = FastAPI(title='forecast-ml serving')
-
-  @app.middleware('http')
-  async def _reject_oversized_body(request, call_next):
-    '''Reject requests whose Content-Length exceeds 10MB.'''
-    length = request.headers.get('content-length')
-    if length is not None:
-      try:
-        size = int(length)
-      except (TypeError, ValueError):
-        size = 0
-      if size > MAX_BODY_BYTES:
-        from starlette.responses import JSONResponse
-        return JSONResponse(
-            status_code=413,
-            content={'detail': 'request body too large'})
-    return await call_next(request)
+  app.add_middleware(_CapAuthHeadersMiddleware)
 
   @app.get('/health', response_model=HealthResponse)
   def health() -> HealthResponse:

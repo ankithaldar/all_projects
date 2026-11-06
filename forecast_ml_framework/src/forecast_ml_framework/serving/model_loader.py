@@ -5,11 +5,20 @@
 
 File-based loading is supported in v1. The MLflow registry
 loader loads ``models:/<name>@<alias>`` via the lazy mlflow
-sklearn/pyfunc entry points.
+sklearn entry point only (``mlflow.sklearn.load_model``).
 
-Trust boundary: model files are trusted framework artifacts
-only. Pickle payloads are decoded with the restricted
-unpickler from :mod:`forecast_ml_framework.core.artifact_store`
+Trust boundary / registry trust: the registry (and any
+model registered in it) must be fully trusted. sklearn
+loading still unpickles model artifacts, so a malicious
+or compromised registry can execute code at load time --
+only load from registries you trust. The pyfunc flavour
+is NOT used by default: ``mlflow.pyfunc.load_model``
+executes arbitrary code shipped with a model, so it is
+gated behind explicit ``allow_pyfunc=True`` (with a
+startup warning). Model files are trusted framework
+artifacts only. Pickle payloads are decoded with the
+restricted unpickler from
+:mod:`forecast_ml_framework.core.artifact_store`
 (exact ``(module, name)`` allowlist, shared with the artifact
 store) so chained ``__reduce__`` payloads reaching loader
 functions such as ``pandas.read_pickle``/``read_csv`` are
@@ -108,11 +117,19 @@ class FileModelLoader:
 class RegistryModelLoader:
   '''Load a model from the MLflow registry lazily.
 
+  Only the sklearn flavour is loaded by default. The
+  registry must be trusted (see module docstring).
+
   Args:
     registry_uri: MLflow tracking/registry URI, or None to
       keep the ambient mlflow configuration.
     model_name: Registered model name.
     alias: Registry alias, default ``production``.
+    allow_pyfunc: Explicit opt-in to the pyfunc flavour
+      fallback. Default False. When True a startup warning
+      is logged: pyfunc executes arbitrary code shipped
+      with the model, so only enable for fully trusted
+      registries.
   '''
 
   def __init__(
@@ -120,6 +137,7 @@ class RegistryModelLoader:
       registry_uri: str | None = None,
       model_name: str | None = None,
       alias: str = 'production',
+      allow_pyfunc: bool = False,
   ) -> None:
     validate_model_name(model_name)
     validate_alias(alias)
@@ -128,6 +146,12 @@ class RegistryModelLoader:
     self.registry_uri = registry_uri
     self.model_name = model_name
     self.alias = alias
+    self.allow_pyfunc = bool(allow_pyfunc)
+    if self.allow_pyfunc:
+      logger.warning(
+        'allow_pyfunc=True: mlflow pyfunc fallback enabled; '
+        'pyfunc executes arbitrary code from the registry '
+        'model -- only use with a fully trusted registry')
     self._model = None
 
   def load(self):
@@ -149,12 +173,13 @@ class RegistryModelLoader:
   def _load_registry(self):
     '''Load ``models:/<name>@<alias>`` via lazy mlflow imports.
 
-    Only an MlflowException signalling a flavour mismatch
-    falls back to pyfunc loading (logged as a warning).
+    sklearn flavour only by default. A flavour-mismatch
+    MlflowException is a generic RuntimeError and never
+    falls back to pyfunc unless ``allow_pyfunc=True`` was
+    explicitly given (startup warning covers that case).
     Alias/model-not-found and every other MlflowException
-    are surfaced as a generic RuntimeError without a
-    pyfunc fallback; unexpected errors likewise become a
-    generic RuntimeError so no URI/detail leaks.
+    likewise become a generic RuntimeError so no
+    URI/detail leaks.
     '''
     try:
       import mlflow
@@ -179,9 +204,15 @@ class RegistryModelLoader:
             'sklearn load failed for %r@%r: %s',
             self.model_name, self.alias, exc)
           raise RuntimeError('model unavailable') from None
+        if not self.allow_pyfunc:
+          logger.warning(
+            'sklearn flavour unavailable for %r@%r; '
+            'pyfunc fallback disabled (allow_pyfunc=False): %s',
+            self.model_name, self.alias, exc)
+          raise RuntimeError('model unavailable') from None
         logger.warning(
           'sklearn flavour unavailable for %r@%r, '
-          'falling back to pyfunc: %s',
+          'falling back to pyfunc (allow_pyfunc=True): %s',
           self.model_name, self.alias, exc)
         return mlflow.pyfunc.load_model(uri)
     except RuntimeError:

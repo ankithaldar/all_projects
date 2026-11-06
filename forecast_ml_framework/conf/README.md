@@ -82,7 +82,9 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   `model_params.<name>.loss_function` overrides. Valid sets and
   aliases are listed in the comment block above `modeling_params`
   in `parameters/modeling.yml`. Custom loss: use a dotted importable string
-  (`'my_losses.my_loss'`). No `loss_function` = library defaults.
+  (`'forecast_ml_framework.losses.huber_loss'` or
+  `'sklearn.metrics.mean_absolute_error'`). No `loss_function` =
+  library defaults.
 - **Feature selection:** toggle methods in
   `feature_selection_params.methods` (`enabled: true|false`), or
   force features via `variables.yml`:

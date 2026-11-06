@@ -11,7 +11,11 @@ non-alphanumerics stripped, so ``accessKey``, ``access_key``
 and ``AWSAccessKeyId`` all match -- recursively) so secrets
 never reach the audit trail. Free-text ``event``/``actor``
 strings and string detail values are scrubbed for
-``key=value`` secret patterns as well.
+``key=value`` secret patterns, space-separated
+``password <value>`` forms (including an optional
+``is``/``was`` copula and ``api key`` space/hyphen
+variants), bare AWS access keys (``AKIA...``/``ASIA...``),
+bare ``sk-...`` keys, and PEM private-key blocks as well.
 '''
 
 import copy
@@ -30,10 +34,28 @@ _SECRET_MARKERS = ('password', 'passwd', 'pwd', 'pass', 'secret',
 
 _SECRET_TEXT_RE = re.compile(
     r'(["\']?[A-Za-z0-9_.\-]*?(?:password|passwd|pwd|passphrase|'
-    r'pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|'
+    r'pass|secret|token|api[_\-\s]*key|access[_\-\s]*key|'
+    r'private[_\-\s]*key|'
     r'bearer|auth|cookie|credential|authorization)'
-    r'[A-Za-z0-9_.\-]*?["\']?\s*[:=]\s*["\']?)([^\s,;"\']+)',
+    r'[A-Za-z0-9_.\-]*?["\']?\s*[:=]\s*)'
+    r'("[^"]*"|\'[^\']*\'|[^\s,;"\']+)',
     re.IGNORECASE)
+_SPACE_SECRET_RE = re.compile(
+    r'(["\']?[A-Za-z0-9_.\-]*?(?:password|passwd|pwd|passphrase|'
+    r'pass|secret|token|api[_\-\s]*key|access[_\-\s]*key|'
+    r'private[_\-\s]*key|'
+    r'bearer|auth|cookie|credential|authorization)'
+    r'[A-Za-z0-9_.\-]*?["\']?'
+    r'(?:\s+(?:is|was)(?:\s*[:=]\s*|\s+)'
+    r'|\s*[:=]\s*|\s+-\s+|\s+))'
+    r'("[^"]*"|\'[^\']*\'|[^\s,;"\']+)',
+    re.IGNORECASE)
+_AWS_ACCESS_KEY_RE = re.compile(r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b')
+_SK_KEY_RE = re.compile(r'\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b')
+_PEM_BLOCK_RE = re.compile(
+    r'-----BEGIN [A-Z ]*?PRIVATE KEY-----.*?'
+    r'(?:-----END [A-Z ]*?PRIVATE KEY-----|$)',
+    re.DOTALL)
 _BEARER_TEXT_RE = re.compile(
     r'\b(Bearer\s+)([A-Za-z0-9_.\-]+)', re.IGNORECASE)
 _URL_CRED_RE = re.compile(
@@ -67,9 +89,29 @@ def _scrub_text(text):
   '''
   if not isinstance(text, str):
     return text
+  text = _PEM_BLOCK_RE.sub(REDACTED, text)
+  text = _AWS_ACCESS_KEY_RE.sub(REDACTED, text)
+  text = _SK_KEY_RE.sub(REDACTED, text)
   text = _URL_CRED_RE.sub(r'\1' + REDACTED + r'\3', text)
   text = _BEARER_TEXT_RE.sub(r'\1' + REDACTED, text)
-  return _SECRET_TEXT_RE.sub(r'\1' + REDACTED, text)
+  text = _SECRET_TEXT_RE.sub(_redact_secret_match, text)
+  return _SPACE_SECRET_RE.sub(_redact_secret_match, text)
+
+
+def _redact_secret_match(match):
+  '''Replace a secret match, preserving surrounding quotes.
+
+  Quoted values (``"..."`` / ``'...'``) are captured whole,
+  including spaces, commas and semicolons inside the quotes,
+  and the quotes are kept around ``REDACTED``. Unquoted
+  values are replaced bare, as before.
+  '''
+  prefix = match.group(1)
+  value = match.group(2)
+  if len(value) >= 2 and value[0] in ('"', "'") and (
+      value[-1] == value[0]):
+    return prefix + value[0] + REDACTED + value[0]
+  return prefix + REDACTED
 
 
 def scrub_details(details):
