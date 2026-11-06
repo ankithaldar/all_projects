@@ -1,9 +1,12 @@
-"""Multi-agent tier-based crafting system.
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Multi-agent tier-based crafting system.
 
 Each tier is an independent Gym environment connected via an OrderBoard.
 Lower tiers fulfill orders from higher tiers. An orchestrator coordinates
 the tick loop across all tier agents.
-"""
+'''
 from __future__ import annotations
 
 import math
@@ -15,7 +18,7 @@ from gymnasium import spaces
 
 from src.core.items import (
   CraftingTree, ItemId, ITEM_NAME_TO_ID,
-  CRAFTABLE_ITEM_IDS, BASE_ITEM_IDS, NUM_ITEMS,
+  CRAFTABLE_ITEM_IDS, BASE_ITEM_IDS,
 )
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
@@ -25,21 +28,26 @@ from src.core.target_provider import TargetProvider
 
 
 class OrderBoard:
+  '''Class definition.'''
   def __init__(self):
+    '''Initialize instance.'''
     self._orders: Dict[ItemId, int] = {}
     self._fulfilled: Dict[ItemId, int] = {}
 
   def post_order(self, item_id: ItemId, quantity: int) -> None:
+    '''Post an order for an item.'''
     self._orders[item_id] = max(
       self._orders.get(item_id, 0), quantity
     )
 
   def get_pending(self, item_id: ItemId) -> int:
+    '''Return pending quantity for item.'''
     ordered = self._orders.get(item_id, 0)
     filled = self._fulfilled.get(item_id, 0)
     return max(0, ordered - filled)
 
   def fulfill(self, item_id: ItemId, quantity: int) -> None:
+    '''Mark quantity as fulfilled.'''
     self._fulfilled[item_id] = (
       self._fulfilled.get(item_id, 0) + quantity
     )
@@ -47,12 +55,14 @@ class OrderBoard:
   def get_all_pending_for_tier(
     self, item_ids: List[ItemId]
   ) -> Dict[ItemId, int]:
+    '''Return pending orders for items.'''
     return {
       iid: self.get_pending(iid) for iid in item_ids
       if self.get_pending(iid) > 0
     }
 
   def reset(self) -> None:
+    '''Reset state.'''
     self._orders.clear()
     self._fulfilled.clear()
 
@@ -60,6 +70,7 @@ class OrderBoard:
 def group_items_by_tier(
   tree: CraftingTree,
 ) -> Dict[int, List[ItemId]]:
+  '''Group craftable items by tier.'''
   groups: Dict[int, List[ItemId]] = {}
   for item_id_int in CRAFTABLE_ITEM_IDS:
     item_id = ItemId(item_id_int)
@@ -73,16 +84,18 @@ def group_items_by_tier(
 def get_ingredient_ids(
   tree: CraftingTree, tier_items: List[ItemId]
 ) -> List[ItemId]:
+  '''Return ingredient ids for tier items.'''
   ing_set: set = set()
   for item_id in tier_items:
     recipe = tree.get_recipe(item_id)
     for ing in recipe.ingredients:
       ing_set.add(ing.item_id)
-  return sorted(ing_set, key=lambda x: int(x))
+  return sorted(ing_set, key=int)
 
 
 class TierEnv(gym.Env):
-  metadata = {"render_modes": ["ansi"]}
+  '''Class definition.'''
+  metadata = {'render_modes': ['ansi']}
 
   def __init__(
     self,
@@ -98,6 +111,7 @@ class TierEnv(gym.Env):
     max_batch: int = 20,
     max_ticks: int = 8064,
   ):
+    '''Initialize instance.'''
     super().__init__()
     self.tier = tier
     self.tier_items = tier_items
@@ -128,11 +142,13 @@ class TierEnv(gym.Env):
     self._orchestrator = None
 
   def set_orchestrator(self, orch: MultiAgentOrchestrator) -> None:
+    '''Set orchestrator reference.'''
     self._orchestrator = orch
 
   def reset(
     self, seed: Optional[int] = None, options: Optional[Dict] = None
   ) -> Tuple[Dict[str, np.ndarray], Dict]:
+    '''Reset state.'''
     super().reset(seed=seed)
     if self._orchestrator is not None:
       obs_all = self._orchestrator.reset(seed=seed)
@@ -143,8 +159,9 @@ class TierEnv(gym.Env):
   def step(
     self, action: np.ndarray
   ) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
+    '''Advance one step.'''
     if self._orchestrator is None:
-      raise RuntimeError("TierEnv.step() requires an orchestrator")
+      raise RuntimeError('TierEnv.step() requires an orchestrator')
     actions: Dict[int, np.ndarray] = {}
     for t_num, t_env in self._orchestrator.tier_envs.items():
       if t_num == self.tier:
@@ -158,36 +175,38 @@ class TierEnv(gym.Env):
     return obs_all[self.tier], rewards[self.tier], terminated, truncated, info
 
   def _build_obs_space(self) -> spaces.Dict:
+    '''Build tier observation space.'''
     return spaces.Dict({
-      "local_stash": spaces.Box(
+      'local_stash': spaces.Box(
         low=0, high=9999,
         shape=(self._n_items,), dtype=np.int32
       ),
-      "input_stash": spaces.Box(
+      'input_stash': spaces.Box(
         low=0, high=9999,
         shape=(max(self._n_ingredients, 1),), dtype=np.int32
       ),
-      "local_slots": spaces.Box(
+      'local_slots': spaces.Box(
         low=0, high=1000,
         shape=(self._n_items, 3), dtype=np.int32
       ),
-      "coins": spaces.Box(
+      'coins': spaces.Box(
         low=0, high=99_999_999, shape=(1,), dtype=np.int32
       ),
-      "time_fraction": spaces.Box(
+      'time_fraction': spaces.Box(
         low=0.0, high=1.0, shape=(1,), dtype=np.float32
       ),
-      "orders_pending": spaces.Box(
+      'orders_pending': spaces.Box(
         low=0, high=9999,
         shape=(self._n_items,), dtype=np.int32
       ),
-      "targets_remaining": spaces.Box(
+      'targets_remaining': spaces.Box(
         low=-9999, high=9999,
         shape=(self._n_items,), dtype=np.int32
       ),
     })
 
   def build_obs(self, tick: int) -> Dict[str, np.ndarray]:
+    '''Build observation dict.'''
     self._tick = tick
     local = np.array(
       [min(9999, self._stash.get(iid)) for iid in self.tier_items],
@@ -220,18 +239,19 @@ class TierEnv(gym.Env):
     )
 
     return {
-      "local_stash": np.clip(local, 0, 9999),
-      "input_stash": np.clip(inputs, 0, 9999),
-      "local_slots": slot_arr,
-      "coins": np.array([self._coins.balance], dtype=np.int32),
-      "time_fraction": np.array(
+      'local_stash': np.clip(local, 0, 9999),
+      'input_stash': np.clip(inputs, 0, 9999),
+      'local_slots': slot_arr,
+      'coins': np.array([self._coins.balance], dtype=np.int32),
+      'time_fraction': np.array(
         [tick / max(self._max_ticks, 1)], dtype=np.float32
       ),
-      "orders_pending": np.clip(orders, 0, 9999),
-      "targets_remaining": np.clip(local_remaining, -9999, 9999),
+      'orders_pending': np.clip(orders, 0, 9999),
+      'targets_remaining': np.clip(local_remaining, -9999, 9999),
     }
 
   def action_masks(self) -> np.ndarray:
+    '''Return valid-action mask.'''
     mask_size = self._n_items * (self._max_batch + 1)
     mask = np.zeros(mask_size, dtype=np.bool_)
 
@@ -259,6 +279,7 @@ class TierEnv(gym.Env):
   def decode_and_apply(
     self, action: np.ndarray
   ) -> Dict[str, Any]:
+    '''Decode and apply tier action.'''
     applied: Dict[ItemId, int] = {}
     rejected: Dict[ItemId, int] = {}
     total_coins_spent = 0
@@ -310,36 +331,37 @@ class TierEnv(gym.Env):
       total_coins_spent += cost_int
 
     return {
-      "applied": applied,
-      "rejected": rejected,
-      "total_coins_spent": total_coins_spent,
+      'applied': applied,
+      'rejected': rejected,
+      'total_coins_spent': total_coins_spent,
     }
 
   def compute_reward(
     self, action_info: Dict[str, Any]
   ) -> Tuple[float, Dict[str, float]]:
+    '''Compute reward and breakdown.'''
     breakdown: Dict[str, float] = {}
 
     local_active = sum(
       1 for iid in self.tier_items if self._slots.is_busy(iid)
     )
     slot_util = local_active / max(self._n_items, 1)
-    breakdown["slot_utilization"] = slot_util
+    breakdown['slot_utilization'] = slot_util
 
     curr_frac = self._targets.fraction_complete()
     progress = (curr_frac - self._prev_fraction) * 10.0
     done_bonus = 50.0 if self._targets.is_complete() else 0.0
-    breakdown["target_progress"] = progress + done_bonus
+    breakdown['target_progress'] = progress + done_bonus
     self._prev_fraction = curr_frac
 
-    applied = action_info.get("applied", {})
-    coins_spent = action_info.get("total_coins_spent", 0)
+    applied = action_info.get('applied', {})
+    coins_spent = action_info.get('total_coins_spent', 0)
     n_produced = sum(applied.values()) if applied else 0
     coin_eff = (
       -coins_spent / max(n_produced, 1) / 1000.0
       if coins_spent > 0 else 0.0
     )
-    breakdown["coin_efficiency"] = coin_eff
+    breakdown['coin_efficiency'] = coin_eff
 
     pending = self._order_board.get_all_pending_for_tier(
       self.tier_items
@@ -350,7 +372,7 @@ class TierEnv(gym.Env):
       fulfilled_this_step / max(total_pending, 1)
       if total_pending > 0 else 1.0
     )
-    breakdown["order_fulfillment"] = order_rate
+    breakdown['order_fulfillment'] = order_rate
 
     reward = (
       0.4 * (progress + done_bonus)
@@ -359,24 +381,27 @@ class TierEnv(gym.Env):
       + 0.1 * coin_eff
       - 0.001
     )
-    breakdown["total"] = reward
+    breakdown['total'] = reward
     return reward, breakdown
 
   def reset_state(self) -> None:
+    '''Reset tier-local state.'''
     self._prev_fraction = 0.0
     self._tick = 0
 
 
 class MultiAgentOrchestrator:
+  '''Class definition.'''
   def __init__(self, config: Dict[str, Any]):
+    '''Initialize instance.'''
     tree_path = config.get(
-      "crafting_tree_path", "config/crafting_tree.yaml"
+      'crafting_tree_path', 'config/crafting_tree.yaml'
     )
-    targets_path = config.get("targets_path", "config/targets.yaml")
-    self._max_batch = config.get("max_batch_size", 20)
-    self._max_ticks = config.get("max_ticks", 8064)
-    self._initial_coins = config.get("initial_coins", 0)
-    self._initial_stash = config.get("initial_stash", {})
+    targets_path = config.get('targets_path', 'config/targets.yaml')
+    self._max_batch = config.get('max_batch_size', 20)
+    self._max_ticks = config.get('max_ticks', 8064)
+    self._initial_coins = config.get('initial_coins', 0)
+    self._initial_stash = config.get('initial_stash', {})
 
     self.tree = CraftingTree.from_yaml(tree_path)
     self.stash = Stash()
@@ -411,6 +436,8 @@ class MultiAgentOrchestrator:
       env.set_orchestrator(self)
 
   def reset(self, seed: int | None = None) -> Dict[int, Dict]:
+    '''Reset state.'''
+    _ = seed
     self.stash.reset()
     for name, qty in self._initial_stash.items():
       iid = ITEM_NAME_TO_ID.get(name.lower())
@@ -433,7 +460,9 @@ class MultiAgentOrchestrator:
     return obs
 
   def _propagate_orders(self) -> None:
+    '''Propagate target orders down tiers.'''
     targets_dict = self.targets.targets
+    # pylint: disable=protected-access
     for item_id, qty in targets_dict.items():
       remaining = qty - self.targets._delivered.get(item_id, 0)
       if remaining > 0:
@@ -456,6 +485,7 @@ class MultiAgentOrchestrator:
   def step(
     self, actions: Dict[int, np.ndarray]
   ) -> Tuple[Dict[int, Dict], Dict[int, float], bool, bool, Dict]:
+    '''Advance one step.'''
     self.coins.tick()
 
     for base_id in BASE_ITEM_IDS:
@@ -484,7 +514,7 @@ class MultiAgentOrchestrator:
     for tier_num, env in self.tier_envs.items():
       obs[tier_num] = env.build_obs(self.current_tick)
       action_info = all_action_info.get(tier_num, {
-        "applied": {}, "rejected": {}, "total_coins_spent": 0,
+        'applied': {}, 'rejected': {}, 'total_coins_spent': 0,
       })
       r, _ = env.compute_reward(action_info)
       rewards[tier_num] = r
@@ -493,14 +523,15 @@ class MultiAgentOrchestrator:
     truncated = self.current_tick >= self._max_ticks
 
     info = {
-      "tick": self.current_tick,
-      "action_info": all_action_info,
-      "completed": completed,
+      'tick': self.current_tick,
+      'action_info': all_action_info,
+      'completed': completed,
     }
 
     return obs, rewards, terminated, truncated, info
 
   def get_action_masks(self) -> Dict[int, np.ndarray]:
+    '''Return masks for all tiers.'''
     return {
       tier_num: env.action_masks()
       for tier_num, env in self.tier_envs.items()

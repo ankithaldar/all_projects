@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the coin generator.'''
+
 from __future__ import annotations
 
 import pytest
@@ -6,6 +11,7 @@ from src.core.coin_generator import CoinGenerator
 
 
 class TestCoinGenerator:
+  '''Tests for coin generation and spending.'''
   def test_initial_balance(self):
     cg = CoinGenerator(500)
     assert cg.balance == 500

@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Launch the Streamlit dashboard for the crafting game.'''
+
 from __future__ import annotations
 
 import os
@@ -9,13 +13,13 @@ import sys
 def main() -> None:
   app_path = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "src", "dashboard", "app.py",
+    'src', 'dashboard', 'app.py',
   )
   subprocess.run(
-    [sys.executable, "-m", "streamlit", "run", app_path],
+    [sys.executable, '-m', 'streamlit', 'run', app_path],
     check=True,
   )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   main()

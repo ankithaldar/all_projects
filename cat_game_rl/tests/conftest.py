@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Shared pytest fixtures for the crafting RL tests.'''
+
 from __future__ import annotations
 
 import os
@@ -6,7 +11,7 @@ import tempfile
 import pytest
 import yaml
 
-from src.core.items import CraftingTree, ItemId, Ingredient, Recipe, ITEM_NAME_TO_ID
+from src.core.items import CraftingTree
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
@@ -15,16 +20,16 @@ from src.cat_game_env.crafting_env import CraftingEnv
 
 TREE_PATH = os.path.join(
   os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-  "config", "crafting_tree.yaml",
+  'config', 'crafting_tree.yaml',
 )
 TARGETS_PATH = os.path.join(
   os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-  "config", "targets.yaml",
+  'config', 'targets.yaml',
 )
 
 
-@pytest.fixture
-def crafting_tree() -> CraftingTree:
+@pytest.fixture(name='crafting_tree')
+def _make_crafting_tree() -> CraftingTree:
   return CraftingTree.from_yaml(TREE_PATH)
 
 
@@ -48,14 +53,14 @@ def target_provider() -> TargetProvider:
   return TargetProvider(TARGETS_PATH)
 
 
-@pytest.fixture
-def env_config() -> dict:
+@pytest.fixture(name='env_config')
+def _make_env_config() -> dict:
   return {
-    "crafting_tree_path": TREE_PATH,
-    "targets_path": TARGETS_PATH,
-    "max_batch_size": 20,
-    "max_ticks": 2016,
-    "initial_coins": 0,
+    'crafting_tree_path': TREE_PATH,
+    'targets_path': TARGETS_PATH,
+    'max_batch_size': 20,
+    'max_ticks': 2016,
+    'initial_coins': 0,
   }
 
 
@@ -66,9 +71,9 @@ def env(env_config: dict) -> CraftingEnv:
 
 @pytest.fixture
 def simple_targets_path() -> str:
-  data = {"targets": {"string": 5}}
+  data = {'targets': {'string': 5}}
   with tempfile.NamedTemporaryFile(
-    mode="w", suffix=".yaml", delete=False
+    mode='w', suffix='.yaml', delete=False
   ) as f:
     yaml.dump(data, f)
     path = f.name

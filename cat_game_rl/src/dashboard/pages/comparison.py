@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''RL versus GA comparison page for the dashboard.'''
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -14,115 +19,127 @@ def render_comparison_page(
   ga_sim: Optional[Dict[str, Any]],
   ga_log: Optional[List[Dict[str, Any]]],
 ) -> None:
-  st.header("RL vs GA Comparison")
+  '''Render the RL versus GA comparison page.
+
+  Args:
+    rl_sim: RL simulation histories, or None if not loaded.
+    ga_sim: GA simulation histories, or None if not loaded.
+    ga_log: GA population log entries, or None if not loaded.
+  '''
+  st.header('RL vs GA Comparison')
 
   if rl_sim is None and ga_sim is None:
-    st.warning("Load both RL and GA schedules to compare.")
+    st.warning('Load both RL and GA schedules to compare.')
     return
 
-  st.subheader("Metrics Comparison")
+  st.subheader('Metrics Comparison')
   col1, col2 = st.columns(2)
 
   with col1:
-    st.markdown("### RL Agent")
+    st.markdown('### RL Agent')
     if rl_sim is not None:
       _display_metrics(rl_sim)
     else:
-      st.info("No RL data loaded.")
+      st.info('No RL data loaded.')
 
   with col2:
-    st.markdown("### GA Best")
+    st.markdown('### GA Best')
     if ga_sim is not None:
       _display_metrics(ga_sim)
     else:
-      st.info("No GA data loaded.")
+      st.info('No GA data loaded.')
 
   if rl_sim is not None and ga_sim is not None:
-    st.subheader("Slot Utilization Over Time")
+    st.subheader('Slot Utilization Over Time')
     fig = go.Figure()
 
-    rl_util = rl_sim["active_slot_history"] / NUM_CRAFTABLE * 100
-    ga_util = ga_sim["active_slot_history"] / NUM_CRAFTABLE * 100
+    rl_util = rl_sim['active_slot_history'] / NUM_CRAFTABLE * 100
+    ga_util = ga_sim['active_slot_history'] / NUM_CRAFTABLE * 100
 
     fig.add_trace(go.Scatter(
       y=rl_util.tolist(),
-      mode="lines",
-      name="RL",
-      line=dict(color="blue"),
+      mode='lines',
+      name='RL',
+      line=dict(color='blue'),
     ))
     fig.add_trace(go.Scatter(
       y=ga_util.tolist(),
-      mode="lines",
-      name="GA",
-      line=dict(color="red"),
+      mode='lines',
+      name='GA',
+      line=dict(color='red'),
     ))
     fig.update_layout(
       height=350,
       margin=dict(l=0, r=0, t=30, b=0),
-      xaxis_title="Tick",
-      yaxis_title="Utilization %",
+      xaxis_title='Tick',
+      yaxis_title='Utilization %',
       yaxis=dict(range=[0, 100]),
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Coin Balance Over Time")
+    st.subheader('Coin Balance Over Time')
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-      y=rl_sim["coin_history"].tolist(),
-      mode="lines",
-      name="RL",
-      line=dict(color="blue"),
+      y=rl_sim['coin_history'].tolist(),
+      mode='lines',
+      name='RL',
+      line=dict(color='blue'),
     ))
     fig.add_trace(go.Scatter(
-      y=ga_sim["coin_history"].tolist(),
-      mode="lines",
-      name="GA",
-      line=dict(color="red"),
+      y=ga_sim['coin_history'].tolist(),
+      mode='lines',
+      name='GA',
+      line=dict(color='red'),
     ))
     fig.update_layout(
       height=300,
       margin=dict(l=0, r=0, t=30, b=0),
-      xaxis_title="Tick",
-      yaxis_title="Coins",
+      xaxis_title='Tick',
+      yaxis_title='Coins',
     )
     st.plotly_chart(fig, use_container_width=True)
 
   if ga_log:
-    st.subheader("GA Training Progress")
-    gens = [e["gen"] for e in ga_log]
-    best_costs = [e["best_cost"] for e in ga_log]
-    best_times = [e["best_time"] for e in ga_log]
-    best_wastes = [e["best_waste"] for e in ga_log]
+    st.subheader('GA Training Progress')
+    gens = [e['gen'] for e in ga_log]
+    best_costs = [e['best_cost'] for e in ga_log]
+    best_times = [e['best_time'] for e in ga_log]
+    best_wastes = [e['best_waste'] for e in ga_log]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-      x=gens, y=best_costs, name="Best Cost", mode="lines"
+      x=gens, y=best_costs, name='Best Cost', mode='lines'
     ))
     fig.add_trace(go.Scatter(
-      x=gens, y=best_times, name="Best Time", mode="lines"
+      x=gens, y=best_times, name='Best Time', mode='lines'
     ))
     fig.add_trace(go.Scatter(
-      x=gens, y=best_wastes, name="Best Waste", mode="lines"
+      x=gens, y=best_wastes, name='Best Waste', mode='lines'
     ))
     fig.update_layout(
       height=400,
       margin=dict(l=0, r=0, t=30, b=0),
-      xaxis_title="Generation",
-      yaxis_title="Fitness Value",
+      xaxis_title='Generation',
+      yaxis_title='Fitness Value',
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
 def _display_metrics(sim_data: Dict[str, Any]) -> None:
-  coin_hist = sim_data["coin_history"]
-  active_hist = sim_data["active_slot_history"]
+  '''Display summary metrics for one simulation.
+
+  Args:
+    sim_data: Mapping of simulation histories as arrays.
+  '''
+  coin_hist = sim_data['coin_history']
+  active_hist = sim_data['active_slot_history']
   n_ticks = len(coin_hist)
 
   avg_util = np.mean(active_hist) / NUM_CRAFTABLE * 100
   max_coins = np.max(coin_hist)
   min_coins = np.min(coin_hist)
 
-  st.metric("Average Slot Utilization", f"{avg_util:.1f}%")
-  st.metric("Peak Coins", f"{max_coins:,}")
-  st.metric("Min Coins", f"{min_coins:,}")
-  st.metric("Total Ticks Used", f"{n_ticks}")
+  st.metric('Average Slot Utilization', f'{avg_util:.1f}%')
+  st.metric('Peak Coins', f'{max_coins:,}')
+  st.metric('Min Coins', f'{min_coins:,}')
+  st.metric('Total Ticks Used', f'{n_ticks}')

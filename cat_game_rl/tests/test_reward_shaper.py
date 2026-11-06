@@ -1,9 +1,14 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the reward shaper.'''
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.core.items import NUM_ITEMS, NUM_CRAFTABLE
+from src.core.items import ItemId, NUM_ITEMS, NUM_CRAFTABLE
 from src.cat_game_env.reward_shaper import (
   SlotUtilizationReward,
   WasteMinimizationReward,
@@ -26,23 +31,24 @@ def _make_state(
   tick=0,
 ):
   return {
-    "active_slot_count": active_slots,
-    "fraction_complete": fraction_complete,
-    "targets_complete": targets_complete,
-    "stash": stash if stash is not None else np.zeros(NUM_ITEMS),
-    "targets_remaining": (
+    'active_slot_count': active_slots,
+    'fraction_complete': fraction_complete,
+    'targets_complete': targets_complete,
+    'stash': stash if stash is not None else np.zeros(NUM_ITEMS),
+    'targets_remaining': (
       targets_remaining if targets_remaining is not None
       else np.zeros(NUM_ITEMS)
     ),
-    "targets_total": (
+    'targets_total': (
       targets_total if targets_total is not None
       else np.ones(NUM_ITEMS)
     ),
-    "tick": tick,
+    'tick': tick,
   }
 
 
 class TestSlotUtilization:
+  '''Tests for the slot utilization reward.'''
   def test_zero_slots(self):
     r = SlotUtilizationReward()
     state = _make_state(active_slots=0)
@@ -59,10 +65,11 @@ class TestSlotUtilization:
     assert r.compute({}, {}, state) == pytest.approx(10 / NUM_CRAFTABLE)
 
   def test_name(self):
-    assert SlotUtilizationReward().name == "slot_utilization"
+    assert SlotUtilizationReward().name == 'slot_utilization'
 
 
 class TestWasteMinimization:
+  '''Tests for the waste minimization reward.'''
   def test_no_waste(self):
     r = WasteMinimizationReward()
     state = _make_state()
@@ -79,10 +86,11 @@ class TestWasteMinimization:
     assert value < 0
 
   def test_name(self):
-    assert WasteMinimizationReward().name == "waste_minimization"
+    assert WasteMinimizationReward().name == 'waste_minimization'
 
 
 class TestTargetCompletion:
+  '''Tests for the target completion reward.'''
   def test_no_progress(self):
     r = TargetCompletionReward()
     before = _make_state(fraction_complete=0.0)
@@ -105,10 +113,11 @@ class TestTargetCompletion:
     assert value > 100.0
 
   def test_name(self):
-    assert TargetCompletionReward().name == "target_completion"
+    assert TargetCompletionReward().name == 'target_completion'
 
 
 class TestExcessInventory:
+  '''Tests for the excess inventory penalty.'''
   def test_empty_stash(self):
     r = ExcessInventoryPenalty()
     state = _make_state(stash=np.zeros(NUM_ITEMS))
@@ -122,30 +131,31 @@ class TestExcessInventory:
     assert value < 0
 
   def test_name(self):
-    assert ExcessInventoryPenalty().name == "excess_inventory"
+    assert ExcessInventoryPenalty().name == 'excess_inventory'
 
 
 class TestCoinEfficiency:
+  '''Tests for the coin efficiency reward.'''
   def test_no_spending(self):
     r = CoinEfficiencyReward()
-    value = r.compute({}, {"total_coins_spent": 0, "applied": {}}, {})
+    value = r.compute({}, {'total_coins_spent': 0, 'applied': {}}, {})
     assert value == 0.0
 
   def test_spending(self):
-    from src.core.items import ItemId
     r = CoinEfficiencyReward()
     action_info = {
-      "total_coins_spent": 500,
-      "applied": {ItemId.STRING: 5},
+      'total_coins_spent': 500,
+      'applied': {ItemId.STRING: 5},
     }
     value = r.compute({}, action_info, {})
     assert value == pytest.approx(-500 / 5 / 1000.0)
 
   def test_name(self):
-    assert CoinEfficiencyReward().name == "coin_efficiency"
+    assert CoinEfficiencyReward().name == 'coin_efficiency'
 
 
 class TestTimeEfficiency:
+  '''Tests for the time efficiency reward.'''
   def test_not_complete(self):
     r = TimeEfficiencyReward()
     state = _make_state(targets_complete=False, tick=100)
@@ -154,7 +164,7 @@ class TestTimeEfficiency:
   def test_early_completion(self):
     r = TimeEfficiencyReward()
     state = _make_state(targets_complete=True, tick=500)
-    state["max_ticks"] = 2016
+    state['max_ticks'] = 2016
     value = r.compute({}, {}, state)
     assert value == pytest.approx(10.0 * (1.0 - 500 / 2016))
 
@@ -165,60 +175,59 @@ class TestTimeEfficiency:
     assert r.compute({}, {}, early) > r.compute({}, {}, late)
 
   def test_name(self):
-    assert TimeEfficiencyReward().name == "time_efficiency"
+    assert TimeEfficiencyReward().name == 'time_efficiency'
 
 
 class TestBatchOptimization:
+  '''Tests for the batch optimization reward.'''
   def test_no_actions(self):
     r = BatchOptimizationReward()
-    assert r.compute({}, {"applied": {}}, {}) == 0.0
+    assert r.compute({}, {'applied': {}}, {}) == 0.0
 
   def test_large_batches(self):
-    from src.core.items import ItemId
     r = BatchOptimizationReward()
-    action_info = {"applied": {ItemId.STRING: 20}}
+    action_info = {'applied': {ItemId.STRING: 20}}
     value = r.compute({}, action_info, {})
     assert value == pytest.approx(1.0)
 
   def test_small_batches(self):
-    from src.core.items import ItemId
     r = BatchOptimizationReward()
-    action_info = {"applied": {ItemId.STRING: 5}}
+    action_info = {'applied': {ItemId.STRING: 5}}
     value = r.compute({}, action_info, {})
     assert value == pytest.approx(0.25)
 
   def test_multiple_items(self):
-    from src.core.items import ItemId
     r = BatchOptimizationReward()
-    action_info = {"applied": {ItemId.STRING: 5, ItemId.WOOD: 15}}
+    action_info = {'applied': {ItemId.STRING: 5, ItemId.WOOD: 15}}
     value = r.compute({}, action_info, {})
     assert value == pytest.approx((5 + 15) / 2 / 20.0)
 
   def test_name(self):
-    assert BatchOptimizationReward().name == "batch_optimization"
+    assert BatchOptimizationReward().name == 'batch_optimization'
 
 
 class TestRewardShaper:
+  '''Tests for the reward shaper.'''
   def test_default_weights(self):
     shaper = RewardShaper()
     before = _make_state(fraction_complete=0.0)
     after = _make_state(active_slots=5, fraction_complete=0.1)
     reward, breakdown = shaper.compute(before, {}, after)
     assert isinstance(reward, float)
-    assert "total" in breakdown
-    assert "slot_utilization" in breakdown
+    assert 'total' in breakdown
+    assert 'slot_utilization' in breakdown
 
   def test_custom_weights(self):
     shaper = RewardShaper(weights={
-      "slot_utilization": 0.0,
-      "waste_minimization": 0.0,
-      "target_completion": 1.0,
-      "excess_inventory": 0.0,
+      'slot_utilization': 0.0,
+      'waste_minimization': 0.0,
+      'target_completion': 1.0,
+      'excess_inventory': 0.0,
     })
     before = _make_state(fraction_complete=0.0)
     after = _make_state(active_slots=19, fraction_complete=0.0)
-    reward, breakdown = shaper.compute(before, {}, after)
-    assert breakdown["slot_utilization_weighted"] == 0.0
+    _, breakdown = shaper.compute(before, {}, after)
+    assert breakdown['slot_utilization_weighted'] == 0.0
 
   def test_all_components_present(self):
     shaper = RewardShaper()
@@ -226,13 +235,13 @@ class TestRewardShaper:
     after = _make_state()
     _, breakdown = shaper.compute(before, {}, after)
     expected_keys = {
-      "slot_utilization", "slot_utilization_weighted",
-      "waste_minimization", "waste_minimization_weighted",
-      "target_completion", "target_completion_weighted",
-      "excess_inventory", "excess_inventory_weighted",
-      "coin_efficiency", "coin_efficiency_weighted",
-      "time_efficiency", "time_efficiency_weighted",
-      "batch_optimization", "batch_optimization_weighted",
-      "total",
+      'slot_utilization', 'slot_utilization_weighted',
+      'waste_minimization', 'waste_minimization_weighted',
+      'target_completion', 'target_completion_weighted',
+      'excess_inventory', 'excess_inventory_weighted',
+      'coin_efficiency', 'coin_efficiency_weighted',
+      'time_efficiency', 'time_efficiency_weighted',
+      'batch_optimization', 'batch_optimization_weighted',
+      'total',
     }
     assert expected_keys.issubset(set(breakdown.keys()))

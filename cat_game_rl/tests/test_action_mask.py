@@ -1,7 +1,9 @@
-from __future__ import annotations
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-import numpy as np
-import pytest
+'''Tests for the action mask integration.'''
+
+from __future__ import annotations
 
 from src.core.items import ItemId, CraftingTree, NUM_CRAFTABLE
 from src.core.inventory import Stash
@@ -11,6 +13,7 @@ from src.cat_game_env.action_handler import ActionHandler
 
 
 class TestActionMaskIntegration:
+  '''Tests for action mask integration with actions.'''
   def test_no_resources_only_zeros_valid(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
     stash = Stash()
@@ -20,9 +23,9 @@ class TestActionMaskIntegration:
     mask = handler.compute_action_mask(stash, coins, slots)
 
     for i in range(NUM_CRAFTABLE):
-      assert mask[i * 21] == True
+      assert bool(mask[i * 21])
       for b in range(1, 21):
-        assert mask[i * 21 + b] == False
+        assert not mask[i * 21 + b]
 
   def test_one_item_affordable(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -34,9 +37,9 @@ class TestActionMaskIntegration:
     mask = handler.compute_action_mask(stash, coins, slots)
 
     string_idx = 0
-    assert mask[string_idx * 21 + 1] == True
-    assert mask[string_idx * 21 + 2] == True
-    assert mask[string_idx * 21 + 3] == False  # only 6 cotton / 3 = 2
+    assert bool(mask[string_idx * 21 + 1])
+    assert bool(mask[string_idx * 21 + 2])
+    assert not mask[string_idx * 21 + 3]  # only 6 cotton / 3 = 2
 
   def test_coin_limited(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -48,8 +51,8 @@ class TestActionMaskIntegration:
     mask = handler.compute_action_mask(stash, coins, slots)
 
     string_idx = 0
-    assert mask[string_idx * 21 + 1] == True
-    assert mask[string_idx * 21 + 2] == False
+    assert bool(mask[string_idx * 21 + 1])
+    assert not mask[string_idx * 21 + 2]
 
   def test_mask_valid_then_action_succeeds(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -70,4 +73,4 @@ class TestActionMaskIntegration:
 
     decoded = {ItemId.STRING: valid_batches[-1]}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
-    assert ItemId.STRING in result["applied"]
+    assert ItemId.STRING in result['applied']

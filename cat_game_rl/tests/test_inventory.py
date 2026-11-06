@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the inventory stash.'''
+
 from __future__ import annotations
 
 import numpy as np
@@ -8,6 +13,7 @@ from src.core.inventory import Stash
 
 
 class TestStash:
+  '''Tests for the inventory stash.'''
   def test_initial_empty(self, fresh_stash: Stash):
     assert fresh_stash.get(ItemId.COTTON) == 0
 

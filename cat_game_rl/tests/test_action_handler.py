@@ -1,11 +1,14 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the action handler and masks.'''
+
 from __future__ import annotations
 
 import math
 
 import numpy as np
-import pytest
-
-from src.core.items import ItemId, CraftingTree, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE
+from src.core.items import ItemId, CraftingTree, NUM_CRAFTABLE
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
@@ -14,6 +17,7 @@ from src.cat_game_env.action_handler import ActionHandler
 
 
 class TestDecode:
+  '''Tests for action decoding.'''
   def test_all_zeros(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
@@ -39,6 +43,7 @@ class TestDecode:
 
 
 class TestValidateAndApply:
+  '''Tests for action validation and application.'''
   def test_valid_action(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
     stash = Stash()
@@ -49,8 +54,8 @@ class TestValidateAndApply:
     decoded = {ItemId.STRING: 5}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
 
-    assert ItemId.STRING in result["applied"]
-    assert result["applied"][ItemId.STRING] == 5
+    assert ItemId.STRING in result['applied']
+    assert result['applied'][ItemId.STRING] == 5
     assert slots.is_busy(ItemId.STRING)
     assert stash.get(ItemId.COTTON) == 30 - 3 * 5
 
@@ -65,8 +70,8 @@ class TestValidateAndApply:
     decoded = {ItemId.STRING: 5}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
 
-    assert ItemId.STRING in result["rejected"]
-    assert result["rejected"][ItemId.STRING] == "slot_busy"
+    assert ItemId.STRING in result['rejected']
+    assert result['rejected'][ItemId.STRING] == 'slot_busy'
 
   def test_insufficient_materials_clipped(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -78,7 +83,7 @@ class TestValidateAndApply:
     decoded = {ItemId.STRING: 5}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
 
-    assert result["applied"][ItemId.STRING] == 3
+    assert result['applied'][ItemId.STRING] == 3
 
   def test_insufficient_coins_clipped(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -90,7 +95,7 @@ class TestValidateAndApply:
     decoded = {ItemId.STRING: 10}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
 
-    applied_batch = result["applied"].get(ItemId.STRING, 0)
+    applied_batch = result['applied'].get(ItemId.STRING, 0)
     assert applied_batch > 0
     assert applied_batch <= 10
 
@@ -103,7 +108,7 @@ class TestValidateAndApply:
     decoded = {ItemId.STRING: 5}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
 
-    assert ItemId.STRING in result["rejected"]
+    assert ItemId.STRING in result['rejected']
 
   def test_coins_deducted(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -127,12 +132,12 @@ class TestValidateAndApply:
 
     decoded = {ItemId.STRING: 3}
     result1 = handler.validate_and_apply(decoded, stash, coins, slots)
-    assert ItemId.STRING in result1["applied"]
+    assert ItemId.STRING in result1['applied']
 
     decoded2 = {ItemId.STRING: 2}
     result2 = handler.validate_and_apply(decoded2, stash, coins, slots)
-    assert ItemId.STRING in result2["rejected"]
-    assert result2["rejected"][ItemId.STRING] == "slot_busy"
+    assert ItemId.STRING in result2['rejected']
+    assert result2['rejected'][ItemId.STRING] == 'slot_busy'
 
   def test_material_rollback_on_partial_failure(
     self, crafting_tree: CraftingTree
@@ -146,11 +151,12 @@ class TestValidateAndApply:
 
     decoded = {ItemId.RIBBON: 2}
     result = handler.validate_and_apply(decoded, stash, coins, slots)
-    assert ItemId.RIBBON in result["rejected"]
+    assert ItemId.RIBBON in result['rejected']
     assert stash.get(ItemId.STRING) == 4
 
 
 class TestActionMask:
+  '''Tests for action mask computation.'''
   def test_zero_always_valid(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
     stash = Stash()
@@ -159,7 +165,7 @@ class TestActionMask:
 
     mask = handler.compute_action_mask(stash, coins, slots)
     for i in range(NUM_CRAFTABLE):
-      assert mask[i * 21] is True or mask[i * 21] == True
+      assert bool(mask[i * 21])
 
   def test_busy_slot_all_masked(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -171,7 +177,7 @@ class TestActionMask:
 
     mask = handler.compute_action_mask(stash, coins, slots)
     for b in range(1, 21):
-      assert mask[0 * 21 + b] == False
+      assert not mask[0 * 21 + b]
 
   def test_with_resources_unmasked(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)
@@ -181,8 +187,8 @@ class TestActionMask:
     slots = SlotScheduler(crafting_tree)
 
     mask = handler.compute_action_mask(stash, coins, slots)
-    assert mask[0 * 21 + 1] == True  # batch=1 for STRING
-    assert mask[0 * 21 + 10] == True  # batch=10 for STRING
+    assert bool(mask[0 * 21 + 1])  # batch=1 for STRING
+    assert bool(mask[0 * 21 + 10])  # batch=10 for STRING
 
   def test_mask_shape(self, crafting_tree: CraftingTree):
     handler = ActionHandler(crafting_tree, max_batch=20)

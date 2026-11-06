@@ -1,6 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the target provider.'''
+
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from src.core.items import ItemId
@@ -8,6 +12,7 @@ from src.core.target_provider import TargetProvider
 
 
 class TestTargetProvider:
+  '''Tests for the target provider.'''
   def test_load(self, target_provider: TargetProvider):
     targets = target_provider.targets
     assert ItemId.GOLD in targets

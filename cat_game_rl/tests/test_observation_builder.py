@@ -1,6 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the observation builder.'''
+
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from src.core.items import NUM_ITEMS, NUM_CRAFTABLE
@@ -12,29 +16,30 @@ from src.cat_game_env.observation_builder import ObservationBuilder
 
 
 class TestObservationBuilder:
+  '''Tests for the observation builder.'''
   @pytest.fixture
   def obs_builder(self) -> ObservationBuilder:
     return ObservationBuilder(max_ticks=8064)
 
   def test_build_space(self, obs_builder: ObservationBuilder):
     space = obs_builder.build_space()
-    assert "stash" in space.spaces
-    assert "coins" in space.spaces
-    assert "slots" in space.spaces
-    assert "time_fraction" in space.spaces
-    assert "current_tick" in space.spaces
-    assert "targets_remaining" in space.spaces
-    assert "targets_total" in space.spaces
+    assert 'stash' in space.spaces
+    assert 'coins' in space.spaces
+    assert 'slots' in space.spaces
+    assert 'time_fraction' in space.spaces
+    assert 'current_tick' in space.spaces
+    assert 'targets_remaining' in space.spaces
+    assert 'targets_total' in space.spaces
 
   def test_build_space_shapes(self, obs_builder: ObservationBuilder):
     space = obs_builder.build_space()
-    assert space["stash"].shape == (NUM_ITEMS,)
-    assert space["coins"].shape == (1,)
-    assert space["slots"].shape == (NUM_CRAFTABLE, 3)
-    assert space["time_fraction"].shape == (1,)
-    assert space["current_tick"].shape == (1,)
-    assert space["targets_remaining"].shape == (NUM_ITEMS,)
-    assert space["targets_total"].shape == (NUM_ITEMS,)
+    assert space['stash'].shape == (NUM_ITEMS,)
+    assert space['coins'].shape == (1,)
+    assert space['slots'].shape == (NUM_CRAFTABLE, 3)
+    assert space['time_fraction'].shape == (1,)
+    assert space['current_tick'].shape == (1,)
+    assert space['targets_remaining'].shape == (NUM_ITEMS,)
+    assert space['targets_total'].shape == (NUM_ITEMS,)
 
   def test_build_obs(
     self,
@@ -47,13 +52,13 @@ class TestObservationBuilder:
     obs = obs_builder.build_obs(
       fresh_stash, funded_coins, slot_scheduler, target_provider, tick=100
     )
-    assert obs["stash"].shape == (NUM_ITEMS,)
-    assert obs["coins"].shape == (1,)
-    assert obs["slots"].shape == (NUM_CRAFTABLE, 3)
-    assert obs["time_fraction"].shape == (1,)
-    assert obs["current_tick"].shape == (1,)
-    assert obs["current_tick"][0] == 100
-    assert obs["coins"][0] == 100_000
+    assert obs['stash'].shape == (NUM_ITEMS,)
+    assert obs['coins'].shape == (1,)
+    assert obs['slots'].shape == (NUM_CRAFTABLE, 3)
+    assert obs['time_fraction'].shape == (1,)
+    assert obs['current_tick'].shape == (1,)
+    assert obs['current_tick'][0] == 100
+    assert obs['coins'][0] == 100_000
 
   def test_obs_in_space(
     self,
@@ -76,4 +81,4 @@ class TestObservationBuilder:
     obs = obs_builder.build_obs(
       fresh_stash, funded_coins, slot_scheduler, target_provider, tick=4032
     )
-    assert obs["time_fraction"][0] == pytest.approx(0.5, rel=1e-3)
+    assert obs['time_fraction'][0] == pytest.approx(0.5, rel=1e-3)

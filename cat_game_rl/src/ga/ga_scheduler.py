@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Scheduler that runs the genetic algorithm evolution.'''
+
 from __future__ import annotations
 
 import json
@@ -7,22 +12,37 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import numpy as np
-from deap import algorithms, base, creator, tools
+from deap import base, creator, tools
 
-from src.core.items import CraftingTree, ItemId, NUM_CRAFTABLE
-from src.ga.chromosome import Chromosome, MAX_TICKS
+from src.core.items import CraftingTree, ItemId
+from src.ga.chromosome import Chromosome
 from src.ga.operators import GaOperators
 
 
-if not hasattr(creator, "FitnessMulti"):
+if not hasattr(creator, 'FitnessMulti'):
   creator.create(
-    "FitnessMulti", base.Fitness, weights=(-1.0, -1.0, -1.0, -1.0)
+    'FitnessMulti', base.Fitness, weights=(-1.0, -1.0, -1.0, -1.0)
   )
-if not hasattr(creator, "Individual"):
-  creator.create("Individual", np.ndarray, fitness=creator.FitnessMulti)
+if not hasattr(creator, 'Individual'):
+  creator.create('Individual', np.ndarray, fitness=creator.FitnessMulti)
+
+
+def _individuals_equal(ind1: np.ndarray, ind2: np.ndarray) -> bool:
+  '''Check if two individuals have identical genes.
+
+  Args:
+    ind1: First individual gene array.
+    ind2: Second individual gene array.
+
+  Returns:
+    True if gene arrays are equal in shape and values.
+  '''
+  return bool(np.array_equal(np.asarray(ind1), np.asarray(ind2)))
 
 
 class GaScheduler:
+  '''Runs multi-objective genetic algorithm evolution.'''
+
   def __init__(
     self,
     config: Dict[str, Any],
@@ -31,6 +51,15 @@ class GaScheduler:
     initial_coins: int = 0,
     initial_stash: Dict[str, int] | None = None,
   ):
+    '''Initialize scheduler and register toolbox operators.
+
+    Args:
+      config: Mapping of scheduler hyperparameters.
+      crafting_tree: Crafting tree used for evaluation.
+      targets: Mapping of item id to target quantity.
+      initial_coins: Coins available at tick zero.
+      initial_stash: Optional mapping of item name to quantity.
+    '''
     self._config = config
     self._tree = crafting_tree
     self._targets = targets
@@ -43,30 +72,40 @@ class GaScheduler:
     self._setup_toolbox()
 
   def _setup_toolbox(self) -> None:
-    density = self._config.get("sparse_init_density", 0.05)
-    max_init = self._config.get("max_init_batch", 10)
+    '''Register individual creation and evolution operators.'''
+    density = self._config.get('sparse_init_density', 0.05)
+    max_init = self._config.get('max_init_batch', 10)
 
     def _init_individual():
+      '''Create a random individual from the chromosome.'''
       genes = Chromosome.create_random(density, max_init)
       ind = creator.Individual(genes)
       return ind
 
-    self._toolbox.register("individual", _init_individual)
+    self._toolbox.register('individual', _init_individual)
     self._toolbox.register(
-      "population",
+      'population',
       tools.initRepeat,
       list,
       self._toolbox.individual,
     )
 
-    self._toolbox.register("evaluate", self._evaluate)
-    self._toolbox.register("mate", self._operators.cx_time_block)
-    self._toolbox.register("mutate", self._operators.mutate)
-    self._toolbox.register("select", tools.selNSGA2)
+    self._toolbox.register('evaluate', self._evaluate)
+    self._toolbox.register('mate', self._operators.cx_time_block)
+    self._toolbox.register('mutate', self._operators.mutate)
+    self._toolbox.register('select', tools.selNSGA2)
 
   def _evaluate(
     self, individual: np.ndarray
   ) -> tuple[float, float, float, float]:
+    '''Evaluate an individual via the chromosome.
+
+    Args:
+      individual: Individual gene array to evaluate.
+
+    Returns:
+      Tuple of (cost, time, waste, cost_per_item).
+    '''
     return Chromosome.evaluate(
       individual, self._tree, self._targets,
       self._initial_coins, self._initial_stash,
@@ -75,19 +114,28 @@ class GaScheduler:
   def run(
     self,
     n_generations: int | None = None,
-    output_dir: str = "output/ga_results",
+    output_dir: str = 'output/ga_results',
   ) -> List:
-    n_gen = n_generations or self._config.get("n_generations", 500)
-    pop_size = self._config.get("population_size", 200)
-    cx_prob = self._config.get("crossover_prob", 0.7)
-    mut_prob = self._config.get("mutation_prob", 0.3)
-    seed = self._config.get("seed", 42)
+    '''Run evolution for the configured number of generations.
+
+    Args:
+      n_generations: Number of generations, or None for config value.
+      output_dir: Directory for the population log file.
+
+    Returns:
+      List of individuals in the Pareto front hall of fame.
+    '''
+    n_gen = n_generations or self._config.get('n_generations', 500)
+    pop_size = self._config.get('population_size', 200)
+    cx_prob = self._config.get('crossover_prob', 0.7)
+    mut_prob = self._config.get('mutation_prob', 0.3)
+    seed = self._config.get('seed', 42)
 
     random.seed(seed)
     np.random.seed(seed)
 
     os.makedirs(output_dir, exist_ok=True)
-    self._log_path = os.path.join(output_dir, "ga_population_log.jsonl")
+    self._log_path = os.path.join(output_dir, 'ga_population_log.jsonl')
 
     pop = self._toolbox.population(n=pop_size)
 
@@ -95,11 +143,11 @@ class GaScheduler:
     for ind, fit in zip(pop, fitnesses):
       ind.fitness.values = fit
 
-    hof = tools.ParetoFront()
+    hof = tools.ParetoFront(similar=_individuals_equal)
     hof.update(pop)
 
     for gen in range(n_gen):
-      offspring = tools.selTournamentDCD(pop, len(pop))
+      offspring = self._toolbox.select(pop, len(pop))
       offspring = [creator.Individual(ind.copy()) for ind in offspring]
 
       for child1, child2 in zip(offspring[::2], offspring[1::2]):
@@ -125,12 +173,12 @@ class GaScheduler:
 
       if gen % 50 == 0:
         best = hof[0] if hof else None
-        best_fit = best.fitness.values if best else None
+        best_fit = best.fitness.values if best is not None else None
         print(
-          f"Gen {gen}/{n_gen} | "
-          f"Pop: {len(pop)} | "
-          f"Front: {len(hof)} | "
-          f"Best: {best_fit}"
+          f'Gen {gen}/{n_gen} | '
+          f'Pop: {len(pop)} | '
+          f'Front: {len(hof)} | '
+          f'Best: {best_fit}'
         )
 
     return list(hof)
@@ -138,17 +186,24 @@ class GaScheduler:
   def _log_generation(
     self, gen: int, pop: List, hof: tools.ParetoFront
   ) -> None:
+    '''Append a generation summary to the population log.
+
+    Args:
+      gen: Zero-based generation index.
+      pop: Current population individuals.
+      hof: Pareto front hall of fame.
+    '''
     if not self._log_path:
       return
 
     front_entries = []
     for ind in hof:
       front_entries.append({
-        "cost": ind.fitness.values[0],
-        "time": ind.fitness.values[1],
-        "waste": ind.fitness.values[2],
-        "cost_per_item": ind.fitness.values[3],
-        "rank": 1,
+        'cost': ind.fitness.values[0],
+        'time': ind.fitness.values[1],
+        'waste': ind.fitness.values[2],
+        'cost_per_item': ind.fitness.values[3],
+        'rank': 1,
       })
 
     fits = [ind.fitness.values for ind in pop]
@@ -158,25 +213,33 @@ class GaScheduler:
     cpis = [f[3] for f in fits]
 
     entry = {
-      "gen": gen,
-      "timestamp": datetime.now(timezone.utc).isoformat(),
-      "pop_size": len(pop),
-      "pareto_front_size": len(hof),
-      "best_cost": min(costs) if costs else 0,
-      "best_time": min(times) if times else 0,
-      "best_waste": min(wastes) if wastes else 0,
-      "best_cost_per_item": min(cpis) if cpis else 0,
-      "avg_cost": sum(costs) / len(costs) if costs else 0,
-      "avg_time": sum(times) / len(times) if times else 0,
-      "avg_waste": sum(wastes) / len(wastes) if wastes else 0,
-      "avg_cost_per_item": sum(cpis) / len(cpis) if cpis else 0,
-      "front": front_entries[:10],
+      'gen': gen,
+      'timestamp': datetime.now(timezone.utc).isoformat(),
+      'pop_size': len(pop),
+      'pareto_front_size': len(hof),
+      'best_cost': min(costs) if costs else 0,
+      'best_time': min(times) if times else 0,
+      'best_waste': min(wastes) if wastes else 0,
+      'best_cost_per_item': min(cpis) if cpis else 0,
+      'avg_cost': sum(costs) / len(costs) if costs else 0,
+      'avg_time': sum(times) / len(times) if times else 0,
+      'avg_waste': sum(wastes) / len(wastes) if wastes else 0,
+      'avg_cost_per_item': sum(cpis) / len(cpis) if cpis else 0,
+      'front': front_entries[:10],
     }
 
-    with open(self._log_path, "a") as f:
-      f.write(json.dumps(entry) + "\n")
+    with open(self._log_path, 'a', encoding='utf-8') as f:
+      f.write(json.dumps(entry) + '\n')
 
   def get_best_schedule(self, hof: List) -> np.ndarray | None:
+    '''Return the best schedule from a hall of fame.
+
+    Args:
+      hof: List of Pareto front individuals.
+
+    Returns:
+      Gene array of the best individual, or None if empty.
+    '''
     if not hof:
       return None
     return np.array(hof[0])

@@ -1,15 +1,19 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for items and the crafting tree.'''
+
 from __future__ import annotations
 
-import pytest
-
 from src.core.items import (
-  ItemId, Ingredient, Recipe, CraftingTree,
+  ItemId, CraftingTree,
   NUM_ITEMS, NUM_CRAFTABLE, BASE_ITEM_IDS, CRAFTABLE_ITEM_IDS,
   ITEM_NAME_TO_ID,
 )
 
 
 class TestItemId:
+  '''Tests for item identifiers.'''
   def test_num_items(self):
     assert len(ItemId) == NUM_ITEMS == 23
 
@@ -27,12 +31,13 @@ class TestItemId:
     assert len(BASE_ITEM_IDS) == 4
 
   def test_name_to_id_mapping(self):
-    assert ITEM_NAME_TO_ID["cotton"] == ItemId.COTTON
-    assert ITEM_NAME_TO_ID["artifact"] == ItemId.ARTIFACT
+    assert ITEM_NAME_TO_ID['cotton'] == ItemId.COTTON
+    assert ITEM_NAME_TO_ID['artifact'] == ItemId.ARTIFACT
     assert len(ITEM_NAME_TO_ID) == NUM_ITEMS
 
 
 class TestCraftingTree:
+  '''Tests for the crafting tree.'''
   def test_load_from_yaml(self, crafting_tree: CraftingTree):
     assert len(crafting_tree.recipes) == NUM_CRAFTABLE
 
@@ -51,7 +56,7 @@ class TestCraftingTree:
       for ing in recipe.ingredients:
         if ing.item_id in order_idx:
           assert order_idx[ing.item_id] < order_idx[item_id], (
-            f"{ing.item_id.name} should come before {item_id.name}"
+            f'{ing.item_id.name} should come before {item_id.name}'
           )
 
   def test_tier_assignments(self, crafting_tree: CraftingTree):

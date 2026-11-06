@@ -1,17 +1,21 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Utilities to parse, simulate, and export dashboard schedules.'''
+
 from __future__ import annotations
 
 import csv
 import io
 import json
 import math
-import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
 
 from src.core.items import (
-  CraftingTree, ItemId, ITEM_NAME_TO_ID, CRAFTABLE_ITEM_IDS,
+  CraftingTree, ItemId, ITEM_NAME_TO_ID,
   BASE_ITEM_IDS, NUM_ITEMS,
 )
 from src.core.inventory import Stash
@@ -21,24 +25,40 @@ from src.core.cost_calculator import CostCalculator
 
 
 def parse_batch_schedule(path: str) -> pd.DataFrame:
+  '''Parse a batch schedule text file into a DataFrame.
+
+  Args:
+    path: Path of the batch schedule text file.
+
+  Returns:
+    DataFrame with one row per scheduled batch action.
+  '''
   rows = []
-  with open(path, "r") as f:
+  with open(path, 'r', encoding='utf-8') as f:
     lines = f.readlines()
   for line in lines[2:]:
     parts = line.split()
     if len(parts) >= 4:
       rows.append({
-        "tick_index": int(parts[0]),
-        "elapsed_minutes": int(parts[1]),
-        "item_name": parts[2],
-        "batch_size_decided": int(parts[3]),
+        'tick_index': int(parts[0]),
+        'elapsed_minutes': int(parts[1]),
+        'item_name': parts[2],
+        'batch_size_decided': int(parts[3]),
       })
   return pd.DataFrame(rows)
 
 
 def parse_ga_log(path: str) -> List[Dict[str, Any]]:
+  '''Parse a genetic algorithm population log file.
+
+  Args:
+    path: Path of the JSON lines population log file.
+
+  Returns:
+    List of log entries, one per generation.
+  '''
   entries = []
-  with open(path, "r") as f:
+  with open(path, 'r', encoding='utf-8') as f:
     for line in f:
       line = line.strip()
       if line:
@@ -53,6 +73,18 @@ def simulate_schedule(
   initial_coins: int = 0,
   initial_stash: Dict[str, int] | None = None,
 ) -> Dict[str, Any]:
+  '''Simulate a batch schedule against the crafting system.
+
+  Args:
+    schedule_df: DataFrame of scheduled batch actions.
+    crafting_tree: Crafting tree used for recipes and slots.
+    max_ticks: Number of ticks to simulate.
+    initial_coins: Coins available at tick zero.
+    initial_stash: Optional mapping of item name to quantity.
+
+  Returns:
+    Mapping of stash, coin, and slot histories as arrays.
+  '''
   stash = Stash()
   if initial_stash:
     for name, qty in initial_stash.items():
@@ -69,12 +101,12 @@ def simulate_schedule(
 
   schedule_by_tick = {}
   for _, row in schedule_df.iterrows():
-    tick = int(row["tick_index"])
+    tick = int(row['tick_index'])
     if tick not in schedule_by_tick:
       schedule_by_tick[tick] = []
     schedule_by_tick[tick].append({
-      "item_name": row["item_name"],
-      "batch_size": int(row["batch_size_decided"]),
+      'item_name': row['item_name'],
+      'batch_size': int(row['batch_size_decided']),
     })
 
   for t in range(max_ticks):
@@ -87,8 +119,8 @@ def simulate_schedule(
 
     if t in schedule_by_tick:
       for action in schedule_by_tick[t]:
-        item_name = action["item_name"]
-        batch_size = action["batch_size"]
+        item_name = action['item_name']
+        batch_size = action['batch_size']
         item_id = ITEM_NAME_TO_ID.get(item_name)
         if item_id is None or slots.is_busy(item_id):
           continue
@@ -132,25 +164,34 @@ def simulate_schedule(
     slot_history.append(slots.get_slot_array().copy())
 
   return {
-    "stash_history": np.array(stash_history),
-    "coin_history": np.array(coin_history),
-    "slot_history": np.array(slot_history),
-    "active_slot_history": np.array(active_slot_history),
+    'stash_history': np.array(stash_history),
+    'coin_history': np.array(coin_history),
+    'slot_history': np.array(slot_history),
+    'active_slot_history': np.array(active_slot_history),
   }
 
 
 def export_replay_csv(sim_data: Dict[str, Any], max_ticks: int = 8064) -> str:
+  '''Export simulation histories as a CSV string.
+
+  Args:
+    sim_data: Mapping of simulation histories as arrays.
+    max_ticks: Maximum number of ticks to export.
+
+  Returns:
+    CSV text with one row per tick.
+  '''
   output = io.StringIO()
   writer = csv.writer(output)
 
-  header = ["tick", "elapsed_minutes", "coin_balance", "active_slots"]
+  header = ['tick', 'elapsed_minutes', 'coin_balance', 'active_slots']
   for item_id in ItemId:
-    header.append(f"stash_{item_id.name.lower()}")
+    header.append(f'stash_{item_id.name.lower()}')
   writer.writerow(header)
 
-  stash_hist = sim_data["stash_history"]
-  coin_hist = sim_data["coin_history"]
-  active_hist = sim_data["active_slot_history"]
+  stash_hist = sim_data['stash_history']
+  coin_hist = sim_data['coin_history']
+  active_hist = sim_data['active_slot_history']
 
   for t in range(min(max_ticks, len(stash_hist))):
     row = [t, t * 5, coin_hist[t], active_hist[t]]

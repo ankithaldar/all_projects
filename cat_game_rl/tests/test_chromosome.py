@@ -1,18 +1,24 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the genetic-algorithm chromosome.'''
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.core.items import CraftingTree, ItemId, ITEM_NAME_TO_ID, CRAFTABLE_ITEM_IDS
+from src.core.items import CraftingTree, ItemId, CRAFTABLE_ITEM_IDS
 from src.ga.chromosome import Chromosome, MAX_TICKS
 
 
-@pytest.fixture
-def targets():
+@pytest.fixture(name='targets')
+def _make_targets():
   return {ItemId.STRING: 5}
 
 
 class TestChromosome:
+  '''Tests for chromosome creation, decoding, and fitness.'''
   def test_create_random_shape(self):
     genes = Chromosome.create_random(density=0.05, max_batch=10)
     assert genes.shape == (MAX_TICKS, 19)
@@ -49,7 +55,7 @@ class TestChromosome:
     self, crafting_tree: CraftingTree, targets: dict
   ):
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
-    cost, time, waste, cpi = Chromosome.evaluate(
+    cost, time, unused_waste, cpi = Chromosome.evaluate(
       genes, crafting_tree, targets
     )
     assert time == MAX_TICKS + 1
@@ -62,7 +68,7 @@ class TestChromosome:
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     for t in range(10):
       genes[t, 0] = 5  # STRING batch=5
-    cost, time, waste, cpi = Chromosome.evaluate(
+    cost, time, unused_waste, cpi = Chromosome.evaluate(
       genes, crafting_tree, targets
     )
     assert time < MAX_TICKS + 1
@@ -70,26 +76,32 @@ class TestChromosome:
     assert cpi > 0
 
   def test_waste_tracks_excess(self, crafting_tree: CraftingTree):
-    targets = {ItemId.STRING: 1}
+    custom_targets = {ItemId.STRING: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     genes[0, 0] = 10  # STRING batch=10, target is only 1
-    cost, time, waste, cpi = Chromosome.evaluate(
-      genes, crafting_tree, targets
+    unused_cost, unused_time, waste, unused_cpi = (
+      Chromosome.evaluate(
+        genes, crafting_tree, custom_targets, initial_coins=100_000
+      )
     )
     assert waste >= 9
 
   def test_evaluate_deterministic(
     self, crafting_tree: CraftingTree
   ):
-    targets = {ItemId.STRING: 1}
+    custom_targets = {ItemId.STRING: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     genes[0, 0] = 1
-    result1 = Chromosome.evaluate(genes, crafting_tree, targets)
-    result2 = Chromosome.evaluate(genes, crafting_tree, targets)
+    result1 = Chromosome.evaluate(
+      genes, crafting_tree, custom_targets
+    )
+    result2 = Chromosome.evaluate(
+      genes, crafting_tree, custom_targets
+    )
     assert result1 == result2
 
   def test_infeasible_craft_no_cost(self, crafting_tree: CraftingTree):
-    targets = {ItemId.RIBBON: 1}
+    custom_targets = {ItemId.RIBBON: 1}
     genes = np.zeros((MAX_TICKS, 19), dtype=np.uint8)
     ribbon_idx = None
     for i, cid in enumerate(CRAFTABLE_ITEM_IDS):
@@ -98,8 +110,10 @@ class TestChromosome:
         break
     assert ribbon_idx is not None
     genes[0, ribbon_idx] = 5
-    cost, time, waste, cpi = Chromosome.evaluate(
-      genes, crafting_tree, targets
+    cost, time, unused_waste, unused_cpi = (
+      Chromosome.evaluate(
+        genes, crafting_tree, custom_targets
+      )
     )
     assert cost == 0.0
     assert time == MAX_TICKS + 1

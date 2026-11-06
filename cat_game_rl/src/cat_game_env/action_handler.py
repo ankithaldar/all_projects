@@ -1,11 +1,19 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Action decoding, validation, and masking for crafting.'''
+
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict
 
 import numpy as np
 
-from src.core.items import CraftingTree, ItemId, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE
+from src.core.items import (
+  CraftingTree, ItemId, CRAFTABLE_ITEM_IDS,
+  NUM_CRAFTABLE,
+)
 from src.core.inventory import Stash
 from src.core.coin_generator import CoinGenerator
 from src.core.slot_scheduler import SlotScheduler
@@ -13,15 +21,19 @@ from src.core.cost_calculator import CostCalculator
 
 
 class ActionHandler:
+  '''Decodes and applies crafting actions.'''
   def __init__(self, crafting_tree: CraftingTree, max_batch: int = 20):
+    '''Initialize with tree and per-item batch cap.'''
     self._tree = crafting_tree
     self._max_batch = max_batch
 
   @property
   def max_batch(self) -> int:
+    '''Return the maximum batch size.'''
     return self._max_batch
 
   def decode(self, action: np.ndarray) -> Dict[ItemId, int]:
+    '''Decode an action vector into item batches.'''
     result = {}
     for i, item_id_int in enumerate(CRAFTABLE_ITEM_IDS):
       batch_size = int(action[i])
@@ -36,6 +48,7 @@ class ActionHandler:
     coins: CoinGenerator,
     slots: SlotScheduler,
   ) -> Dict[str, object]:
+    '''Validate and apply decoded actions.'''
     applied = {}
     rejected = {}
     total_coins_spent = 0
@@ -47,7 +60,7 @@ class ActionHandler:
       batch_size = decoded[item_id]
 
       if slots.is_busy(item_id):
-        rejected[item_id] = "slot_busy"
+        rejected[item_id] = 'slot_busy'
         continue
 
       recipe = self._tree.get_recipe(item_id)
@@ -59,7 +72,7 @@ class ActionHandler:
       feasible_batch = min(batch_size, max_mat, max_coin, self._max_batch)
 
       if feasible_batch <= 0:
-        rejected[item_id] = "insufficient_resources"
+        rejected[item_id] = 'insufficient_resources'
         continue
 
       cost = CostCalculator.total_cost(recipe.coin_cost, feasible_batch)
@@ -72,7 +85,7 @@ class ActionHandler:
         if not success:
           for prev_ing in removed_ings:
             stash.add(prev_ing.item_id, prev_ing.quantity * feasible_batch)
-          rejected[item_id] = "material_deduction_failed"
+          rejected[item_id] = 'material_deduction_failed'
           mat_ok = False
           break
         removed_ings.append(ing)
@@ -83,7 +96,7 @@ class ActionHandler:
       if not coins.spend(cost_int):
         for ing in recipe.ingredients:
           stash.add(ing.item_id, ing.quantity * feasible_batch)
-        rejected[item_id] = "coin_deduction_failed"
+        rejected[item_id] = 'coin_deduction_failed'
         continue
 
       slots.start(item_id, feasible_batch)
@@ -91,9 +104,9 @@ class ActionHandler:
       total_coins_spent += cost_int
 
     return {
-      "applied": applied,
-      "rejected": rejected,
-      "total_coins_spent": total_coins_spent,
+      'applied': applied,
+      'rejected': rejected,
+      'total_coins_spent': total_coins_spent,
     }
 
   def compute_action_mask(
@@ -102,6 +115,7 @@ class ActionHandler:
     coins: CoinGenerator,
     slots: SlotScheduler,
   ) -> np.ndarray:
+    '''Compute the valid-action mask.'''
     mask_size = NUM_CRAFTABLE * (self._max_batch + 1)
     mask = np.zeros(mask_size, dtype=np.bool_)
 

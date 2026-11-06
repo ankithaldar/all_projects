@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Chromosome encoding and evaluation for genetic algorithm.'''
+
 from __future__ import annotations
 
 import math
@@ -19,8 +24,19 @@ PENALTY_TICK = MAX_TICKS + 1
 
 
 class Chromosome:
+  '''Encodes schedules as gene arrays and evaluates fitness.'''
+
   @staticmethod
   def create_random(density: float = 0.05, max_batch: int = 10) -> np.ndarray:
+    '''Create a random sparse gene array.
+
+    Args:
+      density: Probability a gene is non-zero.
+      max_batch: Maximum batch size for a non-zero gene.
+
+    Returns:
+      Gene array of shape (MAX_TICKS, NUM_CRAFTABLE).
+    '''
     genes = np.zeros((MAX_TICKS, NUM_CRAFTABLE), dtype=np.uint8)
     mask = np.random.random((MAX_TICKS, NUM_CRAFTABLE)) < density
     genes[mask] = np.random.randint(1, max_batch + 1, size=mask.sum()).astype(
@@ -30,6 +46,14 @@ class Chromosome:
 
   @staticmethod
   def decode(genes: np.ndarray) -> List[Dict[int, int]]:
+    '''Decode a gene array into per-tick actions.
+
+    Args:
+      genes: Gene array of shape (ticks, NUM_CRAFTABLE).
+
+    Returns:
+      List with one action dict per tick.
+    '''
     schedule = []
     for t in range(genes.shape[0]):
       tick_actions = {}
@@ -47,6 +71,18 @@ class Chromosome:
     initial_coins: int = 0,
     initial_stash: Dict[str, int] | None = None,
   ) -> Tuple[float, float, float, float]:
+    '''Evaluate a gene array against targets.
+
+    Args:
+      genes: Gene array of shape (MAX_TICKS, NUM_CRAFTABLE).
+      crafting_tree: Crafting tree used for recipes and slots.
+      targets: Mapping of item id to target quantity.
+      initial_coins: Coins available at tick zero.
+      initial_stash: Optional mapping of item name to quantity.
+
+    Returns:
+      Tuple of (total_cost, completion_tick, waste, cost_per_item).
+    '''
     stash = Stash()
     if initial_stash:
       for name, qty in initial_stash.items():

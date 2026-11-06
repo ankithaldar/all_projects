@@ -1,16 +1,22 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the crafting environment.'''
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.core.items import ItemId, NUM_CRAFTABLE, CRAFTABLE_ITEM_IDS
+from src.core.items import ItemId, NUM_CRAFTABLE
 from src.cat_game_env.crafting_env import CraftingEnv
 from src.cat_game_env.multi_agent import (
-  OrderBoard, MultiAgentOrchestrator, group_items_by_tier,
+  OrderBoard, MultiAgentOrchestrator,
 )
 
 
 class TestCraftingEnv:
+  '''Tests for the crafting environment.'''
   def test_reset_returns_obs_and_info(self, env: CraftingEnv):
     obs, info = env.reset()
     assert isinstance(obs, dict)
@@ -28,7 +34,6 @@ class TestCraftingEnv:
     action = env.action_space.sample()
     result = env.step(action)
     assert len(result) == 5
-    obs, reward, terminated, truncated, info = result
 
   def test_step_obs_in_space(self, env: CraftingEnv):
     env.reset()
@@ -38,19 +43,19 @@ class TestCraftingEnv:
 
   def test_coins_increase_per_tick(self, env: CraftingEnv):
     obs, _ = env.reset()
-    initial_coins = obs["coins"][0]
+    initial_coins = obs['coins'][0]
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
     obs, _, _, _, _ = env.step(action)
-    assert obs["coins"][0] > initial_coins
+    assert obs['coins'][0] > initial_coins
 
   def test_base_materials_replenished(self, env: CraftingEnv):
     obs, _ = env.reset()
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
     obs, _, _, _, _ = env.step(action)
-    assert obs["stash"][int(ItemId.COTTON)] > 0
-    assert obs["stash"][int(ItemId.TREE)] > 0
-    assert obs["stash"][int(ItemId.ROCK)] > 0
-    assert obs["stash"][int(ItemId.QUARTZ)] > 0
+    assert obs['stash'][int(ItemId.COTTON)] > 0
+    assert obs['stash'][int(ItemId.TREE)] > 0
+    assert obs['stash'][int(ItemId.ROCK)] > 0
+    assert obs['stash'][int(ItemId.QUARTZ)] > 0
 
   def test_crafting_string(self, env: CraftingEnv):
     env.reset()
@@ -58,19 +63,19 @@ class TestCraftingEnv:
 
     # First step: start crafting string (batch=1)
     action[0] = 1  # STRING
-    obs, reward, _, _, info = env.step(action)
+    _, _, _, _, info = env.step(action)
 
-    applied = info["action_info"]["applied"]
+    applied = info['action_info']['applied']
     assert ItemId.STRING in applied
 
   def test_truncated_at_max_ticks(self, env_config: dict):
-    env_config["max_ticks"] = 5
+    env_config['max_ticks'] = 5
     env = CraftingEnv(env_config)
     env.reset()
 
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
-    for i in range(5):
-      obs, reward, terminated, truncated, info = env.step(action)
+    for _ in range(5):
+      _, _, _, truncated, _ = env.step(action)
 
     assert truncated is True
 
@@ -97,7 +102,7 @@ class TestCraftingEnv:
     for _ in range(50):
       action = env.action_space.sample()
       obs, _, terminated, truncated, _ = env.step(action)
-      assert np.all(obs["stash"] >= 0)
+      assert np.all(obs['stash'] >= 0)
       if terminated or truncated:
         break
 
@@ -105,7 +110,7 @@ class TestCraftingEnv:
     env.reset()
     output = env.render()
     assert isinstance(output, str)
-    assert "Tick" in output
+    assert 'Tick' in output
 
   def test_craft_chain_cotton_to_string(self, env: CraftingEnv):
     env.reset()
@@ -115,15 +120,15 @@ class TestCraftingEnv:
 
     # STRING takes 1 tick (5 min / 5 min = 1 tick), so it should complete
     # after the tick() call in this same step
-    has_string = obs["stash"][int(ItemId.STRING)] >= 1
+    has_string = obs['stash'][int(ItemId.STRING)] >= 1
     assert has_string or env.slots.is_busy(ItemId.STRING)
 
   def test_info_has_reward_components(self, env: CraftingEnv):
     env.reset()
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
     _, _, _, _, info = env.step(action)
-    assert "reward_components" in info
-    assert "total" in info["reward_components"]
+    assert 'reward_components' in info
+    assert 'total' in info['reward_components']
 
   def test_reset_deterministic(self, env: CraftingEnv):
     obs1, _ = env.reset(seed=42)
@@ -139,8 +144,8 @@ class TestCraftingEnv:
       env.step(action)
     obs, _ = env.reset()
     assert env.current_tick == 0
-    assert obs["coins"][0] == 0
-    assert obs["current_tick"][0] == 0
+    assert obs['coins'][0] == 0
+    assert obs['current_tick'][0] == 0
 
   def test_obs_within_space_bounds(self, env: CraftingEnv):
     env.reset()
@@ -155,10 +160,11 @@ class TestCraftingEnv:
     env.reset()
     action = np.zeros(NUM_CRAFTABLE, dtype=np.int64)
     obs, _, _, _, _ = env.step(action)
-    assert obs["coins"][0] == 210
+    assert obs['coins'][0] == 210
 
 
 class TestOrderBoard:
+  '''Tests for the order board.'''
   def test_post_and_pending(self):
     board = OrderBoard()
     board.post_order(ItemId.STRING, 10)
@@ -190,6 +196,7 @@ class TestOrderBoard:
 
 
 class TestMultiAgentOrchestrator:
+  '''Tests for the multi-agent orchestrator.'''
   @pytest.fixture
   def orch(self, env_config: dict) -> MultiAgentOrchestrator:
     return MultiAgentOrchestrator(env_config)
@@ -212,20 +219,21 @@ class TestMultiAgentOrchestrator:
     actions = {}
     for tier_num, env in orch.tier_envs.items():
       actions[tier_num] = np.zeros(len(env.tier_items), dtype=np.int64)
-    obs, rewards, terminated, truncated, info = orch.step(actions)
+    obs, rewards, _, _, _ = orch.step(actions)
     assert len(obs) == len(orch.tier_envs)
     assert len(rewards) == len(orch.tier_envs)
     assert orch.current_tick == 1
 
   def test_tier_envs_have_orchestrator(self, orch):
     for env in orch.tier_envs.values():
-      assert env._orchestrator is orch
+      assert env._orchestrator is orch  # pylint: disable=protected-access
 
   def test_action_masks_per_tier(self, orch):
     orch.reset()
     masks = orch.get_action_masks()
     for tier_num, mask in masks.items():
       env = orch.tier_envs[tier_num]
-      expected_size = len(env.tier_items) * (env._max_batch + 1)
+      expected_size = len(env.tier_items) * (
+        env._max_batch + 1)  # pylint: disable=protected-access
       assert mask.shape == (expected_size,)
       assert mask.dtype == np.bool_

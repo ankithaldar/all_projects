@@ -1,13 +1,18 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the slot scheduler.'''
+
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from src.core.items import ItemId, CraftingTree, NUM_CRAFTABLE
 from src.core.slot_scheduler import SlotScheduler, ManufacturingSlot
 
 
 class TestManufacturingSlot:
+  '''Tests for the manufacturing slot.'''
   def test_default_inactive(self):
     slot = ManufacturingSlot(item_id=ItemId.STRING)
     assert not slot.is_active
@@ -22,10 +27,11 @@ class TestManufacturingSlot:
 
 
 class TestSlotScheduler:
+  '''Tests for the slot scheduler.'''
   def test_init_all_idle(self, slot_scheduler: SlotScheduler):
     assert slot_scheduler.active_count() == 0
 
-  def test_start_success(
+  def test_start_success(  # pylint: disable=unused-argument
     self, slot_scheduler: SlotScheduler, crafting_tree: CraftingTree
   ):
     assert slot_scheduler.start(ItemId.STRING, 5) is True

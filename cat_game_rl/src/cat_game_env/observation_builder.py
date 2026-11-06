@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Observation space and state construction.'''
+
 from __future__ import annotations
 
 from typing import Dict
@@ -13,30 +18,33 @@ from src.core.target_provider import TargetProvider
 
 
 class ObservationBuilder:
+  '''Builds observation spaces and states.'''
   def __init__(self, max_ticks: int = 8064):
+    '''Initialize with episode tick limit.'''
     self._max_ticks = max_ticks
 
   def build_space(self) -> spaces.Dict:
+    '''Return the observation space spec.'''
     return spaces.Dict({
-      "stash": spaces.Box(
+      'stash': spaces.Box(
         low=0, high=9999, shape=(NUM_ITEMS,), dtype=np.int32
       ),
-      "coins": spaces.Box(
+      'coins': spaces.Box(
         low=0, high=99_999_999, shape=(1,), dtype=np.int32
       ),
-      "slots": spaces.Box(
+      'slots': spaces.Box(
         low=0, high=1000, shape=(NUM_CRAFTABLE, 3), dtype=np.int32
       ),
-      "time_fraction": spaces.Box(
+      'time_fraction': spaces.Box(
         low=0.0, high=1.0, shape=(1,), dtype=np.float32
       ),
-      "current_tick": spaces.Box(
+      'current_tick': spaces.Box(
         low=0, high=self._max_ticks, shape=(1,), dtype=np.int32
       ),
-      "targets_remaining": spaces.Box(
+      'targets_remaining': spaces.Box(
         low=-9999, high=9999, shape=(NUM_ITEMS,), dtype=np.int32
       ),
-      "targets_total": spaces.Box(
+      'targets_total': spaces.Box(
         low=0, high=9999, shape=(NUM_ITEMS,), dtype=np.int32
       ),
     })
@@ -49,15 +57,16 @@ class ObservationBuilder:
     targets: TargetProvider,
     tick: int,
   ) -> Dict[str, np.ndarray]:
+    '''Build observation dict for current state.'''
     time_frac = tick / max(self._max_ticks, 1)
     return {
-      "stash": np.clip(stash.as_array(), 0, 9999),
-      "coins": np.array([coins.balance], dtype=np.int32),
-      "slots": slots.get_slot_array(),
-      "time_fraction": np.array([time_frac], dtype=np.float32),
-      "current_tick": np.array([tick], dtype=np.int32),
-      "targets_remaining": np.clip(
+      'stash': np.clip(stash.as_array(), 0, 9999),
+      'coins': np.array([coins.balance], dtype=np.int32),
+      'slots': slots.get_slot_array(),
+      'time_fraction': np.array([time_frac], dtype=np.float32),
+      'current_tick': np.array([tick], dtype=np.int32),
+      'targets_remaining': np.clip(
         targets.targets_remaining_array(), -9999, 9999
       ),
-      "targets_total": targets.targets_total_array(),
+      'targets_total': targets.targets_total_array(),
     }

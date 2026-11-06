@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Single-agent crafting Gym environment.'''
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
@@ -7,7 +12,7 @@ import numpy as np
 from gymnasium import spaces
 
 from src.core.items import (
-  CraftingTree, ItemId, BASE_ITEM_IDS, CRAFTABLE_ITEM_IDS, NUM_CRAFTABLE,
+  CraftingTree, ItemId, BASE_ITEM_IDS, NUM_CRAFTABLE,
   ITEM_NAME_TO_ID,
 )
 from src.core.inventory import Stash
@@ -20,18 +25,20 @@ from src.cat_game_env.reward_shaper import RewardShaper
 
 
 class CraftingEnv(gym.Env):
-  metadata = {"render_modes": ["human", "ansi"]}
+  '''Single-agent crafting environment.'''
+  metadata = {'render_modes': ['human', 'ansi']}
 
   def __init__(self, config: Dict[str, Any]):
+    '''Initialize env from config dict.'''
     super().__init__()
 
-    tree_path = config.get("crafting_tree_path", "config/crafting_tree.yaml")
-    targets_path = config.get("targets_path", "config/targets.yaml")
-    self._max_batch = config.get("max_batch_size", 20)
-    self._max_ticks = config.get("max_ticks", 8064)
-    self._initial_coins = config.get("initial_coins", 0)
-    self._initial_stash = config.get("initial_stash", {})
-    reward_weights = config.get("reward_weights", None)
+    tree_path = config.get('crafting_tree_path', 'config/crafting_tree.yaml')
+    targets_path = config.get('targets_path', 'config/targets.yaml')
+    self._max_batch = config.get('max_batch_size', 20)
+    self._max_ticks = config.get('max_ticks', 8064)
+    self._initial_coins = config.get('initial_coins', 0)
+    self._initial_stash = config.get('initial_stash', {})
+    reward_weights = config.get('reward_weights', None)
 
     self.crafting_tree = CraftingTree.from_yaml(tree_path)
     self.stash = Stash()
@@ -54,6 +61,7 @@ class CraftingEnv(gym.Env):
     seed: Optional[int] = None,
     options: Optional[Dict] = None,
   ) -> Tuple[Dict[str, np.ndarray], Dict]:
+    '''Reset env state and return initial obs.'''
     super().reset(seed=seed)
     self.stash.reset()
     for name, qty in self._initial_stash.items():
@@ -73,6 +81,7 @@ class CraftingEnv(gym.Env):
   def step(
     self, action: np.ndarray
   ) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
+    '''Apply action, step world, return result.'''
     state_before = self._build_reward_state()
 
     self.coins.tick()
@@ -104,48 +113,52 @@ class CraftingEnv(gym.Env):
     )
 
     info = {
-      "reward_components": reward_breakdown,
-      "action_info": action_info,
-      "completed_items": completed,
-      "tick": self.current_tick,
+      'reward_components': reward_breakdown,
+      'action_info': action_info,
+      'completed_items': completed,
+      'tick': self.current_tick,
     }
 
     return obs, reward, terminated, truncated, info
 
   def action_masks(self) -> np.ndarray:
+    '''Return mask of valid actions.'''
     return self.action_handler.compute_action_mask(
       self.stash, self.coins, self.slots
     )
 
   def _replenish_base_materials(self) -> None:
+    '''Refill base materials to the cap.'''
     for base_id in BASE_ITEM_IDS:
       deficit = max(0, 9999 - self.stash.get(base_id))
       if deficit > 0:
         self.stash.add(base_id, deficit)
 
   def _build_reward_state(self) -> Dict:
+    '''Build state snapshot for reward shaping.'''
     return {
-      "stash": self.stash.as_array(),
-      "active_slot_count": self.slots.active_count(),
-      "fraction_complete": self.targets.fraction_complete(),
-      "targets_complete": self.targets.is_complete(),
-      "targets_remaining": self.targets.targets_remaining_array(),
-      "targets_total": self.targets.targets_total_array(),
-      "tick": self.current_tick,
-      "max_ticks": self._max_ticks,
+      'stash': self.stash.as_array(),
+      'active_slot_count': self.slots.active_count(),
+      'fraction_complete': self.targets.fraction_complete(),
+      'targets_complete': self.targets.is_complete(),
+      'targets_remaining': self.targets.targets_remaining_array(),
+      'targets_total': self.targets.targets_total_array(),
+      'tick': self.current_tick,
+      'max_ticks': self._max_ticks,
     }
 
   def render(self) -> Optional[str]:
+    '''Render a text summary of state.'''
     lines = [
-      f"=== Tick {self.current_tick}/{self._max_ticks} ===",
-      f"Coins: {self.coins.balance}",
-      f"Active slots: {self.slots.active_count()}/{NUM_CRAFTABLE}",
-      f"Target progress: {self.targets.fraction_complete():.1%}",
-      f"Stash (non-zero):",
+      f'=== Tick {self.current_tick}/{self._max_ticks} ===',
+      f'Coins: {self.coins.balance}',
+      f'Active slots: {self.slots.active_count()}/{NUM_CRAFTABLE}',
+      f'Target progress: {self.targets.fraction_complete():.1%}',
+      'Stash (non-zero):',
     ]
     stash_arr = self.stash.as_array()
     for item_id in ItemId:
       count = stash_arr[int(item_id)]
       if count > 0:
-        lines.append(f"  {item_id.name}: {count}")
-    return "\n".join(lines)
+        lines.append(f'  {item_id.name}: {count}')
+    return '\n'.join(lines)

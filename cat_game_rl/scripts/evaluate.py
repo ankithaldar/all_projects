@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Evaluate a trained RL agent and export its schedule to a file.'''
+
 from __future__ import annotations
 
 import argparse
@@ -6,11 +10,11 @@ import os
 import sys
 from datetime import datetime
 
-import numpy as np
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# pylint: disable=wrong-import-position
 from src.core.items import ItemId, CRAFTABLE_ITEM_IDS
 from src.cat_game_env.crafting_env import CraftingEnv
 from src.cat_game_env.frame_skipper import FrameSkipWrapper
@@ -18,44 +22,44 @@ from src.agent.masked_agent import MaskedAgent
 
 
 def main() -> None:
-  parser = argparse.ArgumentParser(description="Evaluate trained RL agent")
+  parser = argparse.ArgumentParser(description='Evaluate trained RL agent')
   parser.add_argument(
-    "--model", required=True, help="Path to saved model (.zip)"
+    '--model', required=True, help='Path to saved model (.zip)'
   )
   parser.add_argument(
-    "--config", default="config/training.yaml", help="Training config path"
+    '--config', default='config/training.yaml', help='Training config path'
   )
   parser.add_argument(
-    "--output", default=None, help="Output batch_schedule.txt path"
+    '--output', default=None, help='Output batch_schedule.txt path'
   )
   args = parser.parse_args()
 
-  with open(args.config, "r") as f:
+  with open(args.config, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
   env_config = {
-    "crafting_tree_path": "config/crafting_tree.yaml",
-    "targets_path": "config/targets.yaml",
-    "max_batch_size": config["environment"]["max_batch_size"],
-    "max_ticks": config["environment"]["max_ticks"],
-    "initial_coins": config["environment"]["initial_coins"],
-    "initial_stash": config["environment"].get("initial_stash", {}),
-    "reward_weights": config.get("reward_weights"),
+    'crafting_tree_path': 'config/crafting_tree.yaml',
+    'targets_path': 'config/targets.yaml',
+    'max_batch_size': config['environment']['max_batch_size'],
+    'max_ticks': config['environment']['max_ticks'],
+    'initial_coins': config['environment']['initial_coins'],
+    'initial_stash': config['environment'].get('initial_stash', {}),
+    'reward_weights': config.get('reward_weights'),
   }
 
   base_env = CraftingEnv(env_config)
-  frame_skip = config["environment"].get("frame_skip", 1)
+  frame_skip = config['environment'].get('frame_skip', 1)
   if frame_skip > 1:
     env = FrameSkipWrapper(base_env, skip=frame_skip)
   else:
     env = base_env
   agent = MaskedAgent.load(args.model, env, config)
 
-  obs, info = env.reset()
+  obs, _ = env.reset()
   schedule_rows = []
   total_reward = 0.0
 
-  for tick_idx in range(config["environment"]["max_ticks"]):
+  for tick_idx in range(config['environment']['max_ticks']):
     mask = env.action_masks()
     action = agent.predict(obs, action_masks=mask)
 
@@ -63,42 +67,50 @@ def main() -> None:
       batch_size = int(action[i])
       if batch_size > 0:
         schedule_rows.append({
-          "tick_index": tick_idx,
-          "elapsed_minutes": tick_idx * 5,
-          "item_name": ItemId(item_id_int).name.lower(),
-          "batch_size_decided": batch_size,
+          'tick_index': tick_idx,
+          'elapsed_minutes': tick_idx * 5,
+          'item_name': ItemId(item_id_int).name.lower(),
+          'batch_size_decided': batch_size,
         })
 
-    obs, reward, terminated, truncated, info = env.step(action)
+    obs, reward, terminated, truncated, _ = env.step(action)
     total_reward += reward
 
     if terminated or truncated:
       break
 
-  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  output_path = args.output or f"output/batch_schedule_{timestamp}.txt"
-  os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+  timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+  output_path = args.output or f'output/batch_schedule_{timestamp}.txt'
+  os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
 
-  with open(output_path, "w") as f:
+  with open(output_path, 'w', encoding='utf-8') as f:
+    tick_index = 'tick_index'
+    elapsed = 'elapsed_minutes'
+    item_name = 'item_name'
+    batch = 'batch_size_decided'
     header = (
-      f"{'tick_index':<12}{'elapsed_minutes':<18}"
-      f"{'item_name':<20}{'batch_size_decided'}\n"
+      f'{tick_index:<12}{elapsed:<18}'
+      f'{item_name:<20}{batch}\n'
     )
     f.write(header)
-    f.write("-" * 68 + "\n")
+    f.write('-' * 68 + '\n')
     for row in schedule_rows:
+      tick_val = row['tick_index']
+      elapsed_val = row['elapsed_minutes']
+      item_val = row['item_name']
+      batch_val = row['batch_size_decided']
       f.write(
-        f"{row['tick_index']:<12}"
-        f"{row['elapsed_minutes']:<18}"
-        f"{row['item_name']:<20}"
-        f"{row['batch_size_decided']}\n"
+        f'{tick_val:<12}'
+        f'{elapsed_val:<18}'
+        f'{item_val:<20}'
+        f'{batch_val}\n'
       )
 
-  print(f"Total reward: {total_reward:.2f}")
-  print(f"Schedule exported to {output_path}")
-  print(f"Targets complete: {base_env.targets.is_complete()}")
-  print(f"Final tick: {base_env.current_tick}")
+  print(f'Total reward: {total_reward:.2f}')
+  print(f'Schedule exported to {output_path}')
+  print(f'Targets complete: {base_env.targets.is_complete()}')
+  print(f'Final tick: {base_env.current_tick}')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   main()
