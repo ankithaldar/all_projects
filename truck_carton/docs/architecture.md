@@ -143,7 +143,12 @@ config.py
     │
     ├── curriculum/manager.py
     │
-    └── training/{trainer,callbacks}.py
+    ├── training/{trainer,callbacks}.py
+    │
+    ├── evaluation/{metrics,visualizer,heuristic}.py
+    │
+    └── scripts/dashboard.py  (Streamlit live dashboard,
+        consumes structured JSON logs from logging_config.py)
 ```
 
 ## Key Design Decisions
@@ -157,10 +162,13 @@ rotation) has ~600K combinations. Instead:
   (reverse delivery route, then priority ascending)
 - At each step, all valid placements are pre-computed
   across all trucks
-- Action space is `Discrete(500)` — the agent selects
-  a candidate index
+- Action space is `Discrete(600)` = 500 packing
+  candidates (`max_candidates`) + 100 routing actions
+  (`max_routing_actions`) — the agent selects a
+  candidate index
 - Action masking ensures only valid candidates are
-  selectable
+  selectable (packing XOR routing, per Unified Action
+  Space above)
 
 This reduces the problem from "find a valid placement"
 to "choose the best among valid placements."

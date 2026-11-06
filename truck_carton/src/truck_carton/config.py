@@ -1,18 +1,25 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Configuration dataclasses for truck-carton RL.'''
+
 from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class TruckConfig:
+  '''Truck Config.'''
+
   length_range: tuple[int, int] = (8, 16)
   width_range: tuple[int, int] = (4, 8)
   height_range: tuple[int, int] = (4, 8)
-  weight_capacity_range: tuple[float, float] = (
-    500.0, 2000.0
-  )
+  weight_capacity_range: tuple[float, float] = (500.0, 2000.0)
 
 
 @dataclass(frozen=True)
 class CartonConfig:
+  '''Carton Config.'''
+
   length_range: tuple[int, int] = (1, 4)
   width_range: tuple[int, int] = (1, 4)
   height_range: tuple[int, int] = (1, 4)
@@ -22,7 +29,7 @@ class CartonConfig:
 
 @dataclass(frozen=True)
 class GridConfig:
-  """Procedural grid generation parameters."""
+  '''Procedural grid generation parameters.'''
 
   min_facility_spacing: int = 3
   road_extra_edges: int = 3
@@ -31,6 +38,8 @@ class GridConfig:
 
 @dataclass(frozen=True)
 class RewardWeights:
+  '''Reward Weights.'''
+
   alpha_utilization: float = 1.0
   beta_displacement: float = -2.0
   gamma_grouping: float = 1.5
@@ -44,6 +53,8 @@ class RewardWeights:
 
 @dataclass(frozen=True)
 class CurriculumStage:
+  '''Curriculum Stage.'''
+
   name: str
   num_trucks: int
   num_stores: int
@@ -57,29 +68,20 @@ class CurriculumStage:
 
 @dataclass(frozen=True)
 class CurriculumConfig:
+  '''Curriculum Config.'''
+
   stages: tuple[CurriculumStage, ...] = (
-    CurriculumStage(
-      'tiny', 2, 2, 10, 1, 5, 5, 0.7, 100
-    ),
-    CurriculumStage(
-      'small', 3, 3, 20, 2, 16, 16, 0.7, 100
-    ),
-    CurriculumStage(
-      'medium', 5, 4, 40, 3, 40, 40, 0.7, 150
-    ),
-    CurriculumStage(
-      'large', 8, 6, 80, 4, 80, 80, 0.6, 200
-    ),
-    CurriculumStage(
-      'full', 12, 8, 120, 6, 160, 160,
-      0.5, 300
-    ),
+    CurriculumStage('tiny', 2, 2, 10, 1, 5, 5, 0.7, 100),
+    CurriculumStage('small', 3, 3, 20, 2, 16, 16, 0.7, 100),
+    CurriculumStage('medium', 5, 4, 40, 3, 40, 40, 0.7, 150),
+    CurriculumStage('large', 8, 6, 80, 4, 80, 80, 0.6, 200),
+    CurriculumStage('full', 12, 8, 120, 6, 160, 160, 0.5, 300),
   )
 
 
 @dataclass(frozen=True)
 class EnvironmentConfig:
-  """Max bounds for observation space dims."""
+  '''Max bounds for observation space dims.'''
 
   max_trucks: int = 12
   max_stores: int = 8
@@ -102,7 +104,7 @@ class EnvironmentConfig:
 
 @dataclass(frozen=True)
 class TrainingConfig:
-  """MaskablePPO hyperparameters."""
+  '''MaskablePPO hyperparameters.'''
 
   total_timesteps: int = 5_000_000
   learning_rate: float = 3e-4
@@ -122,26 +124,12 @@ class TrainingConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-  """Top-level configuration container."""
+  '''Top-level configuration container.'''
 
-  truck: TruckConfig = field(
-    default_factory=TruckConfig
-  )
-  carton: CartonConfig = field(
-    default_factory=CartonConfig
-  )
-  grid: GridConfig = field(
-    default_factory=GridConfig
-  )
-  rewards: RewardWeights = field(
-    default_factory=RewardWeights
-  )
-  curriculum: CurriculumConfig = field(
-    default_factory=CurriculumConfig
-  )
-  env: EnvironmentConfig = field(
-    default_factory=EnvironmentConfig
-  )
-  training: TrainingConfig = field(
-    default_factory=TrainingConfig
-  )
+  truck: TruckConfig = field(default_factory=TruckConfig)
+  carton: CartonConfig = field(default_factory=CartonConfig)
+  grid: GridConfig = field(default_factory=GridConfig)
+  rewards: RewardWeights = field(default_factory=RewardWeights)
+  curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
+  env: EnvironmentConfig = field(default_factory=EnvironmentConfig)
+  training: TrainingConfig = field(default_factory=TrainingConfig)

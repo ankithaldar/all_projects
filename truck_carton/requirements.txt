@@ -1,0 +1,12 @@
+# Synced from pyproject.toml [project] dependencies (deps-gitignore task).
+# pyproject.toml is canonical; regenerate this file from it if deps change.
+gymnasium>=1.0.0
+stable-baselines3>=2.4.0
+sb3-contrib>=2.4.0
+numpy>=2.0.0
+torch>=2.4.0
+tensorboard>=2.18.0
+matplotlib>=3.9.0
+scipy>=1.14.0
+networkx>=3.2.0
+Pillow>=10.0.0

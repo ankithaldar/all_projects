@@ -1,6 +1,9 @@
-#!/usr/bin/env python3
-"""Entry point for evaluating a trained agent or
-baseline heuristic."""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Entry point for evaluating a trained agent or
+baseline heuristic.
+'''
 
 import argparse
 
@@ -10,6 +13,10 @@ from truck_carton.config import AppConfig
 from truck_carton.env.packing_env import (
   TruckCartonPackingEnv,
 )
+from truck_carton.evaluation.episode_runner import (
+  make_predict,
+  run_episode,
+)
 from truck_carton.evaluation.heuristic import (
   HeuristicAgent,
   RandomAgent,
@@ -17,47 +24,79 @@ from truck_carton.evaluation.heuristic import (
 from truck_carton.evaluation.metrics import (
   MetricsCollector,
 )
+from truck_carton.logging_config import load_model_safely
 
 
 def main() -> None:
+  '''Main.'''
   parser = argparse.ArgumentParser(
     description='Evaluate a packing agent or baseline'
   )
   parser.add_argument(
-    '--model', type=str, default=None,
+    '--model',
+    type=str,
+    default=None,
     help='Path to saved model (omit for baseline)',
   )
   parser.add_argument(
-    '--agent', type=str, default='heuristic',
+    '--agent',
+    type=str,
+    default='heuristic',
     choices=['heuristic', 'random', 'model'],
     help='Agent type when --model not given',
   )
   parser.add_argument(
-    '--episodes', type=int, default=50,
+    '--episodes',
+    type=int,
+    default=50,
     help='Number of evaluation episodes',
   )
   parser.add_argument(
-    '--stage', type=int, default=0,
+    '--stage',
+    type=int,
+    default=0,
     help='Curriculum stage (0-4)',
   )
   parser.add_argument(
-    '--seed', type=int, default=42,
+    '--seed',
+    type=int,
+    default=42,
     help='Random seed',
+  )
+  parser.add_argument(
+    '--allow-trusted-load',
+    action='store_true',
+    help='Opt in to loading a checkpoint: SB3 load '
+    'unpickles it, so only load models you fully trust. '
+    'Path must stay in an allowlisted model dir.',
+  )
+  parser.add_argument(
+    '--model-dir',
+    action='append',
+    default=None,
+    metavar='DIR',
+    help='Allowlisted model dir (repeatable; default: '
+    './output and ./models under cwd, or '
+    'TRUCK_CARTON_MODEL_DIRS)',
   )
   args = parser.parse_args()
 
+  # Load first so a rejected path fails before any work.
+  model = None
+  if args.model:
+    model = load_model_safely(
+      args.model,
+      allow_dirs=args.model_dir,
+      allow_trusted=args.allow_trusted_load,
+    )
+
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=args.stage
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=args.stage)
   collector = MetricsCollector()
 
   # Select agent
-  model = None
   agent = None
-  if args.model:
-    from sb3_contrib import MaskablePPO
-    model = MaskablePPO.load(args.model)
+  if model is not None:
     agent_name = f'MaskablePPO ({args.model})'
   elif args.agent == 'random':
     agent = RandomAgent(seed=args.seed)
@@ -70,33 +109,13 @@ def main() -> None:
   print(f'Stage: {args.stage} | Episodes: {args.episodes}')
   print()
 
+  predict = make_predict(model=model, agent=agent)
   all_metrics = []
 
   for ep in range(args.episodes):
-    obs, info = env.reset(seed=args.seed + ep)
-    total_reward = 0.0
-    done = False
-
-    while not done:
-      masks = env.action_masks()
-      if not masks.any():
-        break
-
-      if model is not None:
-        action, _ = model.predict(
-          obs,
-          action_masks=masks,
-          deterministic=True,
-        )
-        action = int(action)
-      else:
-        action = agent.predict(env, masks)
-
-      obs, reward, terminated, truncated, info = (
-        env.step(action)
-      )
-      total_reward += reward
-      done = terminated or truncated
+    obs, _ = env.reset(seed=args.seed + ep)
+    result = run_episode(env, obs, predict)
+    total_reward = result.total_reward
 
     metrics = collector.compute(
       episode_data=env.episode_data,
@@ -165,8 +184,7 @@ def main() -> None:
     f'{np.mean([m.avg_travel_per_truck for m in all_metrics]):.1f}'
   )
   print(
-    'Mean reward:        '
-    f'{np.mean([m.total_reward for m in all_metrics]):.2f}'
+    f'Mean reward:        {np.mean([m.total_reward for m in all_metrics]):.2f}'
   )
 
 

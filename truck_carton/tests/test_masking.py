@@ -1,7 +1,18 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for action masking in the env.'''
+
 import numpy as np
 
 from truck_carton.config import EnvironmentConfig
-from truck_carton.domain.models import Carton, Truck
+from truck_carton.domain.models import (
+  Carton,
+  GridWorld,
+  Truck,
+  TruckState,
+  Warehouse,
+)
 from truck_carton.env.action import ActionManager
 from truck_carton.env.masking import (
   ActionMaskProvider,
@@ -13,6 +24,7 @@ from truck_carton.packing.space3d import Space3D
 
 
 def test_mask_shape():
+  '''Test mask shape.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
   mask_provider = ActionMaskProvider(am)
@@ -22,30 +34,33 @@ def test_mask_shape():
 
 
 def test_mask_after_candidates():
+  '''Test mask after candidates.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
   mask_provider = ActionMaskProvider(am)
 
   space = Space3D(8, 4, 4)
   truck = Truck(0, 8, 4, 4, 500.0, [0])
-  carton = Carton(
-    1, 1, 1, 1, 5.0, False, 2, 0
-  )
+  carton = Carton(1, 1, 1, 1, 5.0, False, 2, 0)
   validator = PlacementValidator(space, {})
 
   am.compute_candidates(
-    carton, [truck], [space],
-    [0.0], [validator],
+    carton,
+    [truck],
+    [space],
+    [0.0],
+    [validator],
   )
 
   mask = mask_provider.get_mask()
   num_valid = mask.sum()
   assert num_valid > 0
   assert num_valid == len(am.candidates)
-  assert not mask[len(am.candidates):].any()
+  assert not mask[len(am.candidates) :].any()
 
 
 def test_has_valid_actions():
+  '''Test has valid actions.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
   mask_provider = ActionMaskProvider(am)
@@ -54,31 +69,34 @@ def test_has_valid_actions():
 
   space = Space3D(4, 4, 4)
   truck = Truck(0, 4, 4, 4, 500.0, [0])
-  carton = Carton(
-    1, 1, 1, 1, 5.0, False, 2, 0
-  )
+  carton = Carton(1, 1, 1, 1, 5.0, False, 2, 0)
   validator = PlacementValidator(space, {})
   am.compute_candidates(
-    carton, [truck], [space],
-    [0.0], [validator],
+    carton,
+    [truck],
+    [space],
+    [0.0],
+    [validator],
   )
 
   assert mask_provider.has_valid_actions is True
 
 
 def test_decode_valid_action():
+  '''Test decode valid action.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
 
   space = Space3D(4, 4, 4)
   truck = Truck(0, 4, 4, 4, 500.0, [0])
-  carton = Carton(
-    1, 1, 1, 1, 5.0, False, 2, 0
-  )
+  carton = Carton(1, 1, 1, 1, 5.0, False, 2, 0)
   validator = PlacementValidator(space, {})
   am.compute_candidates(
-    carton, [truck], [space],
-    [0.0], [validator],
+    carton,
+    [truck],
+    [space],
+    [0.0],
+    [validator],
   )
 
   decoded = am.decode_action(0)
@@ -89,6 +107,7 @@ def test_decode_valid_action():
 
 
 def test_decode_invalid_action():
+  '''Test decode invalid action.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
   assert am.decode_action(0) is None
@@ -96,40 +115,42 @@ def test_decode_invalid_action():
 
 
 def test_routing_mask():
-  """Routing candidates should appear after
-  the packing offset in the action mask."""
-  from truck_carton.domain.models import (
-    GridWorld,
-    Store,
-    Truck,
-    TruckState,
-    Warehouse,
-  )
-
+  '''Routing candidates should appear after
+  the packing offset in the action mask.'''
   cfg = EnvironmentConfig()
   am = ActionManager(cfg)
 
   gw = GridWorld(
-    rows=5, cols=5,
+    rows=5,
+    cols=5,
     grid=np.zeros((5, 5), dtype=np.int8),
     depot_position=(2, 2),
-    distance_matrix=np.array([
-      [0.0, 3.0], [3.0, 0.0]
-    ]),
+    distance_matrix=np.array([[0.0, 3.0], [3.0, 0.0]]),
     facility_positions=[(2, 2), (0, 0)],
   )
   truck = Truck(
-    0, 8, 4, 4, 500.0, [],
+    0,
+    8,
+    4,
+    4,
+    500.0,
+    [],
     position=(2, 2),
     state=TruckState.ROUTING,
   )
   wh = Warehouse(0, (0, 0))
   am.compute_routing_candidates(
-    truck, 0, [wh], [],
-    gw, {0: [1, 2]}, set(), {},
+    truck,
+    0,
+    [wh],
+    [],
+    gw,
+    {0: [1, 2]},
+    set(),
+    {},
   )
 
   mask = am.get_action_mask()
-  assert not mask[:cfg.max_candidates].any()
-  routing_mask = mask[cfg.max_candidates:]
+  assert not mask[: cfg.max_candidates].any()
+  routing_mask = mask[cfg.max_candidates :]
   assert routing_mask.any()

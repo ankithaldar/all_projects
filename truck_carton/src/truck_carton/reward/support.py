@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Support reward for carton support stability.'''
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -11,34 +16,27 @@ if TYPE_CHECKING:
 
 
 class SupportReward:
-  """Unsupported carton base cell violation rate."""
+  '''Unsupported carton base cell violation rate.'''
 
-  def compute(
-    self, state: EnvironmentState
-  ) -> float:
+  def compute(self, state: EnvironmentState) -> float:
+    '''Compute.'''
     if not state.placed_cartons:
       return 0.0
 
     violations = 0
 
-    for truck_idx, space in enumerate(
-      state.spaces
-    ):
-      for cid, info in (
-        state.placed_cartons.items()
-      ):
+    for truck_idx, space in enumerate(state.spaces):
+      for _, info in state.placed_cartons.items():
         if info.truck_id != truck_idx:
           continue
 
         x, y, z = info.position
-        dl, dw, dh = info.oriented_dims
+        dl, dw, _ = info.oriented_dims
 
         if z == 0:
           continue
 
-        below = space.grid[
-          x:x + dl, y:y + dw, z - 1
-        ]
+        below = space.grid[x : x + dl, y : y + dw, z - 1]
         if not np.all(below != 0):
           violations += 1
 

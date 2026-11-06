@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Training callbacks for curriculum and metrics.'''
+
 from __future__ import annotations
 
 from stable_baselines3.common.callbacks import (
@@ -11,19 +16,21 @@ from truck_carton.logging_config import get_logger
 
 
 class CurriculumCallback(BaseCallback):
-  """Monitors episode rewards and promotes
-  curriculum stages when thresholds are met."""
+  '''Monitors episode rewards and promotes
+  curriculum stages when thresholds are met.'''
 
   def __init__(
     self,
     curriculum_manager: CurriculumManager,
     verbose: int = 0,
   ) -> None:
+    '''Initialize the instance.'''
     super().__init__(verbose)
     self._curriculum = curriculum_manager
     self._log = get_logger('curriculum')
 
   def _on_step(self) -> bool:
+    '''On step.'''
     infos = self.locals.get('infos')
     if not infos:
       return True
@@ -34,17 +41,13 @@ class CurriculumCallback(BaseCallback):
         continue
 
       episode_reward = ep['r']
-      promoted = self._curriculum.record_episode(
-        episode_reward
-      )
+      promoted = self._curriculum.record_episode(episode_reward)
 
       if promoted:
         env = self.training_env.envs[0]
         while hasattr(env, 'env'):
           env = env.env
-        env.set_curriculum_stage(
-          self._curriculum.current_stage
-        )
+        env.set_curriculum_stage(self._curriculum.current_stage)
 
         self.logger.record(
           'curriculum/stage',
@@ -64,33 +67,27 @@ class CurriculumCallback(BaseCallback):
 
 
 class MetricsCallback(BaseCallback):
-  """Logs per-component reward metrics to
-  TensorBoard."""
+  '''Logs per-component reward metrics to
+  TensorBoard.'''
 
   def __init__(self, verbose: int = 0) -> None:
+    '''Initialize the instance.'''
     super().__init__(verbose)
 
   def _on_step(self) -> bool:
+    '''On step.'''
     infos = self.locals.get('infos')
     if not infos:
       return True
 
     for info in infos:
-      breakdown = info.get(
-        'reward_breakdown'
-      )
+      breakdown = info.get('reward_breakdown')
       if breakdown:
-        for name, value in (
-          breakdown.items()
-        ):
-          self.logger.record(
-            f'reward/{name}', value
-          )
+        for name, value in breakdown.items():
+          self.logger.record(f'reward/{name}', value)
 
       num_placed = info.get('num_placed')
       if num_placed is not None:
-        self.logger.record(
-          'env/num_placed', num_placed
-        )
+        self.logger.record('env/num_placed', num_placed)
 
     return True

@@ -1,16 +1,22 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for the packing environment.'''
+
 import numpy as np
 
 from truck_carton.config import AppConfig
+from truck_carton.domain.models import TruckState
 from truck_carton.env.packing_env import (
   TruckCartonPackingEnv,
 )
+from truck_carton.evaluation.visualizer import GridRenderer
 
 
 def test_env_reset():
+  '''Test env reset.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   obs, info = env.reset(seed=42)
 
   assert 'stage' in info
@@ -18,42 +24,33 @@ def test_env_reset():
 
   for key in env.observation_space.spaces:
     assert key in obs
-    assert obs[key].shape == (
-      env.observation_space[key].shape
-    )
+    assert obs[key].shape == (env.observation_space[key].shape)
 
 
 def test_env_step():
+  '''Test env step.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, info = env.reset(seed=42)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=42)
 
   mask = env.action_masks()
-  total_size = (
-    config.env.max_candidates
-    + config.env.max_routing_actions
-  )
+  total_size = config.env.max_candidates + config.env.max_routing_actions
   assert mask.shape == (total_size,)
 
   valid = np.where(mask)[0]
   if len(valid) > 0:
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, reward, _, _, info = env.step(action)
     assert isinstance(reward, float)
     assert 'reward_breakdown' in info
     assert 'num_placed' in info
 
 
 def test_env_full_episode():
+  '''Test env full episode.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, info = env.reset(seed=42)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=42)
 
   total_reward = 0.0
   steps = 0
@@ -65,9 +62,7 @@ def test_env_full_episode():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, reward, terminated, truncated, _ = env.step(action)
     total_reward += reward
     steps += 1
     done = terminated or truncated
@@ -76,52 +71,41 @@ def test_env_full_episode():
 
 
 def test_env_observation_space_contains():
+  '''Test env observation space contains.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   obs, _ = env.reset(seed=42)
 
-  for key, space in (
-    env.observation_space.spaces.items()
-  ):
-    assert space.contains(obs[key]), (
-      f'Observation {key!r} not in space'
-    )
+  for key, space in env.observation_space.spaces.items():
+    assert space.contains(obs[key]), f'Observation {key!r} not in space'
 
 
 def test_env_set_curriculum_stage():
+  '''Test env set curriculum stage.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.set_curriculum_stage(1)
   assert env.curriculum_stage == 1
 
-  obs, info = env.reset(seed=42)
+  _, info = env.reset(seed=42)
   assert info['stage'] == 1
 
 
 def test_env_action_mask_all_valid_at_start():
+  '''Test env action mask all valid at start.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
 
   mask = env.action_masks()
-  assert mask.any(), (
-    'At least some actions should be valid'
-  )
+  assert mask.any(), 'At least some actions should be valid'
 
 
 def test_env_cumulative_reward_in_episode_info():
-  """Episode info 'r' must be cumulative reward."""
+  '''Episode info 'r' must be cumulative reward.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, _ = env.reset(seed=42)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=42)
 
   cumulative = 0.0
   done = False
@@ -133,9 +117,7 @@ def test_env_cumulative_reward_in_episode_info():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, reward, terminated, truncated, info = env.step(action)
     cumulative += reward
     last_info = info
     done = terminated or truncated
@@ -146,12 +128,10 @@ def test_env_cumulative_reward_in_episode_info():
 
 
 def test_env_grid_world_created():
-  """The environment must generate a grid world
-  during reset."""
+  '''The environment must generate a grid world
+  during reset.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
 
   assert env.episode_data is not None
@@ -162,13 +142,11 @@ def test_env_grid_world_created():
 
 
 def test_env_routing_and_packing():
-  """Run a full episode with both routing and
-  packing actions."""
+  '''Run a full episode with both routing and
+  packing actions.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, info = env.reset(seed=42)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=42)
 
   routing_steps = 0
   packing_steps = 0
@@ -186,21 +164,17 @@ def test_env_routing_and_packing():
     else:
       packing_steps += 1
 
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, _, terminated, truncated, _ = env.step(action)
     done = terminated or truncated
 
   assert routing_steps > 0 or packing_steps > 0
 
 
 def test_render_snapshot():
-  """get_render_snapshot() must return a dict
-  with all required keys."""
+  '''get_render_snapshot() must return a dict
+  with all required keys.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
 
   snap = env.get_render_snapshot()
@@ -215,16 +189,10 @@ def test_render_snapshot():
 
 
 def test_grid_renderer_produces_image():
-  """GridRenderer.render() must return a PIL
-  Image."""
-  from truck_carton.evaluation.visualizer import (
-    GridRenderer,
-  )
-
+  '''GridRenderer.render() must return a PIL
+  Image.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
 
   renderer = GridRenderer()
@@ -237,12 +205,8 @@ def test_grid_renderer_produces_image():
 
 
 def test_road_sprite_straight_horizontal():
-  """A road cell with left and right neighbors
-  should produce a horizontal line."""
-  from truck_carton.evaluation.visualizer import (
-    GridRenderer,
-  )
-
+  '''A road cell with left and right neighbors
+  should produce a horizontal line.'''
   renderer = GridRenderer()
   grid = np.zeros((3, 3), dtype=np.int8)
   grid[1, 0] = 1  # ROAD left
@@ -254,12 +218,8 @@ def test_road_sprite_straight_horizontal():
 
 
 def test_road_sprite_corner():
-  """A road cell with bottom and right neighbors
-  should produce a top-left corner."""
-  from truck_carton.evaluation.visualizer import (
-    GridRenderer,
-  )
-
+  '''A road cell with bottom and right neighbors
+  should produce a top-left corner.'''
   renderer = GridRenderer()
   grid = np.zeros((3, 3), dtype=np.int8)
   grid[0, 0] = 1  # center
@@ -267,17 +227,15 @@ def test_road_sprite_corner():
   grid[0, 1] = 1  # right
 
   sprite = renderer._road_sprite(0, 0, grid)
-  assert sprite == '\u250C'  # ┌
+  assert sprite == '\u250c'  # ┌
 
 
 def test_env_episode_terminates():
-  """A full episode must always terminate within
-  max_steps, even with edge-case cartons."""
+  '''A full episode must always terminate within
+  max_steps, even with edge-case cartons.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, _ = env.reset(seed=99)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=99)
 
   steps = 0
   done = False
@@ -287,9 +245,7 @@ def test_env_episode_terminates():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, _, terminated, truncated, _ = env.step(action)
     steps += 1
     done = terminated or truncated
 
@@ -297,12 +253,10 @@ def test_env_episode_terminates():
 
 
 def test_carton_queue_obs_nonzero():
-  """carton_queue observation must have nonzero
-  entries when unplaced cartons exist."""
+  '''carton_queue observation must have nonzero
+  entries when unplaced cartons exist.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   obs, _ = env.reset(seed=42)
 
   assert obs['carton_queue'].any(), (
@@ -312,12 +266,10 @@ def test_carton_queue_obs_nonzero():
 
 
 def test_routing_feature_dim_matches_obs():
-  """routing_candidates observation dim must match
-  config.env.routing_feature_dim (no wasted slots)."""
+  '''routing_candidates observation dim must match
+  config.env.routing_feature_dim (no wasted slots).'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   obs, _ = env.reset(seed=42)
 
   expected_dim = config.env.routing_feature_dim
@@ -326,35 +278,28 @@ def test_routing_feature_dim_matches_obs():
 
 
 def test_stage_index_normalization():
-  """Stage index in global_info must be properly
+  '''Stage index in global_info must be properly
   normalized using num_curriculum_stages, not
-  hardcoded constants."""
+  hardcoded constants.'''
   config = AppConfig()
   max_stage = len(config.curriculum.stages) - 1
 
-  for stage_idx in range(
-    min(3, len(config.curriculum.stages))
-  ):
-    env = TruckCartonPackingEnv(
-      config=config, curriculum_stage=stage_idx
-    )
+  for stage_idx in range(min(3, len(config.curriculum.stages))):
+    env = TruckCartonPackingEnv(config=config, curriculum_stage=stage_idx)
     obs, _ = env.reset(seed=42)
     stage_val = obs['global_info'][1]
     expected = stage_idx / max(max_stage, 1)
     assert abs(stage_val - expected) < 1e-5, (
-      f'Stage {stage_idx}: expected {expected}, '
-      f'got {stage_val}'
+      f'Stage {stage_idx}: expected {expected}, got {stage_val}'
     )
 
 
 def test_cycle_to_truck_with_actions():
-  """When active truck has no valid actions, env
-  should cycle to another truck before terminating."""
+  '''When active truck has no valid actions, env
+  should cycle to another truck before terminating.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
-  obs, _ = env.reset(seed=42)
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
+  _, _ = env.reset(seed=42)
 
   done = False
   steps = 0
@@ -364,9 +309,7 @@ def test_cycle_to_truck_with_actions():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    _, _, terminated, truncated, _ = env.step(action)
     steps += 1
     done = terminated or truncated
 
@@ -374,12 +317,10 @@ def test_cycle_to_truck_with_actions():
 
 
 def test_obs_no_negative_features():
-  """All observation features must be >= 0.0 (no
-  negative values from sentinel IDs like -1)."""
+  '''All observation features must be >= 0.0 (no
+  negative values from sentinel IDs like -1).'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   obs, _ = env.reset(seed=42)
 
   done = False
@@ -390,32 +331,25 @@ def test_obs_no_negative_features():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, reward, terminated, truncated, info = (
-      env.step(action)
-    )
+    obs, _, terminated, truncated, _ = env.step(action)
     steps += 1
     done = terminated or truncated
 
     for key, arr in obs.items():
       assert arr.min() >= 0.0, (
-        f'Negative value in obs[{key!r}] at '
-        f'step {steps}: min={arr.min()}'
+        f'Negative value in obs[{key!r}] at step {steps}: min={arr.min()}'
       )
 
 
 def test_truck_state_obs_full_range():
-  """Truck state observation should use the full
-  [0, 1] range, not cap at 0.667."""
-  from truck_carton.domain.models import TruckState
-
+  '''Truck state observation should use the full
+  [0, 1] range, not cap at 0.667.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
 
   done = False
-  seen_at_depot = False
+  _ = False
   steps = 0
   while not done and steps < 300:
     mask = env.action_masks()
@@ -423,33 +357,24 @@ def test_truck_state_obs_full_range():
     if len(valid) == 0:
       break
     action = int(valid[0])
-    obs, _, terminated, truncated, _ = (
-      env.step(action)
-    )
+    obs, _, terminated, truncated, _ = env.step(action)
     steps += 1
     done = terminated or truncated
 
-    for i, truck in enumerate(
-      env.episode_data.trucks
-    ):
+    for i, truck in enumerate(env.episode_data.trucks):
       if truck.state == TruckState.AT_DEPOT:
         val = obs['truck_states'][i]
         assert abs(val - 1.0) < 1e-5, (
-          f'AT_DEPOT truck state should be 1.0,'
-          f' got {val}'
+          f'AT_DEPOT truck state should be 1.0, got {val}'
         )
-        seen_at_depot = True
+        _ = True
 
 
 def test_truck_travel_property():
-  """env.truck_travel must be accessible and reflect
-  actual distances traveled."""
+  '''env.truck_travel must be accessible and reflect
+  actual distances traveled.'''
   config = AppConfig()
-  env = TruckCartonPackingEnv(
-    config=config, curriculum_stage=0
-  )
+  env = TruckCartonPackingEnv(config=config, curriculum_stage=0)
   env.reset(seed=42)
-  assert len(env.truck_travel) == len(
-    env.episode_data.trucks
-  )
+  assert len(env.truck_travel) == len(env.episode_data.trucks)
   assert all(t == 0.0 for t in env.truck_travel)

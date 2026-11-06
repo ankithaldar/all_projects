@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for structured logging setup.'''
+
 import logging
 
 from truck_carton.logging_config import (
@@ -8,15 +13,20 @@ from truck_carton.logging_config import (
 
 
 def test_get_logger():
+  '''Test get logger.'''
   log = get_logger('env')
   assert log.name == 'truck_carton.env'
   assert isinstance(log, logging.Logger)
 
 
 def test_get_logger_subsystems():
+  '''Test get logger subsystems.'''
   names = [
-    'env', 'reward', 'training',
-    'curriculum', 'packing',
+    'env',
+    'reward',
+    'training',
+    'curriculum',
+    'packing',
   ]
   for name in names:
     log = get_logger(name)
@@ -24,6 +34,7 @@ def test_get_logger_subsystems():
 
 
 def test_setup_logging_idempotent():
+  '''Test setup logging idempotent.'''
   setup_logging(level=logging.DEBUG)
   setup_logging(level=logging.DEBUG)
   root = logging.getLogger('truck_carton')
@@ -31,6 +42,7 @@ def test_setup_logging_idempotent():
 
 
 def test_episode_logger_lifecycle():
+  '''Test episode logger lifecycle.'''
   el = EpisodeLogger()
 
   el.begin_episode(
@@ -70,9 +82,7 @@ def test_episode_logger_lifecycle():
     weight=10.0,
   )
 
-  el.log_delivery(
-    truck_id=0, store_id=1, num_unloaded=3
-  )
+  el.log_delivery(truck_id=0, store_id=1, num_unloaded=3)
 
   summary = el.end_episode(
     total_reward=5.0,
@@ -92,6 +102,7 @@ def test_episode_logger_lifecycle():
 
 
 def test_episode_logger_completion_rate():
+  '''Test episode logger completion rate.'''
   el = EpisodeLogger()
   el.begin_episode(1, 0, 2, 10, (5, 5))
   summary = el.end_episode(

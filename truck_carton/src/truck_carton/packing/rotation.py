@@ -1,7 +1,14 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Carton rotation definitions and helpers.'''
+
 from enum import IntEnum
 
 
 class Rotation(IntEnum):
+  '''Rotation.'''
+
   LWH = 0
   LHW = 1
   WLH = 2
@@ -27,14 +34,19 @@ ALL_ROTATIONS: tuple[Rotation, ...] = tuple(Rotation)
 
 
 def apply_rotation(
-  l: int, w: int, h: int, rotation: Rotation
+  length: int, w: int, h: int, rotation: Rotation
 ) -> tuple[int, int, int]:
-  dims = (l, w, h)
-  perm = _ROTATION_PERMUTATIONS[rotation]
+  '''Apply rotation.'''
+  dims = (length, w, h)
+  try:
+    perm = _ROTATION_PERMUTATIONS[rotation]
+  except (KeyError, TypeError):
+    raise ValueError(f'invalid rotation: {rotation!r}') from None
   return (dims[perm[0]], dims[perm[1]], dims[perm[2]])
 
 
 def get_valid_rotations(
   is_fragile: bool,
 ) -> tuple[Rotation, ...]:
+  '''Get valid rotations.'''
   return FRAGILE_ROTATIONS if is_fragile else ALL_ROTATIONS

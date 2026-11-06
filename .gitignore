@@ -138,7 +138,9 @@ celerybeat.pid
 .env
 .envrc
 .venv
-env/
+# Anchored to repo root only: a bare `env/` also matched
+# truck_carton/src/truck_carton/env/ (the source package, D-004).
+/env/
 venv/
 ENV/
 env.bak/
@@ -182,9 +184,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
@@ -205,3 +207,5 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+/.opencode/

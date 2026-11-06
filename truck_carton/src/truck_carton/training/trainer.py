@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Trainer running RL for truck-carton packing.'''
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,6 +22,7 @@ from truck_carton.env.packing_env import (
 )
 from truck_carton.logging_config import (
   get_logger,
+  resolve_contained_path,
   setup_logging,
 )
 from truck_carton.training.callbacks import (
@@ -26,36 +32,44 @@ from truck_carton.training.callbacks import (
 
 
 class Trainer:
-  """Orchestrates the complete training pipeline
-  with MaskablePPO and curriculum learning."""
+  '''Orchestrates the complete training pipeline
+  with MaskablePPO and curriculum learning.'''
 
   def __init__(
     self,
     config: AppConfig,
     output_dir: str = './output',
+    base_dir: str | Path | None = None,
   ) -> None:
+    '''Initialize the instance.
+
+    output_dir must resolve inside base_dir (default cwd,
+    or TRUCK_CARTON_BASE_DIR); traversal and symlink
+    escapes raise ValueError (S-02).
+    '''
     self._config = config
-    self._output_dir = Path(output_dir)
-    self._output_dir.mkdir(
-      parents=True, exist_ok=True
+    self._base_dir = resolve_contained_path(
+      base_dir or '.', base_dir=base_dir
     )
+    self._output_dir = resolve_contained_path(
+      output_dir, base_dir=self._base_dir
+    )
+    self._output_dir.mkdir(parents=True, exist_ok=True)
 
     log_dir = self._output_dir / 'logs'
     setup_logging(
       log_file=str(log_dir / 'training.log'),
-      json_log_file=str(
-        log_dir / 'training.jsonl'
-      ),
+      json_log_file=str(log_dir / 'training.jsonl'),
+      base_dir=self._base_dir,
     )
     self._log = get_logger('training')
 
   def train(self) -> MaskablePPO:
+    '''Train.'''
     env = self._make_env()
     eval_env = self._make_env()
 
-    curriculum = CurriculumManager(
-      self._config.curriculum
-    )
+    curriculum = CurriculumManager(self._config.curriculum)
 
     tc = self._config.training
     model = MaskablePPO(
@@ -70,39 +84,29 @@ class Trainer:
       clip_range=tc.clip_range,
       ent_coef=tc.ent_coef,
       vf_coef=tc.vf_coef,
-      policy_kwargs={
-        'net_arch': list(tc.net_arch)
-      },
+      policy_kwargs={'net_arch': list(tc.net_arch)},
       verbose=1,
-      tensorboard_log=str(
-        self._output_dir / 'tb_logs'
-      ),
+      tensorboard_log=str(self._output_dir / 'tb_logs'),
       seed=tc.seed,
     )
 
     callbacks = [
-      CurriculumCallback(
-        curriculum, verbose=1
-      ),
+      CurriculumCallback(curriculum, verbose=1),
       MetricsCallback(),
       EvalCallback(
         eval_env,
         n_eval_episodes=tc.eval_episodes,
         eval_freq=tc.eval_freq,
-        best_model_save_path=str(
-          self._output_dir / 'models'
-        ),
-        log_path=str(
-          self._output_dir / 'logs'
-        ),
+        best_model_save_path=str(self._output_dir / 'models'),
+        log_path=str(self._output_dir / 'logs'),
         verbose=1,
       ),
     ]
 
     self._log.info(
-      'Starting training: %d timesteps, lr=%s,'
-      ' seed=%d',
-      tc.total_timesteps, tc.learning_rate,
+      'Starting training: %d timesteps, lr=%s, seed=%d',
+      tc.total_timesteps,
+      tc.learning_rate,
       tc.seed,
     )
 
@@ -111,15 +115,12 @@ class Trainer:
       callback=callbacks,
     )
 
-    final_path = (
-      self._output_dir / 'models' / 'final_model'
-    )
+    final_path = self._output_dir / 'models' / 'final_model'
     model.save(str(final_path))
     self._log.info('Model saved to %s', final_path)
     return model
 
   def _make_env(self) -> Monitor:
-    env = TruckCartonPackingEnv(
-      config=self._config
-    )
+    '''Make env.'''
+    env = TruckCartonPackingEnv(config=self._config)
     return Monitor(env)

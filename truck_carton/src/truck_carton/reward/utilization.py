@@ -1,5 +1,11 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Utilization reward for truck space filling.'''
+
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -9,11 +15,10 @@ if TYPE_CHECKING:
 
 
 class UtilizationReward:
-  """Average volumetric and weight fill ratio."""
+  '''Average volumetric and weight fill ratio.'''
 
-  def compute(
-    self, state: EnvironmentState
-  ) -> float:
+  def compute(self, state: EnvironmentState) -> float:
+    '''Compute.'''
     if not state.spaces:
       return 0.0
 
@@ -26,10 +31,12 @@ class UtilizationReward:
         break
       truck = state.trucks[i]
       vol_sum += space.get_occupancy_ratio()
-      if truck.max_weight > 0:
+      if truck.max_weight > 0 and i < len(state.current_weights):
+        weight = state.current_weights[i]
+        if not math.isfinite(weight) or weight < 0:
+          weight = 0.0
         wt_sum += min(
-          state.current_weights[i]
-          / truck.max_weight,
+          weight / truck.max_weight,
           1.0,
         )
       active += 1
