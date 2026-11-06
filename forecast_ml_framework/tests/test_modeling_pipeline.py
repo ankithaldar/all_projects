@@ -164,3 +164,98 @@ def test_explain_model_shap_available_and_none_params(monkeypatch):
   assert out == {
     'method': 'shap', 'global_importance': {}, 'per_row': {},
     'shap_available': True}
+
+
+# --- loop4: task aliases through normalize_task_kind ---
+
+import sys
+import types
+
+
+class _RecordingClassifier:
+  '''Fake classifier recording construction.'''
+
+  def __init__(self, **kwargs):
+    self.kwargs = kwargs
+
+  def fit(self, x, y):
+    return self
+
+
+class _RecordingRegressor:
+  '''Fake regressor recording construction.'''
+
+  def __init__(self, **kwargs):
+    self.kwargs = kwargs
+
+  def fit(self, x, y):
+    return self
+
+
+def _fake_module(name, **attrs):
+  module = types.ModuleType(name)
+  for key, value in attrs.items():
+    setattr(module, key, value)
+  return module
+
+
+def test_zoo_adapters_task_alias_uses_classifier(monkeypatch):
+  '''cls/BINARY/CASE variants select Classifier, not Regressor.'''
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    CatBoostAdapter, LightGBMAdapter, XGBoostAdapter)
+  cases = [
+    (XGBoostAdapter, 'xgboost',
+     {'XGBClassifier': _RecordingClassifier,
+      'XGBRegressor': _RecordingRegressor}),
+    (LightGBMAdapter, 'lightgbm',
+     {'LGBMClassifier': _RecordingClassifier,
+      'LGBMRegressor': _RecordingRegressor}),
+    (CatBoostAdapter, 'catboost',
+     {'CatBoostClassifier': _RecordingClassifier,
+      'CatBoostRegressor': _RecordingRegressor}),
+  ]
+  x = np.zeros((4, 2))
+  y = np.array([0, 1, 0, 1])
+  for alias in ('cls', 'BINARY', 'Classification', 'CLASS'):
+    for adapter_cls, module, attrs in cases:
+      monkeypatch.setitem(sys.modules, module,
+                          _fake_module(module, **attrs))
+      adapter = adapter_cls({'task_type': alias})
+      adapter.fit(x, y)
+      assert isinstance(adapter.model, _RecordingClassifier), (
+        alias, adapter_cls.__name__)
+
+
+def test_train_models_task_alias_binary_uses_proba():
+  '''train_models with BINARY alias computes classification metrics.'''
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    train_models)
+  rng = np.random.RandomState(0)
+  x = rng.randn(60, 2)
+  y = (x[:, 0] > 0).astype(int)
+  params = {
+    'task_type': 'BINARY', 'models_to_use': ['sklearn'],
+    'selection_metric': 'f1_weighted', 'random_state': 42,
+    'model_params': {'sklearn': {'model_type': 'logistic_regression'}},
+  }
+  _, per_model, best = train_models(x, y, x, y, params)
+  assert best == 'sklearn'
+  assert 'f1_weighted' in per_model['sklearn']
+  assert 'roc_auc' in per_model['sklearn']
+
+
+def test_make_charts_task_alias_binary_is_classification():
+  '''make_charts with BINARY alias builds classification charts.'''
+  from forecast_ml_framework.pipelines.modeling.charts import (
+    make_charts)
+  n = 60
+  y_true = np.tile([0, 1], n // 2)
+  y_pred = y_true.copy()
+  proba = np.column_stack([1 - y_true * 0.8 - 0.1,
+                           y_true * 0.8 + 0.1])
+  x_test = np.zeros((n, 2))
+  for alias in ('BINARY', 'cls', 'Classification'):
+    figs = make_charts(
+        y_true, y_pred, proba, x_test, {'task_type': alias})
+    assert 'roc' in figs, alias
+    assert 'pred_vs_actual' not in figs, alias

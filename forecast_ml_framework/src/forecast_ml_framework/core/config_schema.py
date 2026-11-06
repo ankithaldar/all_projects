@@ -93,7 +93,7 @@ class GlobalParams(_Allow):
 
   task_type: str = 'classification'
   is_regression: bool = False
-  is_domino: bool = False
+  is_external_platform: bool = False
   score_model_id: str = 'demo_model_v1'
   model_type: str = 'sklearn'
   random_state: int = 42
@@ -170,6 +170,10 @@ class ModelingParams(_Allow):
   target_col: str = 'target'
   random_state: int = 42
   test_size: float = 0.2
+  eval_metric: Optional[str] = None
+  old_score: Optional[float] = None
+  lift_threshold: Optional[float] = None
+  model_threshold: Optional[float] = None
   models_to_use: List[str] = Field(default_factory=list)
   model_params: Dict[str, Any] = Field(default_factory=dict)
   calibration: Dict[str, Any] = Field(default_factory=dict)
@@ -283,7 +287,7 @@ class EdaParams(_Allow):
   near_constant_threshold: float = 0.95
   leakage_name_keywords: List[str] = Field(
     default_factory=lambda: [
-      'target', 'churn', 'label', 'outcome', 'result',
+      'target', 'attrition', 'label', 'outcome', 'result',
       'after', 'post'])
   imbalance_ratio_threshold: float = 5.0
   zscore_threshold: float = 3.0

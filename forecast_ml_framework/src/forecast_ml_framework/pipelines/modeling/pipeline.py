@@ -76,9 +76,19 @@ Datasets:
   -> best_model/per_model_metrics/best_model_name
   -> calibrated_model/calibration_meta
   -> evaluation_metrics, plus y_pred/y_pred_proba
+  -> lift_table, promotion (parity: lift table from
+  y_test/y_pred/y_pred_proba with modeling_params
+  lift_threshold/model_threshold; promotion gate from
+  selected_ntile score vs params old_score)
   -> charts (dict of figures), shap_artifact (dict).
+
+  ``old_score`` is explicit in ``ModelingParams``
+  (``Optional[float] = None``); a missing/None,
+  non-positive, or non-finite incumbent never promotes
+  (see ``validation.should_promote``).
 '''
 
+import numpy as np
 from kedro.pipeline import Pipeline, node
 
 from forecast_ml_framework.pipelines.interpretability.nodes import (
@@ -99,6 +109,15 @@ from forecast_ml_framework.pipelines.modeling.data_split import (
 from forecast_ml_framework.pipelines.modeling.evaluate import (
   evaluate_model,
 )
+from forecast_ml_framework.pipelines.modeling.lift_table import (
+  compute_lift_table,
+)
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+)
+from forecast_ml_framework.pipelines.modeling.validation import (
+  should_promote,
+)
 
 
 def _predict(model, x_test):
@@ -108,10 +127,77 @@ def _predict(model, x_test):
 
 def _predict_proba(model, x_test, task_type):
   '''Predict proba, or None for regression.'''
-  if task_type != 'classification':
+  if normalize_task_kind(task_type) != 'classification':
     return None
   return model.predict_proba(x_test)
 
+
+def build_lift_table(y_test, y_pred, y_proba, params=None,
+                     threshold=None):
+  '''Build the per-decile lift table from test predictions.
+
+  Args:
+    y_test: True labels or values.
+    y_pred: Predicted labels or values.
+    y_proba: Probabilities (2 columns, 1 column, 1-D) or
+      None for regression.
+    params: modeling_params dict; ``lift_threshold`` (or its
+      alias ``model_threshold``) is passed through as the
+      lift threshold. A numeric/None value is taken as the
+      threshold directly.
+    threshold: Explicit threshold in [0, 1]; wins over the
+      value in ``params`` when given.
+
+  Returns:
+    Lift DataFrame from ``compute_lift_table`` (empty when
+    without proba).
+  '''
+  if threshold is None:
+    if isinstance(params, dict):
+      threshold = params.get('lift_threshold')
+      if threshold is None:
+        threshold = params.get('model_threshold')
+    elif params is not None:
+      threshold = params
+  if y_proba is None:
+    return compute_lift_table([], [], [])
+  proba = np.asarray(y_proba, dtype=float)
+  if proba.ndim == 2:
+    proba = proba[:, 1] if proba.shape[1] > 1 else proba[:, 0]
+  return compute_lift_table(y_test, y_pred, proba,
+                            threshold=threshold)
+
+
+def build_promotion(evaluation_metrics, params):
+  '''Decide promotion from selected_ntile vs old_score.
+
+  Args:
+    evaluation_metrics: ``evaluate_model`` result dict.
+    params: modeling_params; ``old_score`` (incumbent
+      score) and ``task_type`` drive ``should_promote``.
+
+  Returns:
+    Dict with ``promote``, ``deviation_pct``, ``new_score``,
+    ``old_score``, ``eval_metric``, ``metric`` and
+    ``task_type``. Missing old_score or selected_ntile
+    never promotes.
+  '''
+  params = params or {}
+  selected = (evaluation_metrics or {}).get('selected_ntile') or {}
+  new_score = selected.get('score')
+  old_score = params.get('old_score')
+  metric = selected.get('metric', '')
+  task = params.get('task_type', 'classification')
+  promote, deviation = should_promote(new_score, old_score, task, metric)
+  return {
+    'promote': bool(promote),
+    'deviation_pct': float(deviation),
+    'new_score': new_score,
+    'old_score': old_score,
+    'eval_metric': selected.get('eval_metric'),
+    'metric': metric,
+    'task_type': task,
+  }
 
 
 def explain_model(model, x, y, params):
@@ -197,6 +283,15 @@ def create_pipeline(**kwargs):
                  'params:modeling_params'],
          outputs='evaluation_metrics',
          name='evaluate_model_node'),
+    node(func=build_lift_table,
+         inputs=['y_test', 'y_pred', 'y_pred_proba',
+                 'params:modeling_params'],
+         outputs='lift_table',
+         name='build_lift_table_node'),
+    node(func=build_promotion,
+         inputs=['evaluation_metrics', 'params:modeling_params'],
+         outputs='promotion',
+         name='build_promotion_node'),
     node(func=make_charts,
          inputs=['y_test', 'y_pred', 'y_pred_proba', 'x_test',
                  'params:modeling_params'],

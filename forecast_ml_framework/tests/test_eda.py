@@ -315,7 +315,7 @@ def test_detect_leakage_name_keyword_warning():
   rng = np.random.RandomState(2)
   df = pd.DataFrame({
     'post_outcome_score': rng.normal(size=100),
-    'churn_flag': rng.choice([0, 1], size=100),
+    'attrition_flag': rng.choice([0, 1], size=100),
     'target': np.array([0, 1] * 50),
   })
   findings = detect_leakage(df, 'target', _leakage_params())
@@ -323,8 +323,8 @@ def test_detect_leakage_name_keyword_warning():
   assert by_feature['post_outcome_score']['severity'] == 'warning'
   assert 'post_outcome_score' in by_feature['post_outcome_score'][
     'detail']
-  assert 'churn_flag' in by_feature
-  assert by_feature['churn_flag']['severity'] == 'warning'
+  assert 'attrition_flag' in by_feature
+  assert by_feature['attrition_flag']['severity'] == 'warning'
 
 
 def test_detect_leakage_constant_feature():

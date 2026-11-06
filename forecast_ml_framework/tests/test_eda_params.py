@@ -28,7 +28,7 @@ def test_eda_params_defaults_match_eda_node_defaults():
   assert params.leakage_auc_threshold == 0.99
   assert params.near_constant_threshold == 0.95
   assert params.leakage_name_keywords == [
-    'target', 'churn', 'label', 'outcome', 'result', 'after', 'post']
+    'target', 'attrition', 'label', 'outcome', 'result', 'after', 'post']
   assert params.imbalance_ratio_threshold == 5.0
   assert params.zscore_threshold == 3.0
   assert params.top_correlations == 10

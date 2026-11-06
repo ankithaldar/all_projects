@@ -22,7 +22,7 @@ overlay and inherit the merged base.
 
 | Bucket file | Top-level sections it owns |
 |---|---|
-| `parameters/global.yml` | Runtime/global: flat `${params:}` catalog keys (`score_model_id`, `output_gcs_location`, `model_id_prefix`, `suffix`, `data_project`, `db_staging_data`, `etl_project`, `etl_dataset`, `etl_table`, `external_project`, `tmp_bucket`, `is_domino`, `run_date`, `train_run_dt`, `score_run_dt`, `brand`) + `global_params` |
+| `parameters/global.yml` | Runtime/global: flat `${params:}` catalog keys (`score_model_id`, `output_gcs_location`, `model_id_prefix`, `suffix`, `data_project`, `db_staging_data`, `etl_project`, `etl_dataset`, `etl_table`, `external_project`, `tmp_bucket`, `is_external_platform`, `run_date`, `train_run_dt`, `score_run_dt`, `brand`) + `global_params` |
 | `parameters/data.yml` | `data_params`, `sampling_params`, `sampling_reg_params`, `pandas_conversion_params`, `train_test_split_params`, `validation_params` |
 | `parameters/preprocessing.yml` | `data_prep_params` (FE registry), `feature_selection_params` |
 | `parameters/evaluation.yml` | `evaluation_params` incl. `metrics_to_calculate` |
@@ -51,7 +51,7 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   `parameters/global.yml` (`score_model_id`, `output_gcs_location`,
   `model_id_prefix`, `suffix`, `data_project`, `db_staging_data`,
   `etl_project`, `etl_dataset`, `etl_table`, `external_project`,
-  `tmp_bucket`, `is_domino`, `run_date`, `train_run_dt`,
+  `tmp_bucket`, `is_external_platform`, `run_date`, `train_run_dt`,
   `score_run_dt`, `brand`). These are **new keys** — the pydantic
   config schema must allow them (`extra='allow'`).
 - **Pydantic validation.** Every shipped key must be accepted by the

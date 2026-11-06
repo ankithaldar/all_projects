@@ -110,7 +110,10 @@ def test_spark_scoring_does_not_call_to_pandas():
   assert spark_df.map_partitions_calls == 1
   assert out['prediction'].tolist() == [1, 0, 1, 0, 1]
   assert list(out.columns) == [
-    'id', 'prediction', 'proba', 'score_model_id', 'scored_at']
+    'id', 'prediction', 'proba', 'score_decile', 'score_centile',
+    'high_score_ind', 'score_model_id', 'scored_at']
+  for col in ('score_decile', 'score_centile', 'high_score_ind'):
+    assert col in out.columns
 
 
 def test_spark_scoring_partition_batch_chunks_within_partition():

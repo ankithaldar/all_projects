@@ -118,12 +118,15 @@ def test_load_scoring_data_empty_warns_not_crashes(caplog):
 
 
 def test_predict_classification_schema_and_proba():
-  '''Predict adds prediction, proba, model id, and timestamp.'''
+  '''Predict adds prediction, proba, ntile, model id, timestamp.'''
   out = predict(_frame(), _params(), model_loader=lambda: _FakeModel())
   assert list(out.columns) == [
-    'id', 'prediction', 'proba', 'score_model_id', 'scored_at']
+    'id', 'prediction', 'proba', 'score_decile', 'score_centile',
+    'high_score_ind', 'score_model_id', 'scored_at']
+  for col in ('score_decile', 'score_centile', 'high_score_ind'):
+    assert col in out.columns
   assert out['prediction'].tolist() == [1, 0, 1]
-  assert out['proba'].tolist() == [0.9, 0.9, 0.9]
+  assert out['proba'].tolist() == [0.9, 0.1, 0.9]
   assert (out['score_model_id'] == 'model-v1').all()
   assert out['scored_at'].notna().all()
 
@@ -174,7 +177,9 @@ def test_predict_empty_returns_schema_with_warning(caplog):
                   model_loader=lambda: calls.append(1) or _FakeModel())
   assert len(out) == 0
   assert list(out.columns) == [
-    'id', 'prediction', 'proba', 'score_model_id', 'scored_at']
+    'id', 'prediction', 'proba', 'score_decile', 'score_centile',
+    'calib_decile', 'calib_centile', 'high_score_ind',
+    'score_model_id', 'scored_at']
   assert calls == []
   assert any('empty' in r.message.lower() for r in caplog.records)
 

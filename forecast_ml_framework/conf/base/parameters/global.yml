@@ -5,7 +5,7 @@
 # No credentials or secrets here — read them from the environment at runtime.
 
 # parameters.yml — modelling + feature-engineering parameters (base defaults).
-# Structure mirrors the reference vz_faas_framework_v2 conf/base/parameters.yml,
+# Structure follows the conf/base/parameters.yml layout in this framework,
 # plus feature-selection / multi-model / MLOps sections. Kedro env overlays
 # (conf/local, conf/gcp, conf/aws) override only what they must.
 # No credentials or secrets here — read them from the environment at runtime.
@@ -15,7 +15,7 @@
 # namespace). NEW keys for config_schema (extra=allow): score_model_id,
 # output_gcs_location, model_id_prefix, suffix, data_project,
 # db_staging_data, etl_project, etl_dataset, etl_table, external_project,
-# tmp_bucket, is_domino, run_date, train_run_dt, score_run_dt, brand.
+# tmp_bucket, is_external_platform, run_date, train_run_dt, score_run_dt, brand.
 score_model_id: ${.global_params.score_model_id}
 # output_gcs_location: local runs write artifacts to ./artifacts
 # (the GCS name is legacy; rename deferred).
@@ -29,7 +29,7 @@ etl_dataset: ''
 etl_table: ''
 external_project: ''
 tmp_bucket: ''
-is_domino: false
+is_external_platform: false
 run_date: ${.global_params.run_date}
 train_run_dt: ${.global_params.run_date}
 score_run_dt: ${.global_params.run_date}
@@ -38,7 +38,7 @@ brand: ''
 # --- Run / global -------------------------------------------------------------
 global_params:
   is_regression: false
-  is_domino: false
+  is_external_platform: false
   score_model_id: 'demo_model_v1'
   run_date: '2026-11-06'
   model_type: 'sklearn'

@@ -34,7 +34,7 @@ Params keys (``params:eda_params`` dict, all optional):
   dominant-value proportion above which a feature flags
   as constant / near-constant in :func:`detect_leakage`.
 - ``leakage_name_keywords`` (list, default ['target',
-  'churn', 'label', 'outcome', 'result', 'after', 'post']):
+  'attrition', 'label', 'outcome', 'result', 'after', 'post']):
   name substrings flagging a feature as a post-outcome
   suspect in :func:`detect_leakage`.
 - ``imbalance_ratio_threshold`` (float, default 5.0): majority /
@@ -71,7 +71,7 @@ _RECOMMENDATIONS = {
 }
 
 _DEFAULT_LEAKAGE_KEYWORDS = [
-  'target', 'churn', 'label', 'outcome', 'result', 'after', 'post',
+  'target', 'attrition', 'label', 'outcome', 'result', 'after', 'post',
 ]
 
 

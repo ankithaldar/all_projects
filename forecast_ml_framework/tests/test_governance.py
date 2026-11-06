@@ -10,6 +10,7 @@ split by age with injected now). Pure stdlib; runs in every env.
 
 import hashlib
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -464,11 +465,11 @@ def test_audit_scrubs_bare_openai_sk_key():
 def test_audit_scrubs_pem_private_key_block():
   from forecast_ml_framework.governance.audit import audit_log
   pem = ('-----BEGIN PRIVATE KEY-----\n'
-         'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n'
+         'MIIEvQIBADANBgkqhkiG9w0BAQEXXYZC\n'
          '-----END PRIVATE KEY-----')
   entry = audit_log('train', 'alice', {'cert': pem})
   blob = json.dumps(entry)
-  assert 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC' not in blob
+  assert 'MIIEvQIBADANBgkqhkiG9w0BAQEXXYZC' not in blob
   assert 'PRIVATE KEY' not in blob
   assert '***REDACTED***' in blob
 
@@ -573,3 +574,456 @@ def test_audit_scrubs_api_key_multi_space_and_tab():
     blob = json.dumps(entry)
     assert 'abc123' not in blob, repr(text)
     assert '***REDACTED***' in blob, repr(text)
+
+
+# --- loop5: quote/adverb/spaced-marker audit (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'password=`hunter2`',
+    'password=\u201chunter2\u201d',
+    'password="hunter2',
+    "password='hunter2",
+    'password="hunter2""',
+    "password='hunter2''s'",
+    'password="hunter2\\"x"',
+    'password definitely hunter2',
+    'pass word hunter2',
+])
+def test_audit_scrubs_loop5_quote_adverb_spaced_pocs(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'password is definitely hunter2',
+    'password: definitely hunter2',
+    'password= definitely hunter2',
+    'password=`hunter2',
+    'password=\u201chunter2',
+    'pass word=hunter2',
+    'pass word: hunter2',
+    'token really is hunter2',
+])
+def test_audit_scrubs_loop5_filler_and_unterminated_variants(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_leaves_normal_text_unchanged():
+  from forecast_ml_framework.governance.audit import audit_log
+  text = 'train completed successfully learning_rate 0.1'
+  entry = audit_log('train', 'alice', {'note': text})
+  assert entry['details']['note'] == text
+
+
+# --- loop6: filler-before-separator / broad filler audit (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'password definitely: hunter2',
+    'password definitely= hunter2',
+    'password definitely := hunter2',
+    'password very really definitely absolutely truly hunter2',
+    'password very2 hunter2',
+    'password very, hunter2',
+    'password well-known hunter2',
+    'password 123 hunter2',
+    'password a b c d hunter2',
+    'password really: hunter2',
+    'password -- hunter2',
+    'password definitely -- hunter2',
+    'password : = hunter2',
+    'password := hunter2',
+    'password way hunter2',
+    'password definitely way hunter2',
+    'password very really definitely: hunter2',
+    'token well-known = tok12345',
+    'secret a b c d e f hunter2',
+])
+def test_audit_scrubs_loop6_filler_and_separator_pocs(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert 'tok12345' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+# --- loop7: symbolic separators / dict-key secrets audit (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'password >> hunter2',
+    'password ~ hunter2',
+    'password > hunter2',
+    'password / hunter2',
+    'password | hunter2',
+    'password * hunter2',
+    'password ! hunter2',
+    'password ? hunter2',
+    'password @ hunter2',
+    'password # hunter2',
+    'password $ hunter2',
+    'password >>/ hunter2',
+    'password >>/~ hunter2',
+    'password /=>//\\/|/*/!!!/???/@/#/$ hunter2',
+    'password >>/~ /=>//\\/|/*/!!!/???/@/#/$ hunter2',
+    'password_hunter2',
+    'password>>hunter2',
+    'password~hunter2',
+    'password>>/~hunter2',
+    'token >> tok12345',
+    'secret # hunter2',
+])
+def test_audit_scrubs_loop7_symbolic_separator_pocs(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert 'tok12345' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_symbolic_separator_redaction_is_idempotent():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice', {'note': 'password >> hunter2'})
+  assert entry['details']['note'] == 'password >> ***REDACTED***'
+
+
+def test_audit_scrubs_secret_bearing_dict_keys():
+  from forecast_ml_framework.governance.audit import audit_log
+  pem = ('-----BEGIN PRIVATE KEY-----\n'
+         'MIIEvQIBADANBgkqhkiG9w0BAQEXXYZC\n'
+         '-----END PRIVATE KEY-----')
+  details = {
+      'AKIAIOSFODNN7EXAMPLE': 'x',
+      'password hunter2': 'y',
+      'sk-1234567890abcdefghij': 'z',
+      'password=hunter2': 'w',
+      pem: 'p',
+      'nested': {'AKIAIOSFODNN7EXAMPLE': 'q', 'ok': 'keep'},
+      'ok': 'keep',
+      'password': 'hunter2',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = json.dumps(entry)
+  for raw in ('AKIAIOSFODNN7EXAMPLE', 'hunter2',
+              'sk-1234567890abcdefghij', 'MIIEvQIBADANBgkqhkiG9w0BAQEXXYZC',
+              'PRIVATE KEY'):
+    assert raw not in blob, raw
+  assert '***REDACTED***' in blob
+  assert entry['details']['ok'] == 'keep'
+  assert entry['details']['nested']['ok'] == 'keep'
+  # Plain marker key names (no secret value) are preserved.
+  assert 'password' in entry['details']
+
+
+# --- loop8: non-string dict keys / long filler chains (RED) ---
+
+def test_audit_scrubs_tuple_dict_keys():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      ('AKIAIOSFODNN7EXAMPLE',): 'v1',
+      ('password', 'HUNTER2'): 'v2',
+      ('token', 'tok-12345', 'extra'): 'v3',
+      (('password', 'hunter2'), 'ok-label'): 'v4',
+      ('ok', 'keep'): 'keep-value',
+      ('nested', 'value'): 42,
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  for raw in ('AKIAIOSFODNN7EXAMPLE', 'HUNTER2', 'hunter2', 'tok-12345'):
+    assert raw not in blob, raw
+  assert '***REDACTED***' in blob
+  # Key structure preserved.
+  keys = list(entry['details'].keys())
+  assert ('ok', 'keep') in keys
+  assert ('nested', 'value') in keys
+  assert entry['details'][('ok', 'keep')] == 'keep-value'
+  assert entry['details'][('nested', 'value')] == 42
+  tuple_keys = [k for k in keys if isinstance(k, tuple)]
+  assert len(tuple_keys) == 6
+  assert all(isinstance(k, tuple) for k in tuple_keys)
+
+
+def test_audit_scrubs_frozenset_dict_keys():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      frozenset({'AKIAIOSFODNN7EXAMPLE'}): 'v1',
+      frozenset({'password', 'HUNTER2'}): 'v2',
+      frozenset({'token=tok-12345'}): 'v3',
+      frozenset({'ok', 'keep'}): 'keep-value',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  for raw in ('AKIAIOSFODNN7EXAMPLE', 'HUNTER2', 'tok-12345'):
+    assert raw not in blob, raw
+  assert '***REDACTED***' in blob
+  keys = list(entry['details'].keys())
+  assert all(isinstance(k, frozenset) for k in keys)
+  assert frozenset({'ok', 'keep'}) in keys
+  assert entry['details'][frozenset({'ok', 'keep'})] == 'keep-value'
+
+
+def test_audit_scrubs_nested_tuple_frozenset_dict_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      (frozenset({'AKIAIOSFODNN7EXAMPLE'}), 'label'): 'v1',
+      (frozenset({'password', 'hunter2'}),): 'v2',
+      'ok': 'keep',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  for raw in ('AKIAIOSFODNN7EXAMPLE', 'hunter2'):
+    assert raw not in blob, raw
+  assert entry['details']['ok'] == 'keep'
+
+
+def test_audit_scrubs_long_filler_chain():
+  from forecast_ml_framework.governance.audit import audit_log
+  texts = [
+      'password one two three four five six seven HUNTER2',
+      'password one two three four five six seven eight nine ten '
+      'eleven twelve thirteen HUNTER2',
+      'password very really definitely absolutely truly completely '
+      'utterly totally certainly precisely exactly hunter2',
+      'token one two three four five six seven eight tok12345',
+  ]
+  for text in texts:
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'HUNTER2' not in blob, repr(text)
+    assert 'hunter2' not in blob, repr(text)
+    assert 'tok12345' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)
+
+
+# --- loop9: composite-key order, filler cap, scrub DoS (RED) ---
+
+def test_audit_scrubs_secret_before_marker_in_tuple_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      ('HUNTER2', 'password'): 'v1',
+      ('HUNTER2', 'api', 'key'): 'v2',
+      ('password', 'HUNTER2', 'extra-label'): 'v3',
+      ('ok', 'keep'): 'keep-value',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  for raw in ('HUNTER2', 'extra-label'):
+    assert raw not in blob, raw
+  assert '***REDACTED***' in blob
+  keys = list(entry['details'].keys())
+  assert ('ok', 'keep') in keys
+  assert entry['details'][('ok', 'keep')] == 'keep-value'
+  assert all(isinstance(k, tuple) for k in keys)
+
+
+def test_audit_scrubs_interleaved_marker_parts_in_tuple_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      ('api', 'HUNTER2', 'key'): 'v1',
+      ('api', b'HUNTER2', 'key'): 'v2',
+      (b'HUNTER2', 'password'): 'v3',
+      ('access', 'HUNTER2', 'key'): 'v4',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  assert 'HUNTER2' not in blob
+  assert '***REDACTED***' in blob
+  # Bytes elements decode to str, so str/bytes variants of
+  # the same composite key scrub to the same key.
+  assert len(entry['details']) == 3
+
+
+def test_audit_scrubs_secret_before_marker_in_frozenset_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      frozenset({'api', 'HUNTER2', 'key'}): 'v1',
+      frozenset({'HUNTER2', 'password'}): 'v2',
+      frozenset({'ok', 'keep'}): 'keep-value',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  assert 'HUNTER2' not in blob
+  assert '***REDACTED***' in blob
+  keys = list(entry['details'].keys())
+  assert frozenset({'ok', 'keep'}) in keys
+
+
+def test_audit_scrubs_nested_composite_secret_before_marker():
+  from forecast_ml_framework.governance.audit import audit_log
+  details = {
+      (('HUNTER2', 'password'), 'label'): 'v1',
+      (frozenset({'HUNTER2', 'password'}),): 'v2',
+      ('ok', 'keep'): 'keep-value',
+  }
+  entry = audit_log('train', 'alice', details)
+  blob = str(entry)
+  assert 'HUNTER2' not in blob
+  assert '***REDACTED***' in blob
+  assert entry['details'][('ok', 'keep')] == 'keep-value'
+
+
+def test_audit_scrubs_filler_chain_beyond_32_words():
+  from forecast_ml_framework.governance.audit import audit_log
+  for count in (33, 50, 100):
+    text = 'password ' + ('filler ' * count) + 'HUNTER2'
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'HUNTER2' not in blob, count
+    assert '***REDACTED***' in blob, count
+
+
+def test_audit_scrub_long_token_is_fast():
+  from forecast_ml_framework.governance.audit import scrub_details
+  for size in (5000, 10000):
+    start = time.perf_counter()
+    out = scrub_details({'k': 'x' * size})
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, (size, elapsed)
+    assert out == {'k': 'x' * size}
+
+
+def test_audit_truncates_long_text_and_notes_remainder():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'k': 'x' * 9850 + ' password hunter2'
+                         + ' ' * 200})
+  blob = str(out)
+  assert 'hunter2' not in blob
+  assert 'TRUNCATED' in blob
+  assert len(out['k']) <= 10100
+
+
+def test_audit_truncation_drops_secret_beyond_cutoff():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'k': 'x' * 10050 + ' password hunter2'})
+  blob = str(out)
+  assert 'hunter2' not in blob
+  assert 'TRUNCATED' in blob
+
+
+# --- loop10: trailing pair / AWSAccessKeyId / composite values (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'password=QZ other=1',
+    'password QZ other=1',
+    'password=QZ other:1',
+    'token=QZ other=1',
+])
+def test_audit_scrubs_secret_before_trailing_pair(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'QZ' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_trailing_pair_preserves_non_secret_pair():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice', {'note': 'password=QZ other=1'})
+  assert entry['details']['note'] == 'password=***REDACTED*** other=1'
+
+
+@pytest.mark.parametrize('text', [
+    'AWSAccessKeyId=hunter2',
+    'AWSAccessKeyId hunter2',
+    'awsaccesskeyid=hunter2',
+    'AWSAccessKeyId: hunter2',
+    'accessKeyId=hunter2',
+    'AWSAccessKeyId=hunter2 other=1',
+])
+def test_audit_scrubs_aws_access_key_id_free_text(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_scrubs_composite_secret_in_container_values():
+  from forecast_ml_framework.governance.audit import scrub_details
+  details = {
+      'tuple_val': ('password', 'HUNTER2'),
+      'parts_val': ('api', 'HUNTER2', 'key'),
+      'before_val': ('HUNTER2', 'password'),
+      'list_val': ['password', 'HUNTER2'],
+      'set_val': {'password', 'HUNTER2'},
+      'frozen_val': frozenset({'api', 'HUNTER2', 'key'}),
+      'nested_val': (('HUNTER2', 'password'), 'label'),
+      'ok_val': ('ok', 'keep'),
+  }
+  out = scrub_details(details)
+  blob = str(out)
+  assert 'HUNTER2' not in blob
+  assert '***REDACTED***' in blob
+  assert out['ok_val'] == ('ok', 'keep')
+  assert isinstance(out['tuple_val'], tuple)
+  assert isinstance(out['list_val'], list)
+  assert isinstance(out['set_val'], set)
+  assert isinstance(out['frozen_val'], frozenset)
+  # Non-marker, non-marker-part elements are redacted, markers kept.
+  assert out['tuple_val'] == ('password', '***REDACTED***')
+  assert out['parts_val'] == ('api', '***REDACTED***', 'key')
+
+
+# --- loop11: first value token, trailing prose preserved (RED) ---
+
+@pytest.mark.parametrize('text,expected', [
+    ('password HUNTER2 end', 'password ***REDACTED*** end'),
+    ('password hunter2 end', 'password ***REDACTED*** end'),
+    ('password HUNTER2 the end', 'password ***REDACTED*** the end'),
+    ('token tok12345 trailing words here',
+     'token ***REDACTED*** trailing words here'),
+    ('secret hunter2 done.', 'secret ***REDACTED*** done.'),
+    ('password is hunter2 end', 'password is ***REDACTED*** end'),
+    ('password definitely hunter2 end',
+     'password definitely ***REDACTED*** end'),
+    ('password=QZ other=1', 'password=***REDACTED*** other=1'),
+    ('password QZ other=1', 'password ***REDACTED*** other=1'),
+    ('password "hunter2 phrase" end',
+     'password "***REDACTED***" end'),
+])
+def test_audit_redacts_first_value_preserves_trailing_prose(
+        text, expected):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  assert entry['details']['note'] == expected, repr(text)
+  for raw in ('HUNTER2', 'hunter2', 'tok12345', 'QZ'):
+    assert raw not in entry['details']['note'], repr(text)
+
+
+# --- loop12: empty/blank quoted spans are separators (RED) ---
+
+@pytest.mark.parametrize('text,expected', [
+    ('password "" HUNTER2', 'password "" ***REDACTED***'),
+    ('token "" ABC123', 'token "" ***REDACTED***'),
+    ('password "" "HUNTER2"', 'password "" "***REDACTED***"'),
+    ("password '' HUNTER2", "password '' ***REDACTED***"),
+    ('password "   " HUNTER2', 'password "   " ***REDACTED***'),
+    ('password `` HUNTER2', 'password `` ***REDACTED***'),
+    ('password \u201c\u201d HUNTER2',
+     'password \u201c\u201d ***REDACTED***'),
+    ('password "" "hunter2 phrase" end',
+     'password "" "***REDACTED***" end'),
+    ('password "" "" HUNTER2', 'password "" "" ***REDACTED***'),
+    ('secret "" hunter2 end', 'secret "" ***REDACTED*** end'),
+])
+def test_audit_skips_empty_quote_finds_real_secret(text, expected):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  assert entry['details']['note'] == expected, repr(text)
+  for raw in ('HUNTER2', 'hunter2', 'ABC123'):
+    assert raw not in entry['details']['note'], repr(text)
+
+
+def test_audit_empty_quote_alone_is_not_a_value():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': 'password ""'})
+  assert entry['details']['note'] == 'password ""'

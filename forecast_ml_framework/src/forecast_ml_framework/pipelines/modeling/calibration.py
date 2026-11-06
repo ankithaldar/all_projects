@@ -7,6 +7,9 @@ from forecast_ml_framework.pipelines.modeling.adapters import (
   SklearnAdapter,
   resolve_handle,
 )
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+)
 
 
 class _BetaCalWrapper:
@@ -59,7 +62,8 @@ def calibrate_model(model, x_train, y_train, params):
       calibrator_cls = resolve_handle(handle)
     else:
       resolve_handle(handle)
-  if params.get('task_type') != 'classification' or method == 'none':
+  if (normalize_task_kind(params.get('task_type', 'classification'))
+          != 'classification' or method == 'none'):
     return model, {'calibrated': False, 'method': method}
   base = getattr(model, 'model', model)
   if method == 'betacal':

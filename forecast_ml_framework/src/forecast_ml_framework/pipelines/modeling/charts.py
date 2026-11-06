@@ -47,6 +47,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+)
+
 
 def _pd_abs_err(y_true, y_pred):
   '''Return absolute errors as a pandas Series.
@@ -1705,7 +1709,7 @@ def make_charts(y_true, y_pred, y_proba, x_test, params):
     call (figures are returned closed, not open).
   '''
   params = params or {}
-  task = params.get('task_type', 'classification')
+  task = normalize_task_kind(params.get('task_type', 'classification'))
   figs = {}
   if task == 'classification':
     if y_proba is not None:

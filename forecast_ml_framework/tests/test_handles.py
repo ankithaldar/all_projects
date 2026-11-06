@@ -107,7 +107,7 @@ def test_strict_allowlist_rejects_simple_imputer():
 
 
 def test_expected_handles_present():
-  '''Key vz-style handles are present in shipped config.'''
+  '''Key parity-style handles are present in shipped config.'''
   params = _load_shipped_params()
   handles = set(_collect_handles(params))
   assert 'xgboost.XGBClassifier' in handles

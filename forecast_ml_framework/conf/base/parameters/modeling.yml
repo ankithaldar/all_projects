@@ -83,8 +83,19 @@ modeling_params:
     - 'catboost'
     - 'sklearn'
   selection_metric: 'f1_weighted'
+  # eval_metric: top-level parity ntile selection for selected_ntile
+  #   (distinct from model_params.xgboost.eval_metric 'aucpr',
+  #   the per-model xgboost objective). Examples:
+  #   'LIFT_DECILE_10', 'LIFT_CENTILE_100'. Omitted = no
+  #   selected_ntile. Uncomment to enable:
+  # eval_metric: 'LIFT_DECILE_10'
   random_state: 42
   test_size: 0.2
+  # lift_threshold: proba threshold for lift *_at_or_above_threshold
+  #   columns (pipeline.build_lift_table); null = top-decile
+  #   cumulative semantics. model_threshold is an alias.
+  lift_threshold: null
+  model_threshold: null
   sampling_params:
     method: 'stratified'
     test_size: 0.2
@@ -160,6 +171,11 @@ modeling_reg_params:
     - 'catboost'
     - 'sklearn'
   selection_metric: 'rmse'
+  # eval_metric: top-level parity ntile selection (distinct from
+  #   model_params.xgboost.eval_metric 'rmse', the per-model
+  #   xgboost objective). Examples: 'RMSE_CENTILE_100',
+  #   'RMSE'. Omitted = no selected_ntile. Uncomment:
+  # eval_metric: 'RMSE_CENTILE_100'
   random_state: 42
   test_size: 0.2
   sampling_params:

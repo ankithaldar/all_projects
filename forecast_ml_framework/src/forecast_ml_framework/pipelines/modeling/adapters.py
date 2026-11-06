@@ -8,6 +8,10 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+)
+
 #: Max distinct models fitted by train_models in one call.
 MAX_MODELS = 10
 
@@ -486,7 +490,8 @@ class XGBoostAdapter(ModelAdapter):
       import xgboost as xgb
     except ImportError as exc:
       raise _missing('xgboost', self.name) from exc
-    task = self.params.get('task_type', 'classification')
+    task = normalize_task_kind(
+        self.params.get('task_type', 'classification'))
     cls = xgb.XGBClassifier if task == 'classification' else xgb.XGBRegressor
     self.model = cls(**_loss_kwargs(self.name, self.params))
     self.model.fit(x, y)
@@ -504,7 +509,8 @@ class LightGBMAdapter(ModelAdapter):
       import lightgbm as lgb
     except ImportError as exc:
       raise _missing('lightgbm', self.name) from exc
-    task = self.params.get('task_type', 'classification')
+    task = normalize_task_kind(
+        self.params.get('task_type', 'classification'))
     cls = lgb.LGBMClassifier if task == 'classification' else lgb.LGBMRegressor
     self.model = cls(**_loss_kwargs(self.name, self.params))
     self.model.fit(x, y)
@@ -522,7 +528,8 @@ class CatBoostAdapter(ModelAdapter):
       from catboost import CatBoostClassifier, CatBoostRegressor
     except ImportError as exc:
       raise _missing('catboost', self.name) from exc
-    task = self.params.get('task_type', 'classification')
+    task = normalize_task_kind(
+        self.params.get('task_type', 'classification'))
     cls = (CatBoostClassifier if task == 'classification'
            else CatBoostRegressor)
     self.model = cls(**_loss_kwargs(self.name, self.params))
@@ -690,7 +697,8 @@ def train_models(x_train, y_train, x_test, y_test, params):
   from forecast_ml_framework.pipelines.modeling.metrics import (
     compute_metrics,
   )
-  task = params.get('task_type', 'classification')
+  task = normalize_task_kind(
+      params.get('task_type', 'classification'))
   raw_names = params.get('models_to_use', ['sklearn'])
   if params.get('model_handle') and 'models_to_use' not in params:
     raw_names = [params['model_handle']]

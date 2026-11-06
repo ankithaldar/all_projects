@@ -25,8 +25,44 @@ import numpy as np
 import pandas as pd
 
 from forecast_ml_framework.pipelines.modeling.metrics import (
-  METRIC_REGISTRY, compute_metrics, resolve_selected_metrics,
+  CLASSIFICATION_METRICS, METRIC_REGISTRY, REGRESSION_METRICS,
+  compute_metrics, resolve_selected_metrics,
 )
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+  parse_eval_metric,
+)
+
+# Map parity/ntile metric names to forecast registry names.
+_METRIC_ALIASES = {
+    'lift': 'lift_top_decile',
+    'auc': 'roc_auc',
+    'brier': 'brier_score',
+    'precision': 'precision_weighted',
+    'recall': 'recall_weighted',
+    'f1': 'f1_weighted',
+}
+
+
+def _parse_eval_metric(metric_name, task):
+  '''Parse the eval metric via ``ntile.parse_eval_metric``.
+
+  Delegates entirely to ntile (single owner of the parity
+  grammar); the 1-based ntile conversion happens in
+  ``_selected_ntile``.
+  '''
+  return parse_eval_metric(metric_name, task)
+
+
+def _registry_name(metric):
+  '''Map a parsed metric name to a forecast registry name.'''
+  name = str(metric or '').strip().lower()
+  mapped = _METRIC_ALIASES.get(name, name)
+  if mapped in METRIC_REGISTRY:
+    return mapped
+  if name in METRIC_REGISTRY:
+    return name
+  return mapped
 
 
 def _deciles(_y_true, y_pred, proba, task, n=10):
@@ -43,7 +79,7 @@ def _deciles(_y_true, y_pred, proba, task, n=10):
   Returns:
     Array of integer decile labels.
   '''
-  if task == 'classification':
+  if normalize_task_kind(task) == 'classification':
     arr = np.asarray(proba, dtype=float)
     score = arr[:, 1] if arr.ndim == 2 and arr.shape[1] > 1 else arr
   else:
@@ -104,7 +140,7 @@ def evaluate_model(y_true, y_pred, y_proba, x_test, params):
     ``METRIC_REGISTRY``, so more exist than the default).
   '''
   params = params or {}
-  task = params.get('task_type', 'classification')
+  task = normalize_task_kind(params.get('task_type', 'classification'))
   requested = params.get('metrics', params.get(
       'metrics_to_calculate'))
   selected = resolve_selected_metrics(requested, task)
@@ -124,4 +160,64 @@ def evaluate_model(y_true, y_pred, y_proba, x_test, params):
   labels = _deciles(y_true, y_pred, proba, task)
   result['by_decile'] = _by_group(
       y_true, y_pred, proba, labels, task, selected)
+  result['selected_ntile'] = None
+  eval_metric = params.get('eval_metric')
+  if eval_metric:
+    result['selected_ntile'] = _selected_ntile(
+        eval_metric, y_true, y_pred, proba, task, selected, result)
   return result
+
+
+def _selected_ntile(eval_metric, y_true, y_pred, proba, task, selected,
+                    result):
+  '''Build the selected_ntile dict for ``eval_metric``.
+
+  ``_deciles`` labels are 0-based (0..n-1) while parity ntile
+  labels are 1-based (1..n), so the requested ntile ``n``
+  maps to group label ``str(n - 1)``; when that label is
+  absent (e.g. qcut collapsed groups), fall back to the
+  largest available ntile label.
+  '''
+  metric, kind, ntile = _parse_eval_metric(eval_metric, task)
+  registry = _registry_name(metric)
+  task_name = normalize_task_kind(task)
+  valid = (CLASSIFICATION_METRICS if task_name == 'classification'
+           else REGRESSION_METRICS)
+  effective = list(selected)
+  if registry in valid and registry not in effective:
+    effective.append(registry)
+  groups = result.get('by_decile') or {}
+  if kind == 'centile':
+    centile_labels = _deciles(y_true, y_pred, proba, task, n=100)
+    groups = _by_group(
+        y_true, y_pred, proba, centile_labels, task, effective)
+    result['by_centile'] = groups
+  elif kind != 'overall':
+    # Generic branch: decile/quintile/quartile recompute with
+    # their own ``n`` so the top tile matches the request.
+    tile_labels = _deciles(y_true, y_pred, proba, task,
+                           n=ntile if ntile else 10)
+    groups = _by_group(
+        y_true, y_pred, proba, tile_labels, task, effective)
+  score = None
+  if kind == 'overall':
+    score = result['global'].get(registry)
+    if score is None and registry in valid:
+      single = compute_metrics(
+          y_true, y_pred, proba, task, selected=[registry])
+      score = single.get(registry)
+  elif groups:
+    label = str(ntile - 1)
+    if label not in groups:
+      label = max(groups, key=lambda k: int(k))
+    group = groups[label]
+    if registry in group:
+      score = group[registry]
+  if score is None:
+    score = result['global'].get(registry)
+  try:
+    score = float(score)
+  except (TypeError, ValueError):
+    score = float('nan')
+  return {'eval_metric': eval_metric, 'metric': metric,
+          'score': score, 'ntile': int(ntile)}

@@ -8,9 +8,9 @@
 # parameters.yml top-level runtime keys: score_model_id,
 # output_gcs_location, model_id_prefix, suffix, data_project,
 # db_staging_data, etl_project, etl_dataset, etl_table,
-# external_project, tmp_bucket, is_domino, run_date, train_run_dt,
-# score_run_dt, brand). The reference vz catalog uses
-# runtime_params namespace; this project uses params: everywhere.
+# external_project, tmp_bucket, is_external_platform, run_date, train_run_dt,
+# score_run_dt, brand). This catalog uses params: everywhere
+# (not runtime_params).
 # Every `type:` below is a real importable dataset class string:
 # kedro_datasets.* for files/Spark/JSON, and only our own
 # forecast_ml_framework.core.datasets.SQLQueryDataSet /
@@ -41,7 +41,7 @@ _save_parquet: &save_parquet
   save_args:
     mode: 'overwrite'
 
-# Pickle save anchor (vz _save_json pattern: pickle-serialised
+# Pickle save anchor (this framework _save_json pattern: pickle-serialised
 # metadata/model handles). Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset
 # (filepath, backend='pickle', load_args, save_args, version).
 _save_json: &save_json
@@ -64,7 +64,7 @@ raw_data_regression:
   type: 'kedro_datasets.pandas.CSVDataset'
   filepath: 'data/raw/raw_data_regression.csv'
 
-# --- BigQuery/Spark inputs (vz *_input_params pattern) -------------------------
+# --- BigQuery/Spark inputs (this framework *_input_params pattern) -------------------------
 # Train input: Spark BQ anchor + BigQuery SQL (backtick
 # project.dataset.table). WARNING: SQL is trusted config only;
 # SparkSQLDataSet enforces single-statement read-only intent, it is
@@ -140,9 +140,9 @@ test_lift_df_params:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: '${params:output_gcs_location}/${params:model_id_prefix}_test_lift_${params:suffix}/'
 
-# --- Metrics / lift BigQuery tables (vz BQTable pattern) -----------------------
+# --- Metrics / lift BigQuery tables (this framework BQTable pattern) -----------------------
 # BQ table entries use our SQLQueryDataSet type (the only SQL/BQ type
-# allowed in this catalog, per project rule) with vz-style table keys:
+# allowed in this catalog, per project rule) with this framework table keys:
 # project/dataset/table_name identify the table, save_args carry
 # write_disposition + clustering_fields, partition_field/partition_type
 # (DAY) + partition_value (${params:run_date}) select the partition.
@@ -172,13 +172,13 @@ test_model_evaluation_params:
   partition_type: 'DAY'
   partition_value: '${params:run_date}'
 
-# Regression overall-metrics anchor (vz
+# Regression overall-metrics anchor (this framework
 # _regression_model_overall_metrics pattern).
 _regression_model_overall_metrics: &regression_model_overall_metrics
   type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
   project: '${params:data_project}'
   dataset: '${params:db_staging_data}'
-  table_name: 'faas_regression_model_overall_metrics'
+  table_name: 'regression_model_overall_metrics'
   save_args:
     write_disposition: 'WRITE_APPEND'
     clustering_fields: ['score_model_id', 'data_type']
@@ -196,13 +196,13 @@ valid_model_evaluation_reg_params:
 test_model_evaluation_reg_params:
   <<: *regression_model_overall_metrics
 
-# Regression decile-metrics anchor (vz
-# faas_regression_model_decile_metrics pattern).
+# Regression decile-metrics anchor (this framework
+# regression_model_decile_metrics pattern).
 _regression_model_decile_metrics: &regression_model_decile_metrics
   type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
   project: '${params:data_project}'
   dataset: '${params:db_staging_data}'
-  table_name: 'faas_regression_model_decile_metrics'
+  table_name: 'regression_model_decile_metrics'
   save_args:
     write_disposition: 'WRITE_APPEND'
     clustering_fields: ['score_model_id', 'data_type']
@@ -219,6 +219,30 @@ valid_model_lift_reg_params:
 
 test_model_lift_reg_params:
   <<: *regression_model_decile_metrics
+
+# Classification decile-metrics anchor (this framework
+# classification_model_decile_metrics pattern).
+_classification_model_decile_metrics: &classification_model_decile_metrics
+  type: 'forecast_ml_framework.core.datasets.SQLQueryDataSet'
+  project: '${params:data_project}'
+  dataset: '${params:db_staging_data}'
+  table_name: 'classification_model_decile_metrics'
+  save_args:
+    write_disposition: 'WRITE_APPEND'
+    clustering_fields: ['score_model_id', 'data_type']
+  partition_field: 'run_date'
+  partition_type: 'DAY'
+  partition_value: '${params:run_date}'
+
+# Train/valid/test lift classification metrics share the anchor.
+train_model_lift_params:
+  <<: *classification_model_decile_metrics
+
+valid_model_lift_params:
+  <<: *classification_model_decile_metrics
+
+test_model_lift_params:
+  <<: *classification_model_decile_metrics
 
 # --- Processed / split data (generic, kept) -----------------------------------
 # Processed frame. Type: kedro_datasets.pandas.ParquetDataset.
@@ -496,3 +520,66 @@ eda_summary:
 # Type: kedro.io.MemoryDataset.
 eda_report:
   type: 'kedro.io.MemoryDataset'
+
+# --- Modeling pipeline outputs (persisted) ------------------------------------
+# best_model: fitted model selected by train_models.
+# Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
+best_model:
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
+  filepath: 'artifacts/models/best_model.pkl'
+
+# best_model_name: selected adapter name (str).
+# Type: kedro_datasets.json.JSONDataset.
+best_model_name:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/models/best_model_name.json'
+
+# per_model_metrics: per-adapter metrics dict from train_models.
+# Type: kedro_datasets.json.JSONDataset.
+per_model_metrics:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/per_model_metrics.json'
+
+# calibrated_model: calibrated fitted model.
+# Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
+calibrated_model:
+  type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
+  filepath: 'artifacts/models/calibrated_model.pkl'
+
+# calibration_meta: calibration metadata dict.
+# Type: kedro_datasets.json.JSONDataset.
+calibration_meta:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/models/calibration_meta.json'
+
+# y_pred / y_pred_proba: in-process prediction arrays (predict nodes).
+# Type: kedro.io.MemoryDataset (arrays; see x_train/y_test precedent).
+y_pred:
+  type: 'kedro.io.MemoryDataset'
+
+y_pred_proba:
+  type: 'kedro.io.MemoryDataset'
+
+# evaluation_metrics: evaluate_model result dict.
+# Type: kedro_datasets.json.JSONDataset.
+evaluation_metrics:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/evaluation_metrics.json'
+
+# lift_table: per-decile lift DataFrame.
+# Type: kedro_datasets.pandas.ParquetDataset.
+lift_table:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/metrics/lift_table.parquet'
+
+# promotion: promotion gate decision dict.
+# Type: kedro_datasets.json.JSONDataset.
+promotion:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/metrics/promotion.json'
+
+# shap_artifact: SHAP/permutation explanation dict.
+# Type: kedro_datasets.json.JSONDataset.
+shap_artifact:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/shap/shap_artifact.json'

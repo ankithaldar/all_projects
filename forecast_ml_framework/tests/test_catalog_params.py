@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Base catalog.yml aligns to vz anchors/*_params patterns.'''
+'''Base catalog.yml aligns to this framework anchors/*_params patterns.'''
 
 from pathlib import Path
 
@@ -26,7 +26,7 @@ def _raw(env='base'):
 
 
 def test_anchors_present():
-  '''YAML anchors from the vz pattern are present.'''
+  '''YAML anchors from the this framework pattern are present.'''
   raw = _raw()
   for anchor in ('&spark_bq_data', '&save_parquet', '&save_json',
                  '&regression_model_overall_metrics',
@@ -75,7 +75,7 @@ def test_bq_metrics_and_decile_anchor():
     assert entry['partition_type'] == 'DAY'
     assert 'write_disposition' in entry['save_args']
   decile = catalog['train_model_lift_reg_params']
-  assert decile['table_name'] == 'faas_regression_model_decile_metrics'
+  assert decile['table_name'] == 'regression_model_decile_metrics'
   assert catalog['valid_model_lift_reg_params'] == decile
   assert catalog['test_model_lift_reg_params'] == decile
   overall = catalog['train_model_evaluation_reg_params']

@@ -46,7 +46,7 @@ eda_params:
   near_constant_threshold: 0.95
   leakage_name_keywords:
     - 'target'
-    - 'churn'
+    - 'attrition'
     - 'label'
     - 'outcome'
     - 'result'

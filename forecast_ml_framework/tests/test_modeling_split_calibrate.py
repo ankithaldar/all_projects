@@ -209,3 +209,40 @@ def test_beta_cal_wrapper_delegates_to_base_and_calibrator():
   proba = wrapped.predict_proba(None)
   assert proba.shape == (2, 2)
   assert list(wrapped.predict(None)) == ['neg', 'pos']
+
+
+def test_calibrate_task_alias_binary_calibrates():
+  '''calibrate_model with BINARY/cls alias calibrates (not passthrough).'''
+  from forecast_ml_framework.pipelines.modeling.adapters import (
+    SklearnAdapter,
+  )
+  frame = _frame(120)
+  x = frame[['f1', 'f2']]
+  y = frame['target']
+  for alias in ('BINARY', 'cls', 'Classification'):
+    base = SklearnAdapter({}).fit(x, y)
+    params = {'task_type': alias,
+              'calibration': {'method': 'sigmoid', 'cv': 2}}
+    calibrated, meta = calibrate_model(base, x, y, params)
+    assert meta['calibrated'] is True, alias
+    assert calibrated.predict_proba(x).shape[1] == 2
+
+
+def test_split_task_alias_stratifies(monkeypatch):
+  '''split_data with cls/BINARY alias stratifies by target.'''
+  import sklearn.model_selection
+  captured = {}
+  real = sklearn.model_selection.train_test_split
+
+  def spy(*args, **kwargs):
+    captured.update(kwargs)
+    return real(*args, **kwargs)
+  monkeypatch.setattr(
+      sklearn.model_selection, 'train_test_split', spy)
+  for alias in ('cls', 'BINARY', 'Classification'):
+    captured.clear()
+    params = {'target_col': 'target', 'task_type': alias,
+              'test_size': 0.25, 'random_state': 42,
+              'sampling_params': {'method': 'stratified'}}
+    split_data(_frame(), dict(params))
+    assert captured.get('stratify') is not None, alias

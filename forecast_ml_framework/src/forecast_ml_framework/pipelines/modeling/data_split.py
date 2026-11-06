@@ -5,6 +5,10 @@
 
 import numpy as np
 
+from forecast_ml_framework.pipelines.modeling.ntile import (
+  normalize_task_kind,
+)
+
 
 def split_data(df, params):
   '''Split a frame into train/test features and target.
@@ -40,7 +44,8 @@ def split_data(df, params):
   stratify = None
   if method == 'stratified':
     stratify = df[sampling.get('stratify_col', target)] if (
-        params.get('task_type') == 'classification'
+        normalize_task_kind(params.get('task_type', 'classification'))
+        == 'classification'
         or 'stratify_col' in sampling) else None
     if stratify is not None and stratify.nunique() < 2:
       stratify = None

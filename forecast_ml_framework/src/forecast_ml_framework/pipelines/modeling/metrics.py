@@ -23,6 +23,14 @@ import warnings
 import numpy as np
 
 
+def _normalize_task(task_type):
+  '''Normalize task_type via ntile's single normalizer (lazy).'''
+  from forecast_ml_framework.pipelines.modeling.ntile import (
+    normalize_task_kind,
+  )
+  return normalize_task_kind(task_type)
+
+
 def _safe(fn, *args, **kwargs):
   '''Return fn result as float, or nan on failure.
 
@@ -792,7 +800,7 @@ def _residual_moment(values, kind):
   return float(np.mean(z ** 4) - 3)
 
 
-def _regression(y_true, y_pred, selected=None):
+def _regression(y_true, y_pred, selected=None, n_features=1):
   '''Compute selected regression metrics (None = all).
 
   Args:
@@ -801,10 +809,13 @@ def _regression(y_true, y_pred, selected=None):
     selected: Set of metric names to compute, or None for all.
       Shared intermediates (MAE/MSE/residuals) are computed
       once and only if a dependent metric is selected.
+    n_features: Feature count for adj_r2 (default 1).
 
   Returns:
     Dict of regression metric name to value.
   '''
+  if n_features is None:
+    n_features = 1
   from sklearn.metrics import (
     d2_absolute_error_score, explained_variance_score, max_error,
     mean_absolute_error, mean_absolute_percentage_error,
@@ -854,8 +865,7 @@ def _regression(y_true, y_pred, selected=None):
   if _want(selected, 'r2'):
     out['r2'] = r2_val
   if _want(selected, 'adj_r2'):
-    out['adj_r2'] = _safe(
-        lambda: 1 - (1 - r2_val) * (n - 1) / max(n - 2, 1))
+    out['adj_r2'] = _safe(_adj_r2, r2_val, n, n_features)
   if _want(selected, 'mape', 'mean_absolute_percentage_error'):
     mape_val = _safe(
         mean_absolute_percentage_error, y_true, y_pred)
@@ -996,6 +1006,28 @@ def _regression(y_true, y_pred, selected=None):
       out['r2_log'] = r2log_val
     if _want(selected, 'r2_log1p'):
       out['r2_log1p'] = r2log_val
+  # Descriptive stats (this framework model_evaluation_reg; only when selected).
+  if _want(selected, 'target_sum'):
+    out['target_sum'] = _safe(lambda: float(np.sum(y_true)))
+  if _want(selected, 'target_min'):
+    out['target_min'] = _safe(lambda: float(np.min(y_true)))
+  if _want(selected, 'target_max'):
+    out['target_max'] = _safe(lambda: float(np.max(y_true)))
+  if _want(selected, 'target_mean'):
+    out['target_mean'] = _safe(lambda: float(np.mean(y_true)))
+  if _want(selected, 'pred_sum'):
+    out['pred_sum'] = _safe(lambda: float(np.sum(y_pred)))
+  if _want(selected, 'pred_min'):
+    out['pred_min'] = _safe(lambda: float(np.min(y_pred)))
+  if _want(selected, 'pred_max'):
+    out['pred_max'] = _safe(lambda: float(np.max(y_pred)))
+  if _want(selected, 'pred_mean'):
+    out['pred_mean'] = _safe(lambda: float(np.mean(y_pred)))
+  if _want(selected, 'total_count'):
+    out['total_count'] = _safe(lambda: float(n))
+  if _want(selected, 'max_pred_error'):
+    err = y_true - y_pred
+    out['max_pred_error'] = _safe(lambda: float(np.max(err)))
   return out
 
 
@@ -1121,6 +1153,82 @@ def _log_cosh(y_true, y_pred):
                        - np.log(2)))
 
 
+def _adj_r2(r2_val, n, n_features=1):
+  '''Compute adjusted R-squared with given feature count.
+
+  Args:
+    r2_val: Plain R-squared value.
+    n: Number of samples.
+    n_features: Feature count (default 1).
+
+  Returns:
+    Adjusted R-squared as float.
+
+  Raises:
+    ValueError: If n - n_features - 1 <= 0 (degenerate).
+  '''
+  if n_features is None:
+    n_features = 1
+  denom = n - n_features - 1
+  if denom <= 0:
+    raise ValueError('adj_r2 denominator must be positive')
+  return float(1 - (1 - r2_val) * (n - 1) / denom)
+
+
+def adj_r2(y_true, y_pred, n_features=1):
+  '''Compute adjusted R-squared for regression predictions.
+
+  Args:
+    y_true: True values.
+    y_pred: Predicted values.
+    n_features: Feature count (default 1).
+
+  Returns:
+    Adjusted R-squared as float, or nan when degenerate.
+  '''
+  from sklearn.metrics import r2_score
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
+  r2_val = _safe(r2_score, y_true, y_pred)
+  return _safe(_adj_r2, r2_val, len(y_true), n_features)
+
+
+def confusion_rates_table(y_true, y_pred):
+  '''Return parity-shaped confusion rates rows (tpr/fpr/fnr/tnr).
+
+  Args:
+    y_true: True binary labels.
+    y_pred: Predicted binary labels.
+
+  Returns:
+    List of dicts with rows Actual Positive/Actual Negative,
+    each carrying tpr, fpr, fnr, tnr floats.
+  '''
+  from sklearn.metrics import confusion_matrix
+  try:
+    cm = np.asarray(confusion_matrix(y_true, y_pred), dtype=float)
+  except Exception as exc:  # noqa: BLE001
+    warnings.warn(f'confusion_matrix failed: {exc}',
+                  stacklevel=2)
+    cm = np.zeros((0, 0))
+  if cm.shape == (2, 2):
+    tn, fp, fn, tp = cm.ravel()
+    rates = {
+        'tpr': float(tp / (tp + fn)) if tp + fn else 0.0,
+        'fpr': float(fp / (fp + tn)) if fp + tn else 0.0,
+        'fnr': float(fn / (fn + tp)) if fn + tp else 0.0,
+        'tnr': float(tn / (tn + fp)) if tn + fp else 0.0}
+  else:
+    rates = {key: float('nan') for key in (
+        'tpr', 'fpr', 'fnr', 'tnr')}
+  return [
+      {'label': 'Actual Positive', 'Actual': 'Actual Positive',
+       **rates},
+      {'label': 'Actual Negative', 'Actual': 'Actual Negative',
+       **rates},
+  ]
+
+
 def _validate_lengths(y_true, y_pred, y_proba):
   '''Require y_true, y_pred and y_proba to share one length.'''
   try:
@@ -1148,7 +1256,7 @@ def _validate_lengths(y_true, y_pred, y_proba):
 
 
 def compute_metrics(y_true, y_pred, y_proba, task_type,
-                    selected=None):
+                    selected=None, n_features=None):
   '''Compute metrics dict for the given task type.
 
   Args:
@@ -1159,22 +1267,27 @@ def compute_metrics(y_true, y_pred, y_proba, task_type,
     selected: Set/list of metric names to compute, or None
       for all metrics. Only selected families are computed;
       shared intermediates are computed once.
+    n_features: Feature count for adj_r2 (default 1 when None).
 
   Returns:
     Dict of metric name to float (lists for per-class/cm).
   Raises:
     ValueError: If a selected name is unknown for the task.
   '''
+  if n_features is None:
+    n_features = 1
   _validate_lengths(y_true, y_pred, y_proba)
+  task_kind = _normalize_task(task_type)
   sel = None
   if selected is not None:
-    sel = set(resolve_selected_metrics(selected, task_type))
-  if task_type == 'classification':
+    sel = set(resolve_selected_metrics(selected, task_kind))
+  if task_kind == 'classification':
     if y_proba is None:
       raise ValueError('y_proba required for classification')
     return _classification(y_true, y_pred, np.asarray(y_proba),
                            selected=sel)
-  return _regression(y_true, y_pred, selected=sel)
+  return _regression(y_true, y_pred, selected=sel,
+                     n_features=n_features)
 
 
 CLASSIFICATION_METRICS = [
@@ -1225,7 +1338,9 @@ REGRESSION_METRICS = [
     'rmse', 'rmsle', 'rmspe', 'root_mean_squared_error',
     'root_mean_squared_percentage_error', 'smape', 'spearman',
     'spearman_rho', 'tweedie_deviance', 'weighted_mae',
-    'wmae',
+    'wmae', 'target_sum', 'target_min', 'target_max',
+    'target_mean', 'pred_sum', 'pred_min', 'pred_max',
+    'pred_mean', 'total_count', 'max_pred_error',
 ]
 
 # Curated default subset (~15 per task combined): only these
@@ -1296,6 +1411,8 @@ def resolve_selected_metrics(requested, task_type=None):
     ValueError: If a name is unknown; message lists valid
       metric names for the task.
   '''
+  if task_type is not None:
+    task_type = _normalize_task(task_type)
   valid_all = (CLASSIFICATION_METRICS if task_type ==
                'classification' else REGRESSION_METRICS
                if task_type == 'regression' else

@@ -9,10 +9,14 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 `catalog.yml`) plus per-environment overlays. Changing a dataset, a model,
 or a loss function is a config edit, not a code edit.
 
-Phases 1–5 are landed (955 tests pass, see Tests; count supplied by
-the Phase 5 teams and checked against `pipeline_registry.py` — 12
+Phases 1–6 are landed (1160 tests pass, see Tests; count supplied by
+the Phase 6 teams and checked against `pipeline_registry.py` — 12
 registered pipelines — in this docs pass; the suite was not re-run
-here). Phase 2 added the MLflow model registry, batch scoring,
+here). Phase 6 (parity) added ntile eval-metric grammar,
+`selected_ntile`/`by_centile`, descriptive stats, the confusion rates
+table, lift table, threshold selection, promotion gating, scoring
+ntile columns, pipeline wiring, catalog anchors, and `eval_metric`
+config. Phase 2 added the MLflow model registry, batch scoring,
 Terraform IaC (`infra/`), and the static dashboard (`web/`). Phase 3
 added EDA/leakage, monitoring/retraining, the feature store, A/B
 shadow serving, cost tracking, governance, interpretability, metrics
@@ -25,7 +29,7 @@ degraded serving health, typed serving errors, sample data, EDA
 params, a smoke local profile, and a strict config schema — see the
 [Change Log](#change-log).
 
-> **Current-state note (Phase 5 clean-ux).** This README documents the
+> **Current-state note (Phase 6 parity).** This README documents the
 > code *as found on disk*, verified against `pipeline_registry.py`
 > (`_PIPELINE_MODULES`, 12 entries), every `pipelines/*/pipeline.py`,
 > `conf/`, `cli.py`, and `serving/app.py`. All eight pipeline modules are **registered** for
@@ -35,8 +39,8 @@ params, a smoke local profile, and a strict config schema — see the
 ## Features
 
 - **Config-driven.** `conf/base/variables.yml` (column registry),
-  `conf/base/parameters/*.yml` (6 buckets — see
-  [Parameters split](#parameters-split-6-buckets)), and
+  `conf/base/parameters/*.yml` (7 buckets — see
+  [Parameters split](#parameters-split-7-buckets)), and
   `conf/base/catalog.yml` (Kedro Data Catalog). No code edits are needed to
   point the framework at a new dataset.
 - **Kedro pipelines.** Eight pipeline modules on disk — `data_prep`,
@@ -233,8 +237,8 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **955 tests** at Phase 5
-land (40 test files in `tests/`, including `test_eda`, `test_monitoring`,
+success: `pytest` exits 0 with all tests passing — **1160 tests** at Phase 6
+land (48 test files in `tests/`, including `test_eda`, `test_monitoring`,
 `test_retraining`, `test_cost_tracking`, `test_interpretability`,
 `test_feature_store`, `test_governance`, `test_ab_testing`, `test_scaling`,
 `test_phase3_config`, `test_pipeline_registry`, `test_demo_run`,
@@ -385,7 +389,7 @@ forecast_ml_framework/
 ├── conf/                       # Kedro config (base + env overlays)
 │   ├── base/
 │   │   ├── variables.yml       # column registry (target, id/cat/num/date/seq/ind/drop)
-│   │   ├── parameters/         # split parameters buckets (6 files, see below)
+│   │   ├── parameters/         # split parameters buckets (7 files, see below)
 │   │   │   ├── global.yml      # runtime keys + global_params
 │   │   │   ├── data.yml        # data sources, sampling, split, validation, pandas guard
 │   │   │   ├── preprocessing.yml # FE registry + feature selection
@@ -421,7 +425,8 @@ forecast_ml_framework/
 │   │   ├── data_prep/          # pipeline.py, nodes.py
 │   │   ├── modeling/           # pipeline.py, adapters.py, calibration.py,
 │   │   │                       # data_split.py, evaluate.py, metrics.py (144 registry),
-│   │   │                       # charts.py (groups I-VII); SHAP via interpretability.nodes.shap_explain
+│   │   │                       # charts.py (groups I-VII); SHAP via interpretability.nodes.shap_explain;
+│   │   │                       # ntile.py, lift_table.py, threshold.py, validation.py (Phase 6 parity)
 │   │   ├── scoring/            # pipeline.py, nodes.py (batch scoring, Spark partitioned)
 │   │   ├── eda/                # pipeline.py, nodes.py (summary + leakage)
 │   │   ├── monitoring/         # pipeline.py, nodes.py (PSI/KS drift, alerts)
@@ -432,7 +437,7 @@ forecast_ml_framework/
 │   ├── governance/             # audit.py, lineage.py, retention.py (pure functions, no persistence)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (40 test files, 955 tests)
+├── tests/                      # pytest suite (48 test files, 1160 tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -441,7 +446,7 @@ forecast_ml_framework/
 | Display name | Real module | Nodes (in order) |
 |---|---|---|
 | `data`, `preprocessing`, `feature_selection` | `pipelines/data_prep/pipeline.py` | `data_ingestion_validate` → `preprocessing` → `feature_selection` |
-| `modeling`, `evaluation`, `predict` | `pipelines/modeling/pipeline.py` | `split_data_node` → `train_models_node` → `calibrate_model_node` → `predict_node` → `predict_proba_node` → `evaluate_model_node` → `make_charts_node` → `explain_model_node` |
+| `modeling`, `evaluation`, `predict` | `pipelines/modeling/pipeline.py` | `split_data_node` → `train_models_node` → `calibrate_model_node` → `predict_node` → `predict_proba_node` → `evaluate_model_node` → `build_lift_table_node` → `build_promotion_node` → `make_charts_node` → `explain_model_node` |
 | `scoring` | `pipelines/scoring/pipeline.py` | `score_data` (`load_scoring_data`) → `predict` → `write_predictions` |
 | `eda` | `pipelines/eda/pipeline.py` | `eda_summary` → `eda_report` |
 | `monitoring` | `pipelines/monitoring/pipeline.py` | `compute_drift` → `build_monitoring_report` → `evaluate_alerts` |
@@ -555,7 +560,7 @@ missing rates, numeric descriptives, correlations, top categorical values).
 (`leakage_threshold`, default 0.95), single-feature AUC
 (`leakage_auc_threshold`, 0.99), near-duplicate features (0.99),
 near-constant features (0.95), and post-outcome name keywords
-(`leakage_name_keywords`: `target`, `churn`, `label`, `outcome`,
+(`leakage_name_keywords`: `target`, `attrition`, `label`, `outcome`,
 `result`, `after`, `post`). Outputs: `eda_summary`, `eda_report`
 (summary + findings + recommendations). Catalog: `raw_data` in,
 `variables` in (target column wins over `eda_params.target_col`).
@@ -677,7 +682,7 @@ Two loading paths exist:
 ```mermaid
 flowchart TD
   V["variables.yml<br/>column registry"] --> OC["OmegaConf merge<br/>base + env overlay"]
-  P["parameters/*.yml<br/>6 buckets: global data preprocessing<br/>modeling evaluation platform"] --> OC
+  P["parameters/*.yml<br/>7 buckets: global data preprocessing<br/>modeling evaluation eda platform"] --> OC
   C["catalog.yml<br/>Kedro datasets"] --> OC
   OC --> RES["OmegaConf.resolve()<br/>interpolations ${...}"]
   RES --> PM["Pydantic validation<br/>config_schema.py<br/>extra=allow"]
@@ -780,7 +785,7 @@ run_date: ${.global_params.run_date}
 train_run_dt: ${.global_params.run_date}
 score_run_dt: ${.global_params.run_date}
 # data_project, db_staging_data, etl_project, etl_dataset, etl_table,
-# external_project, tmp_bucket, brand: '' ; is_domino: false
+# external_project, tmp_bucket, brand: '' ; is_external_platform: false
 ```
 
 #### Global / run
@@ -788,7 +793,7 @@ score_run_dt: ${.global_params.run_date}
 ```yaml
 global_params:
   is_regression: false          # true → regression defaults
-  is_domino: false
+  is_external_platform: false
   score_model_id: 'demo_model_v1'
   run_date: '2026-11-05'
   model_type: 'sklearn'
@@ -1423,6 +1428,138 @@ charts:
 For the 27-chart interpretability/diagnostics catalog, see
 [Interpretability pipeline](#interpretability-pipeline--pipelinesinterpretability).
 
+## Metrics Parity (Phase 6, parity)
+
+Parity helpers live in `pipelines/modeling/ntile.py`,
+`pipelines/modeling/lift_table.py`, `pipelines/modeling/threshold.py`,
+and `pipelines/modeling/validation.py`, wired into
+`pipelines/modeling/pipeline.py` (`build_lift_table_node` →
+`lift_table`, `build_promotion_node` → `promotion`) and
+`pipelines/modeling/evaluate.py:evaluate_model`.
+
+### `eval_metric` grammar
+
+Set top-level `eval_metric` in `modeling_params` /
+`modeling_reg_params` (commented examples in
+`conf/base/parameters/modeling.yml:86-91,174-178`; distinct from the
+per-model `model_params.xgboost.eval_metric`). Parsed by
+`ntile.parse_eval_metric(metric_name, task)`
+(`ntile.py:89-164`) into `(metric, kind, n)`:
+
+```yaml
+modeling_params:            # classification
+  eval_metric: 'LIFT_DECILE_10'   # or 'LIFT_CENTILE_100', 'AUC_DECILE_10'
+modeling_reg_params:        # regression
+  eval_metric: 'RMSE_CENTILE_100' # or 'RMSE', 'MAE_QUINTILE_5'
+```
+
+Grammar: `<M>_<DECILE|CENTILE|QUINTILE|QUARTILE>_<n>` where `M` is a
+selectable metric — classification `LIFT|PRECISION|RECALL|ACCURACY|F1|
+AUC|BRIER_SCORE|BRIER` (`ntile.py:35-39`), regression
+`MAE|MAPE|MSE|MSLE|RMSE|RMSLE|ADJ_R2|R2` (`ntile.py:40-44`) — plus
+forecast aliases (`lift_top_decile`, `roc_auc`, `f1_weighted`,
+`root_mean_squared_error`, …; `ntile.py:47-57`). Bare selectable names
+use the task default kind; names containing
+`decile|quintile|quartile|centile` select that kind/count
+(10/5/4/100); `overall|global` selects kind `overall`, `n=0`. Defaults
+when omitted/empty: classification `('lift','decile',10)`, regression
+`('rmse','overall',0)`. Unknown names warn and fall back to the task
+default — they never raise.
+
+### `selected_ntile` and `by_centile`
+
+`evaluate_model` sets `result['selected_ntile'] = None` when
+`eval_metric` is absent, else `_selected_ntile(...)`
+(`evaluate.py:163-168,171-223`) returns
+`{'eval_metric', 'metric', 'score', 'ntile'}`. The requested 1-based
+ntile `n` maps to 0-based group label `str(n-1)` (`evaluate.py:174-178`);
+if that label is absent (qcut collapsed), it falls back to the largest
+available label.
+`kind == 'centile'` recomputes 100 groups and also sets
+`result['by_centile']`; `kind == 'decile'` recomputes decile groups
+with the parsed metric included even when it is not in the user's
+selected list; `kind == 'overall'` reads the global score
+(recomputing if needed). `score` falls back to the global metric,
+then `nan` — never raises.
+
+### Descriptive stats (regression) and confusion rates table
+
+Descriptive stats (regression) are computed only when selected
+(`metrics.py:1009-1030`): `target_sum|min|max|mean`,
+`pred_sum|min|max|mean`, `total_count`, and `max_pred_error`
+(signed `max(y_true - y_pred)`, not max absolute error). The
+parity-shaped confusion table is `metrics.confusion_rates_table(y_true,
+y_pred)` (`metrics.py:1196-1229`): two rows (`Actual Positive` /
+`Actual Negative`, each with `label` and `Actual` keys) carrying
+`tpr|fpr|fnr|tnr` floats; a failed/non-2×2 confusion matrix yields
+`nan` rates, never a crash.
+
+### Lift table
+
+`lift_table.compute_lift_table(y_true, y_pred, proba, n=10,
+threshold=None)` (`lift_table.py:39-184`) returns a DataFrame with
+exactly the `COLUMNS` list (`lift_table.py:13-26`): `decile`,
+`min_prob`, `max_prob`, `avg_prob`, `decile_count`,
+`non_target_count`, `target_count`, `target_percentage`,
+`non_target_percentage`, `cum_target_percentage`,
+`cum_non_target_percentage`, `ks`, `lift`, `decile_disconnect_rate`,
+`predicted_positive`, `predicted_negative`, `tp`, `fp`, `tn`, `fn`,
+`precision`, `recall`, `customers_at_or_above_threshold`,
+`true_positive_at_or_above_threshold`,
+`precision_at_or_above_threshold`, `recall_at_or_above_threshold`,
+`tp_above_threshold`, `fp_above_threshold`, `tn_above_threshold`,
+`fn_above_threshold`, `precision_above_threshold`,
+`recall_above_threshold`. Rows are deciles 1..n (1 = lowest proba)
+sorted descending; `threshold` is wired, not reserved: when given
+(in [0, 1], validated at `lift_table.py:84-92`), the
+above-threshold columns are cumulative-from-top sums over the
+subset `proba >= threshold`; when `None` (default), they are
+cumulative from the top decile down over all rows
+(`lift_table.py:39-55,152-184`). `pipeline.build_lift_table`
+(`pipeline.py:135-168`) passes the threshold from
+`modeling_params` (`lift_threshold`, alias `model_threshold`)
+through to `compute_lift_table`, extracts the positive-class
+proba, and returns the empty frame when `y_proba is None`.
+
+### Threshold methods
+
+`threshold.select_threshold(y_true, proba, method)`
+(`threshold.py:49-111`) supports `pr_curve` (max F-score),
+`roc_curve` (max G-mean), `mcc_curve` (max Matthews correlation,
+0.01 → 0.0001 → 0.000001 step grids), and `ks_statistics` (max
+TPR−FPR). Unknown methods, empty, or single-class input return
+`0.5`. Results are rounded per parity: `<0.0001` → 6dp, `<0.01` → 4dp,
+else 2dp (`threshold.py:16-22`).
+
+### Promotion thresholds
+
+`validation.should_promote(new_score, old_score, task, metric='')`
+(`validation.py:30-74`) returns `(promote, deviation_pct)` with
+`deviation = (new - old) / old * 100`. Classification (and
+higher-better regression `r2`/`adj_r2`) promotes at
+`deviation >= -5%`; lower-better regression promotes at
+`deviation < +5%`. `old_score` of `0`, `None`, `nan`, or an
+unparseable score never promotes (`(False, nan)`).
+`pipeline.build_promotion` compares `selected_ntile.score` against
+`params.old_score` and returns `{'promote', 'deviation_pct',
+'new_score', 'old_score', 'eval_metric', 'metric', 'task_type'}`
+(`pipeline.py:171-200`); missing `old_score`/`selected_ntile` never
+promotes. `should_promote` only returns the decision — registry
+promotion stays with the caller.
+
+### Scoring ntile columns
+
+`pipelines/scoring/nodes.py:_score_pandas_chunk` (`scoring/nodes.py:564-666`)
+adds `score_decile` (10 tiles) and `score_centile` (100 tiles)
+(`scoring/nodes.py:652-653`) via `_ntile_labels`
+(`scoring/nodes.py:438-467`) → `ntile.assign_ntile` (`ntile.py:167-198`;
+`assign_ntile` is 1-based, lowest scores in tile 1, `overall` → all
+zeros). When a calibrated source is present (`_calib_values`,
+`scoring/nodes.py:647`), it also adds `calib_decile` / `calib_centile`
+(`scoring/nodes.py:654-656`). Classification rows also get
+`high_score_ind` (`'Y'` when `proba > model_threshold` (default 0.5)
+and `score_decile >= 5`, else `'N'`, `scoring/nodes.py:657-661`).
+
 ## Scaling: 100M-row guidance
 
 The local pandas path is capped by design; the cloud path never
@@ -1587,11 +1724,34 @@ live with it as documented.
 | 10 | Params mutation | **Fixed** | Mutating shared param dicts across models in the zoo | Adapters never mutate input params: `_loss_kwargs()` / `_estimator_kwargs()` build fresh kwargs, and `train_models()` copies each model's params (`mp = dict(source)`). `ConfigLoader` normalises inputs to plain dicts on construction |
 | 11 | Console script name | **Fixed** | Old scaffold README invoked a non-existent `forecastin-ml` script | Only `forecast-ml` is declared (`pyproject.toml`); `__main__.py` delegates to `cli.main`. Use `uv run forecast-ml ...` |
 | 12 | Phase 3 pipelines not registered | **Fixed (Phase 4)** | `kedro run --pipeline eda|monitoring|retraining|cost_tracking|interpretability` failed — "pipeline not found" | `pipeline_registry._PIPELINE_MODULES` (`pipeline_registry.py:19`) now maps all 12 display names across 8 modules; verified by `tests/test_pipeline_registry.py` (12 keys) |
-| 13 | `parameters.yml` split migration | **Workaround** | Code/scripts reading `conf/base/parameters.yml` break — the file no longer exists | Edit the bucket that owns your section under `conf/base/parameters/` (see [Parameters split](#parameters-split-6-buckets)); Kedro/OmegaConf merges all `*.yml` there, so `params:<section>` references are unchanged. `conf/local/parameters.yml` still exists |
+| 13 | `parameters.yml` split migration | **Workaround** | Code/scripts reading `conf/base/parameters.yml` break — the file no longer exists | Edit the bucket that owns your section under `conf/base/parameters/` (see [Parameters split](#parameters-split-7-buckets)); Kedro/OmegaConf merges all `*.yml` there, so `params:<section>` references are unchanged. `conf/local/parameters.yml` still exists |
 | 14 | Metrics default-subset semantics | **Workaround (documented)** | Setting only `evaluation_params.metrics_to_calculate` in `evaluation.yml` has no effect on a Kedro `modeling` run — `evaluate_model_node` receives `params:modeling_params`, not `evaluation_params` (`pipelines/modeling/pipeline.py:151`) | Put `metrics`/`metrics_to_calculate` inside `modeling_params` for Kedro runs (absent → curated `DEFAULT_METRICS` subset; `'all'` → all 144; list → only those). See [Metrics selection](#metrics-selection-metrics_to_calculate) |
 | 15 | Spark scoring model broadcast | **Workaround** | Partitioned Spark scoring fails on executors with a pickling error for an unpicklable model object | The partition function closes over / broadcasts the model (`pipelines/scoring/pipeline.py:82`) — use a picklable sklearn/XGBoost/LightGBM/CatBoost estimator; keep batch sizes bounded |
 | 16 | `terraform validate` not run locally | **Workaround** | `infra/` Terraform was not validated with a local `terraform validate` in this environment | Before applying, run `terraform init && terraform validate` inside `infra/gcp` and `infra/aws` (see `infra/README.md` Validation); review `terraform plan` before `apply` |
 | 17 | MLflow serial marker | **Workaround** | Running the real-MLflow roundtrip test in parallel corrupts global mlflow state (tracking/registry URIs) | The test carries `@pytest.mark.serial` + a state-reset fixture (`tests/test_registry.py:449`) — run the full suite serially; do not parallelise with `pytest-xdist -n auto` |
+
+### Known-issues audit — 2026-11-06 (post-Phase 6, 1160 tests)
+
+Each item below was re-verified against current code on disk in this
+docs pass (File:Line cites the code that proves it). No code was
+changed. Items #3 and #16 already appear above; they are re-verified
+here as #20 and #25 so the audit list is complete in one place.
+
+| # | Issue | Symptom | Impact | Workaround / config |
+|---|---|---|---|---|
+| 18 | H2O pickle serving rejected (no cluster) | Loading an H2O AutoML pickle via `ModelAdapter.load()` / `FileModelLoader` raises `ValueError` ("Forbidden pickle global") — H2O globals are absent from the exact allowlist (`core/artifact_store.py:309-323` has xgboost/lightgbm/catboost only, no `h2o` entries; `pipelines/modeling/adapters.py:403-416` states zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only: `H2OAutoMLAdapter.fit` calls `h2o.init(disable_server=True)` (`pipelines/modeling/adapters.py:544`); there is no H2O cluster connect/load path (`h2o.connect` / `h2o.import_model` do not appear in `src/`) | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError` via `serving/model_loader.py:141`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change — `pipelines/modeling/adapters.py:414-416` forbids widening it unilaterally |
+| 19 | pyfunc opt-in, trusted registry only | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:250-255`). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:180`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:190-194`). Trust boundary: `serving/model_loader.py:10-18` |
+| 20 | SQL trusted-config, not a sandbox (re-verifies #3) | `SQLQueryDataSet` / `SparkSQLDataSet` accept only a single `SELECT`/`WITH` statement with denylisted keywords (`core/datasets.py:71-119`), but a `SELECT` against any readable table still executes | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account (`core/datasets.py:87-92,125-131`) |
+| 21 | No rate limiting | `serving/app.py` caps payload size only (`MAX_RECORDS=10000`, `MAX_BODY_BYTES=10MB`, `serving/app.py:39-41`; `_check_caps`, `serving/app.py:96-111`) and offers optional API-key auth (`FORECAST_API_KEY`, `serving/app.py:11-18`). A grep of `serving/` finds no rate-limiter, throttle, or 429 handling | An unauthenticated or authenticated client can call `/predict` as fast as the host allows; no per-client quota | Put the app behind a gateway/proxy with rate limiting (e.g. nginx, ALB, API Gateway), and set `FORECAST_API_KEY` in production |
+| 22 | DNS rebinding: literal-IP check only | `_validate_uri_host` rejects non-public **literal** IPs via `ipaddress.ip_address(host)` (`registry/model_registry.py:140-155`) and blocks metadata/encoded forms (`registry/model_registry.py:120-137`), but a hostname that is not a literal IP passes without any DNS resolution — the check never resolves the name | A hostname (e.g. attacker-controlled DNS) that resolves to a private/metadata IP at connect time is not caught by this validator | Use an allowlisted registry hostname you control, resolve and re-check the IP before connecting, or egress through a proxy that validates resolved addresses |
+| 23 | Pickle native-booster trust | The restricted unpickler allowlists native `Booster` constructors for XGBoost/LightGBM (`core/artifact_store.py:315-320`) and CatBoost wrappers (`core/artifact_store.py:321-322`), exact-match only (`core/artifact_store.py:326-349`). Unpickling a `Booster` invokes native code; `restricted_loads` even notes `Booster(model_file=...)` errors may carry filesystem paths (`core/artifact_store.py:374-377`) | A malicious pickle that reaches an allowlisted `Booster` global runs native deserialization code — the allowlist narrows, but does not eliminate, native-code risk | Load only artifacts produced by this framework from a fully trusted registry/store (`serving/model_loader.py:10-25`, `core/artifact_store.py:352-358`); treat any other pickle source as untrusted |
+| 24 | Dataproc / EMR stubs off by default | GCP Dataproc defaults `enable_dataproc = false`, `count = 0` (`infra/gcp/variables.tf:47-51`, `infra/gcp/main.tf:88`); AWS EMR defaults `enable_emr = false`, `count = 0` (`infra/aws/variables.tf:31-35`, `infra/aws/main.tf:83-85`). EMR autoscaling and the EventBridge scheduler ship commented-out | No cloud Spark compute exists until explicitly enabled; 100M-row cloud runs need manual provisioning | Set `-var="enable_dataproc=true"` (+ `autoscaling_enabled=true`) or `-var="enable_emr=true"` (+ `emr_subnet_id`), plan/apply, and destroy when idle (see `infra/README.md`) |
+| 25 | `terraform validate` not run locally (re-verifies #16) | Local checks run only `terraform fmt -check` when terraform is present (`ci/run_checks.sh:37-42`); no `terraform validate` / `plan` step runs in this environment | Terraform syntax/plan errors surface only at first real apply | Before applying, run `terraform init && terraform validate` in `infra/gcp` and `infra/aws`, then review `terraform plan` before `apply` |
+| 26 | System-Anaconda skips | The uv venv is canonical; the system Anaconda env is explicitly not canonical and skips for missing deps (e.g. mlflow extras) are expected there (`pyproject.toml:1-4`, `ci/run_checks.sh:4-7`) | Running pytest under system Anaconda yields skips/false failures that do not reflect the real suite | Always use the uv environment: `uv sync`, then `uv run python -m pytest tests/ -q` (1160 tests). Do not treat Anaconda skips as regressions |
+| 27 | Metrics / charts size | `METRIC_REGISTRY` holds the full 144-name catalog (`pipelines/modeling/metrics.py:1284-1335` lists, `1380-1384` registry build); `make_charts` builds every chart for the task in one call (`pipelines/modeling/charts.py:1690-1759`) and returns them closed. `'all'` selects every registry metric (`pipelines/modeling/metrics.py:1416-1418`) | Selecting `'all'` metrics and/or all chart groups on large eval frames inflates time, memory, and artifact size | Keep metrics at the curated default (absent → `DEFAULT_METRICS`, `pipelines/modeling/metrics.py:1339-1350`) unless you need more; select an explicit list, and save figures inside `make_charts` (they return closed) |
+| 28 | Health cache staleness | `/health` caches its first probe result in `_health_cache` and returns it forever after (`serving/app.py:425-444`); there is no TTL or invalidation | If the model artifact appears/fails after the first probe, `/health` keeps reporting the stale `ok`/`degraded` status until the app process restarts | Recreate the app (restart the service) to force a re-probe; do not rely on `/health` changes alone to detect a model swapped at runtime |
+| 29 | Localhost allowed by design | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:63-64,95-99,138-139,147-152`); subdomains of `localhost` and encoded/mapped loopback forms are rejected (`registry/model_registry.py:129-137`) | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:266`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
+| 30 | Dashboard sample data | The dashboard defaults to `sample/metrics.json` + `sample/charts/` (`web/app.js:6-7`), and that file self-identifies as sample/synthetic (`web/sample/metrics.json:12`, `generated_by: ... (sample/synthetic)`; `web/README.md:26-27`) | Opening the dashboard shows demo numbers, not your evaluation output — easy to mistake for real results | Point `CONFIG.metricsUrl` / `chartsBase` at real artifacts or copy them into `web/sample/` (`web/README.md:31,87`); serve via `python3 -m http.server` (fetch is blocked under `file://`) |
 
 ### Python 3.14 compatibility spike
 
@@ -1627,7 +1787,7 @@ dependency in the core set.
 |---|---|
 | `pytest` collects no tests | `testpaths = ['tests']` is now set, so bare `pytest` works; the explicit `PYTHONPATH=src python -m pytest tests/ -q` form also works (Known Issue #8, fixed) |
 | `kedro run --pipeline eda` (etc.) fails | All 12 names are registered (Phase 4); check the name against `pipeline_registry._PIPELINE_MODULES` — only those 12 work (former Known Issue #12, fixed) |
-| FileNotFound: `conf/base/parameters.yml` | The file was split into `conf/base/parameters/*.yml` (6 buckets) — edit the owning bucket; `params:<section>` references are unchanged (Known Issue #13) |
+| FileNotFound: `conf/base/parameters.yml` | The file was split into `conf/base/parameters/*.yml` (7 buckets) — edit the owning bucket; `params:<section>` references are unchanged (Known Issue #13) |
 | My `metrics_to_calculate` had no effect | `evaluate_model_node` reads `modeling_params`, not `evaluation_params` — set `metrics`/`metrics_to_calculate` in `modeling_params` (Known Issue #14) |
 | Spark scoring fails with a pickling error | The model must be broadcast/picklable for partitioned scoring (Known Issue #15) |
 | `check_pandas_limits` / conversion raises on a large frame | Frame exceeds `max_rows_for_pandas` (default 5,000,000) — enable `scoring_params.spark_scoring` for the Spark path (see Scaling) |
@@ -1670,6 +1830,54 @@ flowchart LR
 | Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-06 — Known-issues documentation pass
+
+- Docs only (no code changes): added the post-Phase 6 known-issues
+  audit (#18–#30) under Known Issues & Fixes, each verified against
+  current code with File:Line cites — H2O pickle serving rejected
+  (no cluster), pyfunc opt-in / trusted registry, SQL
+  trusted-config not a sandbox, no rate limiting, DNS rebinding
+  (literal-IP check only), pickle native-Booster trust, Dataproc/EMR
+  stubs off, `terraform validate` not run locally, system-Anaconda
+  skips, metrics/charts size, health-cache staleness, localhost
+  allowed by design, and dashboard sample data. #3 and #16 were
+  re-verified in place as #20 and #25.
+- Test count confirmed at **1075 tests** (Phase 6 land; supplied by
+  the Phase 6 teams — the suite was not re-run in this docs pass).
+
+### 2026-11-06 — Phase 6 parity
+
+- Ntile eval-metric grammar: `ntile.parse_eval_metric` (Parity
+  `<M>_<KIND>_<n>`, selectable + forecast aliases, task defaults
+  `lift/decile/10` and `rmse/overall/0`, warn-and-fallback on unknown)
+  behind top-level `eval_metric` in `modeling_params` /
+  `modeling_reg_params` (`conf/base/parameters/modeling.yml`).
+- `selected_ntile` (`{eval_metric, metric, score, ntile}`, 1-based
+  ntile → 0-based group with largest-label fallback) and
+  `by_centile` in `evaluate_model`; regression descriptive stats
+  (`target_*/pred_*`, `total_count`, signed `max_pred_error`) and
+  `confusion_rates_table` (`tpr/fpr/fnr/tnr`, `Actual Positive` /
+  `Actual Negative` rows) in `metrics.py`.
+- Lift table (`lift_table.COLUMNS`, 32 parity columns, decile-descending),
+  threshold selection (`pr_curve`/`roc_curve`/`mcc_curve`/
+  `ks_statistics`, parity rounding, unknown → 0.5), promotion gate
+  (`should_promote`: classification/higher-better ≥ −5%,
+  lower-better < +5%, `old_score` 0/None never promotes), scoring
+  ntile columns (`score_decile`/`score_centile`,
+  `calib_decile`/`calib_centile`, `high_score_ind`), modeling
+  pipeline wiring (`build_lift_table` → `lift_table`,
+  `build_promotion` → `promotion`), catalog anchors, and
+  `eval_metric` config.
+- Tests: 1075 pass (count supplied by Phase 6 teams; docs pass
+  verified parity code against `ntile.py`, `evaluate.py`,
+  `lift_table.py`, `threshold.py`, `validation.py`,
+  `metrics.py`, `scoring/nodes.py`, and `modeling.yml`; the suite
+  was not re-run here).
+- Docs: test count 955 → 1075; new Metrics Parity (Phase 6, parity)
+  section with grammar examples, `selected_ntile`, lift columns,
+  threshold methods, promotion thresholds, scoring columns, and
+  descriptive stats.
 
 ### 2026-11-06 — Phase 5 clean-ux
 

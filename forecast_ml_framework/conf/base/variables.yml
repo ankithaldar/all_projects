@@ -12,7 +12,7 @@
 # target_col: the column the model predicts. Defined ONCE here;
 # parameters.yml references it as ${variables.target_col} so renaming
 # the target is a one-line edit. (valid: a column name present in the
-# raw data; default: 'target'; example: 'churn' or 'purchase_amount').
+# raw data; default: 'target'; example: 'attrition' or 'purchase_amount').
 # WARNING: leakage columns (future values) must NOT be the target.
 target_col: 'target'
 
