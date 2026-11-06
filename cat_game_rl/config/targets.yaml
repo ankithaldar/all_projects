@@ -1,10 +1,12 @@
 targets:
-  gold: 14
-  amethyst: 65
-  necklace: 3
-  orb: 76
-  fire: 3
-  waterstone: 16
-  firestone: 8
-  elementstone: 6
-  artifact: 6
+  silver: 12
+  gold: 13
+  pendant: 1
+  necklace: 15
+  orb: 20
+  water: 5
+  fire: 4
+  waterstone: 6
+  firestone: 5
+  elementstone: 10
+  artifact: 3

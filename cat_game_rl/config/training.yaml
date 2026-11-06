@@ -19,25 +19,25 @@ environment:
   initial_coins: 5998996
   frame_skip: 1
   initial_stash:
-    string: 65
-    wood: 70
-    metal: 65
-    bronze: 65
-    amethyst: 70
-    orb: 65
-    ribbon: 65
-    needles: 65
-    sparkles: 70
-    silver: 65
-    gold: 70
-    pendant: 65
-    water: 65
-    necklace: 70
-    fire: 65
-    waterstone: 65
-    firestone: 70
-    elementstone: 65
-    artifact: 65
+    string: 90
+    wood: 79
+    ribbon: 58
+    metal: 41
+    needles: 27
+    sparkles: 2
+    bronze: 30
+    silver: 2
+    gold: 0
+    amethyst: 163
+    pendant: 6
+    necklace: 0
+    orb: 44
+    water: 0
+    fire: 1
+    waterstone: 1
+    firestone: 3
+    elementstone: 1
+    artifact: 0
 
 reward_weights:
   slot_utilization: 0.3
