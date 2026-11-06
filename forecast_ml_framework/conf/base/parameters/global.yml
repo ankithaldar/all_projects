@@ -17,6 +17,8 @@
 # db_staging_data, etl_project, etl_dataset, etl_table, external_project,
 # tmp_bucket, is_domino, run_date, train_run_dt, score_run_dt, brand.
 score_model_id: ${.global_params.score_model_id}
+# output_gcs_location: local runs write artifacts to ./artifacts
+# (the GCS name is legacy; rename deferred).
 output_gcs_location: 'artifacts'
 model_id_prefix: 'demo_model_v1'
 suffix: 'v1'
@@ -38,7 +40,7 @@ global_params:
   is_regression: false
   is_domino: false
   score_model_id: 'demo_model_v1'
-  run_date: '2026-11-05'
+  run_date: '2026-11-06'
   model_type: 'sklearn'
   random_state: 42
   target_col: ${variables.target_col}

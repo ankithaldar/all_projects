@@ -163,21 +163,34 @@ def test_registry_loader_empty_alias_not_coerced():
         'sqlite:///registry.db', 'my-model', alias=None)
 
 
+def test_typed_errors_are_runtime_errors():
+  '''Typed loader errors subclass RuntimeError.'''
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+    ModelNotConfiguredError,
+    ModelNotFoundError,
+  )
+  for cls in (ModelNotConfiguredError, ModelNotFoundError,
+              ModelCorruptError):
+    assert issubclass(cls, RuntimeError)
+
+
 def test_registry_loader_alias_not_found_no_pyfunc_fallback(
     monkeypatch, caplog):
   '''Alias-not-found MlflowException must not fall back.'''
   import logging
-  _calls, exceptions = _install_fake_mlflow(monkeypatch)
   from forecast_ml_framework.serving.model_loader import (
+    ModelNotFoundError,
     RegistryModelLoader,
   )
+  _calls, exceptions = _install_fake_mlflow(monkeypatch)
   # Re-install with the not-found error now that the class exists.
   not_found = exceptions.MlflowException(
       'No model version found for alias production')
   calls, _exc = _install_fake_mlflow(
       monkeypatch, sklearn_exc=not_found)
   with caplog.at_level(logging.WARNING):
-    with pytest.raises(RuntimeError, match='model unavailable'):
+    with pytest.raises(ModelNotFoundError):
       RegistryModelLoader(
           'sqlite:///registry.db', 'my-model',
           alias='production')()
@@ -191,6 +204,7 @@ def test_registry_loader_flavour_error_rejected_by_default(
   import logging
   _calls, exceptions = _install_fake_mlflow(monkeypatch)
   from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
     RegistryModelLoader,
   )
   flavour = exceptions.MlflowException(
@@ -198,7 +212,7 @@ def test_registry_loader_flavour_error_rejected_by_default(
   calls, _exc = _install_fake_mlflow(
       monkeypatch, sklearn_exc=flavour)
   with caplog.at_level(logging.WARNING):
-    with pytest.raises(RuntimeError, match='model unavailable'):
+    with pytest.raises(ModelCorruptError):
       RegistryModelLoader(
           'sqlite:///registry.db', 'my-model',
           alias='production')()
@@ -211,6 +225,7 @@ def test_registry_loader_malicious_pyfunc_rejected(monkeypatch):
   executed = []
   _calls, exceptions = _install_fake_mlflow(monkeypatch)
   from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
     RegistryModelLoader,
   )
   flavour = exceptions.MlflowException(
@@ -222,7 +237,7 @@ def test_registry_loader_malicious_pyfunc_rejected(monkeypatch):
   import sys as _sys
   _sys.modules['mlflow.pyfunc'].load_model = lambda uri: executed.append(
       uri) or Dummy()
-  with pytest.raises(RuntimeError, match='model unavailable'):
+  with pytest.raises(ModelCorruptError):
     RegistryModelLoader(
         'sqlite:///registry.db', 'my-model',
         alias='production')()
@@ -252,16 +267,31 @@ def test_registry_loader_allow_pyfunc_explicit_warns(
              for r in caplog.records)
 
 
+def test_registry_loader_no_mlflow_not_configured(monkeypatch):
+  '''Missing mlflow maps to ModelNotConfiguredError.'''
+  import sys
+  from forecast_ml_framework.serving.model_loader import (
+    ModelNotConfiguredError,
+    RegistryModelLoader,
+  )
+  monkeypatch.setitem(sys.modules, 'mlflow', None)
+  with pytest.raises(ModelNotConfiguredError) as excinfo:
+    RegistryModelLoader(
+        'sqlite:///registry.db', 'my-model', alias='production')()
+  assert 'sqlite' not in str(excinfo.value)
+
+
 def test_registry_loader_failure_generic_no_leak(monkeypatch):
   '''Registry loader failure does not leak registry details.'''
   from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
     RegistryModelLoader,
   )
   secret = 'sqlite:///secret-dir/registry.db'
   _install_fake_mlflow(
       monkeypatch, sklearn_exc=RuntimeError(secret),
       pyfunc_exc=RuntimeError(secret))
-  with pytest.raises(RuntimeError) as excinfo:
+  with pytest.raises(ModelCorruptError) as excinfo:
     RegistryModelLoader(secret, 'my-model', alias='production')()
   assert secret not in str(excinfo.value)
   assert 'secret-dir' not in str(excinfo.value)
@@ -279,18 +309,37 @@ def test_file_loader_evil_pickle_rejected(tmp_path):
 
   path = tmp_path / 'evil.pkl'
   path.write_bytes(pickle.dumps(Evil()))
-  with pytest.raises(ValueError):
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+  )
+  with pytest.raises(ModelCorruptError):
     FileModelLoader(str(path)).load()
 
 
 def test_file_loader_missing_no_path_disclosure(tmp_path):
   import pytest
-  from forecast_ml_framework.serving.model_loader import FileModelLoader
+  from forecast_ml_framework.serving.model_loader import (
+    FileModelLoader,
+    ModelNotFoundError,
+  )
   secret = str(tmp_path / 'secret-dir' / 'model.pkl')
-  with pytest.raises(FileNotFoundError) as excinfo:
+  with pytest.raises(ModelNotFoundError) as excinfo:
     FileModelLoader(secret).load()
   assert secret not in str(excinfo.value)
   assert str(tmp_path) not in str(excinfo.value)
+
+
+def test_file_loader_malformed_corrupt(tmp_path):
+  import pytest
+  from forecast_ml_framework.serving.model_loader import (
+    FileModelLoader,
+    ModelCorruptError,
+  )
+  path = tmp_path / 'model.pkl'
+  path.write_bytes(b'not-a-pickle')
+  with pytest.raises(ModelCorruptError) as excinfo:
+    FileModelLoader(str(path)).load()
+  assert str(path) not in str(excinfo.value)
 
 
 def test_file_loader_chain_read_pickle_blocked(tmp_path):
@@ -313,7 +362,10 @@ def test_file_loader_chain_read_pickle_blocked(tmp_path):
 
   path = tmp_path / 'chain.pkl'
   path.write_bytes(pickle.dumps(Outer()))
-  with pytest.raises(ValueError):
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+  )
+  with pytest.raises(ModelCorruptError):
     FileModelLoader(str(path)).load()
   assert not marker.exists()
 
@@ -332,5 +384,8 @@ def test_file_loader_read_csv_blocked(tmp_path):
 
   path = tmp_path / 'csv.pkl'
   path.write_bytes(pickle.dumps(Outer()))
-  with pytest.raises(ValueError):
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+  )
+  with pytest.raises(ModelCorruptError):
     FileModelLoader(str(path)).load()

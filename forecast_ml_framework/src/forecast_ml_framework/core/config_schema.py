@@ -84,10 +84,11 @@ class GlobalParams(_Allow):
   '''Global run parameters.
 
   ``task_type`` defaults to ``'classification'``: this is the
-  single schema default, aligned with ``ModelingParams`` and
-  with ``is_regression=False``. (``ConfigLoader.task_type``
-  keeps its legacy ``'regression'`` fallback only when no
-  explicit task type is present anywhere in the config.)
+  single schema default, aligned with ``ModelingParams``,
+  with ``is_regression=False``, and with
+  ``ConfigLoader.task_type`` (which falls back to
+  ``'classification'`` when no explicit task type is present
+  anywhere in the config).
   '''
 
   task_type: str = 'classification'
@@ -263,6 +264,31 @@ class ValidationParams(_Allow):
   fail_fast: bool = False
   required_cols: List[str] = Field(default_factory=list)
   max_null_ratio: Optional[float] = None
+
+
+class EdaParams(_Allow):
+  '''EDA parameters (eda.yml) contract.
+
+  Field-for-field with ``conf/base/parameters/eda.yml`` and
+  ``pipelines/eda/nodes.py`` defaults.
+  '''
+
+  target_col: str = 'target'
+  missing_threshold: float = 0.2
+  cardinality_threshold: int = 50
+  leakage_threshold: float = 0.95
+  leakage_corr_threshold: float = 0.95
+  duplicate_corr_threshold: float = 0.99
+  leakage_auc_threshold: float = 0.99
+  near_constant_threshold: float = 0.95
+  leakage_name_keywords: List[str] = Field(
+    default_factory=lambda: [
+      'target', 'churn', 'label', 'outcome', 'result',
+      'after', 'post'])
+  imbalance_ratio_threshold: float = 5.0
+  zscore_threshold: float = 3.0
+  top_correlations: int = 10
+  top_values: int = 3
 
 
 class RegistryParams(_Allow):
@@ -443,6 +469,7 @@ class ParametersConfig(_Allow):
     default_factory=ChartParams)
   validation_params: ValidationParams = Field(
     default_factory=ValidationParams)
+  eda_params: EdaParams = Field(default_factory=EdaParams)
   registry_params: RegistryParams = Field(
     default_factory=RegistryParams)
   scoring_params: ScoringParams = Field(

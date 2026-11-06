@@ -166,7 +166,8 @@ class ConfigLoader:
     An explicit ``task_type`` parameter wins. Otherwise the type
     attached to ``target_col`` (``target_type`` / ``target_col``
     mapping with a ``type`` entry) is auto-detected. Unknown or
-    missing types default to ``'regression'``.
+    missing types default to ``'classification'`` (the single
+    default, aligned with the schema defaults).
 
     Returns:
       ``'classification'`` or ``'regression'``.
@@ -186,7 +187,7 @@ class ConfigLoader:
       for key in ('type', 'task_type', 'kind'):
         if key in target_col:
           return self._normalize(target_col[key])
-    return 'regression'
+    return 'classification'
 
   @staticmethod
   def _normalize(value):
@@ -199,10 +200,12 @@ class ConfigLoader:
       ``'classification'`` or ``'regression'``.
     '''
     text = str(value).strip().lower()
+    if 'regress' in text:
+      return 'regression'
     if any(token in text for token in (
         'class', 'binary', 'categor', 'label', 'clf')):
       return 'classification'
-    return 'regression'
+    return 'classification'
 
   def merged_feature_list(self, selected=None):
     '''Merge selected features with business rules.

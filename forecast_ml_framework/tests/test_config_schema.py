@@ -145,7 +145,7 @@ def test_config_loader_accepts_pydantic_model():
     target_col='target', business_relevant_features=[])
   loader = ConfigLoader(variables=variables, parameters={})
   assert loader.get('target_col') == 'target'
-  assert loader.task_type() == 'regression'
+  assert loader.task_type() == 'classification'
 
 
 def test_config_loader_task_type_preserved():
@@ -221,7 +221,7 @@ def test_round_trip_every_shipped_top_level_key():
   for key in ('global_params', 'modeling_params', 'registry_params',
               'scoring_params', 'infra_params', 'monitoring_params',
               'retraining_params', 'feature_store_params', 'ab_params',
-              'cost_params', 'governance_params'):
+              'cost_params', 'governance_params', 'eda_params'):
     assert key not in (cfg.model_extra or {}), key
 
 
@@ -585,7 +585,8 @@ def test_settings_reject_oc_list_and_tuple_branches():
   from forecast_ml_framework import settings
   cls = settings.CONFIG_LOADER_CLASS
   assert cls is not None
-  assert settings.CONF_SOURCE == 'conf'
+  assert Path(settings.CONF_SOURCE).is_absolute()
+  assert (Path(settings.CONF_SOURCE) / 'base' / 'catalog.yml').exists()
   assert settings.HOOKS == ()
   assert settings.__all__ == [
     'CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']

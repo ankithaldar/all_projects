@@ -9,8 +9,8 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 `catalog.yml`) plus per-environment overlays. Changing a dataset, a model,
 or a loss function is a config edit, not a code edit.
 
-Phases 1–4 are landed (821 tests pass, see Tests; count supplied by
-the Phase 4 teams and checked against `pipeline_registry.py` — 12
+Phases 1–5 are landed (955 tests pass, see Tests; count supplied by
+the Phase 5 teams and checked against `pipeline_registry.py` — 12
 registered pipelines — in this docs pass; the suite was not re-run
 here). Phase 2 added the MLflow model registry, batch scoring,
 Terraform IaC (`infra/`), and the static dashboard (`web/`). Phase 3
@@ -19,12 +19,16 @@ shadow serving, cost tracking, governance, interpretability, metrics
 v2, the full chart catalog, and Spark scaling. Phase 4 (hardening,
 final) registered the Phase 3 pipelines, moved SHAP explanation to
 `interpretability.nodes.shap_explain`, and tightened serving/registry
-validation — see the [Change Log](#change-log).
+validation. Phase 5 (clean-ux) added Kedro project markers + CLI
+introspection (`list-pipelines` / `validate-config` / `dry-run`),
+degraded serving health, typed serving errors, sample data, EDA
+params, a smoke local profile, and a strict config schema — see the
+[Change Log](#change-log).
 
-> **Current-state note (Phase 4 final).** This README documents the
+> **Current-state note (Phase 5 clean-ux).** This README documents the
 > code *as found on disk*, verified against `pipeline_registry.py`
 > (`_PIPELINE_MODULES`, 12 entries), every `pipelines/*/pipeline.py`,
-> and `conf/`. All eight pipeline modules are **registered** for
+> `conf/`, `cli.py`, and `serving/app.py`. All eight pipeline modules are **registered** for
 > `kedro run --pipeline <name>` (12 display names; former Known
 > Issue #12 is fixed).
 
@@ -157,6 +161,60 @@ uv sync
 
 This creates `.venv/` inside `forecast_ml_framework/` (never commit it).
 
+### Quickstart: train smoke (under 2 minutes)
+
+From `forecast_ml_framework/` (verified against `cli.py:253`):
+
+```bash
+cd forecast_ml_framework
+uv sync
+uv run forecast-ml validate-config --env local   # prints "config ok (local)"
+uv run forecast-ml train --env local             # kedro run --pipeline modeling --env local
+```
+
+The `local` overlay is the smoke profile: `models_to_use: ['sklearn']`
+only (`conf/local/parameters.yml:60-62`), local MLflow URI
+(`./mlruns`), DVC off, `validation_params.fail_fast: true`,
+`artifact_store_params.type: local`. Sample data ships at
+`data/raw/raw_data.csv` (columns `id,f1,f2,f3,f4,cat,seq,target`,
+100 rows, `synthetic_data` shape), so a fresh checkout trains with
+no downloads. Kedro discovery needs the project markers in
+`pyproject.toml:77-80` (`[tool.kedro]` with `package_name` /
+`project_name` / `kedro_init_version` only — no `project_version`)
+plus `<package>.cli:cli` (`cli.py:23-51`), which re-exports Kedro's
+top-level Click group; without the marker Kedro 1.7 exits with
+"unexpected keys" or fails to load project commands.
+`forecast-ml` also exposes the alias `forecast-ml-framework`
+(`pyproject.toml:75`) alongside `forecast-ml`.
+
+```bash
+uv run forecast-ml list-pipelines --env local    # 12 lines: "<name> <module>"
+uv run forecast-ml validate-config --env local   # "config ok (local)"
+uv run forecast-ml dry-run modeling --env local  # planned command + node names
+uv run forecast-ml dry-run eda --env local
+```
+
+`list-pipelines` prints one `<name> <module>` line per registered
+pipeline (`cli.py:195-208`). `validate-config` loads the env config
+and validates parameters, printing `config ok (<env>)` on success
+(`cli.py:211-230`). `dry-run <pipeline>` prints the planned
+`kedro run --pipeline <name> --env <env>` command plus node names,
+without running anything (`cli.py:233-250`). `--env` accepts
+`base|local|gcp|aws` only; anything else exits 2 (`cli.py:63-68`).
+
+### Environment variables
+
+| Variable | Use | Default |
+|---|---|---|
+| `MODEL_REGISTRY_URI` | MLflow registry URI for `RegistryModelLoader` (`serving/app.py:231`) | unset |
+| `MODEL_NAME` | Registered model name | unset → degraded mode |
+| `MODEL_ALIAS` | Registry alias | `production` |
+| `MODEL_ARTIFACT_PATH` | File-loader artifact path (`serving/app.py:224`) | unset |
+| `FORECAST_API_KEY` | When set, `/predict` requires it (`X-API-Key` or `Authorization: Bearer ...`); `/health` stays public (401 otherwise) | off |
+| `GOOGLE_APPLICATION_CREDENTIALS` | GCP credentials for GCS/BigQuery | unset |
+| `AWS_PROFILE` / AWS env vars | AWS credentials for S3/Athena | unset |
+| `MLFLOW_DISABLE_AGENT_HINT` | Silence MLflow import banner | unset |
+
 ### Tests
 
 Tests live in the top-level `tests/` directory (see the
@@ -175,11 +233,14 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **821 tests** at Phase 4
-land (30 test files in `tests/`, including `test_eda`, `test_monitoring`,
+success: `pytest` exits 0 with all tests passing — **955 tests** at Phase 5
+land (40 test files in `tests/`, including `test_eda`, `test_monitoring`,
 `test_retraining`, `test_cost_tracking`, `test_interpretability`,
 `test_feature_store`, `test_governance`, `test_ab_testing`, `test_scaling`,
-`test_phase3_config`, `test_pipeline_registry`, `test_demo_run`). Note: the real-MLflow roundtrip test carries
+`test_phase3_config`, `test_pipeline_registry`, `test_demo_run`,
+`test_kedro_markers`, `test_smoke_defaults`, `test_eda_params`,
+`test_schema_strictness`, `test_validation_profile`, `test_cli`,
+`test_main_entrypoint`, `test_catalog_gaps`). Note: the real-MLflow roundtrip test carries
 `@pytest.mark.serial` and resets global mlflow state (Known Issue #17) —
 run the full suite serially; do not parallelise it. `pyproject.toml` now
 sets `testpaths = ['tests']` and `pythonpath = ['src']`, so a bare
@@ -214,13 +275,22 @@ uv run forecast-ml train --help
 uv run forecast-ml predict --help
 uv run forecast-ml serve --help
 uv run forecast-ml run --help
+uv run forecast-ml list-pipelines --env local
+uv run forecast-ml validate-config --env local
+uv run forecast-ml dry-run modeling --env local
 ```
 
 Subcommands: `train`, `predict`, `serve`, `run`, each accepting
 `--env` (default `local`), `--artifact`, `--host` (default `127.0.0.1`),
-and `--port` (default `8000`). Each delegates to
-`kedro run --pipeline <command> --env <env>` when `kedro` is on `PATH`,
-otherwise it prints the planned command.
+and `--port` (default `8000`), plus `list-pipelines`, `validate-config`,
+and `dry-run <pipeline>` (accept `--env` only; see Quickstart). `train`
+delegates to `kedro run --pipeline modeling --env <env>`, `predict` to
+`--pipeline scoring`, `run` to the default pipeline (no `--pipeline`),
+`serve` to `uvicorn forecast_ml_framework.serving.app:app --host <host>
+--port <port>` with the artifact passed via
+`MODEL_ARTIFACT_PATH` (`cli.py:56-99`). When `kedro`/`uvicorn` is not on
+`PATH`, the CLI prints the planned command instead; when the Kedro
+project root cannot be found it exits 2 (`cli.py:156-192`).
 
 ### Synthetic demo walkthrough
 
@@ -362,7 +432,7 @@ forecast_ml_framework/
 │   ├── governance/             # audit.py, lineage.py, retention.py (pure functions, no persistence)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (30 test files, 821 tests)
+├── tests/                      # pytest suite (40 test files, 955 tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -653,10 +723,10 @@ OmegaConf interpolation (`${.cat_cols[0]}`).
 
 Validation model: `VariablesConfig` (`core/config_schema.py`).
 
-### Parameters split (6 buckets)
+### Parameters split (7 buckets)
 
 The former single `conf/base/parameters.yml` **no longer exists**. Its
-sections were split into 6 files under `conf/base/parameters/`; the
+sections were split into 7 files under `conf/base/parameters/`; the
 OmegaConf/Kedro loader merges every `*.yml` in that directory, so all
 top-level section names are unchanged and existing `params:<section>`
 references keep working. **Migration (Known Issue #13):** any tooling,
@@ -671,17 +741,30 @@ your section.
 | `conf/base/parameters/preprocessing.yml` | `data_prep_params` (FE registry), `feature_selection_params` |
 | `conf/base/parameters/modeling.yml` | `models_to_use`, `h2o_automl_params`, `modeling_params`, `modeling_reg_params`, `model_params_by_name`, `calibration_params`, `cv_params` |
 | `conf/base/parameters/evaluation.yml` | `evaluation_params` incl. `metrics_to_calculate` |
+| `conf/base/parameters/eda.yml` | `eda_params` (EDA + leakage thresholds) |
 | `conf/base/parameters/platform.yml` | `spark_params`, `artifact_store_params`, `mlflow_params`, `dvc_params`, `shap_params`, `chart_params`, `registry_params`, `scoring_params`, `infra_params`, `monitoring_params`, `retraining_params`, `feature_store_params`, `ab_params`, `cost_params`, `governance_params` |
 
 `conf/local/parameters.yml` still exists and overrides only
-`artifact_store_params`, `mlflow_params`, `dvc_params`, and
-`spark_params` (local paths, local MLflow URI, DVC off, `local[*]`
-master). `conf/gcp/` and `conf/aws/` ship `catalog.yml` only, so all their
+`artifact_store_params`, `mlflow_params`, `dvc_params`, `spark_params`,
+`validation_params` (fail_fast smoke), and `models_to_use` (sklearn-only
+smoke). `conf/gcp/` and `conf/aws/` ship `catalog.yml` only, so all their
 parameters come from base.
 
 ### `parameters/*.yml` — every section
 
 Base defaults below (section → bucket mapping in the table above).
+`eda_params` lives in its own bucket `conf/base/parameters/eda.yml`
+(Phase 5): typed `EdaParams` in `core/config_schema.py:269-291`
+field-for-field with `pipelines/eda/nodes.py` defaults —
+`target_col`, `missing_threshold` (0.2), `cardinality_threshold` (50),
+`leakage_threshold`/`leakage_corr_threshold` (0.95),
+`duplicate_corr_threshold` (0.99), `leakage_auc_threshold` (0.99),
+`near_constant_threshold` (0.95), `leakage_name_keywords` (7 keywords),
+`imbalance_ratio_threshold` (5.0), `zscore_threshold` (3.0),
+`top_correlations` (10), `top_values` (3). Wrong types raise
+`ValidationError` (`tests/test_schema_strictness.py:21-34`);
+`ConfigLoader.task_type` defaults to `'classification'` everywhere
+(single default, `config_loader.py`).
 
 #### Runtime params (catalog interpolations)
 
@@ -1039,7 +1122,7 @@ artifact_store_params:
 mlflow_params:
   tracking_uri: 'mlruns'
   experiment_name: 'forecast-ml-framework'
-  registry_uri: ''              # Phase 2 (registry loading is a stub)
+  registry_uri: ''              # empty = no registry; set MODEL_REGISTRY_URI for registry loading
   log_params: true
   log_metrics: true
   log_artifacts: true
@@ -1175,9 +1258,11 @@ same syntax at runtime.
 `FeatureSelectionParams`, `ModelingParams`, `ModelingRegParams`,
 `CalibrationParams`, `CvParams`, `SparkParams`, `ArtifactStoreParams`,
 `MlflowParams`, `DvcParams`, `ShapParams`, `ChartParams`,
-`ValidationParams`, and the top-level `ParametersConfig`), all with
+`ValidationParams`, `EdaParams`, and the top-level `ParametersConfig`), all with
 `extra='allow'` so unknown sections/keys pass through and shipped conf
-always validates. `ConfigLoader` (core/config_loader.py) normalises
+always validates. Strictness (Phase 5) is typed fields + defaults +
+`ValidationError` on wrong types (e.g. `EdaParams` rejects
+non-numeric `missing_threshold`), not `extra='forbid'`. `ConfigLoader` (core/config_loader.py) normalises
 dict / OmegaConf / pydantic inputs to plain dicts on construction.
 
 ### How to add a dataset / model / loss
@@ -1377,8 +1462,17 @@ not found. A/B + shadow routing lives in `serving/ab_testing.py`
 
 ```bash
 curl http://127.0.0.1:8000/health
-# → {"status": "ok"}
+# → {"status": "ok", "model_loaded": true}
 ```
+
+`HealthResponse` carries `status` and `model_loaded`
+(`serving/app.py:46-50`). The first probe loads the model: on success
+`status: ok, model_loaded: true`; on any load failure `status:
+degraded, model_loaded: false` (`serving/app.py:431-444`). The result
+is cached on the app instance. With no model configured
+(`DegradedLoader` — no injected loader, no `MODEL_ARTIFACT_PATH`,
+no `MODEL_NAME`), `/predict` returns 503 `model not configured` and
+`/health` reports `degraded`.
 
 `/health` is always public (no API key required), for probes and
 load-balancer health checks.
@@ -1399,6 +1493,15 @@ without leaking the server filesystem path. Feature-name contract
 (Phase 4): when the model carries `feature_names_in_` (e.g. a fitted
 sklearn estimator), that list is the required feature set and order;
 otherwise the first record's keys are used. Unknown features → 422.
+
+**Typed errors (`model_loader.py:69-90`).** Typed loader errors map to:
+`ModelNotConfiguredError` → 503 `model not configured`; missing
+artifact/version → `ModelNotFoundError` → 503 `model artifact not
+found`; malformed artifact or registry flavour mismatch →
+`ModelCorruptError` → 500 `model failed to load`. Validation
+`ValueError` → 422 naming the field; model execution errors → generic
+500 `prediction failed`. Messages never contain the server filesystem
+path or registry URI.
 
 **Authentication (optional).** Auth is off by default. When the
 `FORECAST_API_KEY` environment variable is set, every path except
@@ -1458,11 +1561,11 @@ print(r.json())  # {'predictions': [...]}
 ```
 
 > **Note.** The `forecast-ml serve` CLI subcommand delegates to
-> `kedro run --pipeline serve --env local`; serving the FastAPI app
-> itself (e.g. via `uvicorn`) is not yet wired to the artifact path
-> end-to-end (there is no registered `serve` pipeline). The working
-> programmatic path is `create_app(FileModelLoader(path))` — or
-> `create_app_from_registry(...)` — under uvicorn.
+> `uvicorn forecast_ml_framework.serving.app:app --host <host> --port
+> <port>` with the artifact passed via `MODEL_ARTIFACT_PATH`
+> (`cli.py:90-95,188-190`, verified Phase 5). The programmatic path
+> `create_app(FileModelLoader(path))` or `create_app_from_registry(...)`
+> also works under uvicorn.
 
 ## Known Issues & Fixes
 
@@ -1539,7 +1642,7 @@ dependency in the core set.
 | `SparkSQLDataSet` won't load | A live Spark session is required (passed in, or creatable via `SparkSessionFactory` config). Without Spark it raises `RuntimeError` by design |
 | No charts returned / empty `charts` dict | Charts with insufficient data are skipped gracefully; check that `y_proba` is present for classification. Remember figures are returned closed — save inside the call |
 | MLflow registry / DVC does nothing | MLflow registry loads via `RegistryModelLoader` / `registry/model_registry.py` (needs `tracking_uri`/`registry_uri` or `MODEL_*` env vars). DVC remains parameters/config only — no execution code |
-| `forecast-ml serve` doesn't start the API | It delegates to `kedro run --pipeline serve` (no registered `serve` pipeline); serve programmatically with `create_app(FileModelLoader(path))` or `create_app_from_registry(...)` under uvicorn |
+| `forecast-ml serve` doesn't start the API | It delegates to `uvicorn forecast_ml_framework.serving.app:app` with `MODEL_ARTIFACT_PATH` (verified Phase 5); check the artifact path exists and `MODEL_NAME`/`MODEL_REGISTRY_URI` for registry mode. Without a model, `/health` reports `degraded` and `/predict` returns 503 |
 | Override feature list was ignored / merged unexpectedly | A non-empty override wins alone by design. Empty it to get `selected + business − exclude` |
 | Keys in my new config section are rejected | They aren't: all pydantic models use `extra='allow'`. Add a model for the section in `config_schema.py` for typed validation, or rely on the passthrough |
 | First Kedro run fails on missing data files | `conf/base/catalog.yml` points at `data/raw/raw_data.csv` (or the env overlay path). Place your CSV/Parquet there, or re-point `data_params.train_data` at your catalog entry |
@@ -1550,8 +1653,9 @@ dependency in the core set.
 flowchart LR
   P1["Phase 1 - done<br/>scaffold configs pipelines serving<br/>2026-11-05"] --> P2["Phase 2 - done<br/>MLflow registry<br/>batch scoring (scoring)<br/>Terraform IaC (infra/)<br/>web dashboard (web/)"]
   P2 --> P3["Phase 3 - done<br/>eda + leakage<br/>monitoring + retraining<br/>feature store + governance<br/>A/B shadow + cost<br/>interpretability + metrics v2<br/>scaling (Spark, Dataproc)"]
-  P3 --> P4["Phase 4 - done (final)<br/>register Phase 3 pipelines (12 names)<br/>SHAP -> interpretability.nodes<br/>serving feature_names + registry hardening<br/>821 tests"]
-  P4 --> REM["Remaining<br/>serve CLI wiring<br/>Docker / DVC exec<br/>Kedro MLflow/DVC hooks<br/>pyfunc registration"]
+  P3 --> P4["Phase 4 - done<br/>register Phase 3 pipelines (12 names)<br/>SHAP -> interpretability.nodes<br/>serving feature_names + registry hardening<br/>821 tests"]
+  P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
+  P5 --> REM["Remaining<br/>Docker / DVC exec<br/>Kedro MLflow/DVC hooks<br/>pyfunc registration"]
 ```
 
 | Area | Status on disk |
@@ -1561,11 +1665,42 @@ flowchart LR
 | DVC integration | Parameters/config only; no execution code |
 | IaC | **Done (Phase 2):** Terraform in `infra/gcp` + `infra/aws` (Dataproc/EMR off by default, retraining scheduler + alerts Pub/Sub; AWS EventBridge stub commented). `terraform validate` not run locally (Known Issue #16) |
 | Monitoring / observability | **Done (Phase 3):** PSI/KS drift + alerts (`pipelines/monitoring`), plan-only retraining, cost tracking; static dashboard in `web/` |
-| Serving | FastAPI + optional API-key auth (`FORECAST_API_KEY`) + registry + A/B shadow (`ABRouter`); no end-to-end `serve` CLI wiring, no Docker |
+| Serving | FastAPI + optional API-key auth (`FORECAST_API_KEY`) + registry + A/B shadow (`ABRouter`); `serve` CLI wired to uvicorn (`cli.py:90-95`); degraded health when no model; no Docker |
 | Phase 3 pipelines | **Registered (Phase 4):** all 12 display names in `pipeline_registry.py`; `tests/test_pipeline_registry.py` asserts 12 keys (former Known Issue #12 fixed) |
 | Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-06 — Phase 5 clean-ux
+
+- Kedro project markers (`pyproject.toml:[tool.kedro]` with only
+  `package_name` / `project_name` / `kedro_init_version`; alias
+  `forecast-ml-framework` added) + CLI introspection verified
+  against `cli.py:253-310`: `list-pipelines` (12 lines
+  `<name> <module>`), `validate-config --env <env>` prints
+  `config ok (<env>)`, `dry-run <pipeline> --env <env>` prints the
+  planned command + node names; `--env` whitelist
+  `base|local|gcp|aws` rejects traversal with exit 2.
+- Serving: degraded health (`HealthResponse status: ok|degraded`,
+  `model_loaded`, cached probe, `serving/app.py:431-444`);
+  `serve` CLI wired to uvicorn with `MODEL_ARTIFACT_PATH`
+  (`cli.py:90-95`); typed errors (`ModelNotConfiguredError` → 503,
+  `ModelNotFoundError` → 503, `ModelCorruptError` → 500;
+  validation → 422; execution → generic 500, no path/URI leaks,
+  `serving/model_loader.py:69-90`, `serving/app.py:446-489`).
+- Smoke local profile: `conf/local/parameters.yml` pins
+  `models_to_use: ['sklearn']`, `validation_params.fail_fast: true`,
+  local MLflow URI, DVC off; sample data at
+  `data/raw/raw_data.csv` (100 rows, `id,f1-f4,cat,seq,target`)
+  trains with no downloads (<2min sklearn local).
+- EDA params: `conf/base/parameters/eda.yml` owns typed `eda_params`
+  (`core/config_schema.py:269-291`, `EdaParams`); strict schema rejects
+  wrong types (`tests/test_schema_strictness.py`); single
+  `task_type` default `classification`.
+- Tests: 955 pass (count supplied by Phase 5 teams; docs pass
+  verified CLI/serving/config code, not a full suite re-run).
+- Docs: test count 821 → 955, bucket count 6 → 7, stale serve and
+  registry-stub claims removed.
 
 ### 2026-11-06 — Phase 4 hardening (final, all-teams pass)
 

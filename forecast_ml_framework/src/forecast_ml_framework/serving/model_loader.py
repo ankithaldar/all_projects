@@ -66,6 +66,30 @@ def _is_flavour_error(exc):
   return any(hint in text for hint in _FLAVOUR_HINTS)
 
 
+class ModelNotConfiguredError(RuntimeError):
+  '''Raised when no model loader/configuration is available.'''
+
+
+class ModelNotFoundError(RuntimeError):
+  '''Raised when the requested model artifact/version is missing.'''
+
+
+class ModelCorruptError(RuntimeError):
+  '''Raised when the model artifact is malformed or unusable.'''
+
+
+class DegradedLoader:
+  '''Loader that always reports the model as not configured.'''
+
+  def load(self):
+    '''Raise ModelNotConfiguredError.'''
+    raise ModelNotConfiguredError('model not configured')
+
+  def __call__(self):
+    '''Raise ModelNotConfiguredError.'''
+    return self.load()
+
+
 class FileModelLoader:
   '''Load a pickled model from a file path lazily.
 
@@ -81,9 +105,10 @@ class FileModelLoader:
     '''Load and cache the model, returning it.
 
     Raises:
-      FileNotFoundError: When the artifact is missing; the
+      ModelNotFoundError: When the artifact is missing; the
         message never contains the server filesystem path.
-      ValueError: When the pickle references forbidden globals.
+      ModelCorruptError: When the pickle is malformed or
+        references forbidden globals.
     '''
     if self._model is None:
       self._model = self._load_file(self.artifact_path)
@@ -104,14 +129,29 @@ class FileModelLoader:
       The unpickled model.
 
     Raises:
-      FileNotFoundError: With a generic message (no path leak).
-      ValueError: When the pickle is forbidden or malformed.
+      ModelNotFoundError: With a generic message (no path leak).
+      ModelCorruptError: When the pickle is forbidden or
+        malformed.
     '''
     if not os.path.isfile(str(path)):
-      raise FileNotFoundError('model artifact not found')
-    with open(path, 'rb') as handle:
-      raw = handle.read()
-    return restricted_loads(raw)
+      raise ModelNotFoundError('model artifact not found')
+    try:
+      with open(path, 'rb') as handle:
+        raw = handle.read()
+      return restricted_loads(raw)
+    except (OSError, ValueError, EOFError, TypeError,
+            AttributeError, ImportError, IndexError,
+            KeyError) as exc:
+      # restricted_loads raises ValueError for forbidden
+      # globals; pickle errors surface as a variety of
+      # exceptions. All mean the artifact is unusable.
+      # A file vanishing after the isfile check is
+      # reported as not found, not corrupt.
+      if isinstance(exc, FileNotFoundError):
+        raise ModelNotFoundError('model artifact not found') from None
+      raise ModelCorruptError('model artifact corrupt') from None
+    except Exception:  # pylint: disable=broad-exception-caught
+      raise ModelCorruptError('model artifact corrupt') from None
 
 
 class RegistryModelLoader:
@@ -158,9 +198,11 @@ class RegistryModelLoader:
     '''Load and cache the registry model, returning it.
 
     Raises:
-      RuntimeError: With a generic message (no registry URI,
-        model path, or underlying error leak) when loading
-        fails for any reason.
+      ModelNotConfiguredError: When mlflow is unavailable.
+      ModelNotFoundError: When the alias/model is not found.
+      ModelCorruptError: For flavour mismatches and any
+        other load failure. Messages never contain the
+        registry URI, model path, or underlying error.
     '''
     if self._model is None:
       self._model = self._load_registry()
@@ -174,17 +216,18 @@ class RegistryModelLoader:
     '''Load ``models:/<name>@<alias>`` via lazy mlflow imports.
 
     sklearn flavour only by default. A flavour-mismatch
-    MlflowException is a generic RuntimeError and never
+    MlflowException is a ModelCorruptError and never
     falls back to pyfunc unless ``allow_pyfunc=True`` was
     explicitly given (startup warning covers that case).
-    Alias/model-not-found and every other MlflowException
-    likewise become a generic RuntimeError so no
-    URI/detail leaks.
+    Alias/model-not-found becomes a ModelNotFoundError,
+    missing mlflow a ModelNotConfiguredError, and every
+    other failure a ModelCorruptError, so no URI/detail
+    leaks.
     '''
     try:
       import mlflow
     except ImportError:
-      raise RuntimeError('model unavailable') from None
+      raise ModelNotConfiguredError('model not configured') from None
     try:
       if self.registry_uri:
         mlflow.set_tracking_uri(self.registry_uri)
@@ -193,29 +236,33 @@ class RegistryModelLoader:
         return mlflow.sklearn.load_model(uri)
       except Exception as exc:  # pylint: disable=broad-exception-caught
         if not _is_mlflow_exception(exc):
-          raise RuntimeError('model unavailable') from None
+          raise ModelCorruptError('model corrupt') from None
         if _is_alias_not_found(exc):
           logger.warning(
             'registry model %r alias %r not found',
             self.model_name, self.alias)
-          raise RuntimeError('model unavailable') from None
+          raise ModelNotFoundError('model not found') from None
         if not _is_flavour_error(exc):
           logger.warning(
             'sklearn load failed for %r@%r: %s',
             self.model_name, self.alias, exc)
-          raise RuntimeError('model unavailable') from None
+          raise ModelCorruptError('model corrupt') from None
         if not self.allow_pyfunc:
           logger.warning(
             'sklearn flavour unavailable for %r@%r; '
             'pyfunc fallback disabled (allow_pyfunc=False): %s',
             self.model_name, self.alias, exc)
-          raise RuntimeError('model unavailable') from None
+          raise ModelCorruptError('model corrupt') from None
         logger.warning(
           'sklearn flavour unavailable for %r@%r, '
           'falling back to pyfunc (allow_pyfunc=True): %s',
           self.model_name, self.alias, exc)
-        return mlflow.pyfunc.load_model(uri)
-    except RuntimeError:
+        try:
+          return mlflow.pyfunc.load_model(uri)
+        except Exception:  # pylint: disable=broad-exception-caught
+          raise ModelCorruptError('model corrupt') from None
+    except (ModelNotConfiguredError, ModelNotFoundError,
+            ModelCorruptError):
       raise
     except Exception:  # pylint: disable=broad-exception-caught
-      raise RuntimeError('model unavailable') from None
+      raise ModelCorruptError('model corrupt') from None

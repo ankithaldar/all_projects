@@ -44,8 +44,13 @@ def test_task_type_autodetect_regression_from_target():
   assert loader.task_type() == 'regression'
 
 
-def test_task_type_defaults_to_regression():
+def test_task_type_defaults_to_classification():
   loader = _loader(parameters={'target_col': 'price'})
+  assert loader.task_type() == 'classification'
+
+
+def test_task_type_explicit_regression_wins():
+  loader = _loader(parameters={'task_type': 'regression'})
   assert loader.task_type() == 'regression'
 
 

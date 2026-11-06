@@ -1,0 +1,58 @@
+# parameters/eda.yml — part of the split of the former base parameters.yml.
+# EDA: eda_params consumed by pipelines/eda/nodes.py via
+# flatten_params(params, 'eda_params'). All keys are optional in
+# code; the defaults below mirror the code defaults in the module
+# docstring / function bodies exactly, so omitting this bucket and
+# supplying it both behave identically.
+# Top-level keys below are exactly the sections this bucket owns; the
+# OmegaConf/Kedro loader merges every *.yml in conf/base/parameters/.
+# No credentials or secrets here — read them from the environment at runtime.
+
+# --- EDA ------------------------------------------------------------------------
+# target_col: target column name (default 'target'). variables
+# ['target_col'] wins when present.
+# missing_threshold: missing rate above which eda_quality_checks
+# flags high_missing (default 0.2).
+# cardinality_threshold: unique-value count above which a
+# categorical column flags cardinality_explosion (default 50).
+# leakage_threshold: absolute feature-target correlation above
+# which a feature flags leakage_suspect (default 0.95).
+# leakage_corr_threshold: alias for leakage_threshold used by
+# detect_leakage (default 0.95).
+# duplicate_corr_threshold: feature-feature correlation above
+# which a column flags as near-duplicate (default 0.99).
+# leakage_auc_threshold: AUC above which a numeric feature flags
+# as perfectly separating the target (default 0.99).
+# near_constant_threshold: dominant-value proportion above which
+# a feature flags as near-constant (default 0.95).
+# leakage_name_keywords: name substrings flagging a feature as a
+# post-outcome suspect (default below).
+# imbalance_ratio_threshold: majority/minority target-count ratio
+# above which the target flags class_imbalance (default 5.0).
+# zscore_threshold: |z-score| above which a numeric value counts
+# as a z-score outlier (default 3.0).
+# top_correlations: number of correlation pairs kept in the
+# summary (default 10).
+# top_values: number of top values kept per categorical column
+# (default 3).
+eda_params:
+  target_col: 'target'
+  missing_threshold: 0.2
+  cardinality_threshold: 50
+  leakage_threshold: 0.95
+  leakage_corr_threshold: 0.95
+  duplicate_corr_threshold: 0.99
+  leakage_auc_threshold: 0.99
+  near_constant_threshold: 0.95
+  leakage_name_keywords:
+    - 'target'
+    - 'churn'
+    - 'label'
+    - 'outcome'
+    - 'result'
+    - 'after'
+    - 'post'
+  imbalance_ratio_threshold: 5.0
+  zscore_threshold: 3.0
+  top_correlations: 10
+  top_values: 3

@@ -46,3 +46,17 @@ dvc_params:
 spark_params:
   master: 'local[*]'
   app_name: 'forecast-ml-framework-local'
+
+# validation_params: validate_data override for the local/smoke
+# profile (base keeps fail_fast: false in data.yml).
+# fail_fast: true = raise on missing required columns instead of
+# warning, so bad local data fails fast naming the columns.
+# max_null_ratio: columns above this null rate are reported in
+# high_null_cols (valid: 0-1; example: 0.5).
+validation_params:
+  fail_fast: true
+  max_null_ratio: 0.5
+
+# models_to_use: smoke override — train sklearn only for a fast
+# local run. WARNING: local smoke only; base trains all five.
+models_to_use: ['sklearn']

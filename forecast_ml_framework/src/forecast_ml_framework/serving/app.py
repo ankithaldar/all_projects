@@ -47,6 +47,7 @@ if _IMPORT_ERROR is None:
     '''Health response model.'''
 
     status: str
+    model_loaded: bool = False
 
   class PredictRequest(BaseModel):
     '''Predict request model.'''
@@ -191,7 +192,13 @@ def _check_predictions_finite(predictions):
 
 
 def _predict(model, records):
-  '''Run model prediction on records.'''
+  '''Run model prediction on records.
+
+  Validation (``_validate_records``) is caller-separated:
+  its ValueError is a 422. Errors from ``model.predict``
+  (including ValueError) propagate for the caller to map
+  to a generic 500.
+  '''
   rows = _validate_records(model, records)
   if hasattr(model, 'predict'):
     predictions = _to_list(model.predict(rows))
@@ -203,23 +210,68 @@ def _predict(model, records):
   return predictions
 
 
-def _resolve_loader(model_loader, registry_uri, model_name, alias):
+def _resolve_loader(model_loader, registry_uri, model_name, alias,
+                    artifact_path=None):
   '''Resolve the effective loader, preferring injection.
 
-  Falls back to explicit registry config, then MODEL_*
-  environment variables. Errors are generic (no leak).
+  Falls back to an explicit or MODEL_ARTIFACT_PATH file
+  loader, then explicit registry config or MODEL_NAME,
+  then a degraded loader that reports the model as not
+  configured. Never raises for a missing loader.
   '''
   if model_loader is not None:
     return model_loader
+  artifact_path = artifact_path or os.environ.get(
+      'MODEL_ARTIFACT_PATH')
+  if artifact_path:
+    from forecast_ml_framework.serving.model_loader import (  # noqa: E501
+      FileModelLoader,
+    )
+    return FileModelLoader(artifact_path)
   registry_uri = registry_uri or os.environ.get('MODEL_REGISTRY_URI')
   model_name = model_name or os.environ.get('MODEL_NAME')
   alias = alias or os.environ.get('MODEL_ALIAS') or 'production'
   if not model_name:
-    raise ValueError('model loader or registry config is required')
+    from forecast_ml_framework.serving.model_loader import (  # noqa: E501
+      DegradedLoader,
+    )
+    return DegradedLoader()
   from forecast_ml_framework.serving.model_loader import (  # noqa: E501
     RegistryModelLoader,
   )
   return RegistryModelLoader(registry_uri, model_name, alias=alias)
+
+
+# Re-exported for callers/tests that look for the degraded
+# loader next to the app factory.
+try:
+  from forecast_ml_framework.serving.model_loader import (  # noqa: E501
+    DegradedLoader,
+    ModelCorruptError,
+    ModelNotConfiguredError,
+    ModelNotFoundError,
+  )
+except Exception:  # pragma: no cover - import guard
+  class DegradedLoader:  # type: ignore[no-redef]
+    '''Fallback degraded loader.'''
+
+    def __call__(self):
+      '''Raise ModelNotConfiguredError.'''
+      raise ModelNotConfiguredError('model not configured')
+
+  class ModelNotConfiguredError(RuntimeError):  # type: ignore[no-redef]
+    '''Fallback not-configured error.'''
+
+  class ModelNotFoundError(RuntimeError):  # type: ignore[no-redef]
+    '''Fallback not-found error.'''
+
+  class ModelCorruptError(RuntimeError):  # type: ignore[no-redef]
+    '''Fallback corrupt error.'''
+
+
+def _load_model(model_loader):
+  '''Return the model from a loader or model object.'''
+  return model_loader() if callable(model_loader) else model_loader
 
 
 SECURITY_HEADERS = {
@@ -334,8 +386,13 @@ class _CapAuthHeadersMiddleware:
 
 
 def create_app(model_loader=None, registry_uri=None, model_name=None,
-               alias=None):
+               alias=None, artifact_path=None):
   '''Create FastAPI app with injected or registry model loader.
+
+  Never raises for a missing loader: without an injected
+  loader, MODEL_ARTIFACT_PATH, or registry config, the
+  app runs in degraded mode (health reports degraded and
+  /predict returns 503).
 
   Args:
     model_loader: Callable returning a model, or a model.
@@ -345,16 +402,19 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     model_name: Registered model name (or MODEL_NAME).
     alias: Registry alias (or MODEL_ALIAS, default
       ``production``).
+    artifact_path: File-loader artifact path (or
+      MODEL_ARTIFACT_PATH); takes precedence over
+      registry config.
 
   Returns:
     Configured FastAPI application.
 
   Raises:
     ImportError: If fastapi or pydantic is not installed.
-    ValueError: If no loader or registry config is given.
   '''
   model_loader = _resolve_loader(
-      model_loader, registry_uri, model_name, alias)
+      model_loader, registry_uri, model_name, alias,
+      artifact_path=artifact_path)
   if _IMPORT_ERROR is not None:
     raise ImportError(
       'fastapi and pydantic are required to serve: install them '
@@ -362,11 +422,26 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     ) from _IMPORT_ERROR
   app = FastAPI(title='forecast-ml serving')
   app.add_middleware(_CapAuthHeadersMiddleware)
+  # Health probe cache on the app instance: dict with
+  # 'result' -> HealthResponse or None when not yet probed.
+  _health_cache = {'result': None}
+  app.state.health_cache = _health_cache
+  app._health_cache = _health_cache
 
   @app.get('/health', response_model=HealthResponse)
   def health() -> HealthResponse:
-    '''Return service health.'''
-    return HealthResponse(status='ok')
+    '''Return service health and whether the model loads.'''
+    if _health_cache['result'] is not None:
+      return _health_cache['result']
+    try:
+      _load_model(model_loader)
+    except Exception:  # pylint: disable=broad-exception-caught
+      _health_cache['result'] = HealthResponse(
+        status='degraded', model_loaded=False)
+    else:
+      _health_cache['result'] = HealthResponse(
+        status='ok', model_loaded=True)
+    return _health_cache['result']
 
   @app.post('/predict', response_model=PredictResponse)
   def predict(request: PredictRequest) -> PredictResponse:
@@ -374,19 +449,40 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     records = _records_from(request)
     _check_caps(records)
     try:
-      model = model_loader() if callable(model_loader) else model_loader
+      model = _load_model(model_loader)
+    except ModelNotConfiguredError as exc:
+      _LOG.warning('model not configured')
+      raise HTTPException(
+          status_code=503, detail='model not configured') from exc
+    except ModelNotFoundError as exc:
+      _LOG.warning('model not found')
+      raise HTTPException(
+          status_code=503, detail='model artifact not found') from exc
+    except ModelCorruptError as exc:
+      _LOG.exception('model corrupt')
+      raise HTTPException(
+          status_code=500, detail='model failed to load') from exc
     except Exception as exc:  # pylint: disable=broad-exception-caught
       _LOG.exception('model load failed')
       raise HTTPException(
-          status_code=500, detail='model unavailable') from exc
+          status_code=500, detail='model failed to load') from exc
+    # Validation separate from model execution: validation
+    # ValueError -> 422; model ValueError/other -> generic 500.
     try:
-      predictions = _predict(model, records)
+      rows = _validate_records(model, records)
     except ValueError as exc:
       raise HTTPException(status_code=422,
                           detail=str(exc)) from exc
-    except HTTPException:  # pylint: disable=duplicate-except
-      raise
+    try:
+      if hasattr(model, 'predict'):
+        predictions = _to_list(model.predict(rows))
+      elif callable(model):
+        predictions = _to_list(model(records))
+      else:
+        raise TypeError('model must have predict() or be callable')
+      _check_predictions_finite(predictions)
     except Exception as exc:  # pylint: disable=broad-exception-caught
+      # Log only; never leak model/internal detail to client.
       _LOG.exception('prediction failed')
       raise HTTPException(status_code=500,
                           detail='prediction failed') from exc
@@ -412,3 +508,9 @@ def create_app_from_registry(registry_uri, model_name,
   )
   loader = RegistryModelLoader(registry_uri, model_name, alias=alias)
   return create_app(loader)
+
+
+try:
+  app = create_app()
+except ImportError:  # pragma: no cover - missing fastapi
+  app = None

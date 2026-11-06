@@ -69,7 +69,7 @@ def test_health():
   client = TestClient(create_app(dummy_loader))
   response = client.get('/health')
   assert response.status_code == 200
-  assert response.json() == {'status': 'ok'}
+  assert response.json() == {'status': 'ok', 'model_loaded': True}
 
 
 def test_predict_features():
@@ -165,7 +165,8 @@ def test_create_app_from_registry_health_and_predict(monkeypatch):
   calls = _install_fake_mlflow(monkeypatch)
   client = TestClient(create_app_from_registry(
       'sqlite:///registry.db', 'my-model', alias='production'))
-  assert client.get('/health').json() == {'status': 'ok'}
+  assert client.get('/health').json() == {
+      'status': 'ok', 'model_loaded': True}
   r = client.post('/predict', json={'features': {'a': 1.0, 'b': 2.0}})
   assert r.status_code == 200
   assert r.json() == {'predictions': [3.0]}
@@ -244,7 +245,7 @@ def test_predict_unknown_feature_key_422():
   assert 'c' in r.text
 
 
-def test_predict_nonfinite_output_422():
+def test_predict_nonfinite_output_500():
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
@@ -254,11 +255,11 @@ def test_predict_nonfinite_output_422():
 
   client = TestClient(create_app(lambda: InfModel()))
   r = client.post('/predict', json={'features': {'a': 1.0}})
-  assert r.status_code == 422
-  assert 'predictions' in r.text
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}
 
 
-def test_predict_nan_output_422():
+def test_predict_nan_output_500():
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
@@ -268,7 +269,8 @@ def test_predict_nan_output_422():
 
   client = TestClient(create_app(lambda: NanModel()))
   r = client.post('/predict', json={'features': {'a': 1.0}})
-  assert r.status_code == 422
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}
 
 
 def test_predict_body_too_large_413():
@@ -395,3 +397,173 @@ def test_predict_real_sklearn_logreg():
     '/predict', json={'features': {'f1': 1.0, 'f2': 2.0, 'f3': 3.0}})
   assert r.status_code == 200, r.text
   assert len(r.json()['predictions']) == 1
+
+
+def _clear_model_env(monkeypatch):
+  '''Clear MODEL_* env vars for degraded-loader tests.'''
+  for name in ('MODEL_ARTIFACT_PATH', 'MODEL_REGISTRY_URI',
+               'MODEL_NAME', 'MODEL_ALIAS'):
+    monkeypatch.delenv(name, raising=False)
+
+
+def test_create_app_no_loader_degraded_no_raise(monkeypatch):
+  '''create_app() without loader/config degrades, never raises.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  _clear_model_env(monkeypatch)
+  client = TestClient(create_app())
+  health = client.get('/health')
+  assert health.status_code == 200
+  assert health.json() == {
+      'status': 'degraded', 'model_loaded': False}
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 503
+  assert '/secret' not in r.text
+
+
+def test_predict_typed_loader_errors(monkeypatch):
+  '''Typed loader errors map to 503/503/500 without leak.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+    ModelNotConfiguredError,
+    ModelNotFoundError,
+  )
+  secret = '/secret/dir/model.pkl'
+
+  def make(exc):
+    def loader():
+      raise exc
+    return loader
+
+  cases = [
+      (ModelNotConfiguredError(secret), 503),
+      (ModelNotFoundError(secret), 503),
+      (ModelCorruptError(secret), 500),
+  ]
+  for exc, expected in cases:
+    client = TestClient(create_app(make(exc)))
+    r = client.post('/predict', json={'features': {'a': 1.0}})
+    assert r.status_code == expected, r.text
+    assert '/secret' not in r.text
+    assert 'model.pkl' not in r.text
+    health = client.get('/health')
+    assert health.json() == {
+        'status': 'degraded', 'model_loaded': False}
+
+
+def test_create_app_artifact_path_env_priority(monkeypatch, tmp_path):
+  '''MODEL_ARTIFACT_PATH file loader wins over MODEL_NAME.'''
+  import pickle
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  from sklearn.linear_model import LinearRegression
+  model = LinearRegression().fit([[1.0, 2.0]], [3.0])
+  path = tmp_path / 'model.pkl'
+  path.write_bytes(pickle.dumps(model))
+  monkeypatch.setenv('MODEL_ARTIFACT_PATH', str(path))
+  monkeypatch.setenv('MODEL_REGISTRY_URI', 'sqlite:///registry.db')
+  monkeypatch.setenv('MODEL_NAME', 'my-model')
+  client = TestClient(create_app())
+  assert client.get('/health').json() == {
+      'status': 'ok', 'model_loaded': True}
+  r = client.post('/predict', json={'features': {'a': 1.0, 'b': 2.0}})
+  assert r.status_code == 200, r.text
+  assert r.json() == {'predictions': [3.0]}
+
+
+def test_module_level_app_exists():
+  '''Module-level app is created via create_app().'''
+  from forecast_ml_framework.serving import app as app_module
+  assert app_module.app is not None
+  assert hasattr(app_module.app, 'routes')
+
+
+def test_predict_typed_loader_detail_strings():
+  '''NotFound -> 'model artifact not found' 503, load fail -> 500.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  from forecast_ml_framework.serving.model_loader import (
+    ModelCorruptError,
+    ModelNotFoundError,
+  )
+
+  def make(exc):
+    def loader():
+      raise exc
+    return loader
+
+  client = TestClient(create_app(make(
+    ModelNotFoundError('/secret/dir/model.pkl'))))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 503
+  assert r.json() == {'detail': 'model artifact not found'}
+  assert '/secret' not in r.text
+
+  client = TestClient(create_app(make(
+    ModelCorruptError('/secret/dir/model.pkl'))))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'model failed to load'}
+  assert '/secret' not in r.text
+
+  def bad_loader():
+    raise RuntimeError('/secret/dir/model.pkl boom')
+
+  client = TestClient(create_app(bad_loader))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'model failed to load'}
+  assert '/secret' not in r.text
+
+
+def test_predict_model_value_error_generic_500_no_leak():
+  '''model.predict ValueError -> generic 500, log only, no leak.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+
+  class ValueErrorModel:
+    def predict(self, rows):
+      raise ValueError('/secret/internal detail')
+
+  client = TestClient(create_app(lambda: ValueErrorModel()))
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert r.json() == {'detail': 'prediction failed'}
+  assert '/secret' not in r.text
+  assert 'internal' not in r.text
+
+
+def test_predict_validation_error_still_422():
+  '''_validate_records ValueError stays 422 with field detail.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  r = client.post('/predict', json={'features': {'a': 'x'}})
+  assert r.status_code == 422
+
+
+def test_health_caches_probe_on_app_instance():
+  '''Second /health does not re-probe loader; cache on app.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  calls = {'n': 0}
+
+  def counting_loader():
+    calls['n'] += 1
+    return DummyModel()
+
+  app = create_app(counting_loader)
+  client = TestClient(app)
+  assert client.get('/health').json() == {
+    'status': 'ok', 'model_loaded': True}
+  assert calls['n'] == 1
+  assert client.get('/health').json() == {
+    'status': 'ok', 'model_loaded': True}
+  assert calls['n'] == 1
+  # Cache lives on the app instance (state or attribute).
+  cached = (getattr(app.state, 'health_cache', None)
+            or getattr(app, '_health_cache', None)
+            or getattr(app, 'health_cache', None))
+  assert cached is not None

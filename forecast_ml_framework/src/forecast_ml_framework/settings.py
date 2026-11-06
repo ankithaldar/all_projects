@@ -20,6 +20,8 @@ must use ``load_config`` and must never use the stock
 ``OmegaConfigLoader`` directly.
 '''
 
+from pathlib import Path
+
 try:
   import re
 
@@ -51,8 +53,7 @@ try:
           RestrictedOmegaConfigLoader._reject_oc(_value)
       elif isinstance(node, str) and _OC_PATTERN.search(node):
         raise ValueError(
-          'oc.* resolvers are blocked in Kedro config '
-          'loader: ' + node)
+          'oc.* resolvers are blocked in Kedro config loader')
 
     def _merge_and_resolve(self, key, config_per_file):
       '''Reject ``oc.*`` in raw configs, then resolve.'''
@@ -92,6 +93,6 @@ try:
 except ImportError:  # pragma: no cover - kedro optional at import
   CONFIG_LOADER_CLASS = None
 
-CONF_SOURCE = 'conf'
+CONF_SOURCE = str(Path(__file__).resolve().parents[2] / 'conf')
 HOOKS = ()
 __all__ = ['CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']

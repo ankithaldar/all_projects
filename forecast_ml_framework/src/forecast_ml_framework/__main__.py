@@ -10,9 +10,15 @@ Declared in pyproject.toml as the sole console script,
 module is side-effect free.
 '''
 
+import importlib.metadata
 import sys
 
-_VERSION = 'forecast-ml 0.1.0'
+try:
+  _DIST_VERSION = importlib.metadata.version('forecast-ml-framework')
+except importlib.metadata.PackageNotFoundError:
+  _DIST_VERSION = '0.1.0'
+
+_VERSION = f'forecast-ml {_DIST_VERSION}'
 
 
 def main(argv=None):

@@ -72,6 +72,12 @@ dev = [
 
 [project.scripts]
 forecast-ml = 'forecast_ml_framework.__main__:main'
+forecast-ml-framework = 'forecast_ml_framework.__main__:main'
+
+[tool.kedro]
+package_name = 'forecast_ml_framework'
+project_name = 'forecast-ml-framework'
+kedro_init_version = '1.7.0'
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/forecast_ml_framework']
@@ -86,3 +92,6 @@ markers = [
 [tool.ruff]
 line-length = 80
 indent-width = 2
+
+[tool.kedro_telemetry]
+project_id = "269ab3d93027411b89cf59398870bc34"

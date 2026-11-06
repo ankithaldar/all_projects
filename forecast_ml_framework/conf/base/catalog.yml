@@ -435,3 +435,64 @@ lineage:
 audit_log:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'artifacts/governance/audit_log.parquet'
+
+# --- Clean-UX: pipeline intermediate datasets (Tasks 5) -------------------------
+# validated_data: validated frame from data_prep validate_data node.
+# Type: kedro_datasets.pandas.ParquetDataset.
+validated_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/validated_data.parquet'
+
+# validation_report: validate_data report dict.
+# Type: kedro_datasets.json.JSONDataset.
+validation_report:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'data/processed/validation_report.json'
+
+# preprocessed_data: preprocess node output frame.
+# Type: kedro_datasets.pandas.ParquetDataset.
+preprocessed_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/preprocessed_data.parquet'
+
+# train_data_selected: select_features output frame.
+# Type: kedro_datasets.pandas.ParquetDataset.
+train_data_selected:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/train_data_selected.parquet'
+
+# modeling_input: frame consumed by modeling split node.
+# Type: kedro_datasets.pandas.ParquetDataset.
+modeling_input:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'data/processed/modeling_input.parquet'
+
+# x_train / x_test / y_train / y_test: modeling split outputs.
+# Type: kedro.io.MemoryDataset (in-memory; kedro-datasets 10.x
+# ships no MemoryDataset, kedro core does).
+x_train:
+  type: 'kedro.io.MemoryDataset'
+
+x_test:
+  type: 'kedro.io.MemoryDataset'
+
+y_train:
+  type: 'kedro.io.MemoryDataset'
+
+y_test:
+  type: 'kedro.io.MemoryDataset'
+
+# split_meta: split sizes / indices metadata from modeling split.
+# Type: kedro.io.MemoryDataset.
+split_meta:
+  type: 'kedro.io.MemoryDataset'
+
+# eda_summary: eda_summary node output dict.
+# Type: kedro.io.MemoryDataset.
+eda_summary:
+  type: 'kedro.io.MemoryDataset'
+
+# eda_report: eda_report node output dict.
+# Type: kedro.io.MemoryDataset.
+eda_report:
+  type: 'kedro.io.MemoryDataset'
