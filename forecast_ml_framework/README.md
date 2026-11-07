@@ -158,7 +158,7 @@ params, a smoke local profile, and a strict config schema — see the
   or a prod profile without `FORECAST_API_KEY` refuses startup, keys
   shorter than 16 chars are refused, and every `/predict` writes a
   structured access log + persisted audit entry with an HMAC key-id
-  (`serving/app.py:151-174,202-215,218-244,247-264`; see
+  (`serving/app.py:151-174,225-238,241-267,270-287`; see
   [Serving API](#serving-api)).
 - **MLflow / DVC.** `mlflow_params` / `dvc_params` in `parameters/platform.yml`
   are validated by the schema; MLflow tracking/registry runs through
@@ -251,10 +251,10 @@ without running anything (`cli.py:281-298`). `--env` accepts
 
 | Variable | Use | Default |
 |---|---|---|
-| `MODEL_REGISTRY_URI` | MLflow registry URI for `RegistryModelLoader` (env read in `serving/app.py:541`, `_resolve_loader` `serving/app.py:523-552`) | unset |
+| `MODEL_REGISTRY_URI` | MLflow registry URI for `RegistryModelLoader` (env read in `serving/app.py:569`, `_resolve_loader` `serving/app.py:551-580`) | unset |
 | `MODEL_NAME` | Registered model name | unset → degraded mode |
 | `MODEL_ALIAS` | Registry alias | `production` |
-| `MODEL_ARTIFACT_PATH` | File-loader artifact path (env read at `serving/app.py:534-535`, explicit `artifact_path=` wins) | unset |
+| `MODEL_ARTIFACT_PATH` | File-loader artifact path (env read at `serving/app.py:562-563`, explicit `artifact_path=` wins) | unset |
 | `FORECAST_API_KEY` | Fail-closed auth (see [Serving API](#serving-api)): when set, `/predict` requires it (`X-API-Key` or `Authorization: Bearer ...`); `/health` stays public (401 otherwise); required at startup when `FORECAST_REQUIRE_AUTH=1` or prod profile, min length 16 | off (dev, WARNING logged) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCP credentials for GCS/BigQuery | unset |
 | `AWS_PROFILE` / AWS env vars | AWS credentials for S3/Athena | unset |
@@ -485,12 +485,12 @@ forecast_ml_framework/
 │   ├── hooks.py                # ForecastHooks: MLflow Kedro hooks (Phase 7)
 │   ├── settings.py             # Kedro settings: CONF_SOURCE, HOOKS=(ForecastHooks(),)
 │   ├── pipeline_registry.py    # register_pipelines(), lazy imports (12 display names, 8 modules)
+│   ├── losses.py               # loss callable allowlist (LOSS_CALLABLES)
 │   ├── core/
 │   │   ├── artifact_store.py   # local/GCS/S3 stores, restricted unpickler
 │   │   ├── config_loader.py    # ConfigLoader: lookup, task_type, feature merge
 │   │   ├── config_schema.py    # Pydantic models + OmegaConf load_config()
 │   │   ├── datasets.py         # SQLQueryDataSet, SparkSQLDataSet
-│   │   ├── losses.py           # loss callable allowlist (LOSS_CALLABLES)
 │   │   ├── params.py           # canonical parse_int/parse_float/get_first/parse_datetime
 │   │   ├── predictions.py      # materialize_predictions + finite checks
 │   │   └── spark_factory.py    # SparkSessionFactory, to_pandas(), pandas 5M guard, autoscaling defaults
@@ -1679,11 +1679,11 @@ then `nan` — never raises.
 ### Descriptive stats (regression) and confusion rates table
 
 Descriptive stats (regression) are computed only when selected
-(`metrics.py:1009-1030`): `target_sum|min|max|mean`,
+(`metrics.py:1706-1735`): `target_sum|min|max|mean`,
 `pred_sum|min|max|mean`, `total_count`, and `max_pred_error`
 (signed `max(y_true - y_pred)`, not max absolute error). The
 parity-shaped confusion table is `metrics.confusion_rates_table(y_true,
-y_pred)` (`metrics.py:1196-1229`): two rows (`Actual Positive` /
+y_pred)` (`metrics.py:1941-1970`): two rows (`Actual Positive` /
 `Actual Negative`, each with `label` and `Actual` keys) carrying
 `tpr|fpr|fnr|tnr` floats; a failed/non-2×2 confusion matrix yields
 `nan` rates, never a crash.
@@ -1710,7 +1710,7 @@ above-threshold columns are cumulative-from-top sums over the
 subset `proba >= threshold`; when `None` (default), they are
 cumulative from the top decile down over all rows
 (`lift_table.py:39-86,152-206`). `pipeline.build_lift_table`
-(`pipeline.py:135-168`) passes the threshold from
+(`pipeline.py:251-284`) passes the threshold from
 `modeling_params` (`lift_threshold`, alias `model_threshold`)
 through to `compute_lift_table`, extracts the positive-class
 proba, and returns the empty frame when `y_proba is None`.
@@ -1747,13 +1747,13 @@ non-signed metrics with `old <= 0` return `(False, nan)`.
 `pipeline.build_promotion` compares `selected_ntile.score` against
 `params.old_score` and returns `{'promote', 'deviation_pct',
 'new_score', 'old_score', 'eval_metric', 'metric', 'task_type'}`
-(`pipeline.py:171-200`); missing `old_score`/`selected_ntile` never
+(`pipeline.py:287-309`); missing `old_score`/`selected_ntile` never
 promotes. `should_promote` only returns the decision — registry
 promotion stays with the caller.
 
 ### Scoring ntile columns
 
-`pipelines/scoring/nodes.py:_score_pandas_chunk` (`scoring/nodes.py:756+`)
+`pipelines/scoring/nodes.py:_score_pandas_chunk` (`scoring/nodes.py:707`)
 adds `score_decile` (10 tiles) and `score_centile` (100 tiles) via
 `_ntile_labels` → `ntile.assign_ntile` (`ntile.py`; `assign_ntile`
 is 1-based, lowest scores in tile 1, `overall` → all zeros). When a
@@ -1761,7 +1761,7 @@ calibrated source is present, it also adds `calib_decile` /
 `calib_centile`. Classification rows also get `high_score_ind`
 (`'Y'` when `proba >= model_threshold` (default 0.5) and
 `score_decile >= 5`, else `'N'` — `>=` to match `prediction`, ML-19;
-see `scoring/nodes.py:775-787,860`).
+see `scoring/nodes.py:811-813,868-871`).
 
 ## High-Value Additions (Phase 7)
 
@@ -1806,11 +1806,11 @@ Catalog: `fitted_registry` (`kedro_datasets.json.JSONDataset`,
 
 ### 2. Tuning executor — `pipelines/modeling/tuning.py`
 
-`tune_model(estimator, x, y, params)` (`tuning.py:254+`) returns
+`tune_model(estimator, x, y, params)` (`tuning.py:275`) returns
 `(best_estimator, best_params, report)` where `report` carries
 `method`, `best_score`, `best_params`, `best_index`, `cv`, `scoring`,
 `n_jobs`, `n_candidates` (plus `n_iter` for random). Methods are an
-exact map (`tuning.py:20-33`): `grid` → `GridSearchCV`, `random` →
+exact map (`tuning.py:21-36`): `grid` → `GridSearchCV`, `random` →
 `RandomizedSearchCV`, `halving` → `HalvingGridSearchCV`,
 `halving_random` → `HalvingRandomSearchCV` (aliases accepted,
 e.g. `grid_search`, `randomizedsearchcv`). Config keys:
@@ -1819,10 +1819,10 @@ e.g. `grid_search`, `randomizedsearchcv`). Config keys:
 be a non-empty dict of non-empty lists, product ≤ 1000),
 `cv` (default 3; must be an int in `[2, min class count]` for
 classification or `[2, n_samples]` for regression,
-`tuning.py:240-251`), `scoring` (string or null), `n_jobs` (default 1),
+`tuning.py:252-272`), `scoring` (string or null), `n_jobs` (default 1),
 `n_iter` (default 10, random methods), `random_state`/`seed`.
 The tuning dict may sit under any of `tuning`, `tuning_params`,
-`tuning_config`, `hyperparameter_tuning` (`tuning.py:36-37`;
+`tuning_config`, `hyperparameter_tuning` (`tuning.py:39-40`;
 `adapters.py:367`, `TUNING_KEYS`).
 
 ```yaml
@@ -1838,7 +1838,7 @@ modeling_params:
 
 Wiring: `train_models` tunes when a tuning dict is present and
 stores the report as `per_model_metrics[name]['tuning']`
-(`adapters.py:846-848`); without tuning, no `tuning` key is added.
+(`adapters.py:1006-1008`); without tuning, no `tuning` key is added.
 `tuning_handle` remains a dotted importable validated via
 `resolve_handle()` (`modeling/pipeline.py:68-69`) — it names a
 search class, it is not itself the tuning config.
@@ -1863,12 +1863,12 @@ modeling_params:
 #   sklearn: {balance: true, model_type: 'logistic_regression'}
 ```
 
-Wiring: `adapters._balance_kwargs` (`adapters.py:387-424`) injects
+Wiring: `adapters._balance_kwargs` (`adapters.py:389-426`) injects
 the weights into estimator kwargs when `balance` is truthy —
 preferring `scale_pos_weight` when the estimator signature supports
 it, else `class_weight` / `class_weights` — and never passes
 `balance` itself through. The top-level `balance` flag is copied
-into per-model params in `train_models` (`adapters.py:835-836`).
+into per-model params in `train_models` (`adapters.py:932-933`).
 Note: this is distinct from the EDA flag
 `eda_params.imbalance_ratio_threshold` (majority/minority ratio,
 default 5.0), which only flags `class_imbalance` in the EDA report.
@@ -1893,26 +1893,26 @@ calibrate_probability(np.array([0.5, 0.9]), 0.1, 0.5)
 
 ### 5. Threshold application + prior-rate correction at scoring
 
-`pipelines/scoring/nodes.py:_score_pandas_chunk` (`nodes.py:756+`,
-`_model_threshold` at `nodes.py:95`, `_calibrate_probability` at
-`nodes.py:601`):
+`pipelines/scoring/nodes.py:_score_pandas_chunk` (`nodes.py:707`,
+`_model_threshold` at `nodes.py:87`, `_calibrate_probability` at
+`nodes.py:552`):
 
 - **Threshold.** When `scoring_params.model_threshold` is present
   (not `None`) and the task is classification, `prediction` is
   `(positive-class proba >= threshold).astype(int)` for binary
   `predict_proba` output; `proba` is left unchanged
-  (`nodes.py:809-814`). `_model_threshold` validates the value as a
+  (`nodes.py:760-765`). `_model_threshold` validates the value as a
   float in [0, 1] (default 0.5) and raises `ValueError` otherwise.
   Multiclass or `(n, 1)` proba warns and falls back to
   `model.predict` (binary-only `_positive_class_proba`,
-  `nodes.py:499`); regression ignores the threshold entirely.
-  `high_score_ind` uses `>= threshold` (ML-19, `nodes.py:781-787`),
+  `nodes.py:450`); regression ignores the threshold entirely.
+  `high_score_ind` uses `>= threshold` (ML-19, `nodes.py:811-813`),
   so `proba == threshold` gives prediction 1 and `Y` (when tile ≥ 5).
 - **Prior-rate correction.** When **both** `real_rate` and
   `sample_rate` are present in scoring params, a `calib_proba`
   column corrected via `calibrate_probability` is appended;
   `_calibrate_probability` prefers the modeling implementation
-  (`nodes.py:601`). `proba` and `prediction` are never mutated by
+  (`nodes.py:552`). `proba` and `prediction` are never mutated by
   the correction. With only one rate, or neither, no `calib_proba`
   column is added.
 
@@ -1929,25 +1929,25 @@ scoring_params:
 `model_threshold` also ships in `modeling_params`
 (`conf/base/parameters/modeling.yml:97-98`, alias of
 `lift_threshold` there) and feeds the lift-table threshold in the
-modeling pipeline (`modeling/pipeline.py:155-161`).
+modeling pipeline (`modeling/pipeline.py:271-277`).
 
 ### 6. KNN + sequence routines — `pipelines/data_prep/nodes.py`
 
-Three steps appended to the `_REGISTRY` (`nodes.py:584-604`),
+Three steps appended to the `_REGISTRY` (`nodes.py:742-762`),
 leaving the first 16 registry entries in their original order:
 
-- `KnnImputation` (`nodes.py:490-524`): fits
+- `KnnImputation` (`nodes.py:652-680`): fits
   `KNNImputer(n_neighbors=5 default, weights='uniform')` on the
   include-cols numeric block and transforms it. `n_neighbors` is
   capped at `len(df)`; on any error (including sklearn missing) it
   warns and falls back to per-column mean fill, then re-fills any
   remaining NaNs with the mean. **Not** part of the fitted registry
   (see pillar 1).
-- `SequenceChangeRatio` (`nodes.py:527-554`): per seq column,
+- `SequenceChangeRatio` (`nodes.py:683-711`): per seq column,
   `arr[-1] / mean(arr[-last_n_val:-1])` (defaults `last_n_val=2`,
   suffix `change_ratio` → `<col>_change_ratio`); empty/short seqs
   and zero prior mean give 0.0.
-- `SequenceCov` (`nodes.py:557-581`): `std / mean` of the last-`n`
+- `SequenceCov` (`nodes.py:714-739`): `std / mean` of the last-`n`
   segment (`last_n_val` default 2, suffix `cov` → `<col>_cov`);
   empty seqs and zero mean give 0.0.
 
@@ -2027,7 +2027,7 @@ materialises the full frame on the driver.
 `serving/app.py:create_app(model_loader=None, registry_uri=None,
 model_name=None, alias=None, artifact_path=None, host=None,
 rate_limit_per_minute=None, health_cache_ttl=None)`
-(`serving/app.py:807-809`) builds the FastAPI app
+(`serving/app.py:861-863`) builds the FastAPI app
 (`title='forecast-ml serving'`; `artifact_path=` is the 5th param,
 W3). `model_loader` is a callable returning
 a model or the model itself; wire it to
@@ -2041,7 +2041,7 @@ loading, or inject a stub in tests. Alternatively pass registry config
 `restricted_loads` (size cap `MAX_ARTIFACT_BYTES` 512 MiB +
 optional SHA-256 pin via `MODEL_SHA256`/`expected_sha256`), with
 tracking/registry URIs kept separate. `create_app_from_registry(...)`
-(`serving/app.py:999-1019`) is the registry-only shortcut.
+(`serving/app.py:1059-1079`) is the registry-only shortcut.
 `RegistryModelLoader.load()` caches the model and raises `RuntimeError`
 (no URI leaked) when the registry model is not found. A/B + shadow
 routing lives in `serving/ab_testing.py` (`ABRouter`, modes `shadow`
@@ -2059,12 +2059,12 @@ curl http://127.0.0.1:8000/health
 ```
 
 `HealthResponse` carries `status` and `model_loaded`
-(`serving/app.py:366-370`). The first probe loads the model: on success
+(`serving/app.py:394-398`). The first probe loads the model: on success
 `status: ok, model_loaded: true`; on any load failure `status:
-degraded, model_loaded: false` (`serving/app.py:880-896`). The result
+degraded, model_loaded: false` (`serving/app.py:934-950`). The result
 is cached on the app instance with a 30 s TTL (env
 `FORECAST_HEALTH_CACHE_TTL`, refreshed on expiry and on successful
-`/predict`, `serving/app.py:871-873,875-878,988-989`). With no model configured
+`/predict`, `serving/app.py:909,929-932,1048-1049`). With no model configured
 (`DegradedLoader` — no injected loader, no `MODEL_ARTIFACT_PATH`,
 no `MODEL_NAME`), `/predict` returns 503 `model not configured` and
 `/health` reports `degraded`.
@@ -2095,16 +2095,16 @@ artifact/version → `ModelNotFoundError` → 503 `model artifact not
 found`; malformed artifact or registry flavour mismatch →
 `ModelCorruptError` → 500 `model failed to load`. Validation
 `ValueError` → generic 422 `validation failed` (R-09/X1 landed:
-`serving/app.py:966-967` returns `detail='validation failed'`; the
+`serving/app.py:1026-1027` returns `detail='validation failed'`; the
 offending field is logged scrubbed server-side only via
-`_log_validation_error` at `serving/app.py:267-282`, never echoed to
+`_log_validation_error` at `serving/app.py:290-310`, never echoed to
 the client); model execution errors → generic 500 `prediction failed`
-(`serving/app.py:986-987`). Messages never contain the server
+(`serving/app.py:1046-1047`). Messages never contain the server
 filesystem path or registry URI.
 
 **Authentication (fail-closed, W3/X1 landed).** `_validate_auth_config`
 (`serving/app.py:151-174`, called at startup by `create_app` at
-`serving/app.py:844`) raises `RuntimeError` when
+`serving/app.py:898`) raises `RuntimeError` when
 `FORECAST_REQUIRE_AUTH=1` or a production profile
 (`FORECAST_ENV`/`ENVIRONMENT`/`APP_ENV` in `prod|production`) is set
 without a key, and when a key shorter than `MIN_API_KEY_LENGTH=16`
@@ -2113,22 +2113,22 @@ a WARNING (`serving/app.py:170-174`). Non-loopback binds (`host=`)
 require a valid key (`validate_bind_host`, `serving/app.py:126-148`).
 When `FORECAST_API_KEY` is set, every path except `/health` requires
 the matching key (constant-time compare), else the app returns
-`401 {"detail": "unauthorized"}` (`serving/app.py:709-719`).
+`401 {"detail": "unauthorized"}` (`serving/app.py:763-773`).
 
 **Access + audit logging (X1 landed, D7/A4).** Every `/predict` attempt
 — success, 422, 500, 503, the endpoint `_check_caps` 413
-(`serving/app.py:422-437,907-916`) and the middleware streaming body-cap 413
-(`serving/app.py:740-749`), plus middleware 401/429
-(`serving/app.py:709-729`) — writes a structured access log
+(`serving/app.py:450-465,968-976`) and the middleware streaming body-cap 413
+(`serving/app.py:794-803`), plus middleware 401/429
+(`serving/app.py:763-773,774-783`) — writes a structured access log
 (`predict_access key_id=… outcome=… latency_ms=… records=…`,
-`_log_access` at `serving/app.py:247-264`) **and** a persisted audit
-entry via `_audit_predict` (`serving/app.py:218-244`): `audit_log(
+`_log_access` at `serving/app.py:270-287`) **and** a persisted audit
+entry via `_audit_predict` (`serving/app.py:241-267`): `audit_log(
 event='predict', actor='serving', details={key_id_hmac, outcome,
 latency_ms, records})` appended to the bounded `app.state.audit_log`
 list (`MAX_AUDIT_ENTRIES = 1000`, `serving/app.py:90`; shared list
-wired at `serving/app.py:859-865`, oldest entries dropped past the
+wired at `serving/app.py:913-918`, oldest entries dropped past the
 bound). The key-id is an HMAC-SHA256 truncated to 16 hex chars
-(`_hmac_key_id`, `serving/app.py:202-215`): the HMAC secret is the
+(`_hmac_key_id`, `serving/app.py:225-238`): the HMAC secret is the
 server `FORECAST_API_KEY` itself (or `'anonymous'` when no server
 key is configured), empty provided keys yield `'anonymous'`, and the
 raw key or payload is never logged. **Single-shared-key revocation
@@ -2140,8 +2140,8 @@ until rotation. Rate limiting is in-app and **single-process only
 (R-07):** the token bucket (`FORECAST_RATE_LIMIT_PER_MINUTE`,
 default **600/min**, burst = rate, `DEFAULT_RATE_LIMIT_PER_MINUTE`
 at `serving/app.py:84`, `_rate_limit_per_minute` at
-`serving/app.py:285-308`, `_TokenBucket` at `serving/app.py:328-361`,
-enforced at `serving/app.py:720-729` → 429) is per-process memory —
+`serving/app.py:313-336`, `_TokenBucket` at `serving/app.py:356-389`,
+enforced at `serving/app.py:774-783` → 429) is per-process memory —
 it resets on restart, is not shared across replicas, and has no
 per-IP limit or request timeout. In production you **MUST** put a
 gateway / load balancer in front with distributed per-IP limits and
@@ -2168,7 +2168,7 @@ carries `x-content-type-options: nosniff`,
 `content-security-policy` (`default-src 'none'; frame-ancestors 'none'`),
 `x-permitted-cross-domain-policies: none`, and `strict-transport-security`
 (HSTS) when TLS is detected (`https` scheme, `X-Forwarded-Proto: https`,
-or `FORECAST_TLS_ENABLED=1`, `serving/app.py:587-594,605-623`).
+or `FORECAST_TLS_ENABLED=1`, `serving/app.py:655-673`).
 
 Registry note (Phase 4 final + W4, verified in
 `registry/model_registry.py`): registration uses
@@ -2268,8 +2268,8 @@ live with it as documented.
 
 | # | Issue | Status | Symptom / cause | Fix / workaround now |
 |---|---|---|---|---|
-| 1 | Pickle deserialization trust boundary | **Fixed** | `pickle.load` on an artifact executes `__reduce__` code | Restricted unpickler `restricted_loads()` (`core/artifact_store.py:693`) / `_RestrictedUnpickler` (`core/artifact_store.py:667`) allowlists only sklearn/numpy/pandas + safe builtin types; anything else raises `ValueError`. `FileModelLoader` (`serving/model_loader.py`) uses it. Artifacts are trusted only when produced by this framework; the unpickler is defence in depth |
-| 2 | Path traversal jail | **Fixed** | A key like `../../etc/passwd` escapes the store root | `LocalArtifactStore._full_path()` (`core/artifact_store.py:846-866`) resolves and jail-checks every path against the base; cloud keys validated by `_validate_cloud_key()` (`core/artifact_store.py:760-777`, no absolute keys, no `..`). Absolute paths and escaping keys raise `ValueError` |
+| 1 | Pickle deserialization trust boundary | **Fixed** | `pickle.load` on an artifact executes `__reduce__` code | Restricted unpickler `restricted_loads()` (`core/artifact_store.py:773`) / `_RestrictedUnpickler` (`core/artifact_store.py:747`) allowlists only sklearn/numpy/pandas + safe builtin types; anything else raises `ValueError`. `FileModelLoader` (`serving/model_loader.py`) uses it. Artifacts are trusted only when produced by this framework; the unpickler is defence in depth |
+| 2 | Path traversal jail | **Fixed** | A key like `../../etc/passwd` escapes the store root | `LocalArtifactStore._full_path()` (`core/artifact_store.py:926-947`) resolves and jail-checks every path against the base; cloud keys validated by `_validate_cloud_key()` (`core/artifact_store.py:840-858`, no absolute keys, no `..`). Absolute paths and escaping keys raise `ValueError` |
 | 3 | SQL config-trust | **Fixed (documented)** | Arbitrary SQL string → arbitrary SQL execution | `SQLQueryDataSet` (`core/datasets.py:187,266`) validates intent: single statement, `SELECT`/`WITH` only (`_validate_read_only_query`, `core/datasets.py:136`), plus the extended denylist incl. server-file functions (`PG_READ_FILE`, `READFILE`, …) matched as prefix and double-quoted identifiers kept verbatim for the scan (`core/datasets.py:28-72,75-133`, A8). Documented trust boundary: connection and query come from trusted config (catalog/params), **never** untrusted user input — this is intent-checking, not a SQL sandbox. Only trusted queries may be used, with a read-only DB account |
 | 4 | Matplotlib figure lifecycle | **Fixed** | Unclosed figures leak / "too many open figures" in long runs | `make_charts()` (`pipelines/modeling/charts.py:1743`) closes figures on failure (`_safe`, `pipelines/modeling/charts.py:129`) and closes **every** figure in a `finally` block before returning (e.g. `pipelines/modeling/charts.py:639-641`). Callers must save images inside the call; figures are returned closed |
 | 5 | Env-dependent tests | **Fixed** | Serving tests fail without `httpx`; Spark/cloud tests fail without services | `httpx` is a dev dependency (`pyproject.toml:74-77`) so `fastapi.testclient` works; env-dependent behaviour is mocked/skipped (Spark returns `None` when disabled/missing; cloud SDKs imported lazily). Run `PYTHONPATH=src python -m pytest tests/ -q` |
@@ -2294,11 +2294,11 @@ items #21–#23, #25, #28 are **Fixed** where W3/W4/W2/W5 landed; #3
 and #20 now name the server-file denylist plus double-quote
 identifier scanning (A8); #18, #19, #24, #27, #29–#30 kept with
 freshly read-verified line refs (e.g.
-`core/artifact_store.py:_SAFE_GLOBALS :42`,
-`_BOOSTER_GLOBALS :340`;
+`core/artifact_store.py:_SAFE_GLOBALS :47`,
+`_BOOSTER_GLOBALS :346`;
 `serving/model_loader.py:391,432-436,590-592`;
 `core/datasets.py:28-72,75-133,136`;
-`serving/app.py:83-84,285-308,328-360,311-325,880-896,988`);
+`serving/app.py:83-84,313-336,356-389,339-353,934-950,1048-1049`);
 #31–#40 are new accepted-risk entries from Lead ADRs D6/D7/D8
 (`.opencode/context/decisions.md`) and
 `.opencode/flaw-reports/forecast-qa-final.md` accepted risks.
@@ -2306,18 +2306,18 @@ Counts (2794/2792/1759) unchanged by this docs pass.
 
 | # | Issue | Symptom | Impact | Workaround / config |
 |---|---|---|---|---|
-| 18 | H2O pickle serving rejected (no cluster) — re-verified (softened refs) | H2O globals are absent from the exact allowlist (`core/artifact_store.py:_SAFE_GLOBALS :42`, no `h2o` entries; zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only; there is no H2O cluster connect/load path | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change |
+| 18 | H2O pickle serving rejected (no cluster) — re-verified (softened refs) | H2O globals are absent from the exact allowlist (`core/artifact_store.py:_SAFE_GLOBALS :47`, no `h2o` entries; zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only; there is no H2O cluster connect/load path | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change |
 | 19 | pyfunc opt-in, trusted registry only — re-verified | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:590-592`). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:391`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:432-436`) |
 | 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` (`core/datasets.py:187,327`) accept only a single `SELECT`/`WITH` statement with the extended denylist incl. server-file primitives (`PG_READ_FILE`, `READFILE`, …) and double-quoted identifiers scanned verbatim (`core/datasets.py:28-72,75-133,136`, A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
-| 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:83-84,285-308`, bucket `serving/app.py:328-360`, check `serving/app.py:721`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter. The bucket is single-process (see #33) | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
+| 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:83-84,313-336`, bucket `serving/app.py:356-389`, check `serving/app.py:774-783`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter. The bucket is single-process (see #33) | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
 | 22 | DNS rebinding — **Fixed (W4) + egress required (R-05)** | `_validate_uri_host` now re-validates via `socket.getaddrinfo` and rejects *any* non-global resolved address, fail-closed on error (`registry/model_registry.py:161,173,197-270`) | Hostnames resolving to private/metadata IPs are caught at validation time; residual TOCTOU between validation and the MLflow client's own DNS resolution remains (see #32) | Keep allowlisted registry hostname you control **and** run behind a network egress allowlist (allow only that hostname; block private/metadata) — see Registry DNS egress note above |
-| 23 | Pickle native-booster file-load — **Fixed (W2)** | `restricted_loads` (`core/artifact_store.py:693`) runs a `pickletools` pre-scan rejecting `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (`core/artifact_store.py:340,433`) + `MAX_ARTIFACT_BYTES` size cap before unpickling; legit `NEWOBJ`+`BUILD` roundtrips still load | Booster file-load / oversized-pickle vectors closed | Load only artifacts produced by this framework from a fully trusted registry/store; treat any other pickle source as untrusted |
+| 23 | Pickle native-booster file-load — **Fixed (W2)** | `restricted_loads` (`core/artifact_store.py:773`) runs a `pickletools` pre-scan rejecting `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (`core/artifact_store.py:346,439`) + `MAX_ARTIFACT_BYTES` size cap before unpickling; legit `NEWOBJ`+`BUILD` roundtrips still load | Booster file-load / oversized-pickle vectors closed | Load only artifacts produced by this framework from a fully trusted registry/store; treat any other pickle source as untrusted |
 | 24 | Dataproc / EMR stubs off by default | GCP Dataproc defaults `enable_dataproc = false` (`infra/gcp/variables.tf:47-48`, `infra/gcp/main.tf:166` `count = var.enable_dataproc ? 1 : 0`); AWS EMR defaults `enable_emr = false` (`infra/aws/variables.tf:31-32`, `infra/aws/main.tf:199` `count = var.enable_emr ? 1 : 0`). EMR autoscaling and the EventBridge scheduler ship commented-out | No cloud Spark compute exists until explicitly enabled; 100M-row cloud runs need manual provisioning | Set `-var="enable_dataproc=true"` (+ `autoscaling_enabled=true`) or `-var="enable_emr=true"` (+ `emr_subnet_id`), plan/apply, and destroy when idle (see `infra/README.md`) |
 | 25 | `terraform validate` in CI — **Fixed (W5)** | CI + `ci/run_checks.sh` run `terraform fmt -check` + `init -backend=false` + `terraform validate` for both stacks (`ci/run_checks.sh:55-83`, fail-loud when binary absent in CI) | Plan-time syntax errors are caught in CI | Still review `terraform plan` before `apply` |
 | 26 | System-Anaconda skips | The uv venv is canonical; the system Anaconda env is explicitly not canonical and skips for missing deps (e.g. mlflow extras) are expected there | Running pytest under system Anaconda yields skips/false failures that do not reflect the real suite | Always use the uv environment: `uv sync`, then `uv run python -m pytest tests/ -q`. Do not treat Anaconda skips as regressions |
 | 27 | Metrics / charts size | `METRIC_REGISTRY` holds the full 154-name catalog (`pipelines/modeling/metrics.py:2145-2149`); `make_charts` (`pipelines/modeling/charts.py:1743`) builds every chart for the task in one call and returns them closed. `'all'` selects every registry metric (`resolve_selected_metrics`, `metrics.py:2153`) | Selecting `'all'` metrics and/or all chart groups on large eval frames inflates time, memory, and artifact size | Keep metrics at the curated default (absent → `DEFAULT_METRICS`, `metrics.py:2114-2181`) unless you need more; select an explicit list, and save figures inside `make_charts` (they return closed) |
-| 28 | Health cache TTL — **Fixed (W3/R7)** | `/health` cache has a 30 s TTL (`FORECAST_HEALTH_CACHE_TTL`, `serving/app.py:87,311-325`, endpoint `serving/app.py:880-896`) and refreshes on expiry and on successful `/predict` (`serving/app.py:988`) | Staleness window is 30 s, not process lifetime | Do not rely on `/health` changes alone to detect a model swapped at runtime |
-| 29 | Localhost allowed by design — re-verified | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:129,197-270`); subdomains of `localhost` and encoded/mapped loopback forms are rejected. Fail-closed auth (`serving/app.py:99-101,139-173`) refuses non-loopback binds without a key | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:314,323`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
+| 28 | Health cache TTL — **Fixed (W3/R7)** | `/health` cache has a 30 s TTL (`FORECAST_HEALTH_CACHE_TTL`, `serving/app.py:87,339-353`, endpoint `serving/app.py:934-950`) and refreshes on expiry and on successful `/predict` (`serving/app.py:1048-1049`) | Staleness window is 30 s, not process lifetime | Do not rely on `/health` changes alone to detect a model swapped at runtime |
+| 29 | Localhost allowed by design — re-verified | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:129,197-270`); subdomains of `localhost` and encoded/mapped loopback forms are rejected. Fail-closed auth (`serving/app.py:99-101,151-174`) refuses non-loopback binds without a key | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:314,323`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
 | 30 | Dashboard sample data | The dashboard defaults to `sample/metrics.json` + `sample/charts/` (`web/app.js:6-7`), and that file self-identifies as sample/synthetic (`web/sample/metrics.json:12`, `generated_by: ... (sample/synthetic)`; `web/README.md:26-27`) | Opening the dashboard shows demo numbers, not your evaluation output — easy to mistake for real results | Point `CONFIG.metricsUrl` / `chartsBase` at real artifacts or copy them into `web/sample/` (`web/README.md:31,87`); serve via `python3 -m http.server` (fetch is blocked under `file://`) |
 
 ### Accepted risks — 2026-11-07 (new #31–#40, Lead ADRs D6/D7/D8)
@@ -2327,15 +2327,15 @@ code that enforces or bounds it.
 
 | # | Issue | Symptom | Impact | Workaround / config |
 |---|---|---|---|---|
-| 31 | Single shared API key | Only one `FORECAST_API_KEY` exists (`serving/app.py:41-46,139-173`); revocation is all-or-nothing. Audit carries `actor='serving'` with an HMAC key-id (`serving/app.py:202-241`), not a human actor | No per-client identity; one compromised key compromises the service; key rotation requires redeploy | Use a gateway with per-client auth in front; rotate `FORECAST_API_KEY` by redeploying the service |
+| 31 | Single shared API key | Only one `FORECAST_API_KEY` exists (`serving/app.py:41-46,151-174`); revocation is all-or-nothing. Audit carries `actor='serving'` with an HMAC key-id (`serving/app.py:225-267`), not a human actor | No per-client identity; one compromised key compromises the service; key rotation requires redeploy | Use a gateway with per-client auth in front; rotate `FORECAST_API_KEY` by redeploying the service |
 | 32 | DNS TOCTOU | Validation resolves hostnames via `getaddrinfo` (`registry/model_registry.py:161,173,197-270`), but the MLflow client's own later DNS resolution can differ | A hostname that validates as global can still resolve to a private/metadata IP at connect time | Network egress allowlist MUST (allow only your registry hostname; block private/metadata) — the app-level check is not sufficient alone |
-| 33 | Global single-process rate bucket | Token bucket is in-process only (`serving/app.py:45-46,328-360,686-688`); no per-IP or per-client quota, no timeout backoff | Multi-process/multi-instance deployments limit independently; one noisy client can exhaust the shared bucket | Gateway MUST for production (per-client quotas, timeouts, distributed limits); the app bucket is a single-process safety net only |
+| 33 | Global single-process rate bucket | Token bucket is in-process only (`serving/app.py:45-46,356-389,774-783`); no per-IP or per-client quota, no timeout backoff | Multi-process/multi-instance deployments limit independently; one noisy client can exhaust the shared bucket | Gateway MUST for production (per-client quotas, timeouts, distributed limits); the app bucket is a single-process safety net only |
 | 34 | CMEK opt-in | Artifact buckets use Google/AWS-managed encryption by default; CMEK key is optional (`infra/gcp/variables.tf:105-128`) | Dev default is not customer-managed encryption; prod deployments can silently run without CMEK unless gated | When `production = true`, validation requires a KMS key (GCP `kms_key_name` / AWS `kms_key_id`); set it and keep the role at `objectViewer` (`infra/gcp/main.tf:48`) |
 | 35 | No Docker | No container image is shipped; serving is `uvicorn` on the host (`serving/app.py:38-39`, `cli.py:108,126-131`) | Dev-only serving posture; production needs external process management/reverse proxy | Run behind a reverse proxy with TLS on a managed host; containerisation is out of scope (A5) |
 | 36 | `predict` name divergence | Registry display name `predict` maps to the `modeling` pipeline, while `forecast-ml predict` runs the `scoring` pipeline (`pipeline_registry.py:25-33`) | `kedro run --pipeline predict` and `forecast-ml predict` do different work despite similar names | Use the explicit pipeline name (`scoring`) when batch scoring is intended; both mappings are pinned by tests |
-| 37 | `X-Forwarded-Proto` HSTS trust | HSTS is sent when the ASGI scheme is `https`, when `X-Forwarded-Proto` is `https`, or when `FORECAST_TLS_ENABLED=1` (`serving/app.py:605-623`) | A spoofed `X-Forwarded-Proto: https` header on a plain-HTTP request triggers HSTS; plain-HTTP responses otherwise omit it | Behind a TLS-terminating proxy, set `FORECAST_TLS_ENABLED=1` and strip/override the header at the proxy; do not expose the app without TLS |
-| 38 | `/health` public model probe | `/health` is unauthenticated by design and returns `model_loaded` + a cached load probe (`serving/app.py:14-17,880-896`) | The endpoint leaks whether a model is loaded and can be used to probe service state | Keep it for probes/monitoring only; do not put sensitive state in the health payload; gate the full service with `FORECAST_REQUIRE_AUTH=1` where needed |
-| 39 | Audit bounded volatile list | Per-`/predict` audit entries go to the bounded in-process `app.state.audit_log` list, capped at 1000 entries, oldest dropped (`serving/app.py:89-90,220-241,857-865`) | Audit history is volatile and truncated under load; entries are lost on restart | Persist externally if retention is required; treat the in-process list as a bounded diagnostic, not a compliance record |
+| 37 | `X-Forwarded-Proto` HSTS trust | HSTS is sent when the ASGI scheme is `https`, when `X-Forwarded-Proto` is `https`, or when `FORECAST_TLS_ENABLED=1` (`serving/app.py:655-673`) | A spoofed `X-Forwarded-Proto: https` header on a plain-HTTP request triggers HSTS; plain-HTTP responses otherwise omit it | Behind a TLS-terminating proxy, set `FORECAST_TLS_ENABLED=1` and strip/override the header at the proxy; do not expose the app without TLS |
+| 38 | `/health` public model probe | `/health` is unauthenticated by design and returns `model_loaded` + a cached load probe (`serving/app.py:14-17,934-950`) | The endpoint leaks whether a model is loaded and can be used to probe service state | Keep it for probes/monitoring only; do not put sensitive state in the health payload; gate the full service with `FORECAST_REQUIRE_AUTH=1` where needed |
+| 39 | Audit bounded volatile list | Per-`/predict` audit entries go to the bounded in-process `app.state.audit_log` list, capped at 1000 entries, oldest dropped (`serving/app.py:89-90,241-267,913-918`) | Audit history is volatile and truncated under load; entries are lost on restart | Persist externally if retention is required; treat the in-process list as a bounded diagnostic, not a compliance record |
 | 40 | Spark partitioned scoring pickling | Partitioned scoring closes over / broadcasts the model for `mapPartitions`; the model must be picklable (`pipelines/scoring/pipeline.py:64-82`, see #15) | Unpicklable estimators fail on executors at runtime, not at plan time | Use picklable sklearn/XGBoost/LightGBM/CatBoost estimators; keep batch sizes bounded; validate the closure locally before cloud runs |
 
 ### Python 3.14 compatibility spike
@@ -2573,12 +2573,12 @@ flowchart LR
   planned command + node names; `--env` whitelist
   `base|local|gcp|aws` rejects traversal with exit 2.
 - Serving: degraded health (`HealthResponse status: ok|degraded`,
-  `model_loaded`, cached probe, `serving/app.py:880-896`);
+  `model_loaded`, cached probe, `serving/app.py:934-950`);
   `serve` CLI wired to uvicorn with `MODEL_ARTIFACT_PATH`
   (`cli.py:126-131,215-222`); typed errors (`ModelNotConfiguredError` → 503,
   `ModelNotFoundError` → 503, `ModelCorruptError` → 500;
   validation → 422; execution → generic 500, no path/URI leaks,
-  `serving/model_loader.py:253-262`, `serving/app.py:919-987`).
+  `serving/model_loader.py:253-262`, `serving/app.py:952-1054`).
 - Smoke local profile: `conf/local/parameters.yml` pins
   `models_to_use: ['sklearn']`, `validation_params.fail_fast: true`,
   local MLflow URI, DVC off; sample data at
