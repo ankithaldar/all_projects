@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Company discovery from LinkedIn job pages, located via a search index.
 
@@ -31,7 +31,6 @@ from job_hunter.services.domain_verifier import (
   VerifiedSite,
   WebsiteVerifier,
   is_blocked_domain,
-  registrable_domain,
   tokenize,
 )
 from job_hunter.services.web_search import (
@@ -41,6 +40,7 @@ from job_hunter.services.web_search import (
   is_search_noise,
 )
 from job_hunter.services.vertical_classifier import VerticalClassifier
+from job_hunter.services.normalizer import html_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,8 @@ DEFAULT_LOCATIONS: Tuple[str, ...] = (
 
 '''Company names that are staffing agencies, not direct employers.'''
 STAFFING_MARKERS: Tuple[str, ...] = (
-  'staffing', 'staffing agency', 'recruitment', 'recruiting', 'talent solutions',
+  'staffing', 'staffing agency', 'recruitment', 'recruiting',
+  'talent solutions',
   'human resource', 'hr consultancy', 'outsourcing', 'flex staffing',
   'contract staffing', 'job placement', 'career services',
 )
@@ -353,7 +354,10 @@ def _company_from_title(title: str) -> str:
   if not match:
     return ''
   company = match.group('company').strip(' -\u2013\u2014|,')
-  return '' if len(company) < 2 or company.lower() in _GENERIC_QUERY_TOKENS else company
+  lower = company.lower()
+  if len(company) < 2 or lower in _GENERIC_QUERY_TOKENS:
+    return ''
+  return company
 
 
 class LinkedinCompanyScout:
@@ -391,7 +395,9 @@ class LinkedinCompanyScout:
     self._http = http
     self._repos = repos
 
-  async def collect_candidates(self, queries: Sequence[str], limit: int = 25) -> Tuple[Dict[str, CompanyCandidate], int, int]:
+  async def collect_candidates(
+    self, queries: Sequence[str], limit: int = 25
+  ) -> Tuple[Dict[str, CompanyCandidate], int, int]:
     '''Run every query and merge the companies they reveal.
 
     Args:
@@ -424,7 +430,9 @@ class LinkedinCompanyScout:
           merged[key] = candidate
     return merged, hits, dropped
 
-  async def verify_candidate(self, candidate: CompanyCandidate) -> Optional[ScoutedCompany]:
+  async def verify_candidate(
+    self, candidate: CompanyCandidate
+  ) -> Optional[ScoutedCompany]:
     '''Verify one candidate's website and gather its enrichment.
 
     Args:
@@ -449,7 +457,9 @@ class LinkedinCompanyScout:
       sightings=candidate.sightings,
     )
 
-  async def _resolve_name(self, candidate: CompanyCandidate, site: VerifiedSite) -> str:
+  async def _resolve_name(
+    self, candidate: CompanyCandidate, site: VerifiedSite
+  ) -> str:
     '''Prefer a real display name over a slug-derived approximation.
 
     LinkedIn slugs are lowercased and lose brand casing, so a company found
@@ -477,7 +487,11 @@ class LinkedinCompanyScout:
       return fallback
     text = ' '.join(title.get_text(' ', strip=True).split())
     tokens = set(tokenize(text))
-    if text and tokens and set(tokenize(fallback)) <= tokens and _plausible_company_name(text):
+    fallback_tokens = set(tokenize(fallback))
+    if (
+      text and tokens and fallback_tokens <= tokens
+      and _plausible_company_name(text)
+    ):
       return text
     return fallback
 
@@ -499,7 +513,7 @@ class LinkedinCompanyScout:
       return None, 0.0
     if not html:
       return None, 0.0
-    return self._classifier.classify_rules(_strip_html(html)[:6000])
+    return self._classifier.classify_rules(html_to_text(html)[:6000])
 
   async def detect_ats(self, company: ScoutedCompany) -> None:
     '''Detect and record a company's ATS board in place.
@@ -537,7 +551,9 @@ class LinkedinCompanyScout:
       A :class:`ScoutReport` describing the run.
     '''
     report = ScoutReport(queries_run=len(queries))
-    candidates, hits, dropped = await self.collect_candidates(queries, limit=result_limit)
+    candidates, hits, dropped = await self.collect_candidates(
+      queries, limit=result_limit
+    )
     report.linkedin_hits = hits
     report.skipped_agency = dropped
     report.candidates = len(candidates)
@@ -594,7 +610,9 @@ class LinkedinCompanyScout:
     return True
 
 
-def write_seed_file(path, companies: Sequence[ScoutedCompany], header: str = '') -> int:
+def write_seed_file(
+  path, companies: Sequence[ScoutedCompany], header: str = ''
+) -> int:
   '''Write scouted companies to a seeds YAML file.
 
   Args:
@@ -624,34 +642,19 @@ def write_seed_file(path, companies: Sequence[ScoutedCompany], header: str = '')
     known.add(key)
     existing.append(company.to_seed_entry())
     added += 1
-  lines = [f'# {header}'.rstrip(), 'companies:'] if header else ['companies:']
-  for item in existing:
-    lines.append('  - ' + _inline_mapping(item))
   target.parent.mkdir(parents=True, exist_ok=True)
-  target.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+  body = yaml.safe_dump(
+    {'companies': existing}, sort_keys=False, allow_unicode=True
+  )
+  header = header.replace('\r', ' ').replace('\n', ' ')
+  prefix = f'# {header}'.rstrip() + '\n' if header else ''
+  target.write_text(prefix + body, encoding='utf-8')
   return added
 
 
-def _inline_mapping(entry: Dict[str, object]) -> str:
-  '''Render a mapping as a single-line YAML flow mapping.
-
-  Args:
-    entry: Mapping to render.
-
-  Returns:
-    Flow-style YAML text without the leading list dash.
-  '''
-  parts: List[str] = []
-  for key, value in entry.items():
-    if isinstance(value, str):
-      rendered = f'"{value}"' if (',' in value or ':' in value or value.strip() != value) else value
-    else:
-      rendered = str(value).lower() if isinstance(value, bool) else str(value)
-    parts.append(f'{key}: {rendered}')
-  return '{' + ', '.join(parts) + '}'
-
-
-def make_scout(settings, seeds_dir=None) -> Tuple[LinkedinCompanyScout, WebSearchIndex, HttpClient]:
+def make_scout(
+  settings, seeds_dir=None
+) -> Tuple[LinkedinCompanyScout, WebSearchIndex, HttpClient]:
   '''Build a wired scout from application settings.
 
   Args:
@@ -664,7 +667,9 @@ def make_scout(settings, seeds_dir=None) -> Tuple[LinkedinCompanyScout, WebSearc
   '''
   from pathlib import Path
   config = settings.scout
-  tlds = tuple(config.get('domain_tlds') or ('com', 'in', 'io', 'ai', 'co', 'net', 'tech'))
+  tlds = tuple(
+    config.get('domain_tlds') or ('com', 'in', 'io', 'ai', 'co', 'net', 'tech')
+  )
   http = HttpClient()
   search = WebSearchIndex(
     cache_path=settings.data_dir / 'search_cache.json',
@@ -680,7 +685,8 @@ def make_scout(settings, seeds_dir=None) -> Tuple[LinkedinCompanyScout, WebSearc
     Returns:
       Candidate URLs with search engines and noise hosts removed.
     '''
-    return [url for url in await search.urls(query, 12) if not is_search_noise(url)]
+    urls = await search.urls(query, 12)
+    return [url for url in urls if not is_search_noise(url)]
 
   verifier = WebsiteVerifier(
     http,
@@ -693,22 +699,7 @@ def make_scout(settings, seeds_dir=None) -> Tuple[LinkedinCompanyScout, WebSearc
   classifier = VerticalClassifier(taxonomy_dir / 'verticals.yaml')
   detector = CareerPageDetector(http)
   repos = CompaniesRepository(settings.db_path)
-  return LinkedinCompanyScout(search, verifier, classifier, detector, http, repos), search, http
-
-
-def _strip_html(html: str) -> str:
-  '''Convert HTML to plain text for keyword classification.
-
-  Args:
-    html: Raw page source.
-
-  Returns:
-    Whitespace-collapsed plain text.
-  '''
-  soup = BeautifulSoup(html or '', 'html.parser')
-  for tag in soup(['script', 'style', 'noscript']):
-    tag.decompose()
-  return ' '.join(soup.get_text(' ').split())
-
-
-_ = registrable_domain
+  scout = LinkedinCompanyScout(
+    search, verifier, classifier, detector, http, repos
+  )
+  return scout, search, http

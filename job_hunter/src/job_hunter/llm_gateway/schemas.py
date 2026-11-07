@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Pydantic schemas for gateway requests, responses, tools, and logging.'''
 

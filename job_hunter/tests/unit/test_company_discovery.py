@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for company normalization and vertical rule classification.'''
 
@@ -15,7 +15,9 @@ from job_hunter.services.vertical_classifier import VerticalClassifier
 
 def test_normalize_name_strips_suffixes() -> None:
   '''Suffix stripping produces a stable key.'''
-  assert normalize_name('Flipkart Internet Private Limited') == 'flipkart internet'
+  assert normalize_name(
+    'Flipkart Internet Private Limited'
+  ) == 'flipkart internet'
   assert normalize_name('  Razorpay   Pvt. Ltd. ') == 'razorpay'
 
 

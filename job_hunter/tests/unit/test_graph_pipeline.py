@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for state reducers, normalization, and run claiming.'''
 
@@ -27,7 +27,8 @@ from job_hunter.services.normalizer import (
 
 def test_merge_stats_sums() -> None:
   '''Reducer merges counters by summation.'''
-  assert merge_stats({'a': 1, 'b': 2}, {'b': 3, 'c': 4}) == {'a': 1, 'b': 5, 'c': 4}
+  merged = merge_stats({'a': 1, 'b': 2}, {'b': 3, 'c': 4})
+  assert merged == {'a': 1, 'b': 5, 'c': 4}
 
 
 def test_canonicalize_url_strips_tracking() -> None:
@@ -43,7 +44,7 @@ def test_content_hash_stable() -> None:
     company_name='CRED', title='Staff Data Scientist',
     description_text='models and experiments',
   )
-  other = RawJobRecord(
+  _other = RawJobRecord(
     source_key='lever', url='https://jobs.lever.co/co/1?utm_source=x',
     company_name='cred', title='staff data scientist ',
     description_text='models and experiments',
@@ -68,7 +69,7 @@ def test_city_and_mode_detection() -> None:
 def test_salary_parsing() -> None:
   '''LPA ranges parse; implausible values reject.'''
   assert parse_salary_lpa('45-65 LPA') == (45.0, 65.0)
-  lo, hi = parse_salary_lpa('', 'CTC: ₹50 lakhs per annum')
+  _lo, hi = parse_salary_lpa('', 'CTC: ₹50 lakhs per annum')
   assert hi is not None and abs(hi - 52.5) < 0.6
   assert parse_salary_lpa('2 widgets') == (None, None)
 
@@ -142,8 +143,13 @@ def test_graph_runs_with_stub_targets(tmp_path: Path, monkeypatch) -> None:
   _ = settings.app_root
 
   import job_hunter.graph.nodes as nodes_mod
-  monkeypatch.setattr(registry_mod, 'build_adapter', lambda key, http: StubAdapter(http))
-  monkeypatch.setattr(nodes_mod, 'build_adapter', lambda key, http: StubAdapter(http))
+  def stub(key, http):
+    '''Return a stub adapter for any source key.'''
+    _ = key
+    return StubAdapter(http)
+
+  monkeypatch.setattr(registry_mod, 'build_adapter', stub)
+  monkeypatch.setattr(nodes_mod, 'build_adapter', stub)
 
   companies = __import__(
     'job_hunter.db.repositories.companies', fromlist=['CompaniesRepository'],
@@ -160,11 +166,17 @@ def test_graph_runs_with_stub_targets(tmp_path: Path, monkeypatch) -> None:
   result = asyncio.run(graph.ainvoke(seed, config={
     'configurable': {'settings': settings},
   }))
-  assert result['stats'].get('new_jobs', 0) >= 0
+  # StubAdapter returns exactly one record for the single seeded
+  # company, so the graph must persist exactly one job. These strong
+  # asserts fail if fetch/normalize/persist silently do nothing.
+  assert result['stats'].get('new_jobs') == 1, result['stats']
+  assert result['stats'].get('fetched:lever') == 1, result['stats']
   jobs = __import__(
     'job_hunter.db.repositories.jobs', fromlist=['JobsRepository'],
   ).JobsRepository(db).list_jobs()
-  assert isinstance(jobs, list)
+  assert len(jobs) == 1
+  assert jobs[0]['title'] == 'Staff Data Scientist'
+  assert jobs[0]['company_raw_name'] == 'ExampleCo'
 
 
 def test_run_claim_protocol(tmp_path: Path) -> None:
@@ -282,9 +294,14 @@ def test_fetch_pair_stores_watermark(tmp_path: Path, monkeypatch) -> None:
       return True
 
   import job_hunter.graph.nodes as nodes_mod
-  monkeypatch.setattr(nodes_mod, 'build_adapter', lambda key, http: StubAdapter(http))
+  def stub(key, http):
+    '''Return a stub adapter for any source key.'''
+    _ = key
+    return StubAdapter(http)
 
-  state = {'run_id': 1}
+  monkeypatch.setattr(nodes_mod, 'build_adapter', stub)
+
+  _ = {'run_id': 1}
   update = aio.run(fetch_pair({
     'company_id': 3, 'name': 'X', 'source_key': 'lever', 'board_ref': 'x',
   }, {'configurable': {'settings': settings}}))
@@ -293,7 +310,9 @@ def test_fetch_pair_stores_watermark(tmp_path: Path, monkeypatch) -> None:
   assert crawl.get_cursor('company:3:posted') == '2026-08-20T00:00:00+00:00'
 
 
-def test_fetch_pair_stamps_target_company_name(tmp_path: Path, monkeypatch) -> None:
+def test_fetch_pair_stamps_target_company_name(
+  tmp_path: Path, monkeypatch,
+) -> None:
   '''fetch_pair fills company_name on records the adapter leaves blank.
 
   Args:
@@ -354,10 +373,16 @@ def test_fetch_pair_stamps_target_company_name(tmp_path: Path, monkeypatch) -> N
       return True
 
   import job_hunter.graph.nodes as nodes_mod
-  monkeypatch.setattr(nodes_mod, 'build_adapter', lambda key, http: StubAdapter(http))
+  def stub(key, http):
+    '''Return a stub adapter for any source key.'''
+    _ = key
+    return StubAdapter(http)
+
+  monkeypatch.setattr(nodes_mod, 'build_adapter', stub)
 
   update = aio.run(fetch_pair({
-    'company_id': 7, 'name': 'Target Co', 'source_key': 'lever', 'board_ref': 'x',
+    'company_id': 7, 'name': 'Target Co',
+    'source_key': 'lever', 'board_ref': 'x',
   }, {'configurable': {'settings': settings}}))
   assert not update['errors']
   records = update['raw_jobs']

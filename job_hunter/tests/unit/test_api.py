@@ -1,15 +1,15 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''API smoke tests via TestClient.'''
 
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
+
 fastapi = pytest.importorskip('fastapi')
 TestClient = pytest.importorskip('fastapi.testclient').TestClient
 
@@ -30,7 +30,9 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
   config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
   from job_hunter.api.main import create_app
   app = create_app(str(config_path))
-  return TestClient(app)
+  client = TestClient(app)
+  yield client
+  client.close()
 
 
 def test_healthz(client: TestClient) -> None:
@@ -80,10 +82,25 @@ def test_settings_roundtrip(client: TestClient) -> None:
   assert stored['scoring_weights']['skills_must'] == 0.4
 
 
-def test_fts_search_sanitized_and_functional(client: TestClient) -> None:
+def test_fts_search_sanitized_and_functional(
+  client: TestClient, tmp_path: Path
+) -> None:
   '''Job search handles raw text safely via FTS sanitization.'''
+  from job_hunter.db.repositories.jobs import JobsRepository
+  JobsRepository(tmp_path / 'app.db').insert({
+    'source_key': 'lever',
+    'url': 'https://j.example/seeded-1',
+    'canonical_url': 'https://j.example/seeded-1',
+    'title': 'Data Science Engineer',
+    'raw_json': '{}',
+    'content_hash': 'hash-seeded-1',
+    'description_text': 'data science python role',
+  })
   jobs = client.get('/api/jobs?q=data science + python').json()
   assert isinstance(jobs, list)
+  assert len(jobs) >= 1
+  titles = [job['title'] for job in jobs]
+  assert 'Data Science Engineer' in titles
 
 
 def test_profile_floor_injected_from_settings(client: TestClient) -> None:

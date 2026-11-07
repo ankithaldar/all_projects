@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Example CLI entry point for the LLM gateway.'''
 
@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from llm_gateway.app import LLMGateway
 from llm_gateway.schemas import GatewayRequest
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
 def main() -> None:
@@ -29,8 +32,8 @@ def main() -> None:
   args = parser.parse_args()
 
   gateway = LLMGateway(
-    config_path='config/gateway.yaml',
-    env_path='.env',
+    config_path=str(PACKAGE_ROOT / 'config' / 'gateway.yaml'),
+    env_path=str(PACKAGE_ROOT / '.env'),
   )
 
   request = GatewayRequest(

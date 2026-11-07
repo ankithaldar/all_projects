@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Recommendation review endpoints.'''
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
 from job_hunter.db.repositories.recommendations import RecommendationsRepository
@@ -21,8 +21,8 @@ def list_recommendations(
   min_score: float = 0.0,
   status: str = '',
   vertical: str = '',
-  page: int = 1,
-  per_page: int = 30,
+  page: int = Query(1, ge=1),
+  per_page: int = Query(30, ge=1, le=100),
   include_gated: bool = False,
   settings: AppSettings = Depends(get_settings),
 ) -> List[Dict[str, Any]]:
@@ -45,7 +45,7 @@ def list_recommendations(
     status=status,
     vertical=vertical,
     page=page,
-    per_page=min(per_page, 100),
+    per_page=per_page,
     gate_only=not include_gated,
   )
 

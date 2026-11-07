@@ -4,6 +4,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PYTHON="${PYTHON:-python3}"
+
+# Require Python >= 3.14 (fastembed wheels, project requires-python).
+if ! "$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)' 2>/dev/null; then
+  echo "error: Job Hunter requires Python >= 3.14 (found: $("$PYTHON" --version 2>&1))" >&2
+  echo "       install Python 3.14+ and rerun, e.g. PYTHON=python3.14 ./setup.sh" >&2
+  exit 1
+fi
+
 VENV=".venv"
 
 echo "==> creating virtualenv ($VENV)"
@@ -17,8 +25,9 @@ pip install --quiet -e '.[dev,semantic]'
 
 echo "==> preparing gateway env file"
 GATEWAY_ENV="src/job_hunter/llm_gateway/.env"
+GATEWAY_ENV_EXAMPLE="src/job_hunter/llm_gateway/.env.example"
 if [ ! -f "$GATEWAY_ENV" ]; then
-  cp .env.example "$GATEWAY_ENV"
+  cp "$GATEWAY_ENV_EXAMPLE" "$GATEWAY_ENV"
   echo "    created $GATEWAY_ENV — ADD YOUR REAL API KEYS before running discovery."
 else
   echo "    $GATEWAY_ENV already present, leaving untouched."

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Embedding providers with graceful degradation to keyword scoring.'''
 
@@ -9,9 +9,11 @@ from __future__ import annotations
 import abc
 import logging
 import math
-from typing import List, Optional
+import threading
+from typing import Dict, List, Optional
 
 from job_hunter.core.config import AppSettings
+from job_hunter.services.scorer import DEFAULT_EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,10 @@ class FastembedProvider(EmbeddingProvider):
     return vectors if len(vectors) == len(texts) else None
 
 
+_EMBEDDER_CACHE: Dict[str, EmbeddingProvider] = {}
+_EMBEDDER_LOCK = threading.Lock()
+
+
 class NullProvider(EmbeddingProvider):
   '''Fallback provider signaling that semantics are unavailable.'''
 
@@ -93,12 +99,18 @@ def get_embedder(settings: AppSettings) -> EmbeddingProvider:
   Returns:
     Provider instance.
   '''
-  model = str(settings.embeddings.get('model', 'BAAI/bge-small-en-v1.5'))
-  try:
-    return FastembedProvider(model)
-  except Exception as exc:
-    logger.warning('fastembed unavailable (%s); using keyword fallback', exc)
-    return NullProvider()
+  model = str(settings.embeddings.get('model', DEFAULT_EMBED_MODEL))
+  with _EMBEDDER_LOCK:
+    cached = _EMBEDDER_CACHE.get(model)
+    if cached is not None:
+      return cached
+    try:
+      provider: EmbeddingProvider = FastembedProvider(model)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+      logger.warning('fastembed unavailable (%s); using keyword fallback', exc)
+      provider = NullProvider()
+    _EMBEDDER_CACHE[model] = provider
+    return provider
 
 
 def cosine(a: List[float], b: List[float]) -> float:

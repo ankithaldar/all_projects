@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Run management endpoints including the SSE progress stream.'''
 
@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
@@ -21,7 +21,7 @@ router = APIRouter(prefix='/api/runs', tags=['runs'])
 
 @router.get('')
 def list_runs(
-  limit: int = 50,
+  limit: int = Query(50, ge=1, le=100),
   settings: AppSettings = Depends(get_settings),
 ) -> List[Dict[str, Any]]:
   '''List recent runs.
@@ -33,11 +33,13 @@ def list_runs(
   Returns:
     Run rows.
   '''
-  return RunsRepository(settings.db_path).list_runs(limit=min(limit, 200))
+  return RunsRepository(settings.db_path).list_runs(limit=limit)
 
 
 @router.post('/discovery')
-def trigger_discovery(settings: AppSettings = Depends(get_settings)) -> Dict[str, Any]:
+def trigger_discovery(
+  settings: AppSettings = Depends(get_settings),
+) -> Dict[str, Any]:
   '''Enqueue a discovery run for immediate execution by a worker.
 
   Args:
@@ -50,16 +52,17 @@ def trigger_discovery(settings: AppSettings = Depends(get_settings)) -> Dict[str
     HTTPException: 409 when a run is already active.
   '''
   repo = RunsRepository(settings.db_path)
-  if repo.has_active():
-    raise HTTPException(status_code=409, detail='another run is active')
-  return {'run_id': repo.create('discovery', triggered_by='ui')}
+  run_id = repo.create_if_not_active('discovery', 'ui')
+  if run_id is None:
+    raise HTTPException(status_code=409, detail='a run is already active')
+  return {'run_id': run_id}
 
 
 @router.get('/{run_id}/events')
 def run_events(
   run_id: int,
-  after_id: int = 0,
-  limit: int = 200,
+  after_id: int = Query(0, ge=0),
+  limit: int = Query(200, ge=1, le=500),
   settings: AppSettings = Depends(get_settings),
 ) -> List[Dict[str, Any]]:
   '''Return events after a cursor id.
@@ -79,7 +82,7 @@ def run_events(
   repo = RunsRepository(settings.db_path)
   if repo.get(run_id) is None:
     raise HTTPException(status_code=404, detail='run not found')
-  return repo.events_since(run_id, after_id, limit=min(limit, 500))
+  return repo.events_since(run_id, after_id, limit=limit)
 
 
 @router.post('/{run_id}/cancel')
@@ -121,6 +124,8 @@ async def stream_run(
     SSE response.
   '''
   repo = RunsRepository(settings.db_path)
+  if repo.get(run_id) is None:
+    raise HTTPException(status_code=404, detail='run not found')
 
   async def generator() -> AsyncIterator[str]:
     '''Poll events and forward them as SSE frames.
@@ -143,9 +148,15 @@ async def stream_run(
         yield f'event: log\ndata: {payload}\n\n'
       row = repo.get(run_id)
       if row and row['finished_at'] and not events:
+        raw_stats = row['stats_json']
+        stats = (
+          json.loads(row['stats_json'])
+          if isinstance(raw_stats, str) and raw_stats
+          else {}
+        )
         yield (
           'event: done\ndata: '
-          + json.dumps({'status': row['status'], 'stats': row['stats_json']})
+          + json.dumps({'status': row['status'], 'stats': stats})
           + '\n\n'
         )
         return

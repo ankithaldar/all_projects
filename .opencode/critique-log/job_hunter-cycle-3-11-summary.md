@@ -1,0 +1,11 @@
+# Gate Summary Cycles 3-11 (Lead-persisted from subagent returns)
+- C3: 5 APPROVED (security, anti-sec, frontend, devops, tester) / 5 REJECTED (reviewer, anti-arch, adversarial, DB, docs)
+- C4: 5 APPROVED (reviewer, security, anti-sec, tester, DB) / 5 REJECTED (anti-arch, adversarial, frontend, devops, docs)
+- C5: 4 APPROVED (security, anti-arch, anti-sec, tester) / 6 REJECTED (reviewer, adversarial, DB, frontend, devops, docs)
+- C6: 4 APPROVED (security, anti-arch, anti-sec, tester) / 6 REJECTED (reviewer, adversarial, DB, frontend, devops, docs)
+- C7: 7 APPROVED (security, anti-arch, anti-sec, adversarial, tester, DB, frontend) / 3 REJECTED (reviewer, devops, docs)
+- C8: 7 APPROVED (reviewer, security, anti-arch, anti-sec, tester, DB, frontend) / 3 REJECTED (adversarial, devops, docs)
+- C9: 6 APPROVED (reviewer, security, anti-arch, tester, DB, frontend) / 4 REJECTED (anti-sec, adversarial, devops, docs)
+- C10: 8 APPROVED (reviewer, security, anti-arch, anti-sec, adversarial, tester, DB, frontend) / 2 REJECTED (devops, docs)
+- C11: 9 APPROVED (all except devops) / 1 REJECTED (devops: untracked files, commit action only)
+Full per-cycle findings: .opencode/flaw-reports/job_hunter-flaws.md

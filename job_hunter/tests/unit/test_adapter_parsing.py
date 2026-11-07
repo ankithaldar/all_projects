@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for adapter payload parsing (no network).'''
 
@@ -79,7 +79,9 @@ def test_ashby_parse_with_compensation() -> None:
         'period': 'year',
         'tranches': [{
           'currency': 'INR',
-          'compensationTierSummary': {'minimumAmount': 4500000, 'maximumAmount': 6500000},
+          'compensationTierSummary': {
+            'minimumAmount': 4500000, 'maximumAmount': 6500000
+          },
         }],
       },
     }],
@@ -308,7 +310,10 @@ def test_cutshort_skips_incomplete_and_client_only_pages() -> None:
   # A posting missing both title and URL cannot be stored, so it is dropped.
   page = _cutshort_page([
     {'_id': 'x', 'headline': '', 'publicUrl': ''},
-    {'_id': 'y', 'headline': 'ML Engineer', 'publicUrl': 'https://cutshort.io/job/y'},
+    {
+      '_id': 'y', 'headline': 'ML Engineer',
+      'publicUrl': 'https://cutshort.io/job/y'
+    },
   ])
   records = parse_cutshort(page)
   assert len(records) == 1

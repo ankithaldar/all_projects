@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for the skills taxonomy and structured-output repair loop.'''
 
@@ -109,11 +109,11 @@ def test_structured_repairs_after_validation_failure(tmp_path: Path) -> None:
 
 
 def test_gateway_paths_resolve_to_real_files(tmp_path: Path) -> None:
-  """gateway_root points at the sibling package, not inside the app pkg.
+  '''gateway_root points at the sibling package, not inside the app pkg.
 
   Args:
     tmp_path: Pytest temporary directory (unused).
-  """
+  '''
   from job_hunter.core.config import AppSettings
   root = Path(__file__).resolve().parents[2]
   settings = AppSettings(root / 'config' / 'app.yaml')
@@ -121,11 +121,11 @@ def test_gateway_paths_resolve_to_real_files(tmp_path: Path) -> None:
 
 
 def test_profile_extraction_schema_builds(tmp_path: Path) -> None:
-  """ProfileExtraction resolves its annotations (List must be defined).
+  '''ProfileExtraction resolves its annotations (List must be defined).
 
   Args:
     tmp_path: Pytest temporary directory (unused).
-  """
+  '''
   from job_hunter.services.profile_curator import ProfileExtraction
   model = ProfileExtraction(skills=['Python'], seniority_keywords=['staff'])
   assert model.skills == ['Python']

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Job Hunter — Settings</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -9,14 +10,15 @@
   <div id="nav"></div>
   <main>
     <h1>Scoring weights</h1>
+    <div id="settingsError" role="status" aria-live="polite"></div>
     <div class="card" id="weights"></div>
     <div style="margin:14px 0">
-      <button class="btn save" onclick="saveWeights()">Save weights</button>
-      <span id="weightSum" class="meta" style="margin-left:12px"></span>
+      <button type="button" id="saveWeightsBtn" class="btn save" onclick="saveWeights()" disabled>Save weights</button>
+      <span id="weightSum" class="meta" style="margin-left:12px" role="status" aria-live="polite"></span>
     </div>
 
-    <h1 style="font-size:16px;margin-top:22px">LLM spend (7 days)</h1>
-    <div id="llm"></div>
+    <h2 style="font-size:16px;margin-top:22px">LLM spend (7 days)</h2>
+    <div class="table-wrap"><div id="llm"></div></div>
   </main>
   <script src="/js/api.js"></script>
   <script src="/js/components.js"></script>
@@ -26,28 +28,42 @@
       'title_fit', 'salary_fit', 'recency', 'company_fit'];
     const inputs = {};
     async function load() {
-      const settings = await jh.get('/api/settings');
-      const w = settings.scoring_weights || {};
-      const box = document.getElementById('weights');
-      for (const key of KEYS) {
-        const row = jh.el('label', {}, key,
-          inputs[key] = jh.el('input', {
-            type: 'number', step: '0.01', min: '0', max: '1',
-            value: (w[key] ?? 0).toFixed(2), oninput: updateSum,
-          }));
-        box.append(row);
+      const errBox = document.getElementById('settingsError');
+      errBox.replaceChildren();
+      try {
+        const settings = await jh.get('/api/settings');
+        const w = settings.scoring_weights || {};
+        const box = document.getElementById('weights');
+        box.replaceChildren();
+        for (const key of KEYS) {
+          const inputId = `w-${key}`;
+          const row = jh.el('label', { for: inputId }, key,
+            inputs[key] = jh.el('input', {
+              id: inputId, type: 'number', step: '0.01', min: '0', max: '1',
+              value: (w[key] ?? 0).toFixed(2), oninput: updateSum,
+            }));
+          box.append(row);
+        }
+        updateSum();
+        const llm = await jh.get('/api/llm/stats?days=7');
+        const out = document.getElementById('llm');
+        out.replaceChildren();
+        if (!llm.by_provider?.length) { out.append(jh.el('div', { class: 'card' }, 'No LLM calls yet.')); }
+        else {
+          out.append(components.table(
+            ['Provider', 'Calls', 'Tokens', 'Cost ($)'],
+            llm.by_provider,
+            r => [r.provider, r.calls, r.tokens, Number(r.cost).toFixed(4)]));
+          const t = llm.totals;
+          out.append(jh.el('p', { class: 'meta' },
+            `Total: ${t.calls} calls · ${t.tokens} tokens · $${Number(t.cost).toFixed(4)}`));
+        }
+        document.getElementById('saveWeightsBtn').disabled = false;
+      } catch (e) {
+        errBox.replaceChildren();
+        errBox.append(jh.el('div', { class: 'card', role: 'status', 'aria-live': 'polite' }, `Error: ${e.message}`));
+        jh.toast(e.message, true);
       }
-      updateSum();
-      const llm = await jh.get('/api/llm/stats?days=7');
-      const out = document.getElementById('llm');
-      if (!llm.by_provider?.length) { out.append(jh.el('div', { class: 'card' }, 'No LLM calls yet.')); return; }
-      out.append(components.table(
-        ['Provider', 'Calls', 'Tokens', 'Cost ($)'],
-        llm.by_provider,
-        r => [r.provider, r.calls, r.tokens, Number(r.cost).toFixed(4)]));
-      const t = llm.totals;
-      out.append(jh.el('p', { class: 'meta' },
-        `Total: ${t.calls} calls · ${t.tokens} tokens · $${Number(t.cost).toFixed(4)}`));
     }
     function updateSum() {
       const sum = KEYS.reduce((acc, k) => acc + (Number(inputs[k].value) || 0), 0);

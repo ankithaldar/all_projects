@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Local HTML dashboard and JSON stats API.'''
 
@@ -9,11 +9,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict
 
 TEMPLATE_PATH = Path(__file__).parent / 'templates' / 'dashboard.html'
+CSS_PATH = Path(__file__).parent / 'templates' / 'dashboard.css'
+JS_PATH = Path(__file__).parent / 'templates' / 'dashboard.js'
 DEFAULT_HTML = '''<!doctype html>
 <html>
   <head>
@@ -39,10 +42,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     if path == '/':
       self._send_html()
+    elif path == '/dashboard.css':
+      self._send_asset(CSS_PATH, 'text/css; charset=utf-8')
+    elif path == '/dashboard.js':
+      self._send_asset(JS_PATH, 'text/javascript; charset=utf-8')
     elif path == '/api/stats':
       self._send_stats()
     else:
-      self.send_error(404, 'Not Found')
+      self._send_404()
 
   def _send_html(self) -> None:
     '''Serve dashboard HTML.'''
@@ -53,11 +60,46 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     self._send(200, body, 'text/html; charset=utf-8')
 
+  def _send_asset(self, asset_path: Path, content_type: str) -> None:
+    '''Serve an external dashboard asset file.
+
+    Args:
+      asset_path: File to serve.
+      content_type: Content type header.
+    '''
+    if not asset_path.exists():
+      self._send_404()
+      return
+    body = asset_path.read_bytes()
+    self._send(200, body, content_type)
+
   def _send_stats(self) -> None:
     '''Serve JSON stats.'''
     stats = self._build_stats()
     body = json.dumps(stats, default=str).encode('utf-8')
     self._send(200, body, 'application/json; charset=utf-8')
+
+  def _send_404(self) -> None:
+    '''Send a 404 response with the standard security headers.'''
+    self._send(404, b'Not Found', 'text/plain; charset=utf-8')
+
+  def send_error(  # type: ignore[override]
+    self,
+    code: int,
+    message: str | None = None,
+    explain: str | None = None,
+  ) -> None:
+    '''Send an error response with the standard security headers.
+
+    Args:
+      code: HTTP status code.
+      message: Short error message.
+      explain: Longer explanation (ignored beyond the body text).
+    '''
+    text = message or explain or self.responses.get(
+      code, ('Error',),
+    )[0]
+    self._send(code, str(text).encode('utf-8'), 'text/plain; charset=utf-8')
 
   def _send(self, status: int, body: bytes, content_type: str) -> None:
     '''Send HTTP response.
@@ -70,111 +112,119 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     self.send_response(status)
     self.send_header('Content-Type', content_type)
     self.send_header('Content-Length', str(len(body)))
+    self.send_header('Content-Security-Policy', "default-src 'self'")
+    self.send_header('X-Content-Type-Options', 'nosniff')
+    self.send_header('X-Frame-Options', 'DENY')
     self.end_headers()
     self.wfile.write(body)
 
   def _build_stats(self) -> Dict[str, Any]:
     '''Build usage stats from SQLite.
 
+    Opens the database with sqlite3.connect wrapped in
+    contextlib.closing() so the connection is actually closed
+    (a bare ``with sqlite3.connect`` only commits, it does not
+    close), while the inner ``with conn`` keeps transaction
+    semantics.
+
     Returns:
       Stats dictionary.
     '''
     try:
-      conn = sqlite3.connect(self.db_path)
-      conn.row_factory = sqlite3.Row
-      cur = conn.cursor()
+      with closing(sqlite3.connect(self.db_path)) as conn:
+        with conn:
+          conn.row_factory = sqlite3.Row
+          cur = conn.cursor()
 
-      cur.execute(
-        '''
-        SELECT
-          COUNT(*) AS total_calls,
-          COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-          COALESCE(SUM(input_tokens), 0) AS input_tokens,
-          COALESCE(SUM(output_tokens), 0) AS output_tokens,
-          COALESCE(SUM(cost), 0) AS total_cost
-        FROM llm_calls
-        '''
-      )
-      summary = dict(cur.fetchone())
+          cur.execute(
+            '''
+            SELECT
+              COUNT(*) AS total_calls,
+              COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(cost), 0) AS total_cost
+            FROM llm_calls
+            '''
+          )
+          summary = dict(cur.fetchone())
 
-      cur.execute(
-        '''
-        SELECT status, COUNT(*) AS count
-        FROM llm_calls
-        GROUP BY status
-        ORDER BY count DESC
-        '''
-      )
-      statuses = [dict(row) for row in cur.fetchall()]
+          cur.execute(
+            '''
+            SELECT status, COUNT(*) AS count
+            FROM llm_calls
+            GROUP BY status
+            ORDER BY count DESC
+            '''
+          )
+          statuses = [dict(row) for row in cur.fetchall()]
 
-      total_calls = int(summary.get('total_calls') or 0)
-      failed_calls = sum(
-        int(item.get('count') or 0)
-        for item in statuses
-        if str(item.get('status') or '').lower() != 'success'
-      )
-      error_rate = failed_calls / max(total_calls, 1)
+          total_calls = int(summary.get('total_calls') or 0)
+          failed_calls = sum(
+            int(item.get('count') or 0)
+            for item in statuses
+            if str(item.get('status') or '').lower() != 'success'
+          )
+          error_rate = failed_calls / max(total_calls, 1)
 
-      cur.execute(
-        '''
-        SELECT
-          provider,
-          COUNT(*) AS calls,
-          COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-          COALESCE(SUM(input_tokens), 0) AS input_tokens,
-          COALESCE(SUM(output_tokens), 0) AS output_tokens,
-          COALESCE(SUM(cost), 0) AS total_cost
-        FROM llm_calls
-        GROUP BY provider
-        ORDER BY calls DESC
-        '''
-      )
-      per_provider = [dict(row) for row in cur.fetchall()]
+          cur.execute(
+            '''
+            SELECT
+              provider,
+              COUNT(*) AS calls,
+              COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(cost), 0) AS total_cost
+            FROM llm_calls
+            GROUP BY provider
+            ORDER BY calls DESC
+            '''
+          )
+          per_provider = [dict(row) for row in cur.fetchall()]
 
-      cur.execute(
-        '''
-        SELECT
-          COALESCE(session_id, 'unknown') AS session_id,
-          COUNT(*) AS calls,
-          COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-          COALESCE(SUM(input_tokens), 0) AS input_tokens,
-          COALESCE(SUM(output_tokens), 0) AS output_tokens,
-          COALESCE(SUM(cost), 0) AS total_cost
-        FROM llm_calls
-        GROUP BY session_id
-        ORDER BY calls DESC
-        '''
-      )
-      per_session = [dict(row) for row in cur.fetchall()]
+          cur.execute(
+            '''
+            SELECT
+              COALESCE(session_id, 'unknown') AS session_id,
+              COUNT(*) AS calls,
+              COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(cost), 0) AS total_cost
+            FROM llm_calls
+            GROUP BY session_id
+            ORDER BY calls DESC
+            '''
+          )
+          per_session = [dict(row) for row in cur.fetchall()]
 
-      cur.execute(
-        '''
-        SELECT
-          timestamp,
-          provider,
-          model_used,
-          status,
-          latency_ms,
-          input_tokens,
-          output_tokens,
-          cost
-        FROM llm_calls
-        ORDER BY id DESC
-        LIMIT 100
-        '''
-      )
-      recent_calls = [dict(row) for row in cur.fetchall()]
+          cur.execute(
+            '''
+            SELECT
+              timestamp,
+              provider,
+              model_used,
+              status,
+              latency_ms,
+              input_tokens,
+              output_tokens,
+              cost
+            FROM llm_calls
+            ORDER BY id DESC
+            LIMIT 100
+            '''
+          )
+          recent_calls = [dict(row) for row in cur.fetchall()]
 
-      conn.close()
-
-      return {
-        'summary': summary,
-        'error_rate': error_rate,
-        'statuses': statuses,
-        'per_provider': per_provider,
-        'per_session': per_session,
-        'recent_calls': recent_calls,
-      }
+          return {
+            'summary': summary,
+            'error_rate': error_rate,
+            'statuses': statuses,
+            'per_provider': per_provider,
+            'per_session': per_session,
+            'recent_calls': recent_calls,
+          }
     except sqlite3.Error:
       return {
         'summary': {

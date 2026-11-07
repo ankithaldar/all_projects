@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Gateway routing, fallback, cache, and streaming tests.'''
 
@@ -10,11 +10,13 @@ from typing import Callable, Dict
 
 from llm_gateway.app import LLMGateway
 from llm_gateway.schemas import GatewayRequest
-from tests.conftest import DummyProvider
+from llm_gateway.tests.conftest import DummyProvider
 
 
 def test_rate_limit_routes_to_second_provider(
-  gateway_factory: Callable[[Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway],
+  gateway_factory: Callable[
+    [Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway
+  ],
 ) -> None:
   '''When first provider hits local RPM, second provider is used.'''
   p1 = DummyProvider('p1', text='p1')
@@ -38,7 +40,9 @@ def test_rate_limit_routes_to_second_provider(
 
 
 def test_fallback_after_transient_failure(
-  gateway_factory: Callable[[Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway],
+  gateway_factory: Callable[
+    [Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway
+  ],
 ) -> None:
   '''Fallback provider is used when primary fails transiently.'''
   p1 = DummyProvider('p1', fail_transient=True)
@@ -61,7 +65,9 @@ def test_fallback_after_transient_failure(
 
 
 def test_cache_returns_cached_response(
-  gateway_factory: Callable[[Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway],
+  gateway_factory: Callable[
+    [Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway
+  ],
 ) -> None:
   '''Identical prompt returns cached response without extra API call.'''
   p1 = DummyProvider('p1', text='cached-response')
@@ -86,7 +92,9 @@ def test_cache_returns_cached_response(
 
 
 def test_sync_streaming(
-  gateway_factory: Callable[[Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway],
+  gateway_factory: Callable[
+    [Dict[str, DummyProvider], Dict[str, int], bool], LLMGateway
+  ],
 ) -> None:
   '''Synchronous streaming yields provider chunks.'''
   p1 = DummyProvider('p1', text='chunk')

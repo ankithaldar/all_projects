@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''SmartRecruiters public API adapter.
 
@@ -8,13 +8,13 @@ Endpoints:
   GET https://api.smartrecruiters.com/v1/companies/{company}/postings/{id}
 '''
 
-
 from __future__ import annotations
 
 import asyncio
 from typing import List
+from urllib.parse import quote
 
-from job_hunter.adapters.base import SourceAdapter
+from job_hunter.adapters.base import SourceAdapter, validate_board_ref
 from job_hunter.core.models import CompanyTarget, RawJobRecord
 
 
@@ -28,8 +28,12 @@ def parse_list_payload(payload: dict, company: str) -> List[RawJobRecord]:
   Returns:
     Raw records (descriptions pending detail fetch).
   '''
+  if not isinstance(payload, dict):
+    return []
   records: List[RawJobRecord] = []
   for item in payload.get('content') or []:
+    if not isinstance(item, dict):
+      continue
     location = item.get('location') or {}
     bits = [
       str(location.get('city') or ''),
@@ -37,18 +41,23 @@ def parse_list_payload(payload: dict, company: str) -> List[RawJobRecord]:
       str(location.get('country') or ''),
     ]
     posting_id = str(item.get('id') or '')
-    records.append(RawJobRecord(
-      source_key='smartrecruiters',
-      external_id=posting_id,
-      url=(
-        f'https://jobs.smartrecruiters.com/{company}/{posting_id}'
-        if posting_id and company else ''
-      ),
-      title=str(item.get('name') or '').strip(),
-      location_text=', '.join(bit for bit in bits if bit),
-      employment_type_raw=str(item.get('typeOfEmployment', {}).get('label') or ''),
-      extra={'released_date': item.get('releasedDate')},
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='smartrecruiters',
+        external_id=posting_id,
+        url=(
+          f'https://jobs.smartrecruiters.com/{company}/{posting_id}'
+          if posting_id and company
+          else ''
+        ),
+        title=str(item.get('name') or '').strip(),
+        location_text=', '.join(bit for bit in bits if bit),
+        employment_type_raw=str(
+          item.get('typeOfEmployment', {}).get('label') or ''
+        ),
+        extra={'released_date': item.get('releasedDate')},
+      )
+    )
   return [record for record in records if record.title and record.url]
 
 
@@ -62,14 +71,19 @@ def merge_detail(record: RawJobRecord, detail: dict) -> RawJobRecord:
   Returns:
     Record with description filled in.
   '''
+  if not isinstance(detail, dict):
+    return record
   description = str(
-    (detail.get('jobAd') or {}).get('sections', {}).get('description', {}).get('text')
-    or '',
+    (detail.get('jobAd') or {}).get('sections', {}).get(
+      'description', {}
+    ).get('text') or '',
   )
-  return record.model_copy(update={
-    'description_html': description,
-    'posted_at': detail.get('releasedDate'),
-  })
+  return record.model_copy(
+    update={
+      'description_html': description,
+      'posted_at': detail.get('releasedDate'),
+    }
+  )
 
 
 class SmartRecruitersAdapter(SourceAdapter):
@@ -88,12 +102,19 @@ class SmartRecruitersAdapter(SourceAdapter):
       Detail JSON (empty on failure).
     '''
     try:
-      url = f'https://api.smartrecruiters.com/v1/companies/{company}/postings/{posting_id}'
-      return dict(await self._http.get_json(url, rpm=20))
+      posting = quote(str(posting_id), safe='')
+      url = (
+        'https://api.smartrecruiters.com/v1/companies/'
+        f'{company}/postings/{posting}'
+      )
+      payload = await self._http.get_json(url, rpm=20)
+      return dict(payload) if isinstance(payload, dict) else {}
     except Exception:
       return {}
 
-  async def fetch(self, target: CompanyTarget, limit: int = 200) -> List[RawJobRecord]:
+  async def fetch(
+    self, target: CompanyTarget, limit: int = 200
+  ) -> List[RawJobRecord]:
     '''Fetch postings, enriching up to 60 with full descriptions.
 
     Args:
@@ -103,9 +124,12 @@ class SmartRecruitersAdapter(SourceAdapter):
     Returns:
       Raw job records.
     '''
-    url = f'https://api.smartrecruiters.com/v1/companies/{target.board_ref}/postings'
-    payload = await self._http.get_json(url, params={'limit': min(limit, 100)}, rpm=20)
-    records = parse_list_payload(dict(payload), target.board_ref)[:limit]
+    ref = validate_board_ref(target.board_ref, source=self.source_key)
+    url = f'https://api.smartrecruiters.com/v1/companies/{ref}/postings'
+    payload = await self._http.get_json(
+      url, params={'limit': max(1, min(limit, 100))}, rpm=20
+    )
+    records = parse_list_payload(payload, ref)[:max(1, limit)]
     semaphore = asyncio.Semaphore(5)
 
     async def guarded(record: RawJobRecord) -> RawJobRecord:
@@ -118,24 +142,8 @@ class SmartRecruitersAdapter(SourceAdapter):
         Merged record.
       '''
       async with semaphore:
-        detail = await self._fetch_detail(target.board_ref, record.external_id)
+        detail = await self._fetch_detail(ref, record.external_id)
       return merge_detail(record, detail) if detail else record
 
     enriched = await asyncio.gather(*[guarded(r) for r in records[:60]])
     return list(enriched)
-
-  async def health(self, target: CompanyTarget) -> bool:
-    '''Probe the postings endpoint.
-
-    Args:
-      target: Company with board_ref set.
-
-    Returns:
-      True when the API answers.
-    '''
-    try:
-      url = f'https://api.smartrecruiters.com/v1/companies/{target.board_ref}/postings'
-      await self._http.get_json(url)
-      return True
-    except Exception:
-      return False

@@ -1,17 +1,41 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Background SQLite logger.'''
 
 from __future__ import annotations
 
+import logging
 import queue
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
 from llm_gateway.schemas import LogRecord
+
+logger = logging.getLogger(__name__)
+
+
+def _connect(db_path: str) -> sqlite3.Connection:
+  '''Open a WAL-mode connection with a busy timeout.
+
+  Args:
+    db_path: SQLite database path.
+
+  Returns:
+    Configured connection; caller must close it.
+  '''
+  conn = sqlite3.connect(db_path, timeout=10)
+  try:
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA busy_timeout=5000')
+    conn.execute('PRAGMA foreign_keys=ON')
+  except BaseException:
+    conn.close()
+    raise
+  return conn
 
 
 class DBLogger:
@@ -35,7 +59,7 @@ class DBLogger:
 
   def _init_db(self) -> None:
     '''Create the logging table if needed.'''
-    with sqlite3.connect(self._db_path) as conn:
+    with closing(_connect(self._db_path)) as conn:
       conn.execute(
         '''
         CREATE TABLE IF NOT EXISTS llm_calls (
@@ -57,6 +81,18 @@ class DBLogger:
         )
         '''
       )
+      conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_llm_timestamp '
+        'ON llm_calls(timestamp)'
+      )
+      conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_llm_provider_ts '
+        'ON llm_calls(provider, timestamp)'
+      )
+      conn.execute(
+        'CREATE INDEX IF NOT EXISTS idx_llm_session_ts '
+        'ON llm_calls(session_id, timestamp)'
+      )
       conn.commit()
 
   def log(self, record: LogRecord) -> None:
@@ -71,12 +107,14 @@ class DBLogger:
     self._queue.put(record)
 
   def close(self) -> None:
-    '''Drain the queue and stop the worker thread.'''
+    '''Drain the queue (bounded) and stop the worker thread.'''
     if self._closed:
       return
 
     self._closed = True
-    self._queue.join()
+    joiner = threading.Thread(target=self._queue.join, daemon=True)
+    joiner.start()
+    joiner.join(timeout=5.0)
     self._queue.put(None)
     self._thread.join(timeout=2.0)
 
@@ -91,6 +129,8 @@ class DBLogger:
 
       try:
         self._insert(record)
+      except Exception:
+        logger.exception('failed to persist log record')
       finally:
         self._queue.task_done()
 
@@ -100,7 +140,7 @@ class DBLogger:
     Args:
       record: Log record to persist.
     '''
-    with sqlite3.connect(self._db_path) as conn:
+    with closing(_connect(self._db_path)) as conn:
       conn.execute(
         '''
         INSERT INTO llm_calls (

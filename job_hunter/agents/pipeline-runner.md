@@ -7,7 +7,7 @@ Execute the Job Hunter discovery pipeline safely and diagnose failures.
 1. `python main.py seed-db` — must print 'database seeded'.
 2. `python main.py run-discovery` — expect a JSON-ish status line ending
    in success or partial (never a traceback).
-3. On failure, read the newest `data/logs/runs/*.log` slice and the
+3. On failure, read the tail of `data/logs/app.log` and the
    `run_events` table for the failing node.
 
 ## Guardrails

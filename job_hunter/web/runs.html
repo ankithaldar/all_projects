@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Job Hunter — Runs</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -10,10 +11,10 @@
   <main>
     <h1>Runs</h1>
     <div style="margin-bottom:14px">
-      <button class="btn save" id="triggerBtn" onclick="trigger()">▶ Run discovery now</button>
+      <button type="button" class="btn save" id="triggerBtn" onclick="trigger()">▶ Run discovery now</button>
     </div>
-    <div class="console" id="console" hidden></div>
-    <div id="table"></div>
+    <div class="console" id="console" hidden role="status" aria-live="polite"></div>
+    <div class="table-wrap"><div id="table"></div></div>
   </main>
   <script src="/js/api.js"></script>
   <script src="/js/components.js"></script>
@@ -21,21 +22,26 @@
     document.getElementById('nav').append(components.nav('/runs.html'));
     let currentEs = null;
     async function load() {
-      const runs = await jh.get('/api/runs');
       const box = document.getElementById('table');
-      box.innerHTML = '';
-      if (!runs.length) { box.append(jh.el('div', { class: 'card' }, 'No runs yet.')); return; }
-      box.append(components.table(
-        ['Run', 'Kind', 'Status', 'Triggered by', 'Started', 'Finished'],
-        runs.slice(0, 20),
-        r => [
-          jh.el('a', { href: '#', onclick: (e) => { e.preventDefault(); watch(r.id); } }, `#${r.id}`),
-          r.kind,
-          jh.el('span', {
-            style: 'color:' + ({ success: 'var(--good)', failed: 'var(--weak)' }[r.status] || 'var(--ok)'),
-          }, r.status),
-          r.triggered_by || '', r.started_at || '—', r.finished_at || '—',
-        ]));
+      box.replaceChildren();
+      try {
+        const runs = await jh.get('/api/runs');
+        if (!runs.length) { box.append(jh.el('div', { class: 'card' }, 'No runs yet.')); return; }
+        box.append(components.table(
+          ['Run', 'Kind', 'Status', 'Triggered by', 'Started', 'Finished'],
+          runs.slice(0, 20),
+          r => [
+            jh.el('button', { type: 'button', onclick: () => { watch(r.id); } }, `#${r.id}`),
+            r.kind,
+            jh.el('span', {
+              style: 'color:' + ({ success: 'var(--good)', failed: 'var(--weak)' }[r.status] || 'var(--ok)'),
+            }, r.status),
+            r.triggered_by || '', r.started_at || '—', r.finished_at || '—',
+          ]));
+      } catch (e) {
+        box.replaceChildren();
+        box.append(jh.el('div', { class: 'card', role: 'status', 'aria-live': 'polite' }, `Error: ${e.message}`));
+      }
     }
     function logLine(ev) {
       const con = document.getElementById('console');
@@ -53,7 +59,11 @@
     function watch(runId) {
       if (currentEs) currentEs.close();
       const con = document.getElementById('console');
-      con.hidden = false; con.innerHTML = `<div>[watching run #${runId}…]</div>`;
+      con.hidden = false;
+      con.replaceChildren();
+      const line = document.createElement('div');
+      line.textContent = `[watching run #${runId}…]`;
+      con.append(line);
       currentEs = jh.watchRun(runId, logLine, async (done) => {
         logLine({ level: 'info', node: 'stream', message: `run finished: ${done.status}` });
         load();

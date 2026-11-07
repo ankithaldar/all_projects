@@ -1,0 +1,6 @@
+# Anti-Team Arch Cycle-2 — REJECTED (ses_e4b3465f6ffe2fjjsPn74FCadl, full text in session return)
+Fixed verified: worker entry, safe_node (8 nodes), rank, scheduler caps+bootstrap-once, bridge thread, embedder singleton, run_manager ContextVar, main.py settings, dual ContextVars.
+Remaining Critical: sources.enabled/rpm still dead (annotated as live by W7); atomic enqueue claim false (no partial unique index, has_active race).
+Remaining Important: nodes god 831 lines (ADR/split), MCP §8 tool lists unreconciled + MCPClientManager 0 callers, checkpoint state flips (candidate/inserted/plan), watchdog/taxonomy SQL-backed services, sys.path hacks remain, get_client unkeyed, per-Send HttpClient throttle defeated, AppError unmapped at API, layer inversion (no service layer), load_embeddings full scan, node_var never set, mcp import-time side effects + module-level HttpClient, robots fail-open/no jitter/Retry-After, safe_node CancelledError (adversarial tested: propagates — arch claim disputed, Cycle-3 to prove with test).
+New: checkpoint-resumed dict candidate AttributeError masked by safe_node; dual settings caches split-brain.
+Full findings table in flaw report Cycle-2 section (Lead deduplication pending Cycle-3).

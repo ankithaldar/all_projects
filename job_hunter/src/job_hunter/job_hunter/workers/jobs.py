@@ -1,29 +1,39 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Worker jobs: enqueue and execute discovery runs on demand or schedule.'''
-
 
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from job_hunter.core.bootstrap import bootstrap
 from job_hunter.core.config import AppSettings
 
+# Bootstrap once per process per config path (plus APP_DATA_DIR, which
+# AppSettings reads from the environment).
+_SETTINGS_CACHE: Dict[tuple, AppSettings] = {}
+
 
 def _settings(config_path: str | Path) -> AppSettings:
-  '''Load settings with data dirs prepared.
+  '''Load settings with data dirs prepared, cached per process.
 
   Args:
     config_path: app.yaml path.
 
   Returns:
-    Bootstrapped settings.
+    Bootstrapped settings (same object on repeated calls for one path).
   '''
-  return bootstrap(config_path)
+  key = (str(Path(config_path)), os.getenv('APP_DATA_DIR', ''))
+  cached = _SETTINGS_CACHE.get(key)
+  if cached is not None:
+    return cached
+  settings = bootstrap(config_path)
+  _SETTINGS_CACHE[key] = settings
+  return settings
 
 
 def enqueue_run(
@@ -42,9 +52,10 @@ def enqueue_run(
     New run id.
 
   Raises:
-    RuntimeError: When a run is already active.
+    ConflictError: When a run is already active.
   '''
   from job_hunter.services.run_manager import RunManager
+
   return RunManager(_settings(config_path)).enqueue(kind, triggered_by)
 
 
@@ -62,6 +73,7 @@ def execute_pending_run(
     Result mapping {run_id, status, stats}.
   '''
   from job_hunter.services.run_manager import RunManager
+
   manager = RunManager(_settings(config_path))
   if run_id is None and not manager.runs.has_pending():
     return {'run_id': None, 'status': 'nothing_pending', 'stats': {}}
@@ -79,6 +91,7 @@ def recover_orphans(config_path: str | Path, ttl_minutes: int = 120) -> list:
     Recovered run ids.
   '''
   from job_hunter.services.run_manager import RunManager
+
   return RunManager(_settings(config_path)).recover_orphans(ttl_minutes)
 
 
@@ -93,5 +106,6 @@ def stale_sweep(config_path: str | Path) -> int:
   '''
   settings = _settings(config_path)
   from job_hunter.db.repositories.jobs import JobsRepository
+
   days = int(settings.discovery.get('stale_after_days', 45))
   return JobsRepository(settings.db_path).stale_sweep(days)

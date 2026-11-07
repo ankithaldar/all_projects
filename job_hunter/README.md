@@ -1,23 +1,77 @@
 # Job Hunter
 
 Local-only agentic job discovery system for India. See `docs/app_overview.md`
-for the short version, `docs/architecture.md` for full design.
+for the short version, `docs/architecture.md` for full design,
+`docs/runbook.md` for operations, and `docs/api.md` for the HTTP API.
 
 ## Quick start
 
+> **Python >=3.14 is required upfront** (the project declares
+> `requires-python = '>=3.14'`; `setup.sh` refuses older interpreters).
+> Check `python --version` before the manual steps below.
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e '.[dev]'
-cp .env.example src/job_hunter/llm_gateway/.env   # add your real keys
+pip install -e '.[dev,semantic]'
+cp src/job_hunter/llm_gateway/.env.example src/job_hunter/llm_gateway/.env   # add your real keys
 
-python main.py seed-db        # migrations + taxonomy + default settings
-python main.py api            # terminal 1 -> http://127.0.0.1:8088
-python main.py worker         # terminal 2 -> schedules + discovery runs
+python main.py seed-db            # migrations + taxonomy + default settings
+python main.py discover-companies # ingest seed companies into the DB
+python main.py api                # terminal 1 -> http://127.0.0.1:8088
+python main.py worker             # terminal 2 -> schedules + discovery runs
 
-python main.py run-discovery  # one-off discovery run now
-python main.py verify-ats    # fill in ATS board refs for new companies
-python main.py mcp sources    # inspect an MCP server standalone
+python main.py run-discovery      # one-off discovery run now
+python main.py verify-ats         # fill in ATS board refs for new companies
+python main.py mcp sources        # inspect an MCP server standalone
 ```
+
+`./setup.sh` runs the full flow above (requires Python >= 3.14);
+`./run.sh` starts API + worker together (waits for `/healthz`, honouring
+`APP_HOST`/`APP_PORT`).
+
+Health check: `GET /healthz` returns `status`, `db`, `gateway_db`, and
+`version`. `gateway_db: false` simply means the gateway cost-log DB
+(`data/gateway.db`) does not exist yet — no LLM call has run yet. It is
+**not** unhealthy and is **not** an error; the first gateway call creates
+the file. `db: false` likewise means the app DB has not been seeded yet
+(run `python main.py seed-db`).
+
+Auth / browser token UI: when `JH_API_TOKEN` is set, API calls without a
+matching `Authorization: Bearer <token>` header get `401`. The web UI
+prompts you for the token on a `401`, stores it for the session, and
+retries with the Bearer header. The `TrustedHost` allowlist is hardcoded
+to `127.0.0.1`, `localhost`, and `testserver` — setting a token alone
+does **not** enable LAN exposure; non-loopback hosts are rejected by
+`TrustedHostMiddleware` regardless of the token.
+
+## Environment variables
+
+`APP_*` variables must be exported (or sourced) in your shell — the app does
+not load them from a file. LLM provider keys live in
+`src/job_hunter/llm_gateway/.env` (copy from the gateway `.env.example`).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `APP_HOST` | `127.0.0.1` | API bind host |
+| `APP_PORT` | `8088` | API bind port |
+| `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+| `APP_DATA_DIR` | `./data` | Data directory (DBs, logs, inbox) |
+| `SALARY_HARD_FLOOR_LPA` | `45` | Hard salary floor in LPA |
+| `GATEWAY_DB_PATH` | `./data/gateway.db` | Gateway call/cost log DB |
+| `GATEWAY_CACHE_PATH` | `./data/cache.db` | Gateway response cache DB |
+| `GATEWAY_DASHBOARD_PORT` | `8099` | Gateway dashboard port |
+| `OPENROUTER_API_KEYS` | — | OpenRouter keys (comma-separated) |
+| `GROQ_API_KEYS` | — | Groq keys |
+| `CEREBRAS_API_KEYS` | — | Cerebras keys |
+| `NVIDIA_NIM_API_KEYS` | — | NVIDIA NIM keys |
+| `GITHUB_API_KEYS` | — | GitHub keys (gateway templates also include BYTEZ/MISTRAL/OMNIROUTE/ORCAROUTER) |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Local Ollama fallback base URL |
+
+## Security note
+
+Keys in `src/job_hunter/llm_gateway/.env` are gitignored. If a `.env` file
+containing real keys is ever committed, **rotate every key in it** before
+pushing — git history retains them even after deletion.
 
 ## Widening the net
 
@@ -61,4 +115,9 @@ page, so guesses like `exl.ai` are rejected in favour of `exlservice.com`.
 - `web/` HTML/CSS/vanilla-JS frontend served by the API on port 8088.
 - `seeds/` companies, verticals taxonomy, skills aliases.
 - `data/` SQLite databases, resumes, manual-export inbox (created at runtime).
-- `docs/` architecture, roadmap, overview.
+- `docs/` architecture, roadmap, overview, `runbook.md`, `api.md`.
+
+Notes on tools: the three MCP servers (`sources`, `resume`, `store`) are
+stdio tools for discovery/LLM use; the discovery graph itself uses
+repositories directly. There is no in-process LLM tool loop and no
+LangChain bridge — both were removed (see `docs/architecture.md` §7–§9).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Company website resolution and verification.
 
@@ -12,15 +12,17 @@ only reported as verified when a significant company-name token is observed
 in the resolved URL, the document title, or the opening page text.
 '''
 
-
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import (
+  Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple
+)
 
 from bs4 import BeautifulSoup
-from job_hunter.adapters.http_client import HttpClient
+from job_hunter.adapters.http_client import HttpClient, validate_public_url
+from job_hunter.services.normalizer import html_to_text
 
 _DOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 _HOST_RE = re.compile(r'https?://([a-z0-9.-]+)', re.IGNORECASE)
@@ -28,33 +30,110 @@ _TAG_RE = re.compile(r'<[^>]+>')
 _WS_RE = re.compile(r'\s+')
 
 '''Tokens too generic to prove a domain belongs to a named company.'''
-STOP_TOKENS: frozenset = frozenset({
-  'and', 'the', 'for', 'private', 'pvt', 'ltd', 'limited', 'llc', 'inc',
-  'llp', 'plc', 'gmbh', 'india', 'global', 'technologies', 'technology',
-  'tech', 'services', 'service', 'solutions', 'systems', 'group', 'labs',
-  'company', 'corporation', 'corp', 'holdings', 'enterprises',
-})
+STOP_TOKENS: frozenset = frozenset(
+  {
+    'and',
+    'the',
+    'for',
+    'private',
+    'pvt',
+    'ltd',
+    'limited',
+    'llc',
+    'inc',
+    'llp',
+    'plc',
+    'gmbh',
+    'india',
+    'global',
+    'technologies',
+    'technology',
+    'tech',
+    'services',
+    'service',
+    'solutions',
+    'systems',
+    'group',
+    'labs',
+    'company',
+    'corporation',
+    'corp',
+    'holdings',
+    'enterprises',
+  }
+)
 
 '''Corporate suffixes stripped before building candidate domains.'''
 NAME_SUFFIXES: Tuple[str, ...] = (
-  ' pvt ltd', ' pvt. ltd.', ' pvt ltd.', ' private limited', ' private ltd',
-  ' pvt.', ' ltd.', ' ltd', ' limited', ' llc', ' inc.', ' inc', ' llp',
-  ' plc', ' gmbh', ' s.a.', ' sa', ' ag', ' bv', ' pte ltd', ' co.',
+  ' pvt ltd',
+  ' pvt. ltd.',
+  ' pvt ltd.',
+  ' private limited',
+  ' private ltd',
+  ' pvt.',
+  ' ltd.',
+  ' ltd',
+  ' limited',
+  ' llc',
+  ' inc.',
+  ' inc',
+  ' llp',
+  ' plc',
+  ' gmbh',
+  ' s.a.',
+  ' sa',
+  ' ag',
+  ' bv',
+  ' pte ltd',
+  ' co.',
 )
 
 '''Two-label public suffixes common in Indian company domains.'''
 MULTI_PART_SUFFIXES: Tuple[str, ...] = (
-  'co.in', 'net.in', 'org.in', 'firm.in', 'gen.in', 'ind.in', 'ac.in',
-  'edu.in', 'gov.in', 'co.uk', 'org.uk', 'com.au', 'co.jp', 'com.br',
+  'co.in',
+  'net.in',
+  'org.in',
+  'firm.in',
+  'gen.in',
+  'ind.in',
+  'ac.in',
+  'edu.in',
+  'gov.in',
+  'co.uk',
+  'org.uk',
+  'com.au',
+  'co.jp',
+  'com.br',
 )
 
 '''Tokens that are real words but too common to prove domain ownership.'''
-GENERIC_TOKENS: frozenset = frozenset({
-  'engineer', 'engineering', 'analyst', 'analytics', 'scientist', 'science',
-  'manager', 'digital', 'software', 'systems', 'network', 'international',
-  'global', 'worldwide', 'consulting', 'consultants', 'enterprises', 'labs',
-  'india', 'bureau', 'staffing', 'partners', 'associates',
-})
+GENERIC_TOKENS: frozenset = frozenset(
+  {
+    'engineer',
+    'engineering',
+    'analyst',
+    'analytics',
+    'scientist',
+    'science',
+    'manager',
+    'digital',
+    'software',
+    'systems',
+    'network',
+    'international',
+    'global',
+    'worldwide',
+    'consulting',
+    'consultants',
+    'enterprises',
+    'labs',
+    'india',
+    'bureau',
+    'staffing',
+    'partners',
+    'associates',
+  }
+)
 
 '''Default TLDs tried when guessing a company website.'''
 DEFAULT_TLDS: Tuple[str, ...] = ('com', 'in', 'io', 'ai', 'co', 'net', 'tech')
@@ -140,11 +219,16 @@ def tokenize(name: str, unique: bool = True) -> List[str]:
     if cleaned.endswith(suffix):
       cleaned = cleaned[: -len(suffix)].strip()
   raw = re.split(r'[^a-z0-9]+', cleaned)
-  kept = [token for token in raw if len(token) >= 3 and token not in STOP_TOKENS]
+  kept = [
+    token for token in raw
+    if len(token) >= 3 and token not in STOP_TOKENS
+  ]
   return list(dict.fromkeys(kept)) if unique else kept
 
 
-def slug_candidates(name: str, slug: str = '', tlds: Sequence[str] = DEFAULT_TLDS) -> List[str]:
+def slug_candidates(
+  name: str, slug: str = '', tlds: Sequence[str] = DEFAULT_TLDS
+) -> List[str]:
   '''Build domain candidates from a company name and job-board slug.
 
   Args:
@@ -197,7 +281,9 @@ def registrable_domain(url: str) -> str:
   candidate = url.strip()
   if '//' not in candidate:
     candidate = f'//{candidate}'
-  match = _HOST_RE.search(candidate if candidate.startswith('http') else f'http:{candidate}')
+  match = _HOST_RE.search(
+    candidate if candidate.startswith('http') else f'http:{candidate}'
+  )
   if not match:
     return ''
   host = match.group(1).lower().split(':')[0]
@@ -237,17 +323,58 @@ def is_blocked_domain(domain: str) -> bool:
     True when the domain must never be recorded as a company website.
   '''
   blocked = (
-    'linkedin.com', 'facebook.com', 'twitter.com', 'x.com', 'instagram.com',
-    'youtube.com', 'medium.com', 'wikipedia.org', 'github.com', 'gitlab.com',
-    'glassdoor.com', 'indeed.com', 'naukri.com', 'monster.com', 'ziprecruiter.com',
-    'ambitionbox.com', 'shine.com', 'jobberman.com', 'foundit.in', 'cutshort.io',
-    'google.com', 'duckduckgo.com', 'bing.com', 'yahoo.com', 'tracxn.com',
-    'thecompanycheck.com', 'indianretailer.com', 'apollo.io', 'zoominfo.com',
-    'crunchbase.com', 'owler.com', 'g2.com', 'capterra.com', 'clutch.co',
-    'indeedmail.com', 'workable.com', 'greenhouse.io', 'lever.co', 'ashbyhq.com',
-    'smartrecruiters.com', 'myworkdayjobs.com', 'oraclecloud.com', 'fasthire.io',
-    'hibob.co', 'northstarsearch.com', 'jobvite.com', 'icims.com', 'taleo.net',
-    'citadel.com', 'avature.net', 'eightfold.ai', 'jobs.smartrecruiters.com',
+    'linkedin.com',
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    'youtube.com',
+    'medium.com',
+    'wikipedia.org',
+    'github.com',
+    'gitlab.com',
+    'glassdoor.com',
+    'indeed.com',
+    'naukri.com',
+    'monster.com',
+    'ziprecruiter.com',
+    'ambitionbox.com',
+    'shine.com',
+    'jobberman.com',
+    'foundit.in',
+    'cutshort.io',
+    'google.com',
+    'duckduckgo.com',
+    'bing.com',
+    'yahoo.com',
+    'tracxn.com',
+    'thecompanycheck.com',
+    'indianretailer.com',
+    'apollo.io',
+    'zoominfo.com',
+    'crunchbase.com',
+    'owler.com',
+    'g2.com',
+    'capterra.com',
+    'clutch.co',
+    'indeedmail.com',
+    'workable.com',
+    'greenhouse.io',
+    'lever.co',
+    'ashbyhq.com',
+    'smartrecruiters.com',
+    'myworkdayjobs.com',
+    'oraclecloud.com',
+    'fasthire.io',
+    'hibob.co',
+    'northstarsearch.com',
+    'jobvite.com',
+    'icims.com',
+    'taleo.net',
+    'citadel.com',
+    'avature.net',
+    'eightfold.ai',
+    'jobs.smartrecruiters.com',
   )
   host = domain.lower()
   return any(host == item or host.endswith(f'.{item}') for item in blocked)
@@ -319,10 +446,14 @@ class WebsiteVerifier:
         score = 0.7
       else:
         score = 0.5
-      ordered.append(DomainCandidate(domain=domain, origin='slug' if slug else 'name', score=score))
+      ordered.append(DomainCandidate(
+        domain=domain, origin='slug' if slug else 'name', score=score
+      ))
     return sorted(ordered, key=lambda item: (-item.score, item.domain))
 
-  def _searched_domains(self, name: str, search_urls: Sequence[str]) -> List[DomainCandidate]:
+  def _searched_domains(
+    self, name: str, search_urls: Sequence[str]
+  ) -> List[DomainCandidate]:
     '''Turn search result URLs into ranked domain candidates.
 
     A search hit is trusted far more than a TLD guess, so these candidates
@@ -364,20 +495,28 @@ class WebsiteVerifier:
     '''
     url = f'https://www.{domain}/'
     try:
+      validate_public_url(url)
       html = await self._http.get_text(url, rpm=20)
     except Exception as exc:  # noqa: BLE001 - probing must never propagate
-      return SiteProbe(domain=domain, url=url, ok=False, error=f'{type(exc).__name__}: {exc}')
+      return SiteProbe(
+        domain=domain, url=url, ok=False, error=f'{type(exc).__name__}: {exc}'
+      )
     if not html:
       html = ''
       try:
+        validate_public_url(f'https://{domain}/')
         html = await self._http.get_text(f'https://{domain}/', rpm=20)
       except Exception:  # noqa: BLE001 - fall through to the empty-body check
         html = ''
     if len(html) < 200:
-      return SiteProbe(domain=domain, url=url, ok=False, error='empty or blocked body')
+      return SiteProbe(
+        domain=domain, url=url, ok=False, error='empty or blocked body'
+      )
     haystack = self._page_haystack(html, url)
     if not haystack:
-      return SiteProbe(domain=domain, url=url, ok=False, error='no readable text')
+      return SiteProbe(
+        domain=domain, url=url, ok=False, error='no readable text'
+      )
     return SiteProbe(domain=domain, url=url, ok=True, haystack=haystack)
 
   def _page_haystack(self, html: str, url: str) -> str:
@@ -394,15 +533,16 @@ class WebsiteVerifier:
     title = soup.title.get_text(' ', strip=True) if soup.title else ''
     meta = ''
     for tag in soup.find_all('meta'):
-      if str(tag.get('name') or '').lower() in ('description', 'og:title', 'og:description'):
+      name_attr = str(tag.get('name') or '').lower()
+      if name_attr in ('description', 'og:title', 'og:description'):
         meta += ' ' + str(tag.get('content') or '')
-    for tag in soup(['script', 'style', 'noscript']):
-      tag.decompose()
-    body = ' '.join(soup.get_text(' ').split())
+    body = html_to_text(html)
     blob = f'{url} {title} {meta} {body}'.lower()
     return _WS_RE.sub(' ', _TAG_RE.sub(' ', blob))[:60000]
 
-  async def _search_candidates(self, name: str, slug: str) -> List[DomainCandidate]:
+  async def _search_candidates(
+    self, name: str, slug: str
+  ) -> List[DomainCandidate]:
     '''Derive candidate domains from a search index for one company.
 
     Args:
@@ -426,7 +566,9 @@ class WebsiteVerifier:
       urls.extend(str(item) for item in (found or []))
     return self._searched_domains(name, urls)
 
-  def score_probe(self, probe: SiteProbe, tokens: Sequence[str], prior: float) -> float:
+  def score_probe(
+    self, probe: SiteProbe, tokens: Sequence[str], prior: float
+  ) -> float:
     '''Score how well a probed page matches a company name.
 
     A match on generic words such as ``engineer`` or ``india`` proves
@@ -444,7 +586,10 @@ class WebsiteVerifier:
       return 0.0
     haystack = f' {probe.haystack} '
     stem = sld_of(probe.domain)
-    matched = [token for token in tokens if f' {token} ' in haystack or token in stem]
+    matched = [
+      token for token in tokens
+      if f' {token} ' in haystack or token in stem
+    ]
     if not matched:
       return 0.0
     distinctive = [token for token in matched if token not in GENERIC_TOKENS]
@@ -500,7 +645,10 @@ class WebsiteVerifier:
       if confidence < self._min_confidence:
         continue
       stem = sld_of(candidate.domain)
-      matched = [tok for tok in tokens if f' {tok} ' in f' {probe.haystack} ' or tok in stem]
+      matched = [
+        tok for tok in tokens
+        if f' {tok} ' in f' {probe.haystack} ' or tok in stem
+      ]
       return VerifiedSite(
         domain=candidate.domain,
         url=probe.url,
@@ -511,7 +659,9 @@ class WebsiteVerifier:
     return None
 
 
-def verified_site_row(name: str, slug: str, site: Optional[VerifiedSite]) -> Dict[str, object]:
+def verified_site_row(
+  name: str, slug: str, site: Optional[VerifiedSite]
+) -> Dict[str, object]:
   '''Flatten a verification result into a seed-file friendly mapping.
 
   Args:
@@ -524,7 +674,10 @@ def verified_site_row(name: str, slug: str, site: Optional[VerifiedSite]) -> Dic
     empty when verification failed.
   '''
   if site is None:
-    return {'name': name, 'domain': '', 'slug': slug, 'confidence': 0.0, 'via': 'unverified'}
+    return {
+      'name': name, 'domain': '', 'slug': slug,
+      'confidence': 0.0, 'via': 'unverified',
+    }
   return {
     'name': name,
     'domain': site.domain,
@@ -532,6 +685,7 @@ def verified_site_row(name: str, slug: str, site: Optional[VerifiedSite]) -> Dic
     'confidence': site.confidence,
     'via': site.via,
   }
+
 
 def company_domain_map(entries: Sequence[Dict[str, str]]) -> Dict[str, str]:
   '''Build a lowercase company-name to domain index.

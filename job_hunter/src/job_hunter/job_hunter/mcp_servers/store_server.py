@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''MCP server exposing safe, allow-listed database tools.
 
@@ -9,12 +9,21 @@ Run: python -m job_hunter.mcp_servers.store_server
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
-from job_hunter.mcp_servers.common import config_path, dumps, ensure_sys_path
+try:
+  from mcp.server.fastmcp import FastMCP
+except ModuleNotFoundError:  # mcp 2.x renamed FastMCP to MCPServer
+  from mcp.server.mcpserver import MCPServer as FastMCP
+from job_hunter.mcp_servers.common import dumps, ensure_sys_path
+from job_hunter.mcp_servers.common import (
+  get_settings_obj as _settings_obj,
+)
 
 ensure_sys_path()
 
-from job_hunter.core.bootstrap import bootstrap  # noqa: E402
+from job_hunter.adapters.base import valid_domain  # noqa: E402
+# bootstrap kept as legacy monkeypatch target (common.get_settings_obj
+# honours a patched store_server.bootstrap).
+from job_hunter.core.bootstrap import bootstrap  # noqa: E402,F401
 from job_hunter.core.config import AppSettings  # noqa: E402
 from job_hunter.db.repositories.companies import CompaniesRepository  # noqa: E402
 from job_hunter.db.repositories.jobs import JobsRepository  # noqa: E402
@@ -25,19 +34,10 @@ from job_hunter.db.repositories.recommendations import (  # noqa: E402
 from job_hunter.db.repositories.runs import RunsRepository  # noqa: E402
 
 mcp = FastMCP('job_hunter-store')
+# Legacy hook kept for existing tests that monkeypatch store_server._settings
+# directly (common.get_settings_obj honours it). The shared cache lives in
+# common.py; this variable is not the cache.
 _settings: AppSettings | None = None
-
-
-def _settings_obj() -> AppSettings:
-  '''Return lazily-bootstrapped settings.
-
-  Returns:
-    Application settings.
-  '''
-  global _settings
-  if _settings is None:
-    _settings = bootstrap(config_path())
-  return _settings
 
 
 @mcp.tool()
@@ -80,8 +80,12 @@ def upsert_company(name: str, domain: str = '', vertical: str = '') -> str:
     vertical: Vertical label when known.
 
   Returns:
-    JSON with company_id.
+    JSON with company_id, or an error object for an invalid domain.
   '''
+  try:
+    domain = valid_domain(domain)
+  except ValueError as exc:
+    return dumps({'error': str(exc)})
   company_id = CompaniesRepository(_settings_obj().db_path).upsert(
     name=name,
     domain=domain,
@@ -118,9 +122,10 @@ def recommendations_top(limit: int = 10) -> str:
   Returns:
     JSON array of recommendation rows.
   '''
-  return dumps(RecommendationsRepository(_settings_obj().db_path).list_for_candidate(
-    per_page=min(limit, 100),
-  ))
+  return dumps(
+    RecommendationsRepository(_settings_obj().db_path)
+    .list_for_candidate(per_page=min(limit, 100))
+  )
 
 
 @mcp.tool()

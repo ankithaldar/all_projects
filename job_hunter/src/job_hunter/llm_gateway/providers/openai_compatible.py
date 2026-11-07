@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''OpenAI-compatible provider implementations.'''
 
@@ -499,35 +499,3 @@ class OpenAICompatibleProvider(LLMProvider):
       finish_reason=choice.get('finish_reason'),
       raw=parsed,
     )
-
-
-class BytezProvider(OpenAICompatibleProvider):
-  '''Bytez provider'''
-
-class CerebrasProvider(OpenAICompatibleProvider):
-  '''Cerebras provider.'''
-
-class GithubProvider(OpenAICompatibleProvider):
-  '''Github provider.'''
-
-class GroqProvider(OpenAICompatibleProvider):
-  '''Groq provider.'''
-
-class MistralProvider(OpenAICompatibleProvider):
-  '''Mistral provider.'''
-
-class NvidiaProvider(OpenAICompatibleProvider):
-  '''Nvidia provider.'''
-
-class OllamaProvider(OpenAICompatibleProvider):
-  '''Local Ollama provider using OpenAI-compatible endpoint.'''
-
-class OmniRouteProvider(OpenAICompatibleProvider):
-  '''OmniRoute provider.'''
-
-class OpenRouterProvider(OpenAICompatibleProvider):
-  '''OpenRouter provider.'''
-
-class OrcaRouterProvider(OpenAICompatibleProvider):
-  '''OrcaRouter provider.'''
-

@@ -1,27 +1,26 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Manual-export inbox: parse saved LinkedIn HTML and Naukri-style CSVs.'''
-
 
 from __future__ import annotations
 
 import csv
 import io
+import logging
 import re
-from pathlib import Path
-from typing import Any, Dict, List
+import sqlite3
+from typing import Dict, List
 
 from bs4 import BeautifulSoup
 from job_hunter.core.config import AppSettings
+from job_hunter.core.errors import DatabaseError
 from job_hunter.core.models import RawJobRecord
 from job_hunter.db.repositories.companies import CompaniesRepository
 from job_hunter.db.repositories.jobs import JobsRepository
-from job_hunter.services.normalizer import (
-  canonicalize_url,
-  content_hash,
-  html_to_text,
-)
+from job_hunter.services.persist import persist_record
+
+logger = logging.getLogger(__name__)
 
 _HEADER_HINTS = {
   'title': ('job title', 'title', 'role', 'designation'),
@@ -62,40 +61,52 @@ def parse_linkedin_html(html: str) -> List[RawJobRecord]:
   '''
   soup = BeautifulSoup(html or '', 'html.parser')
   records: List[RawJobRecord] = []
-  cards = soup.select('div.base-card, li[data-occludable-job-id], div.job-search-card')
+  cards = soup.select(
+    'div.base-card, li[data-occludable-job-id], div.job-search-card'
+  )
   for card in cards:
-    anchor = card.find('a', class_=re.compile('base-card__full-link|job-card-list__title'))
+    anchor = card.find(
+      'a', class_=re.compile('base-card__full-link|job-card-list__title')
+    )
     if anchor is None:
       anchor = card.find('a', href=True)
     if anchor is None:
       continue
-    title = (anchor.get_text(' ', strip=True) or anchor.get('aria-label') or '').strip()
+    title = (
+      anchor.get_text(' ', strip=True) or anchor.get('aria-label') or ''
+    ).strip()
     company_el = card.find(class_=re.compile('subtitle|company|org-name'))
     location_el = card.find(class_=re.compile('location|meta'))
     link = anchor.get('href') or ''
     if not title or not link:
       continue
-    records.append(RawJobRecord(
-      source_key='manual',
-      external_id=f"li:{abs(hash(link)) % 10**10}",
-      url=link.split('?')[0],
-      company_name=(company_el.get_text(' ', strip=True) if company_el else ''),
-      title=title,
-      location_text=(location_el.get_text(' ', strip=True) if location_el else ''),
-      extra={'origin': 'linkedin_export'},
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='manual',
+        external_id=f'li:{abs(hash(link)) % 10**10}',
+        url=link.split('?')[0],
+        company_name=(
+          company_el.get_text(' ', strip=True) if company_el else ''
+        ),
+        title=title,
+        location_text=(
+          location_el.get_text(' ', strip=True) if location_el else ''
+        ),
+        extra={'origin': 'linkedin_export'},
+      )
+    )
   return records
 
 
 def parse_csv(text: str) -> List[RawJobRecord]:
-  """Parse a Naukri-style CSV export with fuzzy header mapping.
+  '''Parse a Naukri-style CSV export with fuzzy header mapping.
 
   Args:
     text: CSV content.
 
   Returns:
     Raw records flagged source=manual.
-  """
+  '''
   reader = csv.DictReader(io.StringIO(text))
   mapping = _match_headers(list(reader.fieldnames or []))
   if 'title' not in mapping:
@@ -105,20 +116,32 @@ def parse_csv(text: str) -> List[RawJobRecord]:
     title = (row.get(mapping['title']) or '').strip()
     if not title:
       continue
-    records.append(RawJobRecord(
-      source_key='manual',
-      external_id=f"csv:{abs(hash(title + (row.get(mapping.get('company') or '') or ''))) % 10**10}",
-      url=row.get(mapping.get('url') or '', ''),
-      company_name=(row.get(mapping['company']) or '').strip() if 'company' in mapping else '',
-      title=title,
-      location_text=(row.get(mapping['location']) or '').strip() if 'location' in mapping else '',
-      salary_raw=(row.get(mapping['salary']) or '').strip() if 'salary' in mapping else '',
-      extra={'origin': 'naukri_csv'},
-    ))
+    company_raw = (row.get(mapping.get('company') or '') or '')
+    records.append(
+      RawJobRecord(
+        source_key='manual',
+        external_id=f'csv:{abs(hash(title + company_raw)) % 10**10}',
+        url=row.get(mapping.get('url') or '', ''),
+        company_name=(row.get(mapping['company']) or '').strip()
+        if 'company' in mapping
+        else '',
+        title=title,
+        location_text=(row.get(mapping['location']) or '').strip()
+        if 'location' in mapping
+        else '',
+        salary_raw=(row.get(mapping['salary']) or '').strip()
+        if 'salary' in mapping
+        else '',
+        extra={'origin': 'naukri_csv'},
+      )
+    )
   return records
 
 
-def _insert_records(settings: AppSettings, records: List[RawJobRecord]) -> int:
+async def _insert_records(
+  settings: AppSettings,
+  records: List[RawJobRecord],
+) -> int:
   '''Run manual records through normalization and insert unseen ones.
 
   Args:
@@ -127,76 +150,79 @@ def _insert_records(settings: AppSettings, records: List[RawJobRecord]) -> int:
 
   Returns:
     Inserted count.
+
+  Raises:
+    sqlite3.Error: On database failures (file must not be moved).
+    DatabaseError: On database failures (file must not be moved).
   '''
-  from job_hunter.services.normalizer import (
-    detect_city,
-    infer_work_mode,
-  )
   jobs_repo = JobsRepository(settings.db_path)
   companies_repo = CompaniesRepository(settings.db_path)
   inserted = 0
   for record in records:
-    digest = content_hash(record, '')
-    if jobs_repo.exists_hash(digest):
-      continue
-    company_id = (
-      companies_repo.resolve_alias(record.company_name)
-      if record.company_name else None
-    )
     try:
-      jobs_repo.insert({
-        'source_key': 'manual',
-        'external_id': record.external_id,
-        'url': record.url,
-        'canonical_url': canonicalize_url(record.url),
-        'company_id': company_id,
-        'company_raw_name': record.company_name,
-        'title': record.title,
-        'location_text': record.location_text,
-        'city': detect_city(record.location_text),
-        'work_mode': infer_work_mode('', record.location_text, record.title),
-        'employment_type': 'full_time',
-        'salary_raw': record.salary_raw,
-        'description_text': '',
-        'raw_json': record.model_dump_json(),
-        'content_hash': digest,
-        'quality_score': 0.3,
-      })
-      inserted += 1
-    except Exception:
+      outcome = await persist_record(
+        jobs_repo=jobs_repo,
+        record=record,
+        company_repo=companies_repo,
+        quality_score=0.3,
+        source_key='manual',
+        employment_type='full_time',
+        description_text='',
+        parse_salary=False,
+      )
+    except (sqlite3.Error, DatabaseError) as exc:
+      logger.warning('manual insert failed for %s: %s', record.url, exc)
+      raise
+    except Exception as exc:
+      logger.warning('manual insert failed for %s: %s', record.url, exc)
       continue
+    if outcome == 'inserted':
+      inserted += 1
   return inserted
 
 
 async def scan_inbox(settings: AppSettings) -> int:
-    """Scan data/inbox/** for new exports and ingest them.
+  '''Scan data/inbox/** for new exports and ingest them.
 
-    Args:
-      settings: App settings.
+  Args:
+    settings: App settings.
 
-    Returns:
-      Total postings ingested.
-    """
-    inbox = settings.data_dir / 'inbox'
-    total = 0
-    if not inbox.exists():
-      return 0
-    for path in sorted(inbox.rglob('*')):
-      if path.name.startswith('.') or not path.is_file():
+  Returns:
+    Total postings ingested.
+  '''
+  inbox = settings.data_dir / 'inbox'
+  total = 0
+  if not inbox.exists():
+    return 0
+  for path in sorted(inbox.rglob('*')):
+    if '_processed' in path.parts:
+      continue
+    if path.name.startswith('.') or not path.is_file():
+      continue
+    suffix = path.suffix.lower()
+    success = False
+    try:
+      if suffix in ('.html', '.htm'):
+        records = parse_linkedin_html(
+          path.read_text(encoding='utf-8', errors='ignore')
+        )
+      elif suffix == '.csv':
+        records = parse_csv(path.read_text(encoding='utf-8', errors='ignore'))
+      else:
         continue
-      suffix = path.suffix.lower()
-      try:
-        if suffix in ('.html', '.htm'):
-          records = parse_linkedin_html(path.read_text(encoding='utf-8', errors='ignore'))
-        elif suffix == '.csv':
-          records = parse_csv(path.read_text(encoding='utf-8', errors='ignore'))
-        else:
-          continue
-        total += _insert_records(settings, records)
-        processed = settings.data_dir / 'inbox' / '_processed'
-        processed.mkdir(exist_ok=True)
-        new_path = processed / f'{int(Path.mtime(path))}_{path.name}'
-        path.rename(new_path)
-      except Exception:
-        continue
-    return total
+      total += await _insert_records(settings, records)
+      success = True
+    except Exception as exc:
+      logger.warning('inbox scan failed for %s: %s', path, exc)
+      continue
+    if not success:
+      continue
+    try:
+      processed = settings.data_dir / 'inbox' / '_processed'
+      processed.mkdir(exist_ok=True)
+      new_path = processed / f'{int(path.stat().st_mtime)}_{path.name}'
+      path.rename(new_path)
+    except Exception as exc:
+      logger.warning('inbox scan failed for %s: %s', path, exc)
+      continue
+  return total

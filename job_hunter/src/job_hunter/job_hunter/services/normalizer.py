@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Field normalization: URLs, cities, work modes, salaries, hashes.'''
 
@@ -31,7 +31,9 @@ _SALARY_RANGE_RE = re.compile(
   r'(?:lpa|lakhs? per annum|lakhs?|lacs?|l\b)',
   re.IGNORECASE,
 )
-_SALARY_SINGLE_RE = re.compile(r'(\d{1,2}(?:\.\d)?)\s*(?:lpa|lakhs?|lacs?)\b', re.IGNORECASE)
+_SALARY_SINGLE_RE = re.compile(
+  r'(\d{1,2}(?:\.\d)?)\s*(?:lpa|lakhs?|lacs?)\b', re.IGNORECASE
+)
 
 
 def canonicalize_url(url: str) -> str:
@@ -162,7 +164,9 @@ def normalize_employment(raw: str) -> str:
   return 'other'
 
 
-def parse_salary_lpa(salary_raw: str, text: str = '') -> Tuple[Optional[float], Optional[float]]:
+def parse_salary_lpa(
+  salary_raw: str, text: str = ''
+) -> Tuple[Optional[float], Optional[float]]:
   '''Extract an INR LPA range from salary text or description.
 
   Args:

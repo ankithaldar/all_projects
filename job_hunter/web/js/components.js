@@ -56,19 +56,20 @@ const components = {
       this.breakdown(rec.score_breakdown || {}),
       gateFails.length ? jh.el('div', { class: 'gates' }, 'Gated: ' + gateFails.join(', ')) : null,
       jh.el('div', { class: 'actions' },
-        jh.el('button', { class: 'btn save', onclick: () => onAction('saved', rec) },
+        jh.el('button', { type: 'button', class: 'btn save', onclick: () => onAction('saved', rec) },
           rec.status === 'saved' ? '★ Saved' : '☆ Save'),
-        jh.el('button', { class: 'btn dismiss', onclick: () => onAction('dismissed', rec) }, '✕ Dismiss')));
+        jh.el('button', { type: 'button', class: 'btn dismiss', onclick: () => onAction('dismissed', rec) }, '✕ Dismiss')));
     return card;
   },
 
   table(headers, rows, rowRenderer) {
-    return jh.el('table', {},
-      jh.el('thead', {}, jh.el('tr', {}, headers.map(h => jh.el('th', {}, h)))),
-      jh.el('tbody', {}, rows.map(r => {
-        const cells = rowRenderer(r);
-        return jh.el('tr', {}, cells.map(c => jh.el('td', {}, c)));
-      })));
+    return jh.el('div', { class: 'table-wrap' },
+      jh.el('table', {},
+        jh.el('thead', {}, jh.el('tr', {}, headers.map(h => jh.el('th', { scope: 'col' }, h)))),
+        jh.el('tbody', {}, rows.map(r => {
+          const cells = rowRenderer(r);
+          return jh.el('tr', {}, cells.map(c => jh.el('td', {}, c)));
+        }))));
   },
 };
 

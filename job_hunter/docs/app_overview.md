@@ -39,7 +39,7 @@ agent design leave a clean slot for a later applier extension.
 |-------|------|------|
 | API server | FastAPI + Uvicorn (127.0.0.1) | REST + SSE + serves `web/` |
 | Worker | APScheduler process | nightly discovery, polls, sweeps; runs LangGraph graphs |
-| Agent pipeline | LangGraph (+LangChain utils) | plan → fetch → normalize → filter → enrich → score → persist |
+| Agent pipeline | LangGraph | plan → fetch → normalize → filter → enrich → score → persist |
 | Tools | MCP servers (stdio) | source fetching, resume parsing, safe DB ops, web search |
 | LLM calls | existing `llm_gateway` only | provider cascade + fallback, caching, cost logs |
 | Storage | SQLite (WAL) | jobs, companies, profile, recommendations, runs, settings |
@@ -51,22 +51,28 @@ agent design leave a clean slot for a later applier extension.
 job_hunter/
 ├── src/job_hunter/
 │   ├── llm_gateway/     ← existing, untouched
-│   └── job_hunter/      ← core, db, llm bridge, mcp_servers, adapters,
+│   └── job_hunter/      ← core, db, llm client, mcp_servers, adapters,
 │                          services, graph, workers, api
 ├── web/                 ← HTML pages + js/css (no framework)
 ├── seeds/               ← companies, verticals taxonomy, skills aliases
-├── docs/                ← architecture.md (full detail), roadmap.md
+├── docs/                ← architecture.md (full detail), roadmap.md,
+│                          runbook.md, api.md
 └── data/                ← app.db, gateway.db, cache.db, resumes/, inbox/
 ```
 
-## Running it (planned)
+## Running it
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e .
-python -m job_hunter.api      # terminal 1 → http://127.0.0.1:8088
-python -m job_hunter.worker   # terminal 2 → schedules + discovery runs
+pip install -e '.[dev,semantic]'
+cp src/job_hunter/llm_gateway/.env.example src/job_hunter/llm_gateway/.env
+python main.py seed-db
+python main.py api            # terminal 1 → http://127.0.0.1:8088
+python main.py worker         # terminal 2 → schedules + discovery runs
+python main.py fetch-jobs     # bulk pull from public aggregators
+python main.py scout-companies # find + verify new companies
 ```
 
 Full engineering detail (schemas, scoring math, endpoints, graph states):
 see `docs/architecture.md`. Build order per feature branch: `docs/roadmap.md`.
+Operations: `docs/runbook.md`; endpoint reference: `docs/api.md`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Robots-permitted web search used for company and job discovery.
 
@@ -8,7 +8,6 @@ declares as fully crawlable (``Allow: /``). The main duckduckgo.com host is
 disallowed outright, so it is never used. Results are cached on disk with a
 TTL to stay polite under repeated scouting runs.
 '''
-
 
 from __future__ import annotations
 
@@ -20,24 +19,54 @@ from urllib.parse import unquote
 
 import httpx
 from bs4 import BeautifulSoup
-from job_hunter.adapters.http_client import USER_AGENT
+from job_hunter.adapters.http_client import (
+  USER_AGENT,
+  _fetch_with_redirects,
+  validate_public_url,
+)
+from job_hunter.services.domain_verifier import registrable_domain
 
 SEARCH_ENDPOINT = 'https://html.duckduckgo.com/html/'
 
 '''Result hosts that are never useful as a company website.'''
 _NOISE_HOSTS = (
-  'duckduckgo.com', 'bing.com', 'yahoo.com', 'ecosia.org', 'startpage.com',
-  'brave.com', 'mojeek.com', 'qwant.com', 'yandex.com', 'google.com',
+  'duckduckgo.com',
+  'bing.com',
+  'yahoo.com',
+  'ecosia.org',
+  'startpage.com',
+  'brave.com',
+  'mojeek.com',
+  'qwant.com',
+  'yandex.com',
+  'google.com',
 )
 
 _TITLE_SUFFIXES = (
-  ' | LinkedIn', '- LinkedIn', ' | linkedin', ' on LinkedIn', ' LinkedIn',
-  ' | Indeed', ' | Glassdoor', ' | Naukri', ' | Wellfound', ' | CutShort',
-  ' | AmbitionBox', ' | Foundit', ' | Jobberman', ' | Shine', ' | SimplyHired',
+  ' | LinkedIn',
+  '- LinkedIn',
+  ' | linkedin',
+  ' on LinkedIn',
+  ' LinkedIn',
+  ' | Indeed',
+  ' | Glassdoor',
+  ' | Naukri',
+  ' | Wellfound',
+  ' | CutShort',
+  ' | AmbitionBox',
+  ' | Foundit',
+  ' | Jobberman',
+  ' | Shine',
+  ' | SimplyHired',
 )
 
-_SLUG_AT_RE = re.compile(r'-at-(?P<slug>[a-z0-9][a-z0-9-]{1,60}?)-\d{5,}\s*$', re.IGNORECASE)
-_TITLE_AT_RE = re.compile(r'\s+at\s+(?P<company>[^-]{2,60}?)\s*(?:\||\u2013|\u2014|-{1,2}\s+LinkedIn|$)', re.IGNORECASE)
+_SLUG_AT_RE = re.compile(
+  r'-at-(?P<slug>[a-z0-9][a-z0-9-]{1,60}?)-\d{5,}\s*$', re.IGNORECASE
+)
+_TITLE_AT_RE = re.compile(
+  r'\s+at\s+(?P<company>[^-]{2,60}?)'
+  r'\s*(?:\||\u2013|\u2014|-{1,2}\s+LinkedIn|$)', re.IGNORECASE
+)
 _URL_RE = re.compile(r'^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$', re.IGNORECASE)
 
 
@@ -81,11 +110,12 @@ class WebSearchIndex:
         'Accept': 'text/html,application/xhtml+xml',
       },
       timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=10.0),
-      follow_redirects=True,
+      follow_redirects=False,
     )
     if self._cache_path and self._cache_path.exists():
       try:
         import json
+
         self._cache = json.loads(self._cache_path.read_text(encoding='utf-8'))
       except Exception:  # noqa: BLE001 - a corrupt cache is simply ignored
         self._cache = {}
@@ -120,6 +150,7 @@ class WebSearchIndex:
       return
     try:
       import json
+
       self._cache_path.parent.mkdir(parents=True, exist_ok=True)
       self._cache_path.write_text(json.dumps(self._cache), encoding='utf-8')
     except Exception:  # noqa: BLE001 - caching must never break a run
@@ -127,11 +158,17 @@ class WebSearchIndex:
 
   async def _throttle(self) -> None:
     '''Sleep so that consecutive requests respect the configured interval.'''
-    delta = self._min_interval - (time.monotonic() - self._last_request)
+    now = time.monotonic()
+    delta = self._min_interval - (now - self._last_request)
     if delta > 0:
+      # Reserve the slot before sleeping so concurrent callers space
+      # out by one interval each instead of waking together.
+      self._last_request = now + delta
       import asyncio
+
       await asyncio.sleep(delta)
-    self._last_request = time.monotonic()
+    else:
+      self._last_request = now
 
   @staticmethod
   def _decode_href(href: str) -> str:
@@ -170,14 +207,20 @@ class WebSearchIndex:
       snippet_el = anchor.find_parent(class_=re.compile(r'^result'))
       snippet = ''
       if snippet_el:
-        found = snippet_el.find(class_=re.compile(r'result__snippet|result-snippet'))
+        found = snippet_el.find(
+          class_=re.compile(r'result__snippet|result-snippet')
+        )
         if found:
           snippet = found.get_text(' ', strip=True)
-      results.append(SearchResult({
-        'title': anchor.get_text(' ', strip=True),
-        'href': href,
-        'snippet': snippet,
-      }))
+      results.append(
+        SearchResult(
+          {
+            'title': anchor.get_text(' ', strip=True),
+            'href': href,
+            'snippet': snippet,
+          }
+        )
+      )
     return results
 
   async def search(self, query: str, limit: int = 15) -> List[SearchResult]:
@@ -192,18 +235,22 @@ class WebSearchIndex:
     '''
     cached = self._load_cached(query)
     if cached is not None:
-      return cached[:limit]
+      return cached[:max(1, limit)]
     await self._throttle()
     try:
-      response = await self._client.get(SEARCH_ENDPOINT, params={'q': query})
+      validate_public_url(SEARCH_ENDPOINT)
+      fetched = await _fetch_with_redirects(
+        self._client, 'GET', SEARCH_ENDPOINT, params={'q': query}
+      )
+      if fetched.status_code != 200:
+        return []
+      html = fetched.body.decode(fetched.encoding or 'utf-8', errors='replace')
     except Exception:  # noqa: BLE001 - search failures degrade gracefully
       return []
-    if response.status_code != 200:
-      return []
-    results = self._parse(response.text, max(1, min(limit, 30)))
+    results = self._parse(html, max(1, min(limit, 30)))
     if results:
       self._store_cached(query, results)
-    return results[:limit]
+    return results[:max(1, limit)]
 
   async def urls(self, query: str, limit: int = 15) -> List[str]:
     '''Return only the result URLs for a query.
@@ -215,30 +262,12 @@ class WebSearchIndex:
     Returns:
       Destination URLs in engine order.
     '''
-    return [str(item.get('href')) for item in await self.search(query, limit) if item.get('href')]
+    results = await self.search(query, limit)
+    return [str(item.get('href')) for item in results if item.get('href')]
 
   async def close(self) -> None:
     '''Release the underlying connection pool.'''
     await self._client.aclose()
-
-
-def host_of(url: str) -> str:
-  '''Extract the lowercase host from a URL.
-
-  Args:
-    url: Absolute URL or bare host.
-
-  Returns:
-    Host without scheme, port, or leading ``www.``; empty on failure.
-  '''
-  candidate = url.strip()
-  if '//' not in candidate:
-    candidate = f'//{candidate}'
-  match = re.match(r'^[a-z]+://([^/?#]+)', candidate, re.IGNORECASE)
-  if not match:
-    return ''
-  host = match.group(1).lower().split(':')[0]
-  return host[4:] if host.startswith('www.') else host
 
 
 def is_search_noise(url: str) -> bool:
@@ -250,7 +279,7 @@ def is_search_noise(url: str) -> bool:
   Returns:
     True when the host is a search engine or a social/job aggregator.
   '''
-  host = host_of(url)
+  host = registrable_domain(url)
   if not host:
     return True
   return any(host == item or host.endswith(f'.{item}') for item in _NOISE_HOSTS)

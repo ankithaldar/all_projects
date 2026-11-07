@@ -1,32 +1,72 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Careers-page ATS fingerprinting: domain to (provider, board_ref).'''
 
 from __future__ import annotations
 
 import re
+import warnings
 from typing import Optional, Tuple
 
-import warnings
-
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+from job_hunter.adapters.base import validate_board_ref
 from job_hunter.adapters.http_client import HttpClient
+from job_hunter.core.errors import AdapterError
 
 warnings.filterwarnings('ignore', category=XMLParsedAsHTMLWarning)
 
 FINGERPRINTS = [
-  ('greenhouse', re.compile(r'job-boards\.greenhouse\.io/([A-Za-z0-9_-]+)|boards\.greenhouse\.io/(?:embed_job_board\?for=|greenhouse/)([A-Za-z0-9_-]+)')),
-  ('lever', re.compile(r'jobs\.lever\.co/([A-Za-z0-9_-]+)|jobs\.eu\.lever\.co/([A-Za-z0-9_-]+)')),
-  ('ashby', re.compile(r'jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)|jobs\.ashbyhq\.com/api/job-board/([A-Za-z0-9_.-]+)')),
+  (
+    'greenhouse',
+    re.compile(
+      r'job-boards\.greenhouse\.io/([A-Za-z0-9_-]+)'
+      r'|boards\.greenhouse\.io/'
+      r'(?:embed_job_board\?for=|greenhouse/)([A-Za-z0-9_-]+)'
+    ),
+  ),
+  ('lever', re.compile(
+    r'jobs\.lever\.co/([A-Za-z0-9_-]+)|jobs\.eu\.lever\.co/([A-Za-z0-9_-]+)'
+  )),
+  (
+    'ashby',
+    re.compile(
+      r'jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)'
+      r'|jobs\.ashbyhq\.com/api/job-board/([A-Za-z0-9_.-]+)'
+    ),
+  ),
   ('workable', re.compile(r'apply\.workable\.com/([A-Za-z0-9_-]{2,})')),
-  ('workday', re.compile(r'([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)(?:/([A-Za-z0-9_-]+))?')),
-  ('smartrecruiters', re.compile(r'careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)|jobs\.smartrecruiters\.com/([A-Za-z0-9_-]+)')),
+  ('workday', re.compile(
+    r'([a-z0-9-]+\.wd\d+\.myworkdayjobs\.com)(?:/([A-Za-z0-9_-]+))?'
+  )),
+  (
+    'smartrecruiters',
+    re.compile(
+      r'careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)'
+      r'|jobs\.smartrecruiters\.com/([A-Za-z0-9_-]+)'
+    ),
+  ),
   ('recruitee', re.compile(r'([A-Za-z0-9_-]+)\.recruitee\.com')),
   ('personio', re.compile(r'([A-Za-z0-9_-]+)\.jobs\.personio\.(?:de|com)')),
 ]
 
-CAREERS_PATHS = ['/careers', '/careers/', '/jobs', '/company/careers', '/about/careers']
+CAREERS_PATHS = [
+  '/careers', '/careers/', '/jobs', '/company/careers', '/about/careers'
+]
+
+'''Literal each fingerprint pattern requires; used as a cheap pre-filter
+so regexes never run (and backtrack) on pages lacking the provider.'''
+_FINGERPRINT_LITERALS = {
+  'greenhouse': 'greenhouse',
+  'lever': 'lever.co',
+  'ashby': 'ashbyhq.com',
+  'workable': 'workable.com',
+  'workday': 'myworkdayjobs.com',
+  'smartrecruiters': 'smartrecruiters.com',
+  'recruitee': 'recruitee.com',
+  'personio': 'personio.',
+}
 
 
 def extract_fingerprint(html: str) -> Optional[Tuple[str, str]]:
@@ -40,13 +80,24 @@ def extract_fingerprint(html: str) -> Optional[Tuple[str, str]]:
   '''
   if not html:
     return None
-  hrefs = ' '.join(a.get('href', '') or '' for a in BeautifulSoup(html, 'html.parser').find_all('a'))
-  haystack = f'{hrefs} {html[:40000]}'
+  hrefs = ' '.join(
+    (a.get('href', '') or '')[:2048]
+    for a in BeautifulSoup(html, 'html.parser').find_all('a')
+  )
+  haystack = f'{hrefs} {html[:8000]}'
   for provider, pattern in FINGERPRINTS:
-    match = pattern.search(haystack)
+    if _FINGERPRINT_LITERALS.get(provider, '') not in haystack:
+      continue
+    try:
+      match = pattern.search(haystack)
+    except re.error:
+      continue
     if match:
       groups = [g for g in match.groups() if g]
-      ref = '/'.join(groups) if provider == 'workday' else (groups[0] if groups else '')
+      if provider == 'workday':
+        ref = '/'.join(groups)
+      else:
+        ref = groups[0] if groups else ''
       ref = ref.split('?')[0].strip('/')
       if ref and len(ref) >= 2 and ref.lower() not in {'j', 'jobs', 'careers'}:
         return provider, ref
@@ -64,7 +115,9 @@ class CareerPageDetector:
     '''
     self._http = http
 
-  async def detect(self, domain: str, max_probes: int = 3, name: str = '') -> Optional[Tuple[str, str, str]]:
+  async def detect(
+    self, domain: str, max_probes: int = 3, name: str = ''
+  ) -> Optional[Tuple[str, str, str]]:
     '''Attempt fingerprinting via common careers paths.
 
     Args:
@@ -74,7 +127,8 @@ class CareerPageDetector:
     Returns:
       (provider, board_ref, careers_url) or None.
     '''
-    domain = domain.strip().lower().replace('http://', '').replace('https://', '').strip('/')
+    domain = domain.strip().lower()
+    domain = domain.replace('http://', '').replace('https://', '').strip('/')
     probes = [f'https://www.{domain}{path}' for path in CAREERS_PATHS]
     probes.insert(1, f'https://{domain}/careers')
     seen: set = set()
@@ -93,7 +147,9 @@ class CareerPageDetector:
         return found[0], found[1], url
     return await self._guess_slugs(domain, name)
 
-  async def _guess_slugs(self, domain: str, name: str) -> Optional[Tuple[str, str, str]]:
+  async def _guess_slugs(
+    self, domain: str, name: str
+  ) -> Optional[Tuple[str, str, str]]:
     '''Probe likely greenhouse/lever board slugs from domain and name.
 
     Args:
@@ -109,14 +165,18 @@ class CareerPageDetector:
     if cleaned:
       guesses.add(cleaned)
     for guess in list(guesses)[:2]:
-      gh = f'https://job-boards.greenhouse.io/{guess}'
+      try:
+        slug = validate_board_ref(guess, source='career_page')
+      except AdapterError:
+        continue
+      gh = f'https://job-boards.greenhouse.io/{slug}'
       try:
         text = await self._http.get_text(gh, rpm=20)
         if text and 'greenhouse' in text.lower():
           return 'greenhouse', guess, gh
       except Exception:
         pass
-      lv = f'https://jobs.lever.co/{guess}'
+      lv = f'https://jobs.lever.co/{slug}'
       try:
         text = await self._http.get_text(lv, rpm=20)
         if text and 'lever.co' in text.lower():

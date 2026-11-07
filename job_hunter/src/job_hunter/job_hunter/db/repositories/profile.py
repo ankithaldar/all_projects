@@ -1,17 +1,22 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Candidate profile and skills persistence.'''
-
 
 from __future__ import annotations
 
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from job_hunter.core.db import connect, session
+from job_hunter.core.db import (
+  fetch_all,
+  fetch_one,
+  filter_to_columns,
+  quote_identifier,
+  session,
+)
 
 
 class ProfileRepository:
@@ -34,17 +39,22 @@ class ProfileRepository:
     Returns:
       Row mapping with decoded JSON columns or None.
     '''
-    row = connect(self._db_path, readonly=True).execute(
+    with fetch_one(
+      self._db_path,
       'SELECT * FROM candidate_profiles WHERE candidate_id = ? '
       'ORDER BY version DESC LIMIT 1',
       (candidate_id,),
-    ).fetchone()
-    if row is None:
-      return None
-    data = dict(row)
+    ) as row:
+      if row is None:
+        return None
+      data = dict(row)
     for key in (
-      'target_roles', 'seniority_keywords', 'target_verticals',
-      'blocked_verticals', 'cities', 'employment_types',
+      'target_roles',
+      'seniority_keywords',
+      'target_verticals',
+      'blocked_verticals',
+      'cities',
+      'employment_types',
     ):
       data[key] = json.loads(data.get(key) or '[]')
     return data
@@ -57,7 +67,9 @@ class ProfileRepository:
     '''Persist a new profile version.
 
     Args:
-      fields: Column values (JSON lists encoded here).
+      fields: Column values (JSON lists encoded here). Unknown
+        keys such as ``skills_resolved`` are dropped with a
+        warning, never interpolated into SQL.
       candidate_id: Candidate id.
 
     Returns:
@@ -66,24 +78,74 @@ class ProfileRepository:
     existing = self.get_profile(candidate_id)
     version = (existing['version'] + 1) if existing else 1
     list_keys = (
-      'target_roles', 'seniority_keywords', 'target_verticals',
-      'blocked_verticals', 'cities', 'employment_types',
+      'target_roles',
+      'seniority_keywords',
+      'target_verticals',
+      'blocked_verticals',
+      'cities',
+      'employment_types',
     )
     payload: Dict[str, Any] = {}
     for key, value in fields.items():
       payload[key] = (
         json.dumps(value, ensure_ascii=False) if key in list_keys else value
       )
-    payload['candidate_id'] = candidate_id
-    payload['version'] = version
-    columns = sorted(payload.keys())
     with session(self._db_path) as conn:
+      kept = filter_to_columns(conn, 'candidate_profiles', payload)
+      kept['candidate_id'] = candidate_id
+      kept['version'] = version
+      columns = sorted(kept.keys())
+      quoted = ', '.join(quote_identifier(c) for c in columns)
+      marks = ', '.join('?' * len(columns))
       cur = conn.execute(
-        f'INSERT INTO candidate_profiles ({", ".join(columns)}) '
-        f'VALUES ({", ".join("?" * len(columns))})',
-        tuple(payload[c] for c in columns),
+        f'INSERT INTO candidate_profiles ({quoted}) VALUES ({marks})',
+        tuple(kept[c] for c in columns),
       )
       return int(cur.lastrowid)
+
+  def save_resume_ex(
+    self,
+    file_path: str,
+    sha256: str,
+    mime: str,
+    parsed_ok: bool,
+    candidate_id: int = 1,
+  ) -> Tuple[int, bool]:
+    '''Register an uploaded resume, reporting ownership.
+
+    Args:
+      file_path: Stored file location.
+      sha256: File digest.
+      mime: Detected media type.
+      parsed_ok: Whether text extraction succeeded.
+      candidate_id: Candidate id.
+
+    Returns:
+      Tuple of (resume row id, created). ``created`` is True when
+      this call inserted a new row, False when a duplicate sha256
+      returned the pre-existing row.
+
+    Raises:
+      ValueError: With ``candidate not found`` when the insert
+        fails integrity checks and no existing resume matches
+        (e.g. an unknown candidate_id foreign key).
+    '''
+    with session(self._db_path) as conn:
+      try:
+        cur = conn.execute(
+          'INSERT INTO resumes (candidate_id, file_path, sha256, mime, '
+          'parsed_ok) VALUES (?, ?, ?, ?, ?)',
+          (candidate_id, file_path, sha256, mime, int(parsed_ok)),
+        )
+        return (int(cur.lastrowid), True)
+      except sqlite3.IntegrityError as exc:
+        row = conn.execute(
+          'SELECT id FROM resumes WHERE sha256 = ?',
+          (sha256,),
+        ).fetchone()
+        if row is None:
+          raise ValueError('candidate not found') from exc
+        return (int(row['id']), False)
 
   def save_resume(
     self,
@@ -103,21 +165,48 @@ class ProfileRepository:
       candidate_id: Candidate id.
 
     Returns:
-      Resume row id.
+      Resume row id. A duplicate sha256 returns the existing id.
+
+    Raises:
+      ValueError: With ``candidate not found`` when the insert
+        fails integrity checks and no existing resume matches
+        (e.g. an unknown candidate_id foreign key).
+    '''
+    resume_id, _created = self.save_resume_ex(
+      file_path, sha256, mime, parsed_ok, candidate_id,
+    )
+    return resume_id
+
+  def get_resume(self, resume_id: int) -> Optional[Dict[str, Any]]:
+    '''Fetch one resume row by id.
+
+    Args:
+      resume_id: Resume row id.
+
+    Returns:
+      Row mapping or None when no such resume exists.
+    '''
+    with fetch_one(
+      self._db_path,
+      'SELECT id, candidate_id, file_path, sha256, mime, '
+      'uploaded_at, parsed_ok FROM resumes WHERE id = ?',
+      (resume_id,),
+    ) as row:
+      if row is None:
+        return None
+      return dict(row)
+
+  def delete_resume(self, resume_id: int) -> None:
+    '''Delete one resume row by id.
+
+    Args:
+      resume_id: Resume row id to remove.
     '''
     with session(self._db_path) as conn:
-      try:
-        cur = conn.execute(
-          'INSERT INTO resumes (candidate_id, file_path, sha256, mime, parsed_ok) '
-          'VALUES (?, ?, ?, ?, ?)',
-          (candidate_id, file_path, sha256, mime, int(parsed_ok)),
-        )
-        return int(cur.lastrowid)
-      except sqlite3.IntegrityError:
-        row = conn.execute(
-          'SELECT id FROM resumes WHERE sha256 = ?', (sha256,),
-        ).fetchone()
-        return int(row['id'])
+      conn.execute(
+        'DELETE FROM resumes WHERE id = ?',
+        (resume_id,),
+      )
 
   def set_candidate_skills(
     self,
@@ -132,7 +221,8 @@ class ProfileRepository:
     '''
     with session(self._db_path) as conn:
       conn.execute(
-        'DELETE FROM candidate_skills WHERE candidate_id = ?', (candidate_id,),
+        'DELETE FROM candidate_skills WHERE candidate_id = ?',
+        (candidate_id,),
       )
       for skill_id in skill_ids:
         conn.execute(
@@ -150,10 +240,11 @@ class ProfileRepository:
     Returns:
       Sorted name list.
     '''
-    rows = connect(self._db_path, readonly=True).execute(
+    with fetch_all(
+      self._db_path,
       'SELECT s.canonical_name AS name FROM candidate_skills cs '
       'JOIN skills s ON s.id = cs.skill_id WHERE cs.candidate_id = ? '
       'ORDER BY s.canonical_name',
       (candidate_id,),
-    ).fetchall()
-    return [row['name'] for row in rows]
+    ) as rows:
+      return [row['name'] for row in rows]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Weighted aggregation, ranking, and bounded feedback reweighting.'''
 
@@ -18,6 +18,12 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
   'recency': 0.05,
   'company_fit': 0.05,
 }
+
+DEFAULT_SALARY_FLOOR_LPA = 45.0
+'''Default salary hard floor in LPA (single-sourced; nodes/embedder import).'''
+
+DEFAULT_EMBED_MODEL = 'BAAI/bge-small-en-v1.5'
+'''Default embedding model id (single-sourced; nodes/embedder import).'''
 
 _MAX_ADJUST = 0.05
 
@@ -55,9 +61,12 @@ def feedback_adjust(
   adjusted = dict(weights)
   ratio = max(0.0, min(1.0, dismiss_ratio))
   delta = _MAX_ADJUST * ratio
-  adjusted['skills_must'] = adjusted.get('skills_must', DEFAULT_WEIGHTS['skills_must']) + delta
-  adjusted['semantic'] = adjusted.get('semantic', DEFAULT_WEIGHTS['semantic']) - delta * 0.6
-  adjusted['title_fit'] = adjusted.get('title_fit', DEFAULT_WEIGHTS['title_fit']) - delta * 0.4
+  base_skills = adjusted.get('skills_must', DEFAULT_WEIGHTS['skills_must'])
+  adjusted['skills_must'] = base_skills + delta
+  base_sem = adjusted.get('semantic', DEFAULT_WEIGHTS['semantic'])
+  adjusted['semantic'] = base_sem - delta * 0.6
+  base_title = adjusted.get('title_fit', DEFAULT_WEIGHTS['title_fit'])
+  adjusted['title_fit'] = base_title - delta * 0.4
   for key in ('semantic', 'title_fit'):
     if adjusted[key] < 0.01:
       adjusted[key] = 0.01
@@ -108,5 +117,3 @@ def rationale(components: Dict[str, float]) -> str:
   top = sorted(components.items(), key=lambda kv: kv[1], reverse=True)[:3]
   parts = [labels.get(key, key) for key, value in top if value >= 0.5]
   return 'Strong ' + ', '.join(parts) + '.' if parts else 'Mixed match profile.'
-
-

@@ -11,11 +11,10 @@ dependencies = [
   'fastapi>=0.115',
   'uvicorn>=0.30',
   'pydantic>=2.7',
-  'pydantic-settings>=2.3',
+  'requests>=2.31',
   'python-dotenv>=1.0',
   'PyYAML>=6.0',
   'httpx>=0.27',
-  'tenacity>=8.3',
   'beautifulsoup4>=4.12',
   'feedparser>=6.0',
   'pypdf>=4.2',
@@ -23,9 +22,12 @@ dependencies = [
   'apscheduler>=3.10',
   'langchain-core>=0.3',
   'langgraph>=0.2',
+  'langgraph-checkpoint-sqlite>=3.1',
   'aiosqlite>=0.20',
   'mcp>=1.2',
   'tiktoken>=0.7',
+  'starlette>=0.37',
+  'typing_extensions>=4.8',
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,7 @@ semantic = ['fastembed>=0.3']
 dev = [
   'pytest>=8.2',
   'pytest-asyncio>=0.23',
+  'pytest-cov>=5.0',
   'ruff>=0.5',
 ]
 
@@ -40,9 +43,13 @@ dev = [
 where = ['src/job_hunter']
 include = ['job_hunter*', 'llm_gateway*']
 
+[tool.setuptools.package-data]
+llm_gateway = ['templates/*', 'config/*']
+job_hunter = ['db/migrations/*.sql']
+
 [tool.pytest.ini_options]
 pythonpath = ['src/job_hunter', '.']
-testpaths = ['tests']
+testpaths = ['tests', 'src/job_hunter/llm_gateway/tests']
 asyncio_mode = 'auto'
 
 [tool.ruff]
@@ -50,6 +57,12 @@ line-length = 100
 indent-width = 2
 target-version = 'py314'
 
+[tool.ruff.lint]
+# D13 (user-mandated headers): every file keeps #!/usr/bin/env python
+# and # -*- coding: utf-8 -*-. UP009/EXE001 families are ignored
+# because D13 requires those headers despite ruff defaults.
+ignore = ['UP009', 'EXE001']
+
 [tool.ruff.format]
 quote-style = 'single'
-indent-style = 'spaces'
+indent-style = 'space'

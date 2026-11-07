@@ -1,21 +1,26 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Graph node implementations for the discovery pipeline (v1 stages).'''
 
-
 from __future__ import annotations
 
+import asyncio
+import functools
+import inspect
+import json  # noqa: F401 - top-level json per W5 spec
 import logging
 from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
-from job_hunter.adapters.http_client import HttpClient
+from job_hunter.adapters.http_client import get_shared_http_client
 from job_hunter.adapters.registry import build_adapter
 from job_hunter.core.config import AppSettings
+from job_hunter.core.logging import node_var
 from job_hunter.core.models import (
   CandidateProfile,
   CompanyTarget,
+  NodeError,
   NormalizedJob,
   RawJobRecord,
   RunPlan,
@@ -26,6 +31,7 @@ from job_hunter.db.repositories.companies import CompaniesRepository
 from job_hunter.db.repositories.jobs import JobsRepository
 from job_hunter.db.repositories.profile import ProfileRepository
 from job_hunter.db.repositories.settings import SettingsRepository
+from job_hunter.graph.state import _normalize_inserted
 from job_hunter.services.dedupe import DedupeEngine
 from job_hunter.services.normalizer import (
   canonicalize_url,
@@ -34,11 +40,93 @@ from job_hunter.services.normalizer import (
   html_to_text,
   infer_work_mode,
   normalize_employment,
-  parse_posted_at,
   parse_salary_lpa,
+)
+from job_hunter.services.scorer import (
+  DEFAULT_EMBED_MODEL,
+  DEFAULT_SALARY_FLOOR_LPA,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def safe_node(fn):
+  '''Wrap a graph node so exceptions become NodeError entries.
+
+  Supports both async and sync node functions, preserving the
+  wrapped function's name/signature via functools.wraps.
+
+  Args:
+    fn: Node function (async or sync).
+
+  Returns:
+    Wrapped node function returning a state update on success or
+    {'errors': [NodeError(...)]}, truncated to 500 chars, on
+    exception instead of raising.
+  '''
+  if inspect.iscoroutinefunction(fn):
+
+    @functools.wraps(fn)
+    async def async_wrapper(*args, **kwargs):
+      '''Call the async node, converting errors to NodeError.
+
+      Args:
+        *args: Positional node arguments.
+        **kwargs: Keyword node arguments.
+
+      Returns:
+        State update or errors entry.
+      '''
+      token = node_var.set(fn.__name__)
+      try:
+        return await fn(*args, **kwargs)
+      except asyncio.CancelledError:
+        raise
+      except KeyboardInterrupt:
+        raise
+      except Exception as exc:
+        logger.warning('node %s failed: %s', fn.__name__, exc)
+        err = NodeError(
+          node=fn.__name__,
+          message=str(exc)[:500],
+          recoverable=True,
+        )
+        return {'errors': [err]}
+      finally:
+        node_var.reset(token)
+
+    return async_wrapper
+
+  @functools.wraps(fn)
+  def sync_wrapper(*args, **kwargs):
+    '''Call the sync node, converting errors to NodeError.
+
+    Args:
+      *args: Positional node arguments.
+      **kwargs: Keyword node arguments.
+
+    Returns:
+      State update or errors entry.
+    '''
+    token = node_var.set(fn.__name__)
+    try:
+      return fn(*args, **kwargs)
+    except asyncio.CancelledError:
+      raise
+    except KeyboardInterrupt:
+      raise
+    except Exception as exc:
+      logger.warning('node %s failed: %s', fn.__name__, exc)
+      err = NodeError(
+        node=fn.__name__,
+        message=str(exc)[:500],
+        recoverable=True,
+      )
+      return {'errors': [err]}
+    finally:
+      node_var.reset(token)
+
+  return sync_wrapper
 
 
 def _settings_from_config(config: Dict[str, Any]) -> AppSettings:
@@ -53,7 +141,62 @@ def _settings_from_config(config: Dict[str, Any]) -> AppSettings:
   return config['configurable']['settings']
 
 
-def load_profile(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+def _normalize_candidate(value: Any) -> CandidateProfile:
+  '''Coerce a checkpoint-deserialized candidate back to CandidateProfile.
+
+  Args:
+    value: CandidateProfile instance or its dict form.
+
+  Returns:
+    CandidateProfile instance.
+  '''
+  if isinstance(value, dict):
+    return CandidateProfile(**value)
+  return value
+
+
+def _source_enabled(sources: Dict[str, Any], source_key: Any) -> bool:
+  '''Report whether a source is enabled in settings.sources.
+
+  Args:
+    sources: Per-source config mapping.
+    source_key: Source identifier (e.g. 'lever').
+
+  Returns:
+    False only when the source explicitly sets enabled: false;
+    unknown sources default to enabled.
+  '''
+  source_cfg = (sources or {}).get(source_key or '')
+  if isinstance(source_cfg, dict):
+    return source_cfg.get('enabled') is not False
+  return True
+
+
+def _load_target_embeddings(
+  jobs_repo, model: str, job_ids: List[int],
+) -> Dict[int, List[float]]:
+  '''Load embeddings for the scoring targets only (F2 job_ids filter).
+
+  Args:
+    jobs_repo: Jobs repository.
+    model: Embedding model identifier.
+    job_ids: Scoring-target job ids.
+
+  Returns:
+    Mapping of job id to vector.
+  '''
+  # F2 adds the job_ids parameter; until it lands, the repository
+  # scans every row for the model. Prefer the scoped call.
+  params = inspect.signature(jobs_repo.load_embeddings).parameters
+  if 'job_ids' in params:
+    return jobs_repo.load_embeddings(model, job_ids=job_ids)
+  return jobs_repo.load_embeddings(model)
+
+
+@safe_node
+def load_profile(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Load the latest candidate profile into state.
 
   Args:
@@ -66,12 +209,16 @@ def load_profile(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any
   settings = _settings_from_config(config)
   profiles_repo = ProfileRepository(settings.db_path)
   data = profiles_repo.get_profile(1) or {}
-  floor = SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0)
+  floor_repo = SettingsRepository(settings.db_path)
+  floor = floor_repo.get(
+    'salary_hard_floor_lpa', DEFAULT_SALARY_FLOOR_LPA,
+  )
   skills = profiles_repo.candidate_skill_names(1)
   candidate = CandidateProfile(
     skills=skills,
     target_roles=data.get('target_roles') or ['Data Scientist'],
-    seniority_keywords=data.get('seniority_keywords') or ['staff', 'senior', 'principal', 'lead'],
+    seniority_keywords=data.get('seniority_keywords')
+    or ['staff', 'senior', 'principal', 'lead'],
     target_verticals=data.get('target_verticals') or [],
     blocked_verticals=data.get('blocked_verticals') or [],
     cities=data.get('cities') or [],
@@ -85,7 +232,10 @@ def load_profile(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any
   return {'candidate': candidate}
 
 
-async def build_plan(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def build_plan(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Select fetch targets from active companies.
 
   Args:
@@ -97,14 +247,25 @@ async def build_plan(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
   '''
   settings = _settings_from_config(config)
   companies = CompaniesRepository(settings.db_path)
-  quick = bool(state['plan']['quick_poll']) if isinstance(state.get('plan'), dict) else False
+  plan = state.get('plan')
+  quick = bool(plan['quick_poll']) if isinstance(plan, dict) else False
   if quick:
-    rows = [row for row in companies.list_companies(status='active') if row.get('priority', 0) >= 5]
+    rows = [
+      row
+      for row in companies.list_companies(status='active')
+      if row.get('priority', 0) >= 5
+    ]
   else:
     rows = [
-      row for row in companies.list_companies(status='active')
+      row
+      for row in companies.list_companies(status='active')
       if row.get('ats_provider') and row.get('board_ref')
     ]
+  sources = settings.sources or {}
+  rows = [
+    row for row in rows
+    if _source_enabled(sources, row.get('ats_provider'))
+  ]
   targets = [
     CompanyTarget(
       company_id=int(row['id']),
@@ -119,8 +280,19 @@ async def build_plan(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
   return {'plan': plan.model_dump()}
 
 
-async def fetch_pair(target_data: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def fetch_pair(
+  target_data: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Fetch postings for one (source, board_ref) pair.
+
+  The shared process-wide HttpClient (F4) is used so per-host throttle
+  and robots caches survive across fetch_pair calls; it is never closed
+  here, unlike the previous per-call client. Per-source RPM from
+  settings.sources is not threaded through: adapters pass explicit
+  rpm= to HttpClient.get_json/get_text, so honoring it would require
+  adapter changes (out of scope). Source enablement is enforced
+  upstream in build_plan.
 
   Args:
     target_data: Serialized CompanyTarget.
@@ -131,14 +303,14 @@ async def fetch_pair(target_data: Dict[str, Any], config: RunnableConfig) -> Dic
   '''
   settings = _settings_from_config(config)
   crawl = CrawlStateRepository(settings.db_path)
-  scope = f"company:{target_data['company_id']}"
+  scope = f'company:{target_data["company_id"]}'
   stats: Dict[str, int] = {}
   errors: List[Any] = []
   raw_jobs: List[RawJobRecord] = []
   if crawl.is_cooled_down(scope):
     stats['cooled_skips'] = 1
     return {'raw_jobs': raw_jobs, 'stats': stats, 'errors': errors}
-  http = HttpClient()
+  http = get_shared_http_client()
   try:
     adapter = build_adapter(target_data['source_key'], http)
     target = CompanyTarget(**target_data)
@@ -148,33 +320,42 @@ async def fetch_pair(target_data: Dict[str, Any], config: RunnableConfig) -> Dic
         record.company_name = target.name
     since = crawl.get_cursor(f'{scope}:posted')
     if since:
+      since_str = str(since)
       records = [
-        record for record in records
-        if not record.posted_at or (record.posted_at >= str(since))
+        record
+        for record in records
+        if not record.posted_at or (record.posted_at >= since_str)
       ]
     watermarks = [
       str(record.posted_at) for record in records if record.posted_at
     ]
     raw_jobs = records
-    stats[f"fetched:{target_data['source_key']}"] = len(records)
+    stats[f'fetched:{target_data["source_key"]}'] = len(records)
     crawl.set_success(scope, cursor=max(watermarks) if watermarks else None)
     if watermarks:
       crawl.set_success(f'{scope}:posted', cursor=max(watermarks))
   except Exception as exc:
     failures = crawl.set_failure(scope)
-    errors.append({
-      'node': 'fetch_pair',
-      'message': f"{target_data['source_key']}/{target_data['board_ref']}: {exc}",
-      'recoverable': True,
-    })
+    msg = (
+      f'{target_data['source_key']}/'
+      f'{target_data['board_ref']}: {exc}'
+    )
+    errors.append(
+      NodeError(
+        node='fetch_pair',
+        message=msg[:500],
+        recoverable=True,
+      )
+    )
     stats['fetch_failures'] = 1
     logger.warning('fetch failed (%s consecutive): %s', failures, exc)
-  finally:
-    await http.close()
   return {'raw_jobs': raw_jobs, 'stats': stats, 'errors': errors}
 
 
-async def normalize_dedupe(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def normalize_dedupe(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Normalize fetched records and persist unseen postings.
 
   Args:
@@ -188,15 +369,25 @@ async def normalize_dedupe(state: Dict[str, Any], config: RunnableConfig) -> Dic
   jobs_repo = JobsRepository(settings.db_path)
   companies_repo = CompaniesRepository(settings.db_path)
   engine = DedupeEngine(jobs_repo)
+  from job_hunter.services.persist import persist_record
+
   inserted: List[NormalizedJob] = []
   dupes = 0
   for record in state.get('raw_jobs') or []:
     text_desc = record.description_text or html_to_text(record.description_html)
     digest = content_hash(record, text_desc)
     city = detect_city(record.location_text, text_desc)
-    mode = infer_work_mode(record.work_mode_hint, record.location_text, f"{record.title} {text_desc[:300]}")
+    mode = infer_work_mode(
+      record.work_mode_hint,
+      record.location_text,
+      f'{record.title} {text_desc[:300]}',
+    )
     sal_min, sal_max = parse_salary_lpa(record.salary_raw, text_desc)
-    company_id = companies_repo.resolve_alias(record.company_name) if record.company_name else None
+    company_id = (
+      companies_repo.resolve_alias(record.company_name)
+      if record.company_name
+      else None
+    )
     normalized = NormalizedJob(
       raw=record,
       canonical_url=canonicalize_url(record.url),
@@ -213,31 +404,23 @@ async def normalize_dedupe(state: Dict[str, Any], config: RunnableConfig) -> Dic
     if verdict != 'new':
       dupes += 1
       continue
-    payload = {
-      'source_key': record.source_key,
-      'external_id': record.external_id,
-      'url': record.url,
-      'canonical_url': normalized.canonical_url,
-      'company_id': company_id,
-      'company_raw_name': record.company_name,
-      'title': record.title,
-      'location_text': record.location_text,
-      'city': normalized.city,
-      'work_mode': normalized.work_mode,
-      'employment_type': normalized.employment_type,
-      'salary_min_lpa': normalized.salary_min_lpa,
-      'salary_max_lpa': normalized.salary_max_lpa,
-      'salary_raw': record.salary_raw,
-      'posted_at': parse_posted_at(record.posted_at),
-      'description_text': text_desc[:20000],
-      'raw_json': record.model_dump_json(),
-      'content_hash': digest,
-    }
     try:
-      new_id = jobs_repo.insert(payload)
-      inserted.append(normalized.model_copy(update={'is_new': True, 'job_id': new_id}))
+      outcome = await persist_record(
+        jobs_repo=jobs_repo,
+        record=record,
+        company_repo=companies_repo,
+      )
     except Exception as exc:
       logger.warning('insert failed for %s: %s', normalized.canonical_url, exc)
+      continue
+    if outcome == 'duplicate':
+      dupes += 1
+      continue
+    existing = jobs_repo.find_same_url(normalized.canonical_url)
+    existing = existing or {}
+    new_id = int(existing['id']) if existing.get('id') else None
+    update = {'is_new': True, 'job_id': new_id}
+    inserted.append(normalized.model_copy(update=update))
   stats = {'new_jobs': len(inserted), 'duplicates': dupes}
   return {
     'inserted': inserted,
@@ -245,8 +428,14 @@ async def normalize_dedupe(state: Dict[str, Any], config: RunnableConfig) -> Dic
   }
 
 
-async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def enrich_jds(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Extract structured fields for newly inserted postings.
+
+  Enriched values are stored as plain dicts keyed by content_hash,
+  consistently across graph state and checkpoint serialization.
 
   Args:
     state: Current state.
@@ -260,6 +449,7 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
   from job_hunter.services.jd_analyst import JDAnalyst, apply_salary_floor
   from job_hunter.services.skills_taxonomy import SkillsTaxonomy
 
+  _normalize_inserted(state)
   settings = _settings_from_config(config)
   jobs_repo = JobsRepository(settings.db_path)
   taxonomy = SkillsTaxonomy(settings.db_path)
@@ -276,42 +466,59 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
 
   db_settings = SettingsRepository(settings.db_path)
   disc_overrides = db_settings.get('discovery', {}) or {}
-  max_llm_calls = int(disc_overrides.get(
-    'max_llm_calls_per_run',
-    int(settings.discovery.get('max_llm_calls_per_run', 300)),
-  ))
+  max_llm_calls = int(
+    disc_overrides.get(
+      'max_llm_calls_per_run',
+      int(settings.discovery.get('max_llm_calls_per_run', 300)),
+    )
+  )
   raw_budget = state.get('budget')
   if isinstance(raw_budget, TokenBudget):
     budget = raw_budget.model_copy()
   elif isinstance(raw_budget, dict):
     budget = TokenBudget(**raw_budget)
   else:
-    budget = TokenBudget(max_calls=int(
-      settings.discovery.get('max_llm_calls_per_run', 300),
-    ))
+    budget = TokenBudget(
+      max_calls=int(
+        settings.discovery.get('max_llm_calls_per_run', 300),
+      )
+    )
   budget.max_calls = max_llm_calls
-  floor = float(SettingsRepository(settings.db_path).get('salary_hard_floor_lpa', 45.0))
+  floor_repo = SettingsRepository(settings.db_path)
+  floor = float(floor_repo.get(
+    'salary_hard_floor_lpa', DEFAULT_SALARY_FLOOR_LPA,
+  ))
   enriched_map: Dict[str, Any] = dict(state.get('enriched') or {})
   stats: Dict[str, int] = {}
 
-  cap = int(disc_overrides.get(
-    'enrich_per_run_cap',
-    int(settings.discovery.get('enrich_per_run_cap', 40)),
-  ))
+  cap = int(
+    disc_overrides.get(
+      'enrich_per_run_cap',
+      int(settings.discovery.get('enrich_per_run_cap', 40)),
+    )
+  )
   attempted = 0
   targets = [
-    {'job_id': int(j.job_id), 'content_hash': j.content_hash, 'title': j.raw.title}
-    for j in state.get('inserted') or [] if j.job_id
+    {
+      'job_id': int(j.job_id),
+      'content_hash': j.content_hash,
+      'title': j.raw.title,
+    }
+    for j in state.get('inserted') or []
+    if j.job_id
   ]
   shortfall = cap - len(targets)
   if shortfall > 0:
     for back in jobs_repo.jobs_needing_enrichment(limit=shortfall):
-      targets.append({
-        'job_id': int(back['job_id']),
-        'content_hash': back['content_hash'],
-        'title': back['title'],
-      })
-  stats['enrich_backlog'] = max(0, len(targets) - len(state.get('inserted') or []))
+      targets.append(
+        {
+          'job_id': int(back['job_id']),
+          'content_hash': back['content_hash'],
+          'title': back['title'],
+        }
+      )
+  inserted_count = len(state.get('inserted') or [])
+  stats['enrich_backlog'] = max(0, len(targets) - inserted_count)
 
   for job in targets:
     if attempted >= cap:
@@ -337,17 +544,32 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
       stats['enrich_failures'] = stats.get('enrich_failures', 0) + 1
       continue
 
-    sal_min = extraction.salary_min_lpa if extraction.salary_min_lpa is not None else row.get('salary_min_lpa')
-    sal_max = extraction.salary_max_lpa if extraction.salary_max_lpa is not None else row.get('salary_max_lpa')
-    mode = extraction.work_mode if extraction.work_mode != WorkMode.UNKNOWN else (row.get('work_mode') or WorkMode.UNKNOWN)
-    jobs_repo.update_fields(int(job['job_id']), {
-      'salary_min_lpa': sal_min,
-      'salary_max_lpa': sal_max,
-      'experience_min_yrs': extraction.experience_min_years,
-      'experience_max_yrs': extraction.experience_max_years,
-      'work_mode': mode,
-      'employment_type': extraction.employment_type,
-    })
+    sal_min = (
+      extraction.salary_min_lpa
+      if extraction.salary_min_lpa is not None
+      else row.get('salary_min_lpa')
+    )
+    sal_max = (
+      extraction.salary_max_lpa
+      if extraction.salary_max_lpa is not None
+      else row.get('salary_max_lpa')
+    )
+    mode = (
+      extraction.work_mode
+      if extraction.work_mode != WorkMode.UNKNOWN
+      else (row.get('work_mode') or WorkMode.UNKNOWN)
+    )
+    jobs_repo.update_fields(
+      int(job['job_id']),
+      {
+        'salary_min_lpa': sal_min,
+        'salary_max_lpa': sal_max,
+        'experience_min_yrs': extraction.experience_min_years,
+        'experience_max_yrs': extraction.experience_max_years,
+        'work_mode': mode,
+        'employment_type': extraction.employment_type,
+      },
+    )
     skill_rows: List[Dict[str, Any]] = []
     for kind, names in (
       ('must_have', extraction.must_have_skills),
@@ -359,11 +581,13 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
           taxonomy.load_seed({'skills': {name: None}})
           skill_id = taxonomy.resolve(name)
         if skill_id is not None:
-          skill_rows.append({
-            'skill_id': skill_id,
-            'kind': kind,
-            'confidence': extraction.confidence,
-          })
+          skill_rows.append(
+            {
+              'skill_id': skill_id,
+              'kind': kind,
+              'confidence': extraction.confidence,
+            }
+          )
     jobs_repo.attach_skill_rows(int(job['job_id']), skill_rows)
 
     passes, reason = apply_salary_floor(extraction, floor)
@@ -393,7 +617,10 @@ async def enrich_jds(state: Dict[str, Any], config: RunnableConfig) -> Dict[str,
   }
 
 
-async def compute_embeddings(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def compute_embeddings(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Embed newly inserted postings when a provider is available.
 
   Args:
@@ -405,11 +632,12 @@ async def compute_embeddings(state: Dict[str, Any], config: RunnableConfig) -> D
   '''
   from job_hunter.services.embedder import get_embedder
 
+  _normalize_inserted(state)
   settings = _settings_from_config(config)
   jobs_repo = JobsRepository(settings.db_path)
   embedder = get_embedder(settings)
   stats: Dict[str, int] = {'embeddings': 0, 'embedding_skipped': 0}
-  if embedder.model_id == NullProvider_model_id():
+  if embedder.model_id == _null_provider_model_id():
     stats['embedding_skipped'] = len(state.get('inserted') or [])
     return {'stats': stats}
   pending = [job for job in state.get('inserted') or [] if job.job_id]
@@ -418,7 +646,8 @@ async def compute_embeddings(state: Dict[str, Any], config: RunnableConfig) -> D
   texts = []
   for job in pending:
     row = jobs_repo.get(int(job.job_id)) or {}
-    texts.append(f"{job.raw.title}\n{(row.get('description_text') or '')[:1800]}")
+    desc = (row.get('description_text') or '')[:1800]
+    texts.append(f'{job.raw.title}\n{desc}')
   try:
     vectors = embedder.embed(texts)
   except Exception as exc:
@@ -434,19 +663,20 @@ async def compute_embeddings(state: Dict[str, Any], config: RunnableConfig) -> D
   return {'stats': stats}
 
 
-def NullProvider_model_id() -> str:
+def _null_provider_model_id() -> str:
   '''Return the fallback provider marker id without importing heavy deps.
 
   Returns:
     Marker string.
   '''
   from job_hunter.services.embedder import NullProvider
+
   return NullProvider.model_id
 
 
-
-
-def _candidate_skill_ids(settings: AppSettings, candidate: CandidateProfile) -> List[int]:
+def _candidate_skill_ids(
+  settings: AppSettings, candidate: CandidateProfile
+) -> List[int]:
   '''Resolve the candidate's stored skill ids.
 
   Args:
@@ -457,15 +687,15 @@ def _candidate_skill_ids(settings: AppSettings, candidate: CandidateProfile) -> 
     Skill id list.
   '''
   from job_hunter.services.skills_taxonomy import SkillsTaxonomy
+
   taxonomy = SkillsTaxonomy(settings.db_path)
-  return [
-    taxonomy.resolve(name) or -1
-    for name in candidate.skills
-    if taxonomy.resolve(name) is not None
-  ]
+  return taxonomy.resolve_many(candidate.skills)
 
 
-async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
+@safe_node
+async def score_rank_persist(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
   '''Gate, score, rank, and persist recommendations for inserted jobs.
 
   Args:
@@ -475,10 +705,13 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
   Returns:
     Scored jobs snapshot and counters.
   '''
-  import json as _json
   from job_hunter.core.models import ScoredJob
-  from job_hunter.db.repositories.recommendations import RecommendationsRepository
-  from job_hunter.db.repositories.settings import SettingsRepository as SettingsRepo
+  from job_hunter.db.repositories.recommendations import (
+    RecommendationsRepository,
+  )
+  from job_hunter.db.repositories.settings import (
+    SettingsRepository as SettingsRepo,
+  )
   from job_hunter.services.embedder import cosine
   from job_hunter.services.matcher import (
     company_fit,
@@ -492,46 +725,91 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
   )
   from job_hunter.services.scorer import aggregate, normalize_weights, rationale
 
+  _normalize_inserted(state)
   settings = _settings_from_config(config)
   jobs_repo = JobsRepository(settings.db_path)
   recs_repo = RecommendationsRepository(settings.db_path)
-  weights = normalize_weights(SettingsRepo(settings.db_path).get('scoring_weights', {}))
-  candidate = state['candidate']
+  weights_raw = SettingsRepo(settings.db_path).get('scoring_weights', {})
+  weights = normalize_weights(weights_raw)
+  candidate = _normalize_candidate(state['candidate'])
   cand_skill_ids = _candidate_skill_ids(settings, candidate)
-  embeddings = jobs_repo.load_embeddings(str(settings.embeddings.get('model', 'BAAI/bge-small-en-v1.5')))
-  candidate_doc = f"{candidate.summary} {' '.join(candidate.skills)} {' '.join(candidate.target_roles)}"
-  candidate_vector = None
-  if embeddings:
-    from job_hunter.services.embedder import get_embedder
-    embedder = get_embedder(settings)
-    vectors = embedder.embed([candidate_doc[:2000]])
-    candidate_vector = vectors[0] if vectors else None
 
   scoring_targets = list(state.get('inserted') or [])
   if not scoring_targets:
     for back in jobs_repo.jobs_missing_recommendations(limit=100):
-      scoring_targets.append(type('Stub', (), {
-        'job_id': int(back['job_id']),
-        'content_hash': back['content_hash'],
-        'company_id': back.get('company_id'),
-        'raw': type('R', (), {'title': back['title'], 'company_name': back.get('company_raw_name') or ''})(),
-      })())
+      scoring_targets.append(
+        NormalizedJob(
+          job_id=int(back['job_id']),
+          raw=RawJobRecord(
+            source_key='backlog',
+            url='',
+            title=back['title'],
+            company_name=back.get('company_raw_name') or '',
+          ),
+          canonical_url='',
+          content_hash=back['content_hash'],
+          company_id=back.get('company_id'),
+        )
+      )
     if scoring_targets:
       logger.info('scoring %s backlog jobs', len(scoring_targets))
 
+  # Guard against phantom jobs whose job_id is not a real int
+  # (e.g. a deserialized or model-constructed 'x'): int() on such
+  # a value would crash the whole scoring pass. Skip them with
+  # a warning instead so the remaining jobs still score.
+  guarded_targets: List[NormalizedJob] = []
+  for job in scoring_targets:
+    raw_job_id = getattr(job, 'job_id', None)
+    if isinstance(raw_job_id, bool) or not isinstance(raw_job_id, int):
+      logger.warning('skipping job with non-int job_id %r', raw_job_id)
+      continue
+    guarded_targets.append(job)
+  scoring_targets = guarded_targets
+
+  target_ids = [
+    int(job.job_id) for job in scoring_targets if job.job_id
+  ]
+  embeddings = _load_target_embeddings(
+    jobs_repo,
+    str(settings.embeddings.get('model', DEFAULT_EMBED_MODEL)),
+    target_ids,
+  )
+  skills_text = ' '.join(candidate.skills)
+  roles_text = ' '.join(candidate.target_roles)
+  candidate_doc = f'{candidate.summary} {skills_text} {roles_text}'
+  candidate_vector = None
+  if embeddings:
+    from job_hunter.services.embedder import get_embedder
+
+    embedder = get_embedder(settings)
+    vectors = embedder.embed([candidate_doc[:2000]])
+    candidate_vector = vectors[0] if vectors else None
+
+  skill_map: Dict[int, List[Dict[str, Any]]] = {}
+  for skill_row in _job_skill_rows(jobs_repo, target_ids):
+    skill_map.setdefault(int(skill_row['job_id']), []).append(skill_row)
+
   scored: List[ScoredJob] = []
   for job in scoring_targets:
+    raw_job_id = getattr(job, 'job_id', None)
+    if isinstance(raw_job_id, bool) or not isinstance(raw_job_id, int):
+      logger.warning('skipping job with non-int job_id %r', raw_job_id)
+      continue
     row = jobs_repo.get_with_company(int(job.job_id)) or {}
     enriched = (state.get('enriched') or {}).get(job.content_hash)
     failures = gate_failures(candidate, row, enriched)
-    job_skills = _job_skill_rows(jobs_repo, int(job.job_id))
+    job_skills = skill_map.get(int(job.job_id), [])
     must_cov, nice_cov = skill_coverage(cand_skill_ids, job_skills)
     description = (row.get('description_text') or '')[:2500]
     vector = embeddings.get(int(job.job_id))
     if candidate_vector is not None and vector is not None:
-      semantic = max(0.0, min(1.0, (cosine(candidate_vector, vector) + 1.0) / 2.0))
+      norm = (cosine(candidate_vector, vector) + 1.0) / 2.0
+      semantic = max(0.0, min(1.0, norm))
     else:
-      semantic = semantic_fallback(candidate_doc, f"{row.get('title')} {description}")
+      semantic = semantic_fallback(
+        candidate_doc, f'{row.get("title")} {description}'
+      )
     components = {
       'skills_must': must_cov,
       'skills_nice': nice_cov,
@@ -542,7 +820,11 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
         row.get('experience_max_yrs'),
       ),
       'title_fit': title_fit(candidate.target_roles, row.get('title') or ''),
-      'salary_fit': salary_fit(row.get('salary_min_lpa'), row.get('salary_max_lpa'), candidate.salary_floor_lpa),
+      'salary_fit': salary_fit(
+        row.get('salary_min_lpa'),
+        row.get('salary_max_lpa'),
+        candidate.salary_floor_lpa,
+      ),
       'recency': recency_score(row.get('posted_at')),
       'company_fit': company_fit(
         row.get('vertical'),
@@ -551,20 +833,22 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
       ),
     }
     total, breakdown = aggregate(components, weights)
-    scored.append(ScoredJob(
-      job_id=int(job.job_id),
-      title=row.get('title') or '',
-      url=row.get('url') or '',
-      company_id=job.company_id,
-      company_name=row.get('company_name') or job.raw.company_name,
-      vertical=row.get('vertical') or 'unknown',
-      total_score=total if not failures else 0.0,
-      gate_pass=not failures,
-      gate_failures=failures,
-      breakdown=breakdown,
-      rationale=rationale(components),
-      posted_at=row.get('posted_at'),
-    ))
+    scored.append(
+      ScoredJob(
+        job_id=int(job.job_id),
+        title=row.get('title') or '',
+        url=row.get('url') or '',
+        company_id=job.company_id,
+        company_name=row.get('company_name') or job.raw.company_name,
+        vertical=row.get('vertical') or 'unknown',
+        total_score=total if not failures else 0.0,
+        gate_pass=not failures,
+        gate_failures=failures,
+        breakdown=breakdown,
+        rationale=rationale(components),
+        posted_at=row.get('posted_at'),
+      )
+    )
 
   passing = sorted(
     [s for s in scored if s.gate_pass],
@@ -589,21 +873,23 @@ async def score_rank_persist(state: Dict[str, Any], config: RunnableConfig) -> D
   return {'scored': scored, 'stats': stats}
 
 
-def _job_skill_rows(jobs_repo, job_id: int) -> List[Dict[str, Any]]:
-  '''Fetch skill link rows for one job.
+def _job_skill_rows(
+  jobs_repo, job_ids: Any,
+) -> List[Dict[str, Any]]:
+  '''Fetch skill link rows via the jobs repository (batched).
 
   Args:
     jobs_repo: Jobs repository.
-    job_id: Job id.
+    job_ids: Single job id or list of job ids.
 
   Returns:
     Rows with skill_id/kind.
   '''
-  from job_hunter.core.db import connect
-  rows = connect(jobs_repo._db_path, readonly=True).execute(
-    'SELECT skill_id, kind FROM job_skills WHERE job_id = ?', (job_id,),
-  ).fetchall()
-  return [dict(row) for row in rows]
+  if isinstance(job_ids, int):
+    ids = [job_ids]
+  else:
+    ids = [int(job_id) for job_id in job_ids]
+  return jobs_repo.job_skill_rows(ids)
 
 
 def _persist_recs(recs_repo, run_id: int, rows: List[Dict[str, Any]]) -> int:
@@ -619,33 +905,38 @@ def _persist_recs(recs_repo, run_id: int, rows: List[Dict[str, Any]]) -> int:
   '''
   normalized = []
   for position, row in enumerate(rows, start=1):
-    normalized.append({
-      'job_id': row['job_id'],
-      'total_score': row['total_score'],
-      'gate_pass': True,
-      'gate_failures': [],
-      'breakdown': row['breakdown'],
-      'rationale': row['rationale'],
-      'rank': position,
-    })
+    normalized.append(
+      {
+        'job_id': row['job_id'],
+        'total_score': row['total_score'],
+        'gate_pass': True,
+        'gate_failures': [],
+        'breakdown': row['breakdown'],
+        'rationale': row['rationale'],
+        'rank': position,
+      }
+    )
   return recs_repo.upsert_many(run_id, 1, normalized)
 
 
-async def summarize_run(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
-    """Append a Watchdog quality summary to the run's event stream.
+@safe_node
+async def summarize_run(
+  state: Dict[str, Any], config: RunnableConfig
+) -> Dict[str, Any]:
+  '''Append a Watchdog quality summary to the run's event stream.
 
-    Args:
-      state: Current state.
-      config: Runnable config.
+  Args:
+    state: Current state.
+    config: Runnable config.
 
-    Returns:
-      Watchdog issue counter.
-    """
-    from job_hunter.services.watchdog import build_report, summarize_issues
+  Returns:
+    Watchdog issue counter.
+  '''
+  from job_hunter.services.watchdog import build_report, summarize_issues
 
-    settings = _settings_from_config(config)
-    report = build_report(settings)
-    issues = summarize_issues(report)
-    for issue in issues:
-        logger.warning('watchdog: %s', issue)
-    return {'stats': {'watchdog_issues': len(issues)}}
+  settings = _settings_from_config(config)
+  report = build_report(settings)
+  issues = summarize_issues(report)
+  for issue in issues:
+    logger.warning('watchdog: %s', issue)
+  return {'stats': {'watchdog_issues': len(issues)}}

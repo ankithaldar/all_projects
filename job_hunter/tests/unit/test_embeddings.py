@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for the embedding layer.'''
 
@@ -52,7 +52,9 @@ def test_get_embedder_falls_back(tmp_path: Path) -> None:
   '''
   from job_hunter.core.config import AppSettings
   config_path = tmp_path / 'app.yaml'
-  config_path.write_text('embeddings: {model: bogus-model-xyz}\n', encoding='utf-8')
+  config_path.write_text(
+    'embeddings: {model: bogus-model-xyz}\n', encoding='utf-8'
+  )
   settings = AppSettings(config_path)
   embedder = get_embedder(settings)
-  assert isinstance(embedder, (NullProvider, object))
+  assert isinstance(embedder, NullProvider)

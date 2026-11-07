@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Core gateway orchestration.'''
 
@@ -25,17 +25,7 @@ from llm_gateway.errors import (AllProvidersFailedError, ProviderError,
                                 RateLimitedProviderError,
                                 TransientProviderError)
 from llm_gateway.key_rotator import APIKeyRotator
-from llm_gateway.providers.openai_compatible import (BytezProvider,
-                                                     CerebrasProvider,
-                                                     GithubProvider,
-                                                     GroqProvider,
-                                                     MistralProvider,
-                                                     NvidiaProvider,
-                                                     OllamaProvider,
-                                                     OmniRouteProvider,
-                                                     OpenAICompatibleProvider,
-                                                     OpenRouterProvider,
-                                                     OrcaRouterProvider)
+from llm_gateway.providers.openai_compatible import OpenAICompatibleProvider
 from llm_gateway.rate_limiter import RPMRateLimiter
 from llm_gateway.schemas import (ChatMessage, GatewayRequest, GatewayResponse,
                                  LogRecord, ProviderChunk, ProviderRequest,
@@ -117,6 +107,9 @@ class LLMGateway:
       cache_key = SQLiteCache.make_key(
         request,
         self._config.cache.include_temperature,
+        model=getattr(request, 'model', None),
+        max_tokens=request.max_tokens,
+        session_id=request.session_id,
       )
       cached = self._cache.get(cache_key)
       if cached is not None:
@@ -160,6 +153,9 @@ class LLMGateway:
       cache_key = SQLiteCache.make_key(
         request,
         self._config.cache.include_temperature,
+        model=getattr(request, 'model', None),
+        max_tokens=request.max_tokens,
+        session_id=request.session_id,
       )
       cached = self._cache.get(cache_key)
       if cached is not None:
@@ -205,6 +201,9 @@ class LLMGateway:
       cache_key = SQLiteCache.make_key(
         request,
         self._config.cache.include_temperature,
+        model=getattr(request, 'model', None),
+        max_tokens=request.max_tokens,
+        session_id=request.session_id,
       )
       cached = self._cache.get(cache_key)
       if cached is not None:
@@ -253,6 +252,9 @@ class LLMGateway:
       cache_key = SQLiteCache.make_key(
         request,
         self._config.cache.include_temperature,
+        model=getattr(request, 'model', None),
+        max_tokens=request.max_tokens,
+        session_id=request.session_id,
       )
       cached = self._cache.get(cache_key)
       if cached is not None:
@@ -301,16 +303,16 @@ class LLMGateway:
       Mapping of provider name to provider instance.
     '''
     registry = {
-      'bytez': BytezProvider,
-      'cerebras': CerebrasProvider,
-      'github': GithubProvider,
-      'groq': GroqProvider,
-      'mistral': MistralProvider,
-      'nvidia': NvidiaProvider,
-      'ollama': OllamaProvider,
-      'omniroute': OmniRouteProvider,
-      'openrouter': OpenRouterProvider,
-      'orcarouter': OrcaRouterProvider
+      'bytez': OpenAICompatibleProvider,
+      'cerebras': OpenAICompatibleProvider,
+      'github': OpenAICompatibleProvider,
+      'groq': OpenAICompatibleProvider,
+      'mistral': OpenAICompatibleProvider,
+      'nvidia': OpenAICompatibleProvider,
+      'ollama': OpenAICompatibleProvider,
+      'omniroute': OpenAICompatibleProvider,
+      'openrouter': OpenAICompatibleProvider,
+      'orcarouter': OpenAICompatibleProvider
     }
 
     providers: Dict[str, Any] = {}
@@ -375,7 +377,7 @@ class LLMGateway:
       return None
 
     limiter = self._rate_limiters.get(step.provider)
-    if limiter is not None and not is_fallback and not limiter.allow():
+    if limiter is not None and not limiter.allow():
       self._log_skipped(step, request, model_cfg)
       return None
 
@@ -394,7 +396,9 @@ class LLMGateway:
         response_chars=0,
         cost=0.0,
         temperature=model_cfg.temperature,
-        system_prompt=request.system_prompt or self._config.default_system_prompt,
+        system_prompt=(
+          request.system_prompt or self._config.default_system_prompt
+        ),
         session_id=request.session_id,
       )
       return None
@@ -577,7 +581,7 @@ class LLMGateway:
       return None
 
     limiter = self._rate_limiters.get(step.provider)
-    if limiter is not None and not is_fallback and not limiter.allow():
+    if limiter is not None and not limiter.allow():
       self._log_skipped(step, request, model_cfg)
       return None
 
@@ -596,7 +600,9 @@ class LLMGateway:
         response_chars=0,
         cost=0.0,
         temperature=model_cfg.temperature,
-        system_prompt=request.system_prompt or self._config.default_system_prompt,
+        system_prompt=(
+          request.system_prompt or self._config.default_system_prompt
+        ),
         session_id=request.session_id,
       )
       return None
@@ -779,7 +785,7 @@ class LLMGateway:
       return None
 
     limiter = self._rate_limiters.get(step.provider)
-    if limiter is not None and not is_fallback and not limiter.allow():
+    if limiter is not None and not limiter.allow():
       self._log_skipped(step, request, model_cfg)
       return None
 
@@ -803,7 +809,9 @@ class LLMGateway:
         response_chars=0,
         cost=0.0,
         temperature=model_cfg.temperature,
-        system_prompt=request.system_prompt or self._config.default_system_prompt,
+        system_prompt=(
+          request.system_prompt or self._config.default_system_prompt
+        ),
         session_id=request.session_id,
       )
       return None
@@ -920,7 +928,7 @@ class LLMGateway:
       return None
 
     limiter = self._rate_limiters.get(step.provider)
-    if limiter is not None and not is_fallback and not limiter.allow():
+    if limiter is not None and not limiter.allow():
       self._log_skipped(step, request, model_cfg)
       return None
 
@@ -944,7 +952,9 @@ class LLMGateway:
         response_chars=0,
         cost=0.0,
         temperature=model_cfg.temperature,
-        system_prompt=request.system_prompt or self._config.default_system_prompt,
+        system_prompt=(
+          request.system_prompt or self._config.default_system_prompt
+        ),
         session_id=request.session_id,
       )
       return None

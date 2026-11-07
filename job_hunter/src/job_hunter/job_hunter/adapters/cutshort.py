@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Cutshort (cutshort.io) adapter: India-native tech job board.
 
@@ -45,6 +45,7 @@ from job_hunter.adapters.base import SourceAdapter
 from job_hunter.adapters.http_client import HttpClient
 from job_hunter.core.errors import AdapterError
 from job_hunter.core.models import CompanyTarget, RawJobRecord
+from job_hunter.services.normalizer import html_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,10 @@ CATEGORY_SLUGS: tuple = (
   'product-management-jobs',
 )
 
-_NEXT_DATA_RE = re.compile(r'id="__NEXT_DATA__"[^>]*>(\{.*?\})</script>', re.DOTALL)
+_NEXT_DATA_RE = re.compile(
+  r'id="__NEXT_DATA__"[^>]*>(\{.*?\})</script>',
+  re.DOTALL,
+)
 
 '''``Rs 15L - Rs 20L / yr`` and friends, as printed on the posting.'''
 _LPA_RANGE_RE = re.compile(
@@ -94,19 +98,6 @@ _REMOTE_HINTS = {
 is needed -- no monthly multiplier applies.
 '''
 _RUPEES_PER_LPA = 100000.0
-
-
-def _strip_html(html: str) -> str:
-  '''Convert an HTML fragment to single-spaced plain text.
-
-  Args:
-    html: Raw HTML fragment, possibly empty.
-
-  Returns:
-    Plain text.
-  '''
-  from bs4 import BeautifulSoup
-  return ' '.join(BeautifulSoup(html or '', 'html.parser').get_text(' ').split())
 
 
 def extract_next_data(html: str) -> Optional[dict]:
@@ -266,7 +257,7 @@ def parse_cutshort_job(item: dict) -> Optional[RawJobRecord]:
     company_name=str(company).strip(),
     title=title,
     location_text=_location(item),
-    description_text=_strip_html(str(item.get('sanitizedComment') or '')),
+    description_text=html_to_text(str(item.get('sanitizedComment') or '')),
     employment_type_raw='; '.join(
       str(role) for role in (item.get('roleTypes') or []) if role
     ),
@@ -320,7 +311,9 @@ class CutshortAdapter(SourceAdapter):
     super().__init__(http)
     self._slugs = slugs if slugs is not None else CATEGORY_SLUGS
 
-  async def fetch(self, target: CompanyTarget, limit: int = 200) -> List[RawJobRecord]:
+  async def fetch(
+    self, target: CompanyTarget, limit: int = 200
+  ) -> List[RawJobRecord]:
     '''Fetch Cutshort category pages and return the postings.
 
     Args:
@@ -333,6 +326,7 @@ class CutshortAdapter(SourceAdapter):
     Raises:
       AdapterError: When every category fails, meaning the board is unusable.
     '''
+    limit = max(1, limit)
     collected: List[RawJobRecord] = []
     seen_ids: set = set()
     reached = 0
@@ -367,7 +361,8 @@ class CutshortAdapter(SourceAdapter):
           break
     if not reached:
       raise AdapterError(
-        f'cutshort: no category yielded jobs ({failures} failed of {len(self._slugs)})',
+        'cutshort: no category yielded jobs '
+        f'({failures} failed of {len(self._slugs)})',
         source=SOURCE_KEY,
       )
     if target.board_ref:
@@ -376,19 +371,4 @@ class CutshortAdapter(SourceAdapter):
         record for record in collected
         if needle in record.company_name.lower() or needle in record.url.lower()
       ]
-    return collected[:limit]
-
-  async def health(self, target: CompanyTarget) -> bool:
-    '''Probe one category page for embedded job data.
-
-    Args:
-      target: Unused beyond matching the registry signature.
-
-    Returns:
-      True when a category page yields at least one posting.
-    '''
-    try:
-      html = await self._http.get_text(f'{BASE}/jobs/{self._slugs[0]}', rpm=10)
-    except AdapterError:
-      return False
-    return bool(parse_cutshort(html)) if html else False
+    return collected[:max(1, limit)]

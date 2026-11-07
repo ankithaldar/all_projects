@@ -30,7 +30,13 @@ Inputs already fixed by the repository:
      groq_qwen → groq_gpt_oss → openrouter → cerebras, fallback ollama(local).
    - Built-in per-provider RPM limiting, retry with backoff, SQLite response
      cache (`data/cache.db`) and call-cost log DB (`data/gateway.db`), plus an
-     optional dashboard on port 8099.
+     optional dashboard on port 8099. Dashboard assets (all under
+     `src/job_hunter/llm_gateway/templates/`): `/` serves `dashboard.html`,
+     `/dashboard.css` serves `dashboard.css`, `/dashboard.js` serves
+     `dashboard.js`, and `/api/stats` serves JSON stats from the gateway
+     DB (unknown paths → 404). The gateway config ships as
+     `llm_gateway/config/gateway.yaml`; both are wheel package-data
+     (see `pyproject.toml`).
 
 3. Consequences of the gateway surface that shape this design:
 
@@ -98,13 +104,13 @@ Four long-lived processes, one shared SQLite dataset (WAL mode):
                         │   ├─ static web/ (HTML+CSS+JS)               │
                         │   └─ read-only views over data/app.db        │
                         │                                              │
-                        │  Worker (python -m hunter.worker)            │
-                        │   ├─ APScheduler cron jobs                   │
+                        │  Worker (python main.py worker)              │
+                        │   ├─ APScheduler (BlockingScheduler) jobs    │
                         │   ├─ claims runs from runs table             │
                         │   └─ executes LangGraph DiscoveryGraph       │
                         │        │                                     │
-                        │        ├─▶ MCP tool servers (stdio subs)     │
-                        │        │    sources · resume · store · web   │
+                        │        ├─▶ repositories (graph nodes use     │
+                        │        │    repos directly, per D2)          │
                         │        └─▶ llm_gateway (all LLM calls)       │
                         │              ├─ provider cascade + fallback  │
                         │              ├─ cache.db   gateway.db        │
@@ -118,10 +124,10 @@ Process responsibilities:
 
 | Process | Entry point | Notes |
 |---------|-------------|-------|
-| API server | `python -m hunter.api` | FastAPI + Uvicorn, binds 127.0.0.1, serves `web/` statically. Reads DB; writes only profile/settings/manual actions. |
-| Worker/scheduler | `python -m hunter.worker` | Sole writer during runs; owns APScheduler; invokes graphs. |
-| MCP servers | spawned stdio subprocesses | Short-lived helpers launched by graph nodes via the MCP client. |
-| Gateway dashboard | optional `llm_gateway.main` | Cost inspection UI on 8099, already provided. |
+| API server | `python main.py api` | FastAPI + Uvicorn, binds host/port from AppSettings, serves `web/` statically. Reads DB; writes only profile/settings/manual actions. |
+| Worker/scheduler | `python main.py worker` | Sole writer during runs; owns APScheduler (BlockingScheduler); invokes graphs. |
+| MCP servers | standalone stdio subprocesses (3: sources, resume, store), run via `python main.py mcp <server>` / `config/app.yaml` `mcp:` commands | LLM/discovery tool surface per D2 — the graph nodes themselves use repositories directly, not MCP; no in-process MCP client spawns them. |
+| Gateway dashboard | optional `llm_gateway` dashboard | Cost inspection UI on 8099, already provided. |
 
 SQLite concurrency contract: WAL + `busy_timeout=5000`; worker uses
 `BEGIN IMMEDIATE` to claim pending runs; API writes are short transactions;
@@ -140,71 +146,94 @@ keep working) and the new application package `job_hunter`.
 job_hunter/
 ├── docs/
 │   ├── architecture.md            ← this file
-│   └── roadmap.md                 ← phased feature-branch plan
-├── pyproject.toml                 ← packaging, ruff/pylint, pytest config
-├── requirements.txt
-├── .env.example                   ← re-exports gateway keys + app settings
-├── main.py                        ← thin launcher (api | worker | mcp)
+│   ├── roadmap.md                 ← phased feature-branch plan
+│   ├── app_overview.md            ← short overview
+│   ├── runbook.md                 ← operations runbook
+│   └── api.md                     ← endpoint reference
+├── agents/
+│   ├── bug-hunter.md  doc-keeper.md  pipeline-runner.md  test-writer.md
+├── config/
+│   └── app.yaml                   ← committed app defaults (§22)
+├── pyproject.toml                 ← packaging (canonical deps), ruff, pytest config
+├── .env.example                   ← APP_* only; gateway template is canonical for keys
+├── main.py                        ← thin launcher (seed-db|api|worker|run-discovery|
+│                                    discover-companies|verify-ats|scout-companies|
+│                                    fetch-jobs|mcp)
+├── setup.sh / run.sh              ← one-time setup / api+worker runner
 ├── src/job_hunter/
-│   ├── llm_gateway/               ← EXISTING, unchanged
+│   ├── llm_gateway/               ← EXISTING gateway (config/, providers/, tests/)
 │   └── job_hunter/
 │       ├── __init__.py
 │       ├── core/
-│       │   ├── config.py          ← pydantic-settings AppSettings (+paths)
-│       │   ├── logging.py         ← dictConfig, JSON logs, run contextvars
+│       │   ├── config.py          ← AppSettings (+paths)
+│       │   ├── logging.py         ← JSON logs, run contextvars
 │       │   ├── db.py              ← connection factory, WAL, migrations runner
+│       │   ├── bootstrap.py       ← first-time init (migrations, taxonomy, defaults)
 │       │   ├── models.py          ← domain Pydantic models
 │       │   └── errors.py          ← exception hierarchy
 │       ├── db/
-│       │   ├── migrations/0001_init.sql …
+│       │   ├── migrations/        ← numbered SQL scripts
 │       │   └── repositories/      ← Repository pattern per aggregate
-│       │       ├── candidates.py  companies.py  jobs.py
+│       │       ├── companies.py  crawl_state.py  jobs.py  profile.py
 │       │       ├── recommendations.py  runs.py  settings.py
+│       │       ├── taxonomy.py    ← db/repositories/taxonomy.py
 │       ├── llm/
 │       │   ├── client.py          ← GatewayClient facade (singleton)
 │       │   ├── structured.py      ← complete_structured(): JSON+repair loop
-│       │   └── langchain_bridge.py← GatewayChatModel(BaseChatModel) adapter
+│       │   │                        (langchain_bridge.py / GatewayChatModel
+│       │   │                        and mcp_tools.py / MCPClientManager:
+│       │   │                        removed — see §7–§9)
 │       ├── mcp_servers/
-│       │   ├── sources_server.py  ← fetch_ats_board/fetch_rss/search_web…
-│       │   ├── resume_server.py   ← parse_resume/extract_text
-│       │   ├── store_server.py    ← allow-listed DB queries
-│       │   └── browser_server.py  ← (Phase 6) Playwright render/screenshot
+│       │   ├── common.py
+│       │   ├── sources_server.py  ← fetch_ats_board, fetch_page, search_web,
+│       │   │                        detect_careers (see §8 for exact signatures)
+│       │   ├── resume_server.py   ← extract_text, clean_text
+│       │   └── store_server.py    ← get_profile, list_companies,
+│       │                            upsert_company, jobs_recent,
+│       │                            recommendations_top, record_run_event
 │       ├── adapters/              ← SourceAdapter implementations (§11)
-│       │   ├── base.py  greenhouse.py  lever.py  ashby.py
-│       │   ├── workable.py  smartrecruiters.py  rss_aggregators.py
-│       │   ├── career_page.py     ← ATS detection router
-│       │   └── manual_inbox.py    ← saved HTML/CSV parsers
+│       │   ├── base.py  greenhouse.py  lever.py  ashby.py  workable.py
+│       │   ├── workday.py  smartrecruiters.py  recruitee.py  personio.py
+│       │   ├── aggregators.py     ← remotive/remoteok/weworkremotely/himalayas/
+│       │   │                        arbeitnow/jobicy (shared adapter)
+│       │   ├── cutshort.py  career_page.py  manual_inbox.py
+│       │   ├── http_client.py  registry.py
 │       ├── services/
-│       │   ├── company_discovery.py  vertical_classifier.py
-│       │   ├── normalizer.py  dedupe.py  skills_taxonomy.py
-│       │   ├── embedder.py  matcher.py  scorer.py
-│       │   └── run_manager.py
+│       │   ├── company_discovery.py  vertical_classifier.py  domain_verifier.py
+│       │   ├── normalizer.py  dedupe.py  skills_taxonomy.py  web_search.py
+│       │   ├── embedder.py  matcher.py  scorer.py  jd_analyst.py
+│       │   ├── profile_curator.py  resume_parser.py  bulk_fetch.py
+│       │   ├── linkedin_scout.py  run_manager.py  watchdog.py
+│       │   ├── persist.py         ← persist_record(): shared persist sequence
 │       ├── graph/
 │       │   ├── state.py           ← TypedDict states + reducers
-│       │   ├── nodes.py           ← pure-ish node functions
+│       │   ├── nodes.py           ← node functions
 │       │   ├── discovery_graph.py ← build_discovery_graph()
-│       │   ├── refresh_graph.py   ← single company/source on-demand
 │       │   └── checkpointing.py   ← SqliteSaver wiring
 │       ├── workers/
-│       │   ├── scheduler.py       ← APScheduler job definitions
+│       │   ├── scheduler.py       ← APScheduler (BlockingScheduler) jobs
 │       │   └── jobs.py            ← claim-run + execute + finalize
-│       ├── api/
-│       │   ├── main.py            ← FastAPI app factory, static mount
-│       │   ├── deps.py            ← DI (settings, db, gateway)
-│       │   └── routes/ (profiles, companies, jobs, recommendations,
-│       │               runs, settings, stats)
-│       └── worker/__main__.py     ← python -m job_hunter.worker
+│       ├── worker/__main__.py
+│       └── api/
+│           ├── __main__.py        ← api/__main__.py (`python -m job_hunter.api`)
+│           ├── main.py            ← FastAPI app factory, static mount
+│           ├── deps.py            ← DI (settings, db, gateway)
+│           └── routes/
+│               ├── profiles.py  companies.py  jobs.py
+│               ├── recommendations.py  runs.py  settings.py
 ├── web/
 │   ├── index.html  profile.html  companies.html  jobs.html
 │   ├── recommendations.html  runs.html  settings.html
 │   ├── css/style.css
-│   └── js/api.js  js/components.js  js/pages/*.js
+│   └── js/api.js  js/components.js
 ├── seeds/
-│   ├── companies_fintech.yaml  companies_saas.yaml  …
+│   ├── companies_*.yaml           ← seed companies per vertical
 │   ├── verticals.yaml             ← taxonomy (§13)
 │   └── skills_aliases.yaml        ← starter skill taxonomy
 └── tests/
-    ├── unit/…  integration/…  fixtures/ (saved API payloads)
+    └── unit/…                     ← 56 unit test modules (pre-existing;
+                                     live list is tests/unit/; pytest;
+                                     gateway tests collected via testpaths)
 ```
 
 Packaging notes:
@@ -244,7 +273,7 @@ Rules (matching both your requirements and the existing gateway code):
    `ScoringComponent`); repositories behind protocols; composition via
    constructors; no import-time side effects.
 5. Patterns used deliberately: Facade (`GatewayClient`), Adapter
-   (`GatewayChatModel`, `SourceAdapter`), Repository, Strategy (scorers),
+   (`SourceAdapter`), Repository, Strategy (scorers),
    Factory (app/graph builders), Observer-lite (SSE broadcaster).
 6. Type hints everywhere; `from __future__ import annotations`.
 7. Lint: repo-root `.pylintrc` applies; add ruff for speed; CI-less local
@@ -306,69 +335,99 @@ one squash commit; tags `v0.x.y` at roadmap milestones.
 ## 7. Agent roles
 
 Agents are LangGraph subgraphs/nodes composed of prompts + gateway calls +
-MCP tools. Each has a single responsibility (SRP) and a typed state slice.
+repository access. Per D2, the graph nodes use repositories directly — the
+MCP servers are a standalone stdio tool surface for discovery/LLM use
+(`python main.py mcp <sources|resume|store>`; commands in
+`config/app.yaml`), not the graph's data path. There is no in-process LLM
+tool loop: `MCPClientManager` (`llm/mcp_tools.py`) was deleted, so MCP
+tools are not loaded into the graph or an LLM session at runtime; graph
+nodes call repositories and services (`persist_record`, §10) directly.
+Each agent has a single responsibility (SRP) and a typed state slice.
 
-| Agent | Responsibility | LLM usage | Tools (MCP) |
+| Agent | Responsibility | LLM usage | Data access |
 |-------|----------------|-----------|-------------|
-| Profile Curator | Parse resume → canonical profile; keep skills taxonomy fresh | Structured extraction | resume-mcp |
-| Company Scout | Expand seed list into verified targets: resolve domain, detect ATS provider/board token, classify vertical | Light (classification, disambiguation) | sources-mcp (search_web, fetch_page), store-mcp |
-| Job Fetcher | Pull postings from assigned (source, target) pairs; paginate; respect limits | None (deterministic) | sources-mcp, browser-mcp (later) |
-| Normalizer | Canonicalize fields, map cities/regions, dedupe | Rare fallback for messy locations | store-mcp |
+| Profile Curator | Parse resume → canonical profile; keep skills taxonomy fresh | Structured extraction | repositories/services (resume-mcp `extract_text`/`clean_text` available as standalone stdio tools) |
+| Company Scout | Expand seed list into verified targets: resolve domain, detect ATS provider/board token, classify vertical | Light (classification, disambiguation) | repositories/services (sources-mcp `search_web`/`fetch_page`/`detect_careers` available as standalone stdio tools) |
+| Job Fetcher | Pull postings from assigned (source, target) pairs; paginate; respect limits | None (deterministic) | adapters + repositories (browser-mcp later) |
+| Normalizer | Canonicalize fields, map cities/regions, dedupe | Rare fallback for messy locations | repositories/services |
 | JD Analyst | Extract must/nice skills, experience band, salary, work mode, employment type from raw description | Heavy structured extraction | none |
-| Matcher | Compute component scores vs candidate (skills coverage, semantic sim, seniority…) | None (embeddings + rules) | store-mcp |
-| Ranker | Weighted aggregation, gates, rank, human-readable rationale | One-line rationale (cheap alias) | store-mcp |
-| Watchdog | Post-run QA: stale detection, adapter health, quarantine counts, alert flags | Optional summary | store-mcp |
+| Matcher | Compute component scores vs candidate (skills coverage, semantic sim, seniority…) | None (embeddings + rules) | repositories/services |
+| Ranker | Weighted aggregation, gates, rank, human-readable rationale | One-line rationale (cheap alias) | repositories/services |
+| Watchdog | Post-run QA: stale detection, adapter health, quarantine counts, alert flags | Optional summary | repositories/services |
 | Applier (future) | Tailor documents, fill forms, submit after approval gate | Heavy generation | browser-mcp |
 
 Design rule: **no agent talks to HTTP directly** — everything flows through
-MCP tools or repositories, keeping tools testable and swappable (DIP).
+repositories/services (or the standalone MCP stdio tools above), keeping
+tools testable and swappable (DIP).
+
+> **D2 overload note:** "D2" is overloaded in this document. In §3/§7/§8,
+> "per D2" means "graph nodes use repositories directly; MCP is a separate
+> tool surface". In the §25 decision list, D2 is the resume-input decision
+> (LaTeX-generated PDF via pypdf).
 
 ---
 
 ## 8. MCP servers and tools
 
-Local MCP servers (official `mcp` Python SDK, stdio transport), one process
-per concern. Agents reach them through `langchain-mcp-adapters`, so each tool
-appears as a standard LangChain tool.
+Three local MCP servers (official `mcp` Python SDK, stdio transport), one
+process per concern. Per D2 they form a standalone LLM/discovery tool
+surface — run via `python main.py mcp <sources|resume|store>` or the
+`mcp:` commands in `config/app.yaml` — while graph nodes use repositories
+directly. There is no in-process tool loop and no MCP client manager
+(`MCPClientManager` deleted); the tables below are the exact
+`@mcp.tool` definitions in `mcp_servers/*.py`. MCP 2.x fallback: all
+three servers (`mcp_servers/sources_server.py`,
+`mcp_servers/resume_server.py`, `mcp_servers/store_server.py`) try
+`mcp.server.fastmcp.FastMCP` first and fall back to
+`mcp.server.mcpserver.MCPServer` (aliased as `FastMCP`) on
+`ModuleNotFoundError`, so all three servers import on both mcp 1.x
+and mcp 2.x.
 
 ### sources-mcp (`mcp_servers/sources_server.py`)
 
-| Tool | Input | Output |
-|------|-------|--------|
-| `fetch_ats_board(provider, org_or_token, since?)` | enum + id | normalized raw posting list |
-| `fetch_json(url, headers?, jq_hint?)` | URL | parsed JSON (size-capped) |
-| `fetch_rss(url)` | URL | items[] |
-| `fetch_page(url)` | URL | text/markdown + detected meta (robots-aware, UA-tagged, token-bucket per host) |
-| `search_web(query, max_results?)` | query | results[] (DuckDuckGo lite endpoint) |
+| Tool (exact signature) | Output |
+|------|--------|
+| `fetch_ats_board(provider: str, board_ref: str, limit: int = 100) -> str` | normalized raw posting list as JSON |
+| `fetch_page(url: str) -> str` (`async def`) | page body as cleaned text (robots-aware) |
+| `search_web(query: str, max_results: int = 8) -> str` | results[] (web-search index) |
+| `detect_careers(domain: str) -> str` | ATS fingerprint for a domain's careers board |
 
-### resume-mcp
+### resume-mcp (`mcp_servers/resume_server.py`)
 
-| Tool | Input | Output |
-|------|-------|--------|
-| `extract_text(path)` | file path | plain text + page map |
-| `parse_sections(text)` | text | heuristic sections (summary/skills/experience/education/projects) |
+| Tool (exact signature) | Output |
+|------|--------|
+| `extract_text(path: str) -> str` | extracted text + metadata from a PDF resume |
+| `clean_text(text: str) -> str` | normalized text (ligatures, unicode, whitespace) |
 
-### store-mcp
+### store-mcp (`mcp_servers/store_server.py`)
 
 Allow-listed operations only (never raw SQL passthrough):
-`upsert_company`, `get_companies_due`, `insert_raw_jobs`,
-`get_jobs_without_enrichment`, `save_recommendations`, `record_run_event`,
-plus read views `jobs_recent`, `recommendations_top`.
 
-### browser-mcp (Phase 6+, Playwright)
+| Tool (exact signature) | Output |
+|------|--------|
+| `get_profile(candidate_id: int = 1) -> str` | candidate profile as JSON |
+| `list_companies(status: str = 'active', limit: int = 100) -> str` | company rows |
+| `upsert_company(name: str, domain: str = '', vertical: str = '') -> str` | created/updated company id |
+| `jobs_recent(limit: int = 25, city: str = '', work_mode: str = '') -> str` | recent active jobs |
+| `recommendations_top(limit: int = 10) -> str` | top gate-passing recommendations |
+| `record_run_event(run_id: int, level: str, node: str, message: str) -> str` | event id (level: debug\|info\|warn\|error) |
 
-`render_page(url)` → DOM text + screenshot path; used for JS-only career pages
-and, later, apply-form introspection. Optional dependency; system degrades to
-skipping JS-only sites with a health note when absent.
+Effective limit clamps (callers pass a raw limit; the server clamps it):
+`fetch_ats_board` uses `max(1, min(limit, 300))`, `search_web` uses
+`max(1, min(max_results, 15))`, `list_companies` uses `min(limit, 500)`,
+`jobs_recent` uses `min(limit, 200)`, and `recommendations_top` uses
+`min(limit, 100)`.
 
-Server configs live in `config/app.yaml` (command, args, env), consumed by a
-single `MCPClientManager` that owns session lifecycles per run.
+### Planned (not built)
+
+A browser-mcp (Playwright) is planned for the applier track only; it is not
+part of the current 3-server surface and is not needed for discovery.
 
 ---
 
 ## 9. LLM integration (via llm_gateway)
 
-`services/llm/client.py` provides the only construction site for the gateway
+`llm/client.py` provides the only construction site for the gateway
 (Singleton scoped per process):
 
 ```python
@@ -381,7 +440,7 @@ gateway = LLMGateway(
 )
 ```
 
-Three call patterns, all through the gateway:
+Two call patterns, all through the gateway:
 
 1. **Plain completion** — rationales, summaries:
    `gateway.acomplete(GatewayRequest(prompt=..., session_id=f'{run_id}:ranker'))`.
@@ -391,18 +450,21 @@ Three call patterns, all through the gateway:
    Pydantic; on failure replays once with the validator error appended
    (max 2 repairs), then raises `StructuredOutputError` so the node can fall
    back to rules. Every attempt shares one `session_id` for cost attribution.
-3. **LangChain bridge** — `GatewayChatModel(BaseChatModel)` adapting the
-   gateway to LangChain's chat-model interface so stock LangGraph/LangChain
-   utilities (prompt templates, output parsers, future `create_react_agent`)
-   work without bypassing the gateway (Adapter pattern).
+
+Removed: the LangChain bridge (`GatewayChatModel` in
+`llm/langchain_bridge.py`) and the MCP client tool loader
+(`MCPClientManager` in `llm/mcp_tools.py`) are deleted. LLM calls go
+directly through `GatewayClient` (`llm/client.py`) and the structured
+helper above; there is no LangChain chat-model adapter and no in-process
+tool loop.
 
 Degradation ladder per task class:
 
 - Extraction quality critical (JD Analyst): try cascade; on
   `AllProvidersFailedError` mark job `needs_review` rather than guessing.
 - Nice-to-have (rationale lines): skip silently if LLM unavailable.
-- Ollama fallback lacks tools: tool-using agents treat it as last resort and
-  switch to deterministic plans when reached.
+- Ollama fallback lacks tools: it is a last resort for completion calls
+  and agents switch to deterministic plans when reached.
 
 Cost governance: gateway RPM limits already cap burn; the app additionally
 caches extractions keyed by job `content_hash` (a re-crawl of an unchanged JD
@@ -417,22 +479,46 @@ costs zero tokens) and enforces a per-run token budget from settings.
 ```python
 class DiscoveryState(TypedDict):
   '''State for the nightly discovery graph.'''
-  run_id: str
+  run_id: int
   triggered_by: str
   candidate: CandidateProfile
-  plan: RunPlan                          # targets due + enabled sources
-  raw_jobs: Annotated[list[RawJobRecord], operator.add]
-  normalized: list[NormalizedJob]
-  enriched: dict[str, EnrichedJob]       # keyed by content_hash
-  scored: list[ScoredJob]
-  errors: Annotated[list[NodeError], operator.add]
-  stats: dict[str, int]                  # counters merged by reducer
+  plan: Dict[str, Any]                     # build_plan returns plan.model_dump();
+                                           # callers seed {'quick_poll': ...}
+  raw_jobs: Annotated[List[RawJobRecord], operator.add]
+  inserted: List[NormalizedJob]
+  enriched: Dict[str, Any]                 # keyed by content_hash; plain dicts
+  scored: List[ScoredJob]
+  errors: Annotated[List[NodeError], operator.add]
+  stats: Annotated[Dict[str, int], merge_stats]  # counters merged by reducer
   budget: TokenBudget
 ```
 
 Reducers: `raw_jobs`/`errors` append (fan-out safe); `stats` merges dicts;
-everything else last-write-wins. Checkpointing via LangGraph's `SqliteSaver`
-into `data/checkpoints.sqlite` → any run resumes after crash/restart.
+everything else last-write-wins. State normalization: `DiscoveryState`
+is a `typing_extensions.TypedDict` (`total=False`); after checkpoint
+serialization the candidate may come back as a plain dict, so nodes
+normalize inserted items via `graph/state.py: _normalize_inserted`
+(dict → `NormalizedJob`) and the candidate via
+`graph/nodes.py: _normalize_candidate` (dict →
+`CandidateProfile(**value)`, instance passes through) before use.
+Checkpointing via LangGraph's `SqliteSaver` into
+`data/checkpoints.sqlite` → any run resumes after crash/restart.
+Dependencies: `langgraph-checkpoint-sqlite>=3.1` + `aiosqlite>=0.20`
+(declared in `pyproject.toml`); resume is conditional on install —
+`graph/checkpointing.py: open_checkpointer` yields `None` (and logs a
+warning) when those imports are missing, and the graph runs without a
+checkpointer instead of crashing. The checkpointer connection sets
+`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000` and
+`PRAGMA foreign_keys=ON` before `AsyncSqliteSaver` setup.
+`graph/checkpointing.py:
+thread_config(run_id)` builds the runnable config with
+`'checkpoint_ns': ''` (empty namespace) and `thread_id=f'run-{run_id}'`.
+
+Persistence: `services/persist.py: persist_record(...)` is the shared
+persist sequence (content-hash/canonical-URL, city/work-mode detection,
+company resolution, insert → `inserted`/`duplicate`) used by the graph
+nodes, `bulk_fetch`, and the manual inbox — graph nodes do not persist
+via MCP tools.
 
 ### 10.2 Graph topology
 
@@ -469,7 +555,7 @@ load_profile → build_plan ──Send(fetch_pair)──▶ fetch_node (fan-out 
 - Conditional edges: enrichment only for unseen hashes; Watchdog escalates to
   `status='failed'` only if ≥ 1 hard-required node errored.
 - `RefreshGraph` = subset subgraph (single company/source) reused by the API's
-  "refresh now" button; same nodes, different `RunPlan`.
+  "refresh now" button; same nodes, different `plan` dict.
 
 ---
 
@@ -481,13 +567,24 @@ Tier model, cheapest/most-stable first. All tiers feed the same
 
 | Tier | Source | Mechanism | Coverage notes for India |
 |------|--------|-----------|--------------------------|
-| T1 official ATS APIs | Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Personio(XML) | Public JSON endpoints, no auth | Strong for product companies, GCCs, startups: e.g. `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true`, `api.lever.co/v0/postings/{co}?mode=json`, `api.ashbyhq.com/posting-api/job-board/{org}`, `apply.workable.com/api/v1/widget/accounts/{ac}?details=true`, `api.smartrecruiters.com/v1/companies/{co}/postings` |
-| T2 remote/global aggregators | Remotive `/api/remote-jobs`, RemoteOK `/api`, Himalayas, WeWorkRemotely RSS | Public API/RSS | Filters to India-eligible + remote-timezone-overlap |
+| T1 official ATS APIs | Greenhouse, Lever, Ashby, Workable, Workday, SmartRecruiters, Recruitee, Personio(XML) | Public JSON endpoints, no auth | Strong for product companies, GCCs, startups: e.g. `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true`, `api.lever.co/v0/postings/{co}?mode=json`, `api.ashbyhq.com/posting-api/job-board/{org}`, `apply.workable.com/api/v1/widget/accounts/{ac}?details=true`, `api.smartrecruiters.com/v1/companies/{co}/postings` |
+| T2 remote/global aggregators | Remotive `/api/remote-jobs`, RemoteOK `/api`, Himalayas, WeWorkRemotely RSS, Arbeitnow, Jobicy, Cutshort (India-first, server-rendered category pages) | Public API/RSS/HTML | Filters to India-eligible + remote-timezone-overlap |
 | T3 career pages | `{domain}/careers|/jobs` crawl → ATS fingerprint (URL/CNAME patterns) → route to matching T1 adapter | Discovery-driven | Catches companies missing from seed lists |
-| T4 manual export inbox | Watched dirs `data/inbox/{linkedin,naukri,instahyre}/` | Parse saved search-result HTML/CSV you export by hand | Compliant way to include ToS-restricted portals; records flagged `source='manual'` |
+| T4 manual export inbox | Watched dirs `data/inbox/{linkedin,naukri,instahyre}/` | Parse saved search-result HTML/CSV you export by hand; after a successful parse the file is moved to `data/inbox/_processed/<mtime>_<name>` (skipped on scan, so it is not re-ingested) | Compliant way to include ToS-restricted portals; records flagged `source='manual'` |
 
-Cross-cutting behavior: per-host token bucket (default 30 req/min), polite UA
-(`job-hunter-personal/0.1 (+contact: local)`), robots.txt respected for HTML,
+Cross-cutting behavior: per-(host, rpm) throttle, default 30 rpm
+(`adapters/http_client.py: throttle_for` keys throttles by `(host, rpm)`
+per D15 — the same host at different rpm values runs independent
+throttles, so the aggregate rate can exceed the minimum rpm; adapters
+pass explicit `rpm=` per source). The throttle host is normalized
+lowercase with trailing dots stripped
+(`parsed.hostname.lower().rstrip('.')`, with the same lowercasing and
+`.rstrip('.')` for a bare `host[:port]` URL, so trailing-dot hosts
+share the same throttle), and `HostThrottle.wait()` reserves its slot
+before sleeping (`_last = now + delta`), so concurrent callers space
+out by one interval each instead of waking together. Polite UA
+is `job-hunter-personal/0.1 (local personal job search; contact: self)`,
+robots.txt respected for HTML,
 ETag/Last-Modified reuse via `crawl_state`, pagination until `since` watermark,
 per-adapter circuit breaker (5 consecutive failures → cooldown 24h, surfaced in
 Watchdog report).
@@ -503,6 +600,10 @@ Pipeline (Company Scout agent + `services/company_discovery.py`):
 
 1. **Seeds** — user-curated YAML per vertical/city
    (`name, domain?, vertical_hint, priority`). Ships with fintech/Bengaluru examples.
+   Seed priorities are clamped 1..5 (numeric truncated via int() then
+   clamped 1..5; missing/None->3; 0->1 (clamped) on import/seed); a seed entry with a
+   bad priority (non-numeric/non-finite) is skipped with a warning and
+   not counted; bool priority is rejected, not clamped (422 create/patch; errors import; skipped seed).
 2. **Harvest** — every T1/T2 posting carries `company_raw_name` + board token;
    unknown names become candidate companies automatically (this alone covers
    most of the ATS ecosystem over time).
@@ -558,11 +659,17 @@ Mechanics:
 - **Skills taxonomy**: `skills` + aliases seeded from
   `seeds/skills_aliases.yaml`; Curator proposes new aliases; matcher resolves
   JD skills ↔ canonical ids (alias map first, embedding-nearest within
-  threshold second).
+  threshold second). None spec seeded with empty category/aliases; non-None non-dict spec skipped/not counted, category preserved (non-None non-dict specs log `skipping non-dict skill spec for <name>: <spec>`; dict specs preserve their category/aliases). resolve_many(non-str elements skipped with warning; bare str/bytes/non-list raises TypeError -> 422 on PUT /api/profile/skills). Further guards: a non-dict payload returns 0, a non-str name is skipped/not counted, non-list aliases are empty+warn, and non-str aliases are skipped.
 - **Semantic similarity**: `fastembed` MiniLM-class vectors; candidate doc =
   summary + skills + recent titles; job doc = title + cleaned description
   (chunked at ~1k chars, mean-pooled). Cosine → scaled to [0,1]. Vectors stored
   in `job_embeddings` (BLOB) keyed by model id; recomputed only when hash changes.
+- **Resume duplicates**: duplicate sha256 returns the existing resume_id
+  and stored path (the new upload file is unlinked; the stored row is kept).
+  A dangling duplicate (sha matches but the stored row is missing) raises
+  `RuntimeError: resume row missing after save_resume_ex`. On failure it
+  deletes owned resume row first; file kept if referenced (row delete is
+  FK-blocked when a profile references it). FK-blocked/retained failure sets exc.file_path falsy so API does not unlink stored file.
 
 ---
 
@@ -595,7 +702,9 @@ Weighted components (defaults; editable live in Settings, persisted per user):
 | company/vertical fit | 0.05 | exact vertical 1.0, sub-vertical parent 0.7, pinned +0.2 cap 1 |
 
 `total_score = round(100 · Σ wᵢ·sᵢ, 1)` for gate-passers; ties broken by
-recency then company priority. Recommendations table stores rank per run +
+recency then company priority. Jobs with a non-int `job_id` (incl. bool)
+are skipped with `skipping job with non-int job_id` before any `int()`
+conversion, so one phantom job cannot crash the scoring pass. Recommendations table stores rank per run +
 rationale (template-built; optional one-line LLR summary via cheapest alias).
 
 Feedback loop: dismiss/save actions feed simple learned adjustments
@@ -805,34 +914,54 @@ CREATE TABLE settings (
 
 | Method & path | Purpose |
 |---------------|---------|
-| GET `/healthz` | liveness + db/gateway status |
+| GET `/healthz` | liveness + db/gateway status (`gateway_db: false` = gateway DB not created yet, no LLM call yet — not unhealthy) |
 | GET/PUT `/api/profile` | current candidate profile (auto-creates single candidate) |
-| POST `/api/profile/resume` | multipart upload → parse → preview |
+| POST `/api/profile/resume` | multipart upload → parse → preview (422 if LLM unavailable, e.g. placeholder keys; 415 non-PDF; over 10 MB: 422 when the declared Content-Length exceeds it, 413 when the actual body does) |
 | PUT `/api/profile/skills` | edit skill list/weights |
-| GET `/api/skills?q=` | taxonomy lookup/aliases |
-| GET/POST `/api/companies` | list (filters)/create manually |
-| POST `/api/companies/import` | upload seed YAML/CSV |
-| PATCH `/api/companies/{id}` | pause/pin/label vertical/edit |
+| GET `/api/skills` | full canonical skill taxonomy (no `q` param) |
+| GET/POST `/api/companies` | list (filters)/create manually; priority clamped 1..5 on create/patch/import; non-numeric/non-finite import priority increments errors; numeric truncated via int() then clamped 1..5 (missing/None->3; 0->1 (clamped) on import/seed) bool priority is rejected, not clamped (422 create/patch; errors import; skipped seed) |
+| POST `/api/companies/import` | import seed companies from YAML content (422 on invalid YAML); priority clamped 1..5 on create/patch/import; non-numeric/non-finite import priority increments errors; numeric truncated via int() then clamped 1..5 (missing/None->3; 0->1 (clamped) on import/seed) bool priority is rejected, not clamped (422 create/patch; errors import; skipped seed) |
+| PATCH `/api/companies/{id}` | pause/pin/label vertical/edit; priority clamped 1..5 on create/patch/import; non-numeric/non-finite import priority increments errors; numeric truncated via int() then clamped 1..5 (missing/None->3; 0->1 (clamped) on import/seed) bool priority is rejected, not clamped (422 create/patch; errors import; skipped seed) |
 | DELETE `/api/companies/{id}` | blacklist |
-| POST `/api/companies/{id}/refresh` | enqueue RefreshGraph run |
-| GET `/api/jobs` | paginated explorer (q → FTS5, filters: city/mode/vertical/date) |
+| POST `/api/companies/{id}/refresh` | **planned** — not implemented |
+| GET `/api/jobs` | paginated explorer (`q` → FTS5; filters: city/work_mode/vertical/status; params `page`, `per_page`) |
 | GET `/api/jobs/{id}` | detail incl. raw_json |
-| GET `/api/recommendations` | ranked list (min_score, status, vertical filters) |
-| GET `/api/recommendations/{id}` | detail + score breakdown |
-| PATCH `/api/recommendations/{id}` | status transitions (saved/dismissed/applied) |
+| GET `/api/recommendations` | ranked list (min_score, status, vertical, `include_gated`, `page`, `per_page` filters) |
+| GET `/api/recommendations/{id}` | **planned** — not implemented (list carries the breakdown) |
+| PATCH `/api/recommendations/{id}` | status transitions (new/saved/dismissed/applied) |
 | GET `/api/runs` | history + stats |
-| POST `/api/runs/discovery` | trigger now (409 if one running) |
+| POST `/api/runs/discovery` | trigger now (409 if one running; atomic via `create_if_not_active` single `BEGIN IMMEDIATE` session — sequential 409 semantics, API route now atomic too, see §19) |
 | POST `/api/runs/{id}/cancel` | cooperative cancel flag |
 | GET `/api/runs/{id}/events` | paged events |
 | GET `/api/runs/{id}/stream` | **SSE** live progress (worker publishes to events table; API tails it) |
-| GET/PUT `/api/settings` | weights sliders, schedule, source toggles, budgets |
+| GET `/api/settings` | seeded read-only copies of the settings table (keys seeded from `config/app.yaml` by `ensure_defaults`: `schedule`, `sources`, `discovery`, `scoring_weights`, `embeddings`, `salary_hard_floor_lpa`) |
+| PUT `/api/settings` | 4 keys only: `scoring_weights`, `salary_hard_floor_lpa`, `discovery.max_llm_calls_per_run`, `discovery.enrich_per_run_cap` (unknown keys → 422) |
 | GET `/api/stats/dashboard` | counts, top companies, score histogram, freshness |
 | GET `/api/llm/stats?days=` | read-only rollup from `data/gateway.db` (calls, tokens, cost, by provider/node) |
-| POST `/api/inbox/import` | force-scan manual inbox folder now |
-| GET `/api/inbox/preview` | parsed cards awaiting confirm |
+| POST `/api/inbox/import` | **planned** — inbox is scanned by the worker interval job, not an API |
+| GET `/api/inbox/preview` | **planned** — not implemented |
 
-Errors: RFC-7807-ish JSON `{title, status, detail, instance}`; validation via
-Pydantic; 409 for concurrent run attempts; 422 with field errors on payloads.
+Errors: two shapes. Unhandled errors (500) use problem-style JSON
+`{title, status, detail}` (no `instance` field); expected `HTTPException`
+errors use FastAPI's `{detail}` shape. Status rows:
+401 (token configured and Bearer header missing/wrong),
+404 (unknown id), 409 (concurrent run attempt), 422 (Pydantic/domain
+validation, incl. resume curation unavailable on placeholder keys),
+500 (unexpected). `AppError` mapping (`api/main.py` handler,
+problem-style `{title, status, detail}`):
+`ConflictError` → 409 `{'title': 'Conflict', 'status': 409, 'detail':
+'conflict'}`, `AdapterError` → 502 `'adapter error'` /
+`'Bad Gateway'`, `GatewayUnavailableError` → 503 `'gateway
+unavailable'` / `'Service Unavailable'`, `DatabaseError` → 500
+`'database error'`, other `AppError` → 500 `'internal error'` — see
+`docs/api.md` error section. Direct `HTTPException` 409s from the runs
+route use the `{detail}` shape ('a run is already active'; see
+`docs/api.md`), unlike the problem-style `AppError` handler responses
+above. Per D1, non-loopback `APP_HOST`
+requires `JH_API_TOKEN` (Bearer) — see `docs/api.md`. CSRF: non-GET with cross-origin Origin/Referer is rejected 403; headerless requests not checked (browser always sends Origin on POST); the 403 shape is
+`{'detail': 'forbidden origin'}`. `Referer` is accepted as an
+alternative to `Origin` when it is same-host. The web UI sends it
+automatically.
 
 ---
 
@@ -850,33 +979,46 @@ No framework, no build step. FastAPI serves `web/` at `/`; pages share
 | `recommendations.html` | Card list sorted by score: total + component bar chart (pure CSS), gates, rationale, links; actions save/dismiss; keyboard nav; bulk dismiss |
 | `jobs.html` | Raw explorer with FTS search box, filter sidebar, duplicate/stale badges |
 | `runs.html` | Run history table + detail drawer with live SSE event console (level-colored), stats counters, errors panel |
-| `settings.html` | Scoring weights sliders (live-sum validation = 1.0), schedule editor (cron presets), source toggles + RPM, token budget, notification toggles (future) |
+| `settings.html` | Scoring weights sliders (live-sum validation = 1.0; page PUTs only `scoring_weights` — the other 3 PUT-able keys are API-only, see §17); no schedule editor, no source toggles, no token-budget UI — schedule and source enabling are yaml-only (`config/app.yaml`, see §22) |
 
-SSE protocol: `event: progress` (`{node, pct, message}`), `event: stat`
-(counter deltas), `event: done` (`{status, stats}`). Reconnect handled in
-`api.js`.
+SSE protocol (actual `routes/runs.py`): `event: log`
+(`{id, level, node, message}`), `event: done` (`{status, stats}`),
+`event: timeout` (`{}`). Reconnect handled in `api.js`.
 
 ---
 
 ## 19. Scheduled crawling/polling workers
 
-Worker entrypoint `python -m job_hunter.worker` runs APScheduler
-(AsyncIOScheduler) with jobs defined in `workers/scheduler.py`:
+Worker entrypoint `python main.py worker` runs APScheduler
+(`BlockingScheduler`, per D6) with jobs defined in `workers/scheduler.py`:
 
 | Job | Cadence (default) | Action |
 |-----|--------------------|--------|
-| discovery_run | daily 06:15 IST | insert `runs(pending, discovery)` then execute DiscoveryGraph end-to-end |
+| discovery_run | daily 06:15 | insert `runs(pending, discovery)` then execute DiscoveryGraph end-to-end |
 | quick_poll | every 120 min | T2 aggregators + pinned (priority 5) companies only — cheap incremental fetch |
 | company_refresh | weekly, staggered chunk/night | Scout verification for companies `last_checked_at > 7d`, batch of ≤ 50/night |
 | stale_sweep | daily 04:00 | mark unseen > 45d jobs stale, expire their recommendations |
 | inbox_scan | every 30 min | parse new files in `data/inbox/**` |
-| maintenance | Sundays | FTS optimize, `PRAGMA optimize`, checkpoint gc, log rotation check |
+| pending_executor | every 30 s | drain UI/CLI-enqueued pending runs |
 
-Execution contract: worker claims `runs` rows with `BEGIN IMMEDIATE`
-(single-writer discipline), streams progress into `run_events` (which powers
-SSE), finalizes status success/partial/failed with stats, releases lock.
-Missed schedules coalesce (max_instances=1, misfire_grace=1h). Cron strings
-live in Settings, editable from the UI.
+That is 6 real jobs. There is no `maintenance` job (that row was aspirational
+and is removed). All times are in the host's local timezone — there is no
+timezone attached to the scheduler (no IST/UTC conversion); the cron values
+above are literal local times. Execution contract: worker claims `runs` rows
+with `BEGIN IMMEDIATE` (single-writer discipline), streams progress into
+`run_events` (which powers SSE), finalizes status success/partial/failed with
+stats, releases lock. Missed schedules coalesce (max_instances=1,
+misfire_grace=1h). Cron strings live in `config/app.yaml` under `schedule:`
+(yaml-only; not editable via the Settings UI — see §17/§18).
+Atomic enqueue: `RunManager.enqueue` and the API route
+`POST /api/runs/discovery` both use
+`RunsRepository.create_if_not_active` (single `BEGIN IMMEDIATE`
+session): the active-run check and insert are one atomic step, so a
+concurrent caller loses the race and gets 409 (`RunManager`:
+'another run is pending or running'; API route: 'a run is already
+active') instead of a duplicate run. Sequential (non-concurrent)
+semantics are the same: a second enqueue while one is
+pending/running is 409.
 
 ---
 
@@ -886,13 +1028,13 @@ Layered, fail-soft by design:
 
 | Layer | Policy |
 |-------|--------|
-| HTTP/tool calls | httpx timeouts (connect 10s/read 30s); tenacity retries (3×, expo+jitter) on transient; circuit breaker per source; robots/blocks → `cooldown_until`, never tight-loop |
+| HTTP/tool calls | httpx timeouts (connect 10s/read 30s); `HttpClient.get_json` makes 2 attempts total (one retry) on 429/500/502/503/504 and on transport errors, sleeping `_retry_delay` (Retry-After honoured, capped at 30s, plus jitter); `get_text` has no retry (single attempt after the robots check); circuit breaker per source; robots/blocks → `cooldown_until`, never tight-loop |
 | LLM (inside gateway) | provider cascade + retries + fallback already handled; app adds: structured-parse repair loop (≤ 2), then rule-based fallback flagged `confidence<0.5`; `AllProvidersFailedError` ⇒ node degrades per §9 ladder |
 | Graph nodes | `safe_node` wrapper: catch-all → NodeError + run_event, continue; required-node failure ⇒ run `partial`/`failed` but partial results still persisted |
-| Validation | Pydantic models at every boundary; malformed payloads quarantined (`jobs.status='error'` + raw_json preserved) — nothing silently dropped |
-| API | exception handlers → problem+json; unexpected errors logged with run/request ids; 409/422 semantics as above |
+| Validation | Pydantic models at every boundary; checkpoint-resumed malformed, non-dict, or identity-less `inserted` items are logged and skipped (`graph/state.py: _normalize_inserted` logs `skipping inserted item without identity` / `skipping malformed inserted item` / `skipping non-dict inserted item`) — that path is never silent; scoring skips non-int `job_id` with `skipping job with non-int job_id` (§15). No code path currently writes `jobs.status='error'` quarantine rows (the Watchdog only counts such rows if present), so the old blanket quarantine claim does not hold elsewhere |
+| API | exception handlers → 500 problem-style `{title, status, detail}`, expected errors → `HTTPException` `{detail}`; unexpected errors logged with run/request ids; 401/404/409/422 semantics as in §17 |
 | Data integrity | content_hash uniqueness (idempotent reruns); FK constraints ON; migration transaction-per-script with version table |
-| Crash recovery | LangGraph SqliteSaver checkpoints; worker startup adopts orphaned `running` runs older than TTL → marks failed, optionally resumes from checkpoint |
+| Crash recovery | LangGraph SqliteSaver checkpoints; orphan recovery: worker/scheduler fails `running` runs older than 120 min, CLI `run-discovery` uses >5 min (5m), and `pending` runs older than 1h (1 hour) are failed by the same sweep → marks failed, optionally resumes from checkpoint |
 
 User-visible errors always carry a run/event reference so Runs page explains them.
 
@@ -900,8 +1042,8 @@ User-visible errors always carry a run/event reference so Runs page explains the
 
 ## 21. Logging and observability
 
-- Stdlib `logging` + dictConfig; JSON formatter; `RotatingFileHandler`
-  `logs/app.log` (10 MB × 5) and per-run `logs/runs/{run_id}.log`.
+- Stdlib `logging`; JSON formatter; `RotatingFileHandler`
+  `data/logs/app.log` (10 MB × 5). Invalid log levels raise `ValueError`.
 - Context propagation via `contextvars` (run_id, node, source_key) injected by
   `safe_node`/middleware — every line correlates to UI-visible entities.
 - Levels: DEBUG dev default off; INFO pipeline milestones; WARN degraded
@@ -917,20 +1059,37 @@ User-visible errors always carry a run/event reference so Runs page explains the
 
 ## 22. Configuration and secrets
 
-- `.env` (gitignored; gateway's existing file is authoritative for keys —
-  app points `env_path` at it): provider keys, `GATEWAY_DB_PATH`,
-  `GATEWAY_CACHE_PATH`, `APP_DATA_DIR`, `APP_LOG_LEVEL`.
-- `config/app.yaml` (committed defaults + local overrides): bind host/port,
-  schedule crons, source toggles/RPM, scoring weight defaults, verticals
-  taxonomy path, inbox paths, embedding model id, token budgets.
-- `pydantic-settings` loads env → `AppSettings`; yaml → typed models; both
-  validated at boot; UI Settings edits persist to `settings` table and win.
+- `src/job_hunter/llm_gateway/.env` (gitignored; **the canonical key file**,
+  created by `setup.sh` from the 9-provider
+  `src/job_hunter/llm_gateway/.env.example` template): provider keys,
+  `GATEWAY_DB_PATH`, `GATEWAY_CACHE_PATH`, `GATEWAY_DASHBOARD_PORT`.
+  The repo-root `.env.example` is APP-only and points at the gateway template.
+- `config/app.yaml` (committed defaults + local overrides): `app` bind
+  host/port/log level, `salary_hard_floor_lpa`, `schedule` crons/intervals,
+  `sources` enabled-only toggles (incl. `workday`; `manual` is the inbox
+  scan, not an adapter), `scout` (company discovery), `discovery` (run
+  knobs), `scoring_weights`, `embeddings` model id, `mcp` stdio commands.
+  Per-source RPM is adapter-owned (adapters pass explicit `rpm=`), not
+  read from config. Enabling/disabling sources and editing the schedule
+  are yaml-only: change `config/app.yaml` and restart (no Settings UI
+  for schedule or source toggles).
+- `AppSettings` (`core/config.py`) reads yaml + `APP_*`/`SALARY_HARD_FLOOR_LPA`
+  env at boot; the `settings` table is seeded read-only from yaml
+  (`ensure_defaults`) and only the 4 PUT keys in §17 may be changed via
+  the API/UI. `APP_*` vars must be exported/sourced in the shell — see
+  `docs/runbook.md`.
 
 ---
 
 ## 23. Security, privacy, ToS posture
 
 - Servers bind 127.0.0.1 only; no inbound exposure; no telemetry.
+  `TrustedHostMiddleware` is hardcoded to `127.0.0.1`/`localhost`/
+  `testserver` — a `JH_API_TOKEN` alone does not enable LAN exposure.
+  When a token is set, the UI prompts for it on `401` and sends the
+  Bearer header thereafter. CSRF: non-GET with cross-origin Origin/Referer is rejected 403; headerless requests not checked (browser always sends Origin on POST). The 403 body is
+  `{'detail': 'forbidden origin'}`; `Referer` is an accepted
+  alternative to `Origin` when same-host.
 - Egress limited to: configured job sources, DDG lite search, LLM providers.
 - ToS: no scraping of LinkedIn/Naukri/Instahyre/Hirist; manual-export inbox
   keeps those ecosystems available without violations. robots.txt honored for
@@ -963,12 +1122,17 @@ Resolved (2026-08-24):
 - **D1 — Target role:** Staff-level Data Scientist positions in India.
 - **D2 — Resume input:** LaTeX-generated PDF; pypdf-based parsing (LaTeX PDFs
   extract cleanly; ligature/unicode-normalization step included). DOCX optional later.
+  (D2 overload note: in §3/§7/§8 "per D2" means graph nodes use repositories
+  directly — see the note in §7. Here D2 is this resume-input decision.)
 - **D3 — Compensation:** hard floor 45 LPA, enforced as a gate (§15); nothing
   below is recommended. Unknown-salary postings pass but flagged `salary_unverified`.
 - **D4 — Runtime:** Python 3.14+ dedicated venv.
 - **D5 — llm_gateway:** unchanged. Its existing `tools` / `tool_choice`
   support on `supports_tools: true` providers covers every tool-calling need;
-  integration happens purely in external adapter code (`llm/langchain_bridge.py`).
+  integration happens purely in external adapter code (`llm/client.py`).
+  The former LangChain bridge (`llm/langchain_bridge.py`,
+  `GatewayChatModel`) and MCP client tool loader (`llm/mcp_tools.py`,
+  `MCPClientManager`) are deleted — see §7–§9.
   If a future gap appears (e.g., native JSON-schema response_format), a minimal
   gateway change may be proposed explicitly first.
 - **D6 — Ports:** app API 8088; gateway dashboard 8099; both localhost-only.
@@ -1028,6 +1192,11 @@ Live-log triage of repeated `/api/profile/resume` 500s:
 
 Verification: 47 tests green; live upload attempt returns structured 502
 (remaining failures are placeholder keys, by design).
+
+> **History note (superseded by 422):** the structured 502 responses
+> recorded in Loop 2 above are superseded by 422 — current
+> resume-curation failures return 422 (`{"detail": "resume curation
+> unavailable"}`), see §17 and `docs/api.md` / `docs/runbook.md`.
 
 ### Loop 3 — 2026-08-24 (`feature_18_expanded_coverage_v2`)
 

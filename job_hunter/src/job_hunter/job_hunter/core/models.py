@@ -1,24 +1,15 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Domain models shared across services, graph, and API.'''
 
-
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-
-def utcnow() -> datetime:
-  '''Return current UTC time.
-
-  Returns:
-    Timezone-aware datetime.
-  '''
-  return datetime.now(timezone.utc)
+from job_hunter.services.scorer import DEFAULT_SALARY_FLOOR_LPA
 
 
 class WorkMode:
@@ -43,7 +34,7 @@ class CandidateProfile(BaseModel):
   cities: List[str] = Field(default_factory=list)
   relocate_ok: bool = False
   remote_pref: str = 'any'
-  salary_floor_lpa: float = 45.0
+  salary_floor_lpa: float = DEFAULT_SALARY_FLOOR_LPA
   experience_years: float = 0.0
   employment_types: List[str] = Field(default_factory=lambda: ['full_time'])
   skills: List[str] = Field(default_factory=list)

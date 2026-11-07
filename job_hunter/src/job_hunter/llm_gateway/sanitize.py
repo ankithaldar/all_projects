@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Utilities for removing thinking/reasoning tokens from displayed output.'''
 
@@ -7,37 +7,21 @@
 from __future__ import annotations
 
 import re
-from typing import Callable
+from collections.abc import Callable
 
 _THINK_TAG_GROUP = (
   r'(think|thinking|thoughts|reasoning|chain[_-]?of[_-]?thought)'
 )
 
-_THINK_BLOCK_RE = re.compile(
-  r'<\s*'
-  + _THINK_TAG_GROUP
-  + r'\b[^>]*>.*?<\s*/\s*\1\s*>',
-  re.IGNORECASE | re.DOTALL,
-)
+_MAX_INPUT_CHARS = 200_000
 
-_UNCLOSED_THINK_RE = re.compile(
-  r'<\s*'
-  + _THINK_TAG_GROUP
-  + r'\b[^>]*>.*$',
-  re.IGNORECASE | re.DOTALL,
-)
-
-_ORPHAN_THINK_MARKER_RE = re.compile(
-  r'<\s*/?\s*'
-  + _THINK_TAG_GROUP
-  + r'\b[^>]*>',
-  re.IGNORECASE,
-)
-
-_BRACKET_THINK_BLOCK_RE = re.compile(
-  r'\[\s*think\s*\].*?\[\s*/\s*think\s*\]',
-  re.IGNORECASE | re.DOTALL,
-)
+_THINK_TAGS_NORM = frozenset({
+  'think',
+  'thinking',
+  'thoughts',
+  'reasoning',
+  'chainofthought',
+})
 
 _STREAM_START_RE = re.compile(
   r'<\s*'
@@ -57,8 +41,104 @@ _TAG_PREFIXES = (
 )
 
 
+def _skip_spaces(text: str, index: int) -> int:
+  '''Return index after any whitespace at position.'''
+  while index < len(text) and text[index].isspace():
+    index += 1
+  return index
+
+
+def _parse_angle_tag(
+  text: str,
+  lowered: str,
+  index: int,
+) -> tuple[str, str, int] | None:
+  '''Parse a think-like angle tag at index, if any (linear, no regex).'''
+  pos = _skip_spaces(text, index + 1)
+  if pos >= len(text):
+    return None
+  is_close = False
+  if text[pos] == '/':
+    is_close = True
+    pos = _skip_spaces(text, pos + 1)
+  start = pos
+  while pos < len(text) and (text[pos].isalnum() or text[pos] in '_-'):
+    pos += 1
+  if start == pos:
+    return None
+  norm = lowered[start:pos].replace('_', '').replace('-', '')
+  if norm not in _THINK_TAGS_NORM:
+    return None
+  gt = text.find('>', pos)
+  if gt == -1:
+    return None
+  return ('close' if is_close else 'open', norm, gt + 1)
+
+
+def _parse_bracket_tag(
+  text: str,
+  lowered: str,
+  index: int,
+) -> tuple[str, str, int] | None:
+  '''Parse a [think]/[/think] bracket tag at index, if any.'''
+  pos = _skip_spaces(text, index + 1)
+  if pos >= len(text):
+    return None
+  is_close = False
+  if text[pos] == '/':
+    is_close = True
+    pos = _skip_spaces(text, pos + 1)
+  if lowered[pos:pos + 5] != 'think':
+    return None
+  end = _skip_spaces(text, pos + 5)
+  # 'think' must be a whole word inside brackets
+  if end < len(text) and (text[end].isalnum() or text[end] in '_-'):
+    return None
+  if end >= len(text) or text[end] != ']':
+    return None
+  return ('close' if is_close else 'open', 'think', end + 1)
+
+
+def _find_angle_close(
+  text: str,
+  lowered: str,
+  start: int,
+  tag: str,
+) -> int:
+  '''Find end index (after '>') of matching close tag, or -1.'''
+  idx = start
+  while True:
+    lt = text.find('<', idx)
+    if lt == -1:
+      return -1
+    parsed = _parse_angle_tag(text, lowered, lt)
+    if parsed is not None and parsed[0] == 'close' and parsed[1] == tag:
+      return parsed[2]
+    idx = lt + 1
+
+
+def _find_bracket_close(
+  text: str,
+  lowered: str,
+  start: int,
+) -> int:
+  '''Find end index (after ']') of [/think], or -1.'''
+  idx = start
+  while True:
+    br = text.find('[', idx)
+    if br == -1:
+      return -1
+    parsed = _parse_bracket_tag(text, lowered, br)
+    if parsed is not None and parsed[0] == 'close':
+      return parsed[2]
+    idx = br + 1
+
+
 def sanitize_think_tokens(content: str) -> str:
   '''Remove thinking/reasoning tokens from content intended for display.
+
+  Linear scan (str.find based) -- no backtracking regex, caps input so
+  pathological input (e.g. thousands of unclosed ``<think>``) is O(n).
 
   Args:
     content: Raw model output.
@@ -69,13 +149,45 @@ def sanitize_think_tokens(content: str) -> str:
   if not content:
     return ''
 
-  sanitized = content
+  text = content[:_MAX_INPUT_CHARS]
+  lowered = text.lower()
+  out: list[str] = []
+  index = 0
+  length = len(text)
+  bracket_no_close = False
 
-  sanitized = _THINK_BLOCK_RE.sub('', sanitized)
-  sanitized = _BRACKET_THINK_BLOCK_RE.sub('', sanitized)
-  sanitized = _UNCLOSED_THINK_RE.sub('', sanitized)
-  sanitized = _ORPHAN_THINK_MARKER_RE.sub('', sanitized)
+  while index < length:
+    ch = text[index]
+    if ch == '<':
+      parsed = _parse_angle_tag(text, lowered, index)
+      if parsed is not None:
+        kind, tag, end = parsed
+        if kind == 'close':
+          index = end
+          continue
+        close_end = _find_angle_close(text, lowered, end, tag)
+        if close_end == -1:
+          break  # unclosed: strip to end (previous contract)
+        index = close_end
+        continue
+      out.append(ch)
+      index += 1
+      continue
+    if ch == '[':
+      parsed = _parse_bracket_tag(text, lowered, index)
+      if parsed is not None and parsed[0] == 'open' and not bracket_no_close:
+        close_end = _find_bracket_close(text, lowered, parsed[2])
+        if close_end != -1:
+          index = close_end
+          continue
+        bracket_no_close = True  # no close after here => none for later opens
+      out.append(ch)
+      index += 1
+      continue
+    out.append(ch)
+    index += 1
 
+  sanitized = ''.join(out)
   sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
   sanitized = sanitized.strip()
 
@@ -123,10 +235,10 @@ def _could_be_think_end(suffix: str) -> bool:
     return False
 
   body = suffix[1:].lstrip()
-  if not body.startswith('/'):
+  if body and not body.startswith('/'):
     return False
-
-  body = body[1:].lstrip()
+  if body:
+    body = body[1:].lstrip()
   if not body:
     return True
 

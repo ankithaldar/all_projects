@@ -1,17 +1,42 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Application settings loaded from config/app.yaml plus .env overrides.'''
 
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import yaml
 from job_hunter.core.errors import ConfigError
+from job_hunter.services.scorer import DEFAULT_SALARY_FLOOR_LPA
+
+
+def is_loopback_host(host: str | None = None) -> bool:
+  '''Return True when host is a loopback address/name.
+
+  Args:
+    host: Hostname or IP to test; empty is non-loopback.
+
+  Returns:
+    True for 127.0.0.1, localhost, ::1 and any loopback IP.
+  '''
+  value = (host or '').strip().lower()
+  if not value:
+    return False
+  if value in {'127.0.0.1', 'localhost', '::1', '[::1]'}:
+    return True
+  candidate = value
+  if value.startswith('[') and value.endswith(']'):
+    candidate = value[1:-1]
+  try:
+    return ipaddress.ip_address(candidate).is_loopback
+  except ValueError:
+    return False
 
 
 class AppSettings:
@@ -42,10 +67,14 @@ class AppSettings:
     self.raw: Dict[str, Any] = loaded
     self.app_root = self.config_path.parent.parent
     data_dir = Path(
-      os.getenv('APP_DATA_DIR', str(self.raw.get('app', {}).get('data_dir', '')))
+      os.getenv(
+        'APP_DATA_DIR', str(self.raw.get('app', {}).get('data_dir', ''))
+      )
       or (self.app_root / 'data'),
     )
-    self.data_dir = data_dir if data_dir.is_absolute() else (self.app_root / data_dir)
+    self.data_dir = (
+      data_dir if data_dir.is_absolute() else (self.app_root / data_dir)
+    )
 
   @property
   def seeds_dir(self) -> Path:
@@ -91,8 +120,30 @@ class AppSettings:
 
   @property
   def host(self) -> str:
-    '''Return API bind host.'''
-    return str(os.getenv('APP_HOST', self.raw.get('app', {}).get('host', '127.0.0.1')))
+    '''Return API bind host.
+
+    Returns:
+      Configured bind host.
+    '''
+    default = self.raw.get('app', {}).get('host', '127.0.0.1')
+    return str(os.getenv('APP_HOST', default))
+
+  def is_loopback_host(self) -> bool:
+    '''Return True when the configured bind host is loopback.
+
+    Returns:
+      True for loopback hosts.
+    '''
+    return is_loopback_host(self.host)
+
+  @property
+  def api_token(self) -> str:
+    '''Return API bearer token from JH_API_TOKEN.
+
+    Returns:
+      Token, or empty string for local-only mode.
+    '''
+    return os.getenv('JH_API_TOKEN', '') or ''
 
   @property
   def port(self) -> int:
@@ -101,15 +152,26 @@ class AppSettings:
 
   @property
   def log_level(self) -> str:
-    '''Return log level name.'''
-    return str(os.getenv('APP_LOG_LEVEL', self.raw.get('app', {}).get('log_level', 'INFO'))).upper()
+    '''Return validated log level name.
+
+    Returns:
+      Uppercase log level name.
+
+    Raises:
+      ValueError: If the level is not a known logging level.
+    '''
+    default = self.raw.get('app', {}).get('log_level', 'INFO')
+    level = str(os.getenv('APP_LOG_LEVEL', default)).upper()
+    if level not in {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}:
+      raise ValueError(f'invalid log level: {level}')
+    return level
 
   @property
   def salary_floor_lpa(self) -> float:
     '''Return the hard salary floor in LPA.'''
     value = os.getenv(
       'SALARY_HARD_FLOOR_LPA',
-      str(self.raw.get('salary_hard_floor_lpa', 45)),
+      str(self.raw.get('salary_hard_floor_lpa', DEFAULT_SALARY_FLOOR_LPA)),
     )
     return float(value)
 
@@ -146,16 +208,3 @@ class AppSettings:
   def scout(self) -> Dict[str, Any]:
     '''Return company-discovery (scout) configuration mapping.'''
     return dict(self.raw.get('scout', {}))
-
-  def section(self, key: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    '''Return a top-level section as a dict.
-
-    Args:
-      key: Section name.
-      default: Value when absent.
-
-    Returns:
-      The section mapping.
-    '''
-    value = self.raw.get(key, default or {})
-    return dict(value) if isinstance(value, dict) else {}

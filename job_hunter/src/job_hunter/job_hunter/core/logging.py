@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Logging setup with run/node context propagation.'''
 
@@ -42,30 +42,43 @@ class JsonFormatter(logging.Formatter):
     return json.dumps(payload, ensure_ascii=False)
 
 
-def setup_logging(level: str = 'INFO', log_dir: Optional[Path] = None) -> None:
-    '''Configure root logging with console + rotating JSON file handlers.
+_VALID_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
 
-    Args:
-      level: Log level name.
-      log_dir: Optional directory for app.log; console only when None.
-    '''
-    root = logging.getLogger()
-    if getattr(root, '_job_hunter_configured', False):
-      return
-    root.setLevel(level.upper())
-    formatter = JsonFormatter()
-    console = logging.StreamHandler(sys.stderr)
-    console.setFormatter(formatter)
-    root.addHandler(console)
-    if log_dir is not None:
-      from logging.handlers import RotatingFileHandler
-      log_dir.mkdir(parents=True, exist_ok=True)
-      file_handler = RotatingFileHandler(
-        log_dir / 'app.log',
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding='utf-8',
-      )
-      file_handler.setFormatter(formatter)
-      root.addHandler(file_handler)
-    setattr(root, '_job_hunter_configured', True)
+
+def setup_logging(
+  level: str = 'INFO',
+  log_dir: Optional[Path] = None,
+) -> None:
+  '''Configure root logging with console + rotating JSON file handlers.
+
+  Args:
+    level: Log level name (DEBUG/INFO/WARNING/ERROR/CRITICAL, any case).
+    log_dir: Optional directory for app.log; console only when None.
+
+  Raises:
+    ValueError: If level is not a known logging level name.
+  '''
+  normalized = str(level).upper()
+  if normalized not in _VALID_LEVELS:
+    expected = ', '.join(_VALID_LEVELS)
+    raise ValueError(f'invalid log level: {level!r} (expected: {expected})')
+  root = logging.getLogger()
+  if getattr(root, '_job_hunter_configured', False):
+    return
+  root.setLevel(normalized)
+  formatter = JsonFormatter()
+  console = logging.StreamHandler(sys.stderr)
+  console.setFormatter(formatter)
+  root.addHandler(console)
+  if log_dir is not None:
+    from logging.handlers import RotatingFileHandler
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(
+      log_dir / 'app.log',
+      maxBytes=10 * 1024 * 1024,
+      backupCount=5,
+      encoding='utf-8',
+    )
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+  setattr(root, '_job_hunter_configured', True)

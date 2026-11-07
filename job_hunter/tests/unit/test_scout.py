@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for company scouting, domain verification, and bulk fetch helpers.'''
 
@@ -44,7 +44,9 @@ def test_registrable_domain_collapses_subdomains() -> None:
   Args:
     None: Unused.
   '''
-  assert registrable_domain('https://careers.burohappold.com/x') == 'burohappold.com'
+  assert registrable_domain(
+    'https://careers.burohappold.com/x'
+  ) == 'burohappold.com'
   assert registrable_domain('https://www.exlservice.com/') == 'exlservice.com'
   assert registrable_domain('https://acme.co.in/') == 'acme.co.in'
 
@@ -88,7 +90,9 @@ def test_linkedin_job_url_detection() -> None:
   Args:
     None: Unused.
   '''
-  assert is_linkedin_job_url('https://in.linkedin.com/jobs/view/ds-at-acme-1234567890')
+  assert is_linkedin_job_url(
+    'https://in.linkedin.com/jobs/view/ds-at-acme-1234567890'
+  )
   assert not is_linkedin_job_url('https://in.linkedin.com/company/acme')
   assert not is_linkedin_job_url('https://example.com/jobs/view/1')
 
@@ -129,7 +133,9 @@ def test_headline_like_names_are_rejected() -> None:
     'GALA GROUP - Your solution provider',
   ):
     assert not _plausible_company_name(headline)
-  for real in ('HackerRank', 'Zomato', 'Buro Happold Engineer India Private Limited'):
+  for real in (
+    'HackerRank', 'Zomato', 'Buro Happold Engineer India Private Limited'
+  ):
     assert _plausible_company_name(real)
 
 
@@ -167,9 +173,15 @@ def test_score_probe_requires_a_distinctive_token() -> None:
     None: Unused.
   '''
   verifier = WebsiteVerifier.__new__(WebsiteVerifier)
-  generic = SiteProbe(domain='engineer.ai', url='https://engineer.ai/', ok=True, haystack='we are an engineer company in india')
+  generic = SiteProbe(
+    domain='engineer.ai', url='https://engineer.ai/', ok=True,
+    haystack='we are an engineer company in india'
+  )
   assert verifier.score_probe(generic, ['engineer'], 1.0) == 0.0
-  distinctive = SiteProbe(domain='kupi.ai', url='https://kupi.ai/', ok=True, haystack='kupi is an ai platform')
+  distinctive = SiteProbe(
+    domain='kupi.ai', url='https://kupi.ai/', ok=True,
+    haystack='kupi is an ai platform'
+  )
   assert verifier.score_probe(distinctive, ['kupi'], 0.9) > 0.6
 
 
@@ -182,10 +194,16 @@ def test_write_seed_file_appends_without_duplicates(tmp_path) -> None:
   from job_hunter.services.linkedin_scout import ScoutedCompany
 
   path = tmp_path / 'companies_scouted.yaml'
-  first = ScoutedCompany(name='Acme', domain='acme.com', vertical='saas', sightings=4)
+  first = ScoutedCompany(
+    name='Acme', domain='acme.com', vertical='saas', sightings=4
+  )
   assert write_seed_file(path, [first], header='scouted') == 1
-  assert write_seed_file(path, [ScoutedCompany(name='acme', domain='acme.com')]) == 0
-  assert write_seed_file(path, [ScoutedCompany(name='Zenith', domain='zenith.io')]) == 1
+  assert write_seed_file(
+    path, [ScoutedCompany(name='acme', domain='acme.com')]
+  ) == 0
+  assert write_seed_file(
+    path, [ScoutedCompany(name='Zenith', domain='zenith.io')]
+  ) == 1
   text = path.read_text(encoding='utf-8')
   assert 'acme.com' in text and 'zenith.io' in text
   assert text.count('name: Acme') == 1
@@ -198,7 +216,9 @@ def test_resolve_sources_defaults_and_dedupes() -> None:
     None: Unused.
   '''
   assert 'arbeitnow' in resolve_sources([])
-  assert resolve_sources(['jobicy', 'jobicy', 'arbeitnow']) == ['jobicy', 'arbeitnow']
+  assert resolve_sources(
+    ['jobicy', 'jobicy', 'arbeitnow']
+  ) == ['jobicy', 'arbeitnow']
 
 
 def test_domain_candidate_orders_by_score() -> None:
@@ -218,7 +238,10 @@ def test_scout_rejects_result_without_company() -> None:
   Args:
     None: Unused.
   '''
-  assert candidate_from_result('Data Scientist | LinkedIn', 'https://www.linkedin.com/jobs/view/4466849157') is None
+  assert candidate_from_result(
+    'Data Scientist | LinkedIn',
+    'https://www.linkedin.com/jobs/view/4466849157'
+  ) is None
 
 
 if __name__ == '__main__':

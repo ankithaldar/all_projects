@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Aggressive multi-source job ingestion.
 
@@ -9,7 +9,6 @@ aggregator APIs, which is where the highest posting volume lives, then runs
 every record through the same normalization and dedupe path used elsewhere
 so the normal scoring pipeline is unaffected.
 '''
-
 
 from __future__ import annotations
 
@@ -23,22 +22,18 @@ from job_hunter.core.config import AppSettings
 from job_hunter.core.models import CompanyTarget, RawJobRecord
 from job_hunter.db.repositories.companies import CompaniesRepository
 from job_hunter.db.repositories.jobs import JobsRepository
-from job_hunter.services.normalizer import (
-  canonicalize_url,
-  content_hash,
-  detect_city,
-  html_to_text,
-  infer_work_mode,
-  normalize_employment,
-  parse_posted_at,
-  parse_salary_lpa,
-)
+from job_hunter.services.persist import persist_record
 
 logger = logging.getLogger(__name__)
 
 '''Aggregators pulled by a bulk run when no explicit list is given.'''
 DEFAULT_SOURCES: tuple = (
-  'arbeitnow', 'jobicy', 'himalayas', 'remotive', 'remoteok', 'weworkremotely',
+  'arbeitnow',
+  'jobicy',
+  'himalayas',
+  'remotive',
+  'remoteok',
+  'weworkremotely',
   'cutshort',
 )
 
@@ -125,7 +120,7 @@ async def fetch_source(
     return []
 
 
-def _persist_records(
+async def _persist_records(
   settings: AppSettings,
   records: Sequence[RawJobRecord],
   report: FetchReport,
@@ -142,61 +137,35 @@ def _persist_records(
   for record in records:
     if not record.title or not record.url:
       continue
-    text_desc = record.description_text or html_to_text(record.description_html)
-    digest = content_hash(record, text_desc)
-    if jobs_repo.exists_hash(digest):
-      report.duplicates += 1
-      continue
-    company_id = None
-    if record.company_name:
-      company_id = companies_repo.resolve_alias(record.company_name)
-      if company_id is None:
-        try:
-          company_id = companies_repo.upsert(
-            name=record.company_name,
-            status='needs_review',
-            discovered_via=f'fetch:{record.source_key}',
-            priority=2,
-          )
-        except Exception as exc:  # noqa: BLE001 - a clash must not stop the run
-          logger.debug('company insert failed for %s: %s', record.company_name, exc)
-          company_id = None
-        if company_id:
-          companies_repo.add_alias(record.company_name, company_id)
-          report.new_companies += 1
-      if company_id:
-        report.companies_linked += 1
-    sal_min, sal_max = parse_salary_lpa(record.salary_raw, text_desc)
+    company_stats: Dict[str, int] = {}
     try:
-      jobs_repo.insert({
-        'source_key': record.source_key,
-        'external_id': record.external_id,
-        'url': record.url,
-        'canonical_url': canonicalize_url(record.url),
-        'company_id': company_id,
-        'company_raw_name': record.company_name,
-        'title': record.title,
-        'location_text': record.location_text,
-        'city': detect_city(record.location_text, text_desc),
-        'work_mode': infer_work_mode(
-          record.work_mode_hint, record.location_text, f'{record.title} {text_desc[:300]}',
-        ),
-        'employment_type': normalize_employment(record.employment_type_raw),
-        'salary_min_lpa': sal_min,
-        'salary_max_lpa': sal_max,
-        'salary_raw': record.salary_raw,
-        'posted_at': parse_posted_at(record.posted_at),
-        'description_text': text_desc[:20000],
-        'raw_json': record.model_dump_json(),
-        'content_hash': digest,
-        'quality_score': 0.5,
-      })
-      report.inserted += 1
+      outcome = await persist_record(
+        jobs_repo=jobs_repo,
+        record=record,
+        company_repo=companies_repo,
+        quality_score=0.5,
+        create_company=True,
+        company_status='needs_review',
+        company_priority=2,
+        discovered_via=f'fetch:{record.source_key}',
+        company_stats=company_stats,
+      )
     except Exception as exc:  # noqa: BLE001 - skip unpersistable rows
-      # Surfaced at warning, not debug: a whole source failing to insert looks
-      # identical to a source with no new postings in the returned counters,
-      # which once hid an unregistered source_key foreign-key rejection.
-      logger.warning('insert failed for %s: %s: %s', record.url, type(exc).__name__, exc)
+      # Surfaced at warning, not debug: a whole source failing to insert
+      # looks identical to a source with no new postings in counters.
+      logger.warning(
+        'insert failed for %s: %s: %s',
+        record.url,
+        type(exc).__name__,
+        exc,
+      )
+      continue
+    report.new_companies += company_stats.get('new_companies', 0)
+    report.companies_linked += company_stats.get('companies_linked', 0)
+    if outcome == 'duplicate':
+      report.duplicates += 1
+    else:
+      report.inserted += 1
 
 
 async def bulk_fetch(
@@ -241,7 +210,7 @@ async def bulk_fetch(
         seen.add(key)
         collected.append(record)
     if persist:
-      _persist_records(settings, collected, report)
+      await _persist_records(settings, collected, report)
   finally:
     if owns_client:
       await client.close()

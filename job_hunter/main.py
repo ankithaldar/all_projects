@@ -1,10 +1,12 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Thin launcher for the Job Hunter app.
 
 Commands: seed-db | api | worker | run-discovery | discover-companies |
-verify-ats | mcp <sources|resume|store>.
+verify-ats | scout-companies | fetch-jobs | mcp <sources|resume|store>.
+scout-companies finds new companies; fetch-jobs bulk-pulls aggregator
+postings; discover-companies ingests seed companies into the DB.
 '''
 
 
@@ -45,7 +47,8 @@ def main() -> int:
   )
   parser.add_argument(
     '--queries', type=int, default=0,
-    help='Search queries for scout-companies (0 = config scout.search_queries).',
+    help='Search queries for scout-companies '
+    '(0 = config scout.search_queries).',
   )
   parser.add_argument(
     '--max', type=int, default=0,
@@ -53,7 +56,8 @@ def main() -> int:
   )
   parser.add_argument(
     '--sources', default='',
-    help='Comma-separated source keys for fetch-jobs (default: all aggregators).',
+    help='Comma-separated source keys for fetch-jobs '
+    '(default: all aggregators).',
   )
   parser.add_argument(
     '--limit', type=int, default=2000,
@@ -64,11 +68,13 @@ def main() -> int:
   if args.command == 'api':
     import uvicorn
     from job_hunter.api.main import create_app
+    from job_hunter.core.config import AppSettings
+    settings = AppSettings(args.config)
     uvicorn.run(
       create_app(args.config),
-      host='127.0.0.1',
-      port=8088,
-      log_level='warning',
+      host=settings.host,
+      port=settings.port,
+      log_level=settings.log_level.lower(),
     )
     return 0
 
@@ -190,17 +196,26 @@ def main() -> int:
         report.companies = report.companies[: args.max]
       print(report.summary())
       for company in report.companies:
-        ats = f'{company.ats_provider}:{company.board_ref}' if company.ats_provider else '-'
+        ats = (
+          f'{company.ats_provider}:{company.board_ref}'
+          if company.ats_provider
+          else '-'
+        )
         print(
           f'  {company.name[:38]:40s} {company.domain[:34]:36s} '
-          f'{(company.vertical or "?"):20s} {ats[:30]:32s} seen={company.sightings}'
+          f'{(company.vertical or "?"):20s} '
+          f'{ats[:30]:32s} seen={company.sightings}'
         )
       if report.companies:
-        seed_path = settings.seeds_dir / str(scout_cfg.get('seed_file', 'companies_scouted.yaml'))
+        seed_name = str(
+          scout_cfg.get('seed_file', 'companies_scouted.yaml')
+        )
+        seed_path = settings.seeds_dir / seed_name
         added = write_seed_file(
           seed_path,
           report.companies,
-          header='Companies discovered from LinkedIn job pages via the search index.',
+          header='Companies discovered from LinkedIn job pages '
+          'via the search index.',
         )
         print(f'seed file updated: {seed_path} (+{added})')
       return 0

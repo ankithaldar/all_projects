@@ -1,20 +1,46 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''APScheduler wiring for discovery, polls, sweeps, and refreshes.'''
-
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Tuple
 
 from apscheduler.schedulers.blocking import BlockingScheduler
+from job_hunter.core.errors import ConflictError
 from job_hunter.core.logging import setup_logging
 
 logger = logging.getLogger(__name__)
+
+# Bootstrap once per process per config path (plus APP_DATA_DIR, which
+# AppSettings reads from the environment). Jobs closures capture the
+# cached settings instead of re-bootstrapping on every tick.
+_SETTINGS_CACHE: dict = {}
+
+
+def _cached_bootstrap(config_path: str | Path):
+  '''Return cached bootstrapped settings, bootstrapping once per path.
+
+  Args:
+    config_path: app.yaml path.
+
+  Returns:
+    Bootstrapped settings (same object on repeated calls for one path).
+  '''
+  key = (str(Path(config_path)), os.getenv('APP_DATA_DIR', ''))
+  cached = _SETTINGS_CACHE.get(key)
+  if cached is not None:
+    return cached
+  from job_hunter.core.bootstrap import bootstrap
+
+  settings = bootstrap(config_path)
+  _SETTINGS_CACHE[key] = settings
+  return settings
 
 
 def cron_to_apscheduler(expression: str) -> Tuple[int, int, int, int, str]:
@@ -52,7 +78,15 @@ def _shift_dow_token(token: str) -> str:
   Raises:
     ValueError: For malformed ranges.
   '''
-  names = {'sun': 'sun', 'mon': 'mon', 'tue': 'tue', 'wed': 'wed', 'thu': 'thu', 'fri': 'fri', 'sat': 'sat'}
+  names = {
+    'sun': 'sun',
+    'mon': 'mon',
+    'tue': 'tue',
+    'wed': 'wed',
+    'thu': 'thu',
+    'fri': 'fri',
+    'sat': 'sat',
+  }
   lowered = token.lower()
   if lowered in names:
     return lowered
@@ -70,8 +104,7 @@ def start_scheduler(config_path: str | Path) -> None:
   Args:
     config_path: app.yaml path.
   '''
-  from job_hunter.core.bootstrap import bootstrap
-  settings = bootstrap(config_path)
+  settings = _cached_bootstrap(config_path)
   setup_logging(settings.log_level, settings.data_dir / 'logs')
   schedule = settings.schedule
   scheduler = BlockingScheduler()
@@ -90,24 +123,28 @@ def start_scheduler(config_path: str | Path) -> None:
       run_id = enqueue_run(config_path, triggered_by='scheduler:discovery')
       result = execute_pending_run(config_path, run_id)
       logger.info('discovery run finished: %s', result['status'])
-    except RuntimeError as exc:
+    except (RuntimeError, ConflictError) as exc:
       logger.info('skipping discovery: %s', exc)
 
   def run_quick_poll() -> None:
     '''Enqueue then execute a pinned-company quick poll.'''
     try:
-      run_id = enqueue_run(config_path, kind='refresh', triggered_by='scheduler:quick_poll')
+      run_id = enqueue_run(
+        config_path, kind='refresh', triggered_by='scheduler:quick_poll'
+      )
       result = execute_pending_run(config_path, run_id)
       logger.info('quick poll finished: %s', result['status'])
-    except RuntimeError as exc:
+    except (RuntimeError, ConflictError) as exc:
       logger.info('skipping quick poll: %s', exc)
 
   def run_company_refresh() -> None:
     '''Verify careers pages for companies due.'''
-    result = asyncio.run(verify_pending(
-      settings,
-      chunk=int(settings.discovery.get('company_refresh_chunk', 50)),
-    ))
+    result = asyncio.run(
+      verify_pending(
+        settings,
+        chunk=int(settings.discovery.get('company_refresh_chunk', 50)),
+      )
+    )
     logger.info('company refresh: %s', result)
 
   def run_stale_sweep() -> None:
@@ -118,35 +155,105 @@ def start_scheduler(config_path: str | Path) -> None:
   def drain_pending() -> None:
     '''Claim and execute any UI/CLI-enqueued pending run.'''
     from job_hunter.workers.jobs import execute_pending_run
+
     result = execute_pending_run(config_path, run_id=None)
     if result.get('run_id') is not None:
-      logger.info('drained pending run: %s -> %s', result['run_id'], result['status'])
+      logger.info(
+        'drained pending run: %s -> %s', result['run_id'], result['status']
+      )
 
   def run_inbox_scan() -> None:
     '''Scan the manual inbox when that feature is present.'''
     try:
       from job_hunter.adapters.manual_inbox import scan_inbox
+
       count = asyncio.run(scan_inbox(settings))
       if count:
         logger.info('inbox scan imported %s postings', count)
     except ImportError:
-      pass
+      logger.debug('manual inbox scan unavailable', exc_info=True)
 
   recover_orphans(config_path)
-  minute, hour, day, month, dow = cron_to_apscheduler(schedule.get('discovery_cron', '15 6 * * *'))
-  scheduler.add_job(run_discovery_now, 'cron', minute=minute, hour=hour, day=day, month=month, day_of_week=dow, id='discovery')
-  scheduler.add_job(run_quick_poll, 'interval', minutes=int(schedule.get('quick_poll_minutes', 120)), id='quick_poll')
-  minute, hour, day, month, dow = cron_to_apscheduler(schedule.get('company_refresh_cron', '30 3 * * 0'))
-  scheduler.add_job(run_company_refresh, 'cron', minute=minute, hour=hour, day=day, month=month, day_of_week=dow, id='company_refresh')
-  minute, hour, day, month, dow = cron_to_apscheduler(schedule.get('stale_sweep_cron', '0 4 * * *'))
-  scheduler.add_job(run_stale_sweep, 'cron', minute=minute, hour=hour, day=day, month=month, day_of_week=dow, id='stale_sweep')
-  scheduler.add_job(run_inbox_scan, 'interval', minutes=int(schedule.get('inbox_scan_minutes', 30)), id='inbox_scan')
-  scheduler.add_job(drain_pending, 'interval', seconds=30, id='pending_executor')
+  minute, hour, day, month, dow = cron_to_apscheduler(
+    schedule.get('discovery_cron', '15 6 * * *')
+  )
+  scheduler.add_job(
+    run_discovery_now,
+    'cron',
+    minute=minute,
+    hour=hour,
+    day=day,
+    month=month,
+    day_of_week=dow,
+    id='discovery',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
+  scheduler.add_job(
+    run_quick_poll,
+    'interval',
+    minutes=int(schedule.get('quick_poll_minutes', 120)),
+    id='quick_poll',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
+  minute, hour, day, month, dow = cron_to_apscheduler(
+    schedule.get('company_refresh_cron', '30 3 * * 0')
+  )
+  scheduler.add_job(
+    run_company_refresh,
+    'cron',
+    minute=minute,
+    hour=hour,
+    day=day,
+    month=month,
+    day_of_week=dow,
+    id='company_refresh',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
+  minute, hour, day, month, dow = cron_to_apscheduler(
+    schedule.get('stale_sweep_cron', '0 4 * * *')
+  )
+  scheduler.add_job(
+    run_stale_sweep,
+    'cron',
+    minute=minute,
+    hour=hour,
+    day=day,
+    month=month,
+    day_of_week=dow,
+    id='stale_sweep',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
+  scheduler.add_job(
+    run_inbox_scan,
+    'interval',
+    minutes=int(schedule.get('inbox_scan_minutes', 30)),
+    id='inbox_scan',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
+  scheduler.add_job(
+    drain_pending,
+    'interval',
+    seconds=30,
+    id='pending_executor',
+    max_instances=1,
+    coalesce=True,
+    misfire_grace_time=3600,
+  )
 
   logger.info('worker scheduler started (config=%s)', config_path)
   try:
     scheduler.start()
-  except (KeyboardInterrupt, SystemExit):
+  except KeyboardInterrupt, SystemExit:
     logger.info('worker stopped')
 
 

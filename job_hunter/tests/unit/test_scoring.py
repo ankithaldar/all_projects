@@ -1,10 +1,12 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for gates, scoring math, and feedback reweighting.'''
 
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from job_hunter.core.models import CandidateProfile
 from job_hunter.services.matcher import (
@@ -53,9 +55,12 @@ def test_gates_salary_floor() -> None:
 def test_gates_location_and_mode() -> None:
   '''Location, work-mode, and employment gates behave per policy.'''
   base = {'salary_max_lpa': 60.0}
-  assert any(f.startswith('location') for f in gate_failures(_profile(), {**base, 'city': 'Pune'}, None))
+  failures = gate_failures(_profile(), {**base, 'city': 'Pune'}, None)
+  assert any(f.startswith('location') for f in failures)
   remote_profile = _profile(remote_pref='remote')
-  failures = gate_failures(remote_profile, {**base, 'work_mode': 'onsite', 'city': ''}, None)
+  failures = gate_failures(
+    remote_profile, {**base, 'work_mode': 'onsite', 'city': ''}, None
+  )
   assert any(f.startswith('work_mode') for f in failures)
   contract_failures = gate_failures(
     _profile(), {**base, 'city': '', 'employment_type': 'internship'}, None,
@@ -70,7 +75,13 @@ def test_component_scores_bounds() -> None:
   assert 0.0 <= seniority_fit(9.0, 8.0, 12.0) <= 1.0
   must, nice = skill_coverage([1, 2], [{'skill_id': 1, 'kind': 'must_have'}])
   assert must == 1.0 and nice == 0.5
-  must2, _ = skill_coverage([1], [{'skill_id': 1, 'kind': 'must_have'}, {'skill_id': 2, 'kind': 'must_have'}])
+  must2, _ = skill_coverage(
+    [1],
+    [
+      {'skill_id': 1, 'kind': 'must_have'},
+      {'skill_id': 2, 'kind': 'must_have'},
+    ],
+  )
   assert abs(must2 - 0.5) < 1e-9
   assert title_fit(['Data Scientist'], 'Staff Data Scientist - ML') > 0.3
   assert recency_score(None) == 0.5

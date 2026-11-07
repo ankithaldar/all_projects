@@ -1,19 +1,33 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Run lifecycle orchestration bridging the runs table and LangGraph.'''
 
-
 from __future__ import annotations
 
-from contextvars import ContextVar
+import sqlite3
 from typing import Any, Dict, Optional
 
 from job_hunter.core.config import AppSettings
+from job_hunter.core.errors import ConflictError
 from job_hunter.core.logging import node_var, run_id_var
 from job_hunter.db.repositories.runs import RunsRepository
 
-current_run_id: ContextVar[Optional[int]] = ContextVar('current_run_id', default=None)
+
+def _error_field(error: Any, field: str, default: Any = None) -> Any:
+  '''Read a field from a NodeError instance or a dict-shaped error.
+
+  Args:
+    error: NodeError model or plain dict.
+    field: Field name.
+    default: Value when absent.
+
+  Returns:
+    Field value or default.
+  '''
+  if isinstance(error, dict):
+    return error.get(field, default)
+  return getattr(error, field, default)
 
 
 class RunManager:
@@ -37,7 +51,9 @@ class RunManager:
     '''
     return self._runs
 
-  def enqueue(self, kind: str = 'discovery', triggered_by: str = 'scheduler') -> int:
+  def enqueue(
+    self, kind: str = 'discovery', triggered_by: str = 'scheduler'
+  ) -> int:
     '''Insert a pending run unless another is active.
 
     Args:
@@ -48,14 +64,23 @@ class RunManager:
       New run id.
 
     Raises:
-      RuntimeError: When a run is already active.
+      ConflictError: When a run is already active. The active-run
+        check and insert are atomic in
+        :meth:`RunsRepository.create_if_not_active` (single
+        ``BEGIN IMMEDIATE`` session), so a lost race returns None
+        here rather than creating a duplicate run.
     '''
-    if self._runs.has_active():
-      raise RuntimeError('another run is pending or running')
-    run_id = self._runs.create(kind, triggered_by)
-    token = current_run_id.set(run_id)
-    _ = token
-    return run_id
+    try:
+      run_id = self._runs.create_if_not_active(kind, triggered_by)
+    except sqlite3.IntegrityError as exc:
+      raise ConflictError('another run is pending or running') from exc
+    if run_id is None:
+      raise ConflictError('another run is pending or running')
+    token = run_id_var.set(str(run_id))
+    try:
+      return run_id
+    finally:
+      run_id_var.reset(token)
 
   async def execute(self, run_id: Optional[int] = None) -> Dict[str, Any]:
     '''Claim (specific or oldest pending) and execute to completion.
@@ -67,19 +92,26 @@ class RunManager:
       Final stats mapping.
     '''
     from job_hunter.graph.discovery_graph import run_discovery
+
     claimed = self._runs.claim_pending(run_id)
     if claimed is None:
       return {'run_id': run_id, 'status': 'skipped', 'stats': {}}
-    token = current_run_id.set(claimed)
     run_token = run_id_var.set(str(claimed))
     try:
       final_state = await run_discovery(self._settings, claimed)
       stats = dict(final_state.get('stats') or {})
       errors = list(final_state.get('errors') or [])
       for error in errors:
-        self.log_event(claimed, 'error', error.get('node', ''), str(error.get('message')))
-      status = 'failed' if any(not e.get('recoverable', True) for e in errors) else (
-        'success' if not errors else 'partial'
+        self.log_event(
+          claimed,
+          'error',
+          _error_field(error, 'node', '') or '',
+          str(_error_field(error, 'message')),
+        )
+      status = (
+        'failed'
+        if any(not _error_field(e, 'recoverable', True) for e in errors)
+        else ('success' if not errors else 'partial')
       )
       self._runs.finish(claimed, status, stats)
       return {'run_id': claimed, 'status': status, 'stats': stats}
@@ -88,7 +120,6 @@ class RunManager:
       self.log_event(claimed, 'error', 'run_manager', f'run crashed: {exc}')
       return {'run_id': claimed, 'status': 'failed', 'stats': {}}
     finally:
-      current_run_id.reset(token)
       run_id_var.reset(run_token)
 
   def log_event(
@@ -111,8 +142,11 @@ class RunManager:
     Returns:
       Event id.
     '''
-    node_var.set(node or None)
-    return self._runs.log_event(run_id, level, node, message, data)
+    node_token = node_var.set(node or None)
+    try:
+      return self._runs.log_event(run_id, level, node, message, data)
+    finally:
+      node_var.reset(node_token)
 
   def recover_orphans(self, ttl_minutes: int = 120) -> list:
     '''Fail stale non-terminal rows after crashes.

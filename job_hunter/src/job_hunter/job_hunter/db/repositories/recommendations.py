@@ -1,16 +1,15 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Recommendation persistence and review actions.'''
-
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from job_hunter.core.db import connect, session
+from job_hunter.core.db import fetch_all, fetch_one, session
 
 
 class RecommendationsRepository:
@@ -35,7 +34,9 @@ class RecommendationsRepository:
     Args:
       run_id: Producing run.
       candidate_id: Candidate id.
-      scored_rows: ScoredJob-shaped mappings with job_id, total_score, etc.
+      scored_rows: ScoredJob-shaped mappings with job_id, total_score,
+        etc. Any ``rank`` in a row is ignored; the stored rank is
+        always the 1-based position in ``scored_rows``.
 
     Returns:
       Number of rows written.
@@ -45,9 +46,10 @@ class RecommendationsRepository:
       for position, row in enumerate(scored_rows, start=1):
         cur = conn.execute(
           'INSERT INTO recommendations (job_id, candidate_id, run_id, '
-          'total_score, rank, gate_pass, gate_failures, score_breakdown_json, '
-          'rationale, status, rank, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '
-          "'new', ?, NULL) "
+          'total_score, rank, gate_pass, gate_failures, '
+          'score_breakdown_json, rationale, status, reviewed_at) '
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '
+          "'new', NULL) "
           'ON CONFLICT(job_id, candidate_id) DO UPDATE SET '
           'total_score = excluded.total_score, rank = excluded.rank, '
           'gate_pass = excluded.gate_pass, '
@@ -55,12 +57,15 @@ class RecommendationsRepository:
           'score_breakdown_json = excluded.score_breakdown_json, '
           'rationale = excluded.rationale, run_id = excluded.run_id',
           (
-            row['job_id'], candidate_id, run_id, row['total_score'], position,
+            row['job_id'],
+            candidate_id,
+            run_id,
+            row['total_score'],
+            position,
             int(row['gate_pass']),
             json.dumps(row.get('gate_failures', []), ensure_ascii=False),
             json.dumps(row.get('breakdown', {}), ensure_ascii=False),
             row.get('rationale', ''),
-            row.get('rank'),
           ),
         )
         count += max(cur.rowcount, 0)
@@ -90,6 +95,7 @@ class RecommendationsRepository:
     Returns:
       Enriched row mappings.
     '''
+    per_page = max(1, min(per_page, 100))
     sql = (
       'SELECT r.id AS recommendation_id, r.total_score, r.rank, r.status, '
       'r.gate_failures, r.score_breakdown_json, r.rationale, r.reviewed_at, '
@@ -113,14 +119,16 @@ class RecommendationsRepository:
       params.append(vertical)
     sql += ' ORDER BY r.total_score DESC LIMIT ? OFFSET ?'
     params.extend([per_page, (max(1, page) - 1) * per_page])
-    rows = connect(self._db_path, readonly=True).execute(sql, params).fetchall()
-    result = []
-    for row in rows:
-      item = dict(row)
-      item['score_breakdown'] = json.loads(item.pop('score_breakdown_json') or '{}')
-      item['gate_failures'] = json.loads(item.pop('gate_failures') or '[]')
-      result.append(item)
-    return result
+    with fetch_all(self._db_path, sql, params) as rows:
+      result = []
+      for row in rows:
+        item = dict(row)
+        item['score_breakdown'] = json.loads(
+          item.pop('score_breakdown_json') or '{}'
+        )
+        item['gate_failures'] = json.loads(item.pop('gate_failures') or '[]')
+        result.append(item)
+      return result
 
   def set_status(
     self,
@@ -141,7 +149,8 @@ class RecommendationsRepository:
     with session(self._db_path) as conn:
       cur = conn.execute(
         'UPDATE recommendations SET status = ?, '
-        "reviewed_at = CASE WHEN ? = 'new' THEN NULL ELSE datetime('now') END "
+        "reviewed_at = CASE WHEN ? = 'new' THEN NULL "
+        "ELSE datetime('now') END "
         'WHERE id = ? AND candidate_id = ?',
         (status, status, recommendation_id, candidate_id),
       )
@@ -156,37 +165,45 @@ class RecommendationsRepository:
     Returns:
       Mapping of counter names to values.
     '''
-    conn = connect(self._db_path, readonly=True)
-    new_today = conn.execute(
-      "SELECT COUNT(*) AS n FROM recommendations WHERE candidate_id = ? "
+    with fetch_one(
+      self._db_path,
+      'SELECT COUNT(*) AS n FROM recommendations WHERE candidate_id = ? '
       "AND status = 'new' AND date(created_at) = date('now')",
       (candidate_id,),
-    ).fetchone()['n']
-    saved = conn.execute(
-      "SELECT COUNT(*) AS n FROM recommendations WHERE candidate_id = ? "
+    ) as row:
+      new_today = row['n'] if row else 0
+    with fetch_one(
+      self._db_path,
+      'SELECT COUNT(*) AS n FROM recommendations WHERE candidate_id = ? '
       "AND status = 'saved'",
       (candidate_id,),
-    ).fetchone()['n']
-    active_jobs = conn.execute(
+    ) as row:
+      saved = row['n'] if row else 0
+    with fetch_one(
+      self._db_path,
       "SELECT COUNT(*) AS n FROM jobs WHERE status = 'active'",
-    ).fetchone()['n']
-    companies = conn.execute(
-      "SELECT COUNT(*) AS n FROM companies WHERE status IN ('active','needs_review')",
-    ).fetchone()['n']
-    top_verticals = conn.execute(
+    ) as row:
+      active_jobs = row['n'] if row else 0
+    with fetch_one(
+      self._db_path,
+      'SELECT COUNT(*) AS n FROM companies WHERE status IN '
+      "('active','needs_review')",
+    ) as row:
+      companies = row['n'] if row else 0
+    with fetch_all(
+      self._db_path,
       'SELECT c.vertical AS v, COUNT(*) AS n FROM recommendations r '
       'JOIN jobs j ON j.id = r.job_id JOIN companies c ON c.id = j.company_id '
       'WHERE r.candidate_id = ? AND r.gate_pass = 1 AND c.vertical IS NOT NULL '
       'GROUP BY c.vertical ORDER BY n DESC LIMIT 5',
       (candidate_id,),
-    ).fetchall()
-    conn.close()
-    return {
-      'new_today': new_today,
-      'saved': saved,
-      'active_jobs': active_jobs,
-      'companies': companies,
-      'top_verticals': [
-        {'vertical': row['v'], 'count': row['n']} for row in top_verticals
-      ],
-    }
+    ) as top_verticals:
+      return {
+        'new_today': new_today,
+        'saved': saved,
+        'active_jobs': active_jobs,
+        'companies': companies,
+        'top_verticals': [
+          {'vertical': row['v'], 'count': row['n']} for row in top_verticals
+        ],
+      }

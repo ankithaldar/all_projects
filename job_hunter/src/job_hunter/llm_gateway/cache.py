@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''SQLite-backed response cache.'''
 
@@ -10,10 +10,31 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from llm_gateway.schemas import GatewayRequest
+
+
+def _connect(db_path: str) -> sqlite3.Connection:
+  '''Open a WAL-mode connection with a busy timeout.
+
+  Args:
+    db_path: SQLite database path.
+
+  Returns:
+    Configured connection; caller must close it.
+  '''
+  conn = sqlite3.connect(db_path, timeout=10)
+  try:
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA busy_timeout=5000')
+    conn.execute('PRAGMA foreign_keys=ON')
+  except BaseException:
+    conn.close()
+    raise
+  return conn
 
 
 class SQLiteCache:
@@ -31,7 +52,7 @@ class SQLiteCache:
 
     Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(self._db_path) as conn:
+    with closing(_connect(self._db_path)) as conn:
       conn.execute(
         '''
         CREATE TABLE IF NOT EXISTS cache (
@@ -43,6 +64,12 @@ class SQLiteCache:
       )
       conn.commit()
 
+  def _delete(self, key: str) -> None:
+    '''Delete a cache entry.'''
+    with closing(_connect(self._db_path)) as conn:
+      conn.execute('DELETE FROM cache WHERE key = ?', (key,))
+      conn.commit()
+
   def get(self, key: str) -> Optional[Dict[str, Any]]:
     '''Fetch a cached payload.
 
@@ -50,9 +77,10 @@ class SQLiteCache:
       key: Cache key.
 
     Returns:
-      Cached payload dictionary or None.
+      Cached payload dictionary or None. Corrupt or expired entries are
+      deleted on access and return None (never raise).
     '''
-    with sqlite3.connect(self._db_path) as conn:
+    with closing(_connect(self._db_path)) as conn:
       row = conn.execute(
         'SELECT created_at, payload FROM cache WHERE key = ?',
         (key,),
@@ -64,9 +92,18 @@ class SQLiteCache:
     created_at, payload = row
 
     if self._ttl_seconds > 0 and time.time() - created_at > self._ttl_seconds:
+      self._delete(key)
       return None
 
-    return json.loads(payload)
+    try:
+      decoded = json.loads(payload)
+    except (ValueError, TypeError):
+      self._delete(key)
+      return None
+    if not isinstance(decoded, dict):
+      self._delete(key)
+      return None
+    return decoded
 
   def set(self, key: str, payload: Dict[str, Any]) -> None:
     '''Store a cached payload.
@@ -77,7 +114,7 @@ class SQLiteCache:
     '''
     serialized = json.dumps(payload, default=str)
 
-    with sqlite3.connect(self._db_path) as conn:
+    with closing(_connect(self._db_path)) as conn:
       conn.execute(
         '''
         INSERT OR REPLACE INTO cache (key, created_at, payload)
@@ -91,12 +128,19 @@ class SQLiteCache:
   def make_key(
     request: GatewayRequest,
     include_temperature: bool = False,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    session_id: str | None = None,
   ) -> str:
     '''Create a stable cache key for a gateway request.
 
     Args:
       request: Gateway request.
       include_temperature: Whether temperature should affect the cache key.
+      model: Model/alias, included when not None. Falls back to a
+        ``model``/``alias`` attribute or metadata on the request.
+      max_tokens: Included when not None (else request.max_tokens).
+      session_id: Included when not None (else request.session_id).
 
     Returns:
       SHA256 cache key.
@@ -117,6 +161,32 @@ class SQLiteCache:
 
     if include_temperature:
       payload['temperature'] = request.temperature
+
+    effective_model = model
+    if effective_model is None:
+      effective_model = getattr(request, 'model', None) or getattr(
+        request, 'alias', None
+      )
+      if effective_model is None and isinstance(
+        getattr(request, 'metadata', None), dict
+      ):
+        effective_model = request.metadata.get('model') or request.metadata.get(
+          'alias'
+        )
+    if effective_model is not None:
+      payload['model'] = effective_model
+
+    effective_max_tokens = max_tokens
+    if effective_max_tokens is None:
+      effective_max_tokens = getattr(request, 'max_tokens', None)
+    if effective_max_tokens is not None:
+      payload['max_tokens'] = effective_max_tokens
+
+    effective_session_id = session_id
+    if effective_session_id is None:
+      effective_session_id = getattr(request, 'session_id', None)
+    if effective_session_id is not None:
+      payload['session_id'] = effective_session_id
 
     canonical = json.dumps(
       payload,

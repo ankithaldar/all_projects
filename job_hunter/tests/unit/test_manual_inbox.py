@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Tests for the manual-export inbox parsers.'''
 
@@ -9,7 +9,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from job_hunter.adapters.manual_inbox import parse_csv, parse_linkedin_html, scan_inbox
+from job_hunter.adapters.manual_inbox import (
+  parse_csv,
+  parse_linkedin_html,
+  scan_inbox,
+)
 
 LINKEDIN_HTML = '''
 <div class="base-card relative job-search-card">
@@ -46,21 +50,30 @@ def test_csv_parse_with_fuzzy_headers() -> None:
   assert records[0].salary_raw == '50-70 LPA'
 
 
-def test_scan_inbox_moves_files(tmp_path: Path) -> None:
+def test_scan_inbox_moves_files(
+  tmp_path: Path, monkeypatch
+) -> None:
   '''Scan ingests inbox files and moves them to _processed.
 
   Args:
     tmp_path: Pytest temporary directory.
-  """
+    monkeypatch: Pytest fixture.
   '''
   from job_hunter.core.config import AppSettings
   from job_hunter.core.db import run_migrations
+  from job_hunter.db.repositories.jobs import JobsRepository
+  monkeypatch.setenv('APP_DATA_DIR', str(tmp_path))
   inbox = tmp_path / 'inbox'
   (inbox / 'linkedin').mkdir(parents=True)
   run_migrations(tmp_path / 'app.db')
-  (inbox / 'linkedin' / 'saved.html').write_text(LINKEDIN_HTML, encoding='utf-8')
+  (inbox / 'linkedin' / 'saved.html').write_text(
+    LINKEDIN_HTML, encoding='utf-8'
+  )
   config_path = tmp_path / 'app.yaml'
   config_path.write_text('salary_hard_floor_lpa: 45\n', encoding='utf-8')
   settings = AppSettings(config_path)
   count = asyncio.run(scan_inbox(settings))
-  assert count >= 0
+  assert count == 1
+  rows = JobsRepository(settings.db_path).list_jobs()
+  assert len(rows) == 1
+  assert rows[0]['title'] == 'Staff Data Scientist'

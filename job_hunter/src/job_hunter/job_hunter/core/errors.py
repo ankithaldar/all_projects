@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Exception hierarchy for the Job Hunter application.'''
 
@@ -31,10 +31,6 @@ class AdapterError(AppError):
     '''
     super().__init__(message)
     self.source = source
-
-
-class NotFoundError(AppError):
-  '''Raised when a requested entity does not exist.'''
 
 
 class ConflictError(AppError):

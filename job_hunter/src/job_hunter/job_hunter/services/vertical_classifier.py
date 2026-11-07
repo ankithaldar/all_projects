@@ -1,17 +1,20 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Industry vertical classification: rules first, gateway fallback.'''
 
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import yaml
 from job_hunter.llm.client import GatewayClient
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class VerticalGuess(BaseModel):
@@ -30,7 +33,8 @@ class VerticalClassifier:
     Args:
       taxonomy_path: Path to verticals.yaml.
     '''
-    payload = yaml.safe_load(Path(taxonomy_path).read_text(encoding='utf-8')) or {}
+    text = Path(taxonomy_path).read_text(encoding='utf-8')
+    payload = yaml.safe_load(text) or {}
     self._verticals: Dict[str, Dict[str, Any]] = payload.get('verticals') or {}
     self._conf: Dict[str, float] = payload.get('default_confidence', {})
     self._keywords: Dict[str, list] = {
@@ -60,7 +64,11 @@ class VerticalClassifier:
     best_name: Optional[str] = None
     best_hits = 0
     for name, keywords in self._keywords.items():
-      hits = sum(1 for keyword in keywords if f' {keyword} ' in lowered or f'{keyword}' in lowered)
+      matched = [
+        keyword for keyword in keywords
+        if f' {keyword} ' in lowered or keyword in lowered
+      ]
+      hits = len(matched)
       if hits > best_hits:
         best_hits = hits
         best_name = name
@@ -100,6 +108,11 @@ class VerticalClassifier:
       )
       if guess.vertical in allowed.split(', ') and guess.vertical != '':
         return guess.vertical, float(guess.confidence)
-    except Exception:
-      pass
+    except Exception as exc:
+      logger.debug(
+        'vertical classification failed for %r: %s',
+        text[:200],
+        exc,
+        exc_info=True,
+      )
     return 'unknown', 0.0

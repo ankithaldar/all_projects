@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Job explorer endpoints.'''
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 import json as _json
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
 from job_hunter.db.repositories.jobs import JobsRepository
@@ -24,8 +24,8 @@ def list_jobs(
   work_mode: str = '',
   vertical: str = '',
   status: str = 'active',
-  page: int = 1,
-  per_page: int = 25,
+  page: int = Query(1, ge=1, le=10000),
+  per_page: int = Query(25, ge=1, le=100),
   settings: AppSettings = Depends(get_settings),
 ) -> List[Dict[str, Any]]:
   '''Search and list postings.
@@ -46,12 +46,11 @@ def list_jobs(
   repo = JobsRepository(settings.db_path)
   rows = repo.list_jobs(
     q=q, city=city, work_mode=work_mode, vertical=vertical,
-    status=status or 'active', page=page, per_page=min(per_page, 100),
+    status=status or 'active', page=page, per_page=per_page,
   )
   for row in rows:
     row.pop('raw_json', None)
     row['description_text'] = (row.get('description_text') or '')[:600]
-  _ = _json
   return rows
 
 

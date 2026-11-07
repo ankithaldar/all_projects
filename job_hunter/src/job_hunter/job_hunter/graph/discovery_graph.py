@@ -1,15 +1,20 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Discovery graph builder.
 
 v1 pipeline: load_profile → build_plan → (Send fan-out) fetch_pair →
 normalize_dedupe. Later features append enrichment/embedding/scoring nodes.
-'''
 
+State shape notes: ``enriched`` values are stored as plain dicts
+(consistent across enrich_jds and checkpoint serialization), and
+``errors`` entries are ``NodeError`` instances matching the
+``List[NodeError]`` annotation in graph/state.py.
+'''
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from langgraph.graph import StateGraph
@@ -17,18 +22,35 @@ from langgraph.types import Send
 from job_hunter.graph import nodes as node_fns
 from job_hunter.graph.state import DiscoveryState, initial_state
 
+logger = logging.getLogger(__name__)
+
+MAX_FANOUT = 50
+
 
 def route_targets(state: Dict[str, Any]) -> list:
-  '''Fan out one Send per planned target.
+  '''Fan out one Send per planned target, capped at 50.
 
   Args:
     state: Current state after build_plan.
 
   Returns:
-    List of Send payloads.
+    List of Send payloads (at most MAX_FANOUT).
   '''
   plan = state.get('plan') or {}
-  return [Send('fetch_pair', target) for target in plan.get('targets') or []]
+  targets = (
+    plan.get('targets')
+    if isinstance(plan, dict)
+    else getattr(plan, 'targets', []) or []
+  )
+  targets = list(targets or [])
+  if len(targets) > MAX_FANOUT:
+    logger.warning(
+      'route_targets: truncating fan-out from %s to %s targets',
+      len(targets),
+      MAX_FANOUT,
+    )
+    targets = targets[:MAX_FANOUT]
+  return [Send('fetch_pair', target) for target in targets]
 
 
 def build_discovery_graph(checkpointer: Optional[Any] = None):
@@ -80,6 +102,7 @@ async def run_discovery(
     Final state snapshot.
   '''
   from job_hunter.graph.checkpointing import open_checkpointer, thread_config
+
   seed = initial_state(run_id, triggered_by)
   seed['plan'] = {'quick_poll': quick_poll}
   async with open_checkpointer(settings.checkpoint_path) as saver:

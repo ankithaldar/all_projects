@@ -1,15 +1,14 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Crawl watermark state per source or company scope.'''
-
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
-from job_hunter.core.db import connect, session
+from job_hunter.core.db import fetch_one, session
 
 
 class CrawlStateRepository:
@@ -32,10 +31,12 @@ class CrawlStateRepository:
     Returns:
       Cursor value or None.
     '''
-    row = connect(self._db_path, readonly=True).execute(
-      'SELECT cursor FROM crawl_state WHERE scope = ?', (scope,),
-    ).fetchone()
-    return row['cursor'] if row else None
+    with fetch_one(
+      self._db_path,
+      'SELECT cursor FROM crawl_state WHERE scope = ?',
+      (scope,),
+    ) as row:
+      return row['cursor'] if row else None
 
   def set_success(self, scope: str, cursor: Optional[str]) -> None:
     '''Record a successful fetch.
@@ -58,7 +59,8 @@ class CrawlStateRepository:
 
     Args:
       scope: Scope key.
-      cooldown_hours: Cooldown applied from the fifth consecutive failure.
+      cooldown_hours: Cooldown applied from the fifth consecutive
+        failure.
 
     Returns:
       Updated consecutive-failure count.
@@ -77,7 +79,7 @@ class CrawlStateRepository:
       count = int(row['consecutive_failures'])
       if count >= 5:
         conn.execute(
-          'UPDATE crawl_state SET cooldown_until = datetime(\'now\', ?) '
+          "UPDATE crawl_state SET cooldown_until = datetime('now', ?) "
           'WHERE scope = ?',
           (f'+{cooldown_hours * count // 5} hours', scope),
         )
@@ -92,8 +94,10 @@ class CrawlStateRepository:
     Returns:
       True when cooling down.
     '''
-    row = connect(self._db_path, readonly=True).execute(
-      "SELECT 1 FROM crawl_state WHERE scope = ? AND cooldown_until > datetime('now')",
+    with fetch_one(
+      self._db_path,
+      'SELECT 1 FROM crawl_state WHERE scope = ? AND cooldown_until > '
+      "datetime('now')",
       (scope,),
-    ).fetchone()
-    return row is not None
+    ) as row:
+      return row is not None

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Match component computation and hard gates.'''
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from job_hunter.core.models import CandidateProfile, WorkMode
 
@@ -67,7 +67,9 @@ def gate_failures(
   mode = job.get('work_mode') or WorkMode.UNKNOWN
   pref = candidate.remote_pref
   allowed = {
-    'any': {WorkMode.REMOTE, WorkMode.HYBRID, WorkMode.ONSITE, WorkMode.UNKNOWN},
+    'any': {
+      WorkMode.REMOTE, WorkMode.HYBRID, WorkMode.ONSITE, WorkMode.UNKNOWN
+    },
     'remote': {WorkMode.REMOTE, WorkMode.UNKNOWN},
     'hybrid': {WorkMode.HYBRID, WorkMode.REMOTE},
     'onsite': {WorkMode.ONSITE},
@@ -114,7 +116,9 @@ def skill_coverage(
   '''
   cand = set(candidate_skill_ids)
   musts = {row['skill_id'] for row in job_skills if row['kind'] == 'must_have'}
-  nices = {row['skill_id'] for row in job_skills if row['kind'] == 'nice_to_have'}
+  nices = {
+    row['skill_id'] for row in job_skills if row['kind'] == 'nice_to_have'
+  }
   must_cov = len(musts & cand) / len(musts) if musts else 0.5
   nice_cov = len(nices & cand) / len(nices) if nices else 0.5
   return min(1.0, must_cov), min(1.0, nice_cov)
@@ -144,7 +148,9 @@ def seniority_fit(
   return max(0.0, 1.0 - distance / width)
 
 
-def recency_score(posted_at: Optional[str], half_life_days: float = 10.0) -> float:
+def recency_score(
+  posted_at: Optional[str], half_life_days: float = 10.0
+) -> float:
   '''Exponential recency with configurable half-life.
 
   Args:
@@ -158,7 +164,8 @@ def recency_score(posted_at: Optional[str], half_life_days: float = 10.0) -> flo
     return 0.5
   try:
     then = datetime.fromisoformat(str(posted_at).replace('Z', '+00:00'))
-    age_days = max(0.0, (datetime.now(timezone.utc) - then).total_seconds() / 86400.0)
+    elapsed = (datetime.now(timezone.utc) - then).total_seconds()
+    age_days = max(0.0, elapsed / 86400.0)
   except ValueError:
     return 0.5
   return math.pow(0.5, age_days / half_life_days)
@@ -189,7 +196,8 @@ def semantic_fallback(candidate_text: str, job_text: str) -> float:
   Returns:
     Score in [0, 1].
   '''
-  return min(1.0, _overlap_ratio(tokens(candidate_text), tokens(job_text)) * 3.0)
+  overlap = _overlap_ratio(tokens(candidate_text), tokens(job_text))
+  return min(1.0, overlap * 3.0)
 
 
 def salary_fit(
@@ -209,10 +217,12 @@ def salary_fit(
   '''
   if salary_min is None and salary_max is None:
     return 0.5
+  if not floor_lpa or floor_lpa <= 0:
+    return 1.0
   mid_low = salary_min if salary_min is not None else salary_max
   mid_high = salary_max if salary_max is not None else salary_min
   mid = (float(mid_low) + float(mid_high)) / 2.0
-  return min(1.0, mid / floor_lpa)
+  return max(0.0, min(1.0, mid / floor_lpa))
 
 
 def company_fit(

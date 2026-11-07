@@ -1,32 +1,37 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''JD Analyst: LLM extraction of structured fields from postings.'''
 
 
 from __future__ import annotations
 
-import time
-from typing import List, Optional, Tuple
+from typing import Annotated, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 from job_hunter.core.models import EnrichedJob, WorkMode
 from job_hunter.llm.client import GatewayClient
 from job_hunter.llm.structured import complete_structured
 
+_Skill = Annotated[str, Field(max_length=100)]
+
 
 class JDExtraction(BaseModel):
   '''Schema requested from the model for one posting.'''
 
-  must_have_skills: List[str] = Field(default_factory=list)
-  nice_to_have_skills: List[str] = Field(default_factory=list)
-  experience_min_years: Optional[float] = None
-  experience_max_years: Optional[float] = None
-  salary_min_lpa: Optional[float] = None
-  salary_max_lpa: Optional[float] = None
+  must_have_skills: List[_Skill] = Field(
+    default_factory=list, max_length=200
+  )
+  nice_to_have_skills: List[_Skill] = Field(
+    default_factory=list, max_length=200
+  )
+  experience_min_years: Optional[float] = Field(default=None, ge=0, le=60)
+  experience_max_years: Optional[float] = Field(default=None, ge=0, le=60)
+  salary_min_lpa: Optional[float] = Field(default=None, ge=0, le=1000)
+  salary_max_lpa: Optional[float] = Field(default=None, ge=0, le=1000)
   work_mode: str = WorkMode.UNKNOWN
   employment_type: str = 'full_time'
-  confidence: float = 0.6
+  confidence: float = Field(default=0.6, ge=0, le=1)
 
 
 INSTRUCTION = (
@@ -54,8 +59,10 @@ def apply_salary_floor(
   Returns:
     (passes_floor, reason) — reason explains a failure.
   '''
-  if enriched.salary_max_lpa is not None and enriched.salary_max_lpa < floor_lpa:
-    return False, f'salary_max {enriched.salary_max_lpa} below floor {floor_lpa}'
+  salary_max = enriched.salary_max_lpa
+  if salary_max is not None and salary_max < floor_lpa:
+    reason = f'salary_max {salary_max} below floor {floor_lpa}'
+    return False, reason
   return True, ''
 
 
@@ -70,7 +77,9 @@ class JDAnalyst:
     '''
     self._client = client
 
-  async def extract(self, title: str, description_text: str, session_id: str) -> EnrichedJob:
+  async def extract(
+    self, title: str, description_text: str, session_id: str
+  ) -> EnrichedJob:
     '''Run structured extraction over one posting.
 
     Args:

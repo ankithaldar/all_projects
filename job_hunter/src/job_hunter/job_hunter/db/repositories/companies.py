@@ -1,16 +1,17 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Company persistence and lookup helpers.'''
 
-
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rapidfuzz import fuzz
-from job_hunter.core.db import connect, session
+
+from job_hunter.core.db import fetch_all, fetch_one, quote_identifier, session
 
 
 def normalize_name(name: str) -> str:
@@ -24,11 +25,18 @@ def normalize_name(name: str) -> str:
   '''
   lowered = ' '.join(name.lower().split())
   for suffix in (
-    ' private limited', ' pvt ltd', ' pvt. ltd.', ' ltd', ' limited',
-    ' inc', ' llc', ' technologies', ' technology',
+    ' private limited',
+    ' pvt ltd',
+    ' pvt. ltd.',
+    ' ltd',
+    ' limited',
+    ' inc',
+    ' llc',
+    ' technologies',
+    ' technology',
   ):
     if lowered.endswith(suffix):
-      lowered = lowered[: -len(suffix)]
+      lowered = lowered.removesuffix(suffix)
   return lowered.strip(' -')
 
 
@@ -42,6 +50,67 @@ class CompaniesRepository:
       db_path: Application database path.
     '''
     self._db_path = str(db_path)
+
+  def _update_sql(self) -> str:
+    '''Build the shared ON CONFLICT / domain update clause.
+
+    Returns:
+      Update assignments mirroring the historical UPDATE binding
+      order (see :meth:`upsert`).
+    '''
+    return (
+      'UPDATE SET '
+      "name = CASE WHEN ? != '' THEN ? ELSE name END, "
+      'domain = CASE WHEN ? IS NOT NULL THEN ? ELSE domain END, '
+      'vertical = COALESCE(?, vertical), '
+      'vertical_confidence = COALESCE(?, vertical_confidence), '
+      'ats_provider = COALESCE(?, ats_provider), '
+      'board_ref = COALESCE(?, board_ref), '
+      "careers_url = CASE WHEN ? != '' THEN ? ELSE careers_url END, "
+      "status = CASE WHEN ? != 'active' THEN ? ELSE status END, "
+      "last_checked_at = datetime('now')"
+    )
+
+  def _update_params(
+    self,
+    domain: str,
+    clean_domain: Optional[str],
+    vertical: Optional[str],
+    confidence: Optional[float],
+    ats_provider: Optional[str],
+    board_ref: Optional[str],
+    careers_url: Optional[str],
+    status: str,
+  ) -> tuple[Any, ...]:
+    '''Assemble the shared update binding values.
+
+    Args:
+      domain: Raw domain argument (legacy binding order).
+      clean_domain: Stripped domain or None.
+      vertical: Vertical label.
+      confidence: Vertical classification confidence.
+      ats_provider: Detected ATS provider key.
+      board_ref: Provider-specific board reference.
+      careers_url: Careers page URL.
+      status: Lifecycle status.
+
+    Returns:
+      Binding values in SQL placeholder order.
+    '''
+    return (
+      domain,
+      domain,
+      clean_domain,
+      clean_domain,
+      vertical,
+      confidence,
+      ats_provider,
+      board_ref,
+      careers_url,
+      careers_url,
+      status,
+      status,
+    )
 
   def upsert(
     self,
@@ -75,46 +144,76 @@ class CompaniesRepository:
     '''
     normalized = normalize_name(name)
     clean_domain = (domain or '').strip() or None
+    careers = careers_url or ''
+    params = self._update_params(
+      domain,
+      clean_domain,
+      vertical,
+      confidence,
+      ats_provider,
+      board_ref,
+      careers,
+      status,
+    )
     with session(self._db_path) as conn:
-      row = conn.execute(
-        'SELECT id FROM companies WHERE normalized_name = ? '
-        'OR (? IS NOT NULL AND domain = ?)',
-        (normalized, clean_domain, clean_domain),
-      ).fetchone()
-      if row is None:
-        cur = conn.execute(
+      try:
+        conn.execute(
           'INSERT INTO companies (name, normalized_name, domain, vertical, '
           'vertical_confidence, ats_provider, board_ref, careers_url, '
-          "priority, status, discovered_via, last_checked_at) "
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))',
+          'priority, status, discovered_via, last_checked_at) '
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+          'ON CONFLICT(normalized_name) DO ' + self._update_sql(),
           (
-            name, normalized, clean_domain, vertical, confidence, ats_provider,
-            board_ref, careers_url, priority, status, discovered_via,
+            name,
+            normalized,
+            clean_domain,
+            vertical,
+            confidence,
+            ats_provider,
+            board_ref,
+            careers_url,
+            priority,
+            status,
+            discovered_via,
+            *params,
           ),
         )
-        return int(cur.lastrowid)
-      company_id = int(row['id'])
-      conn.execute(
-        'UPDATE companies SET '
-        'name = CASE WHEN ? != \'\' THEN ? ELSE name END, '
-        'domain = CASE WHEN ? IS NOT NULL THEN ? ELSE domain END, '
-        'vertical = COALESCE(?, vertical), '
-        'vertical_confidence = COALESCE(?, vertical_confidence), '
-        'ats_provider = COALESCE(?, ats_provider), '
-        'board_ref = COALESCE(?, board_ref), '
-        "careers_url = CASE WHEN ? != '' THEN ? ELSE careers_url END, "
-        "status = CASE WHEN ? != 'active' THEN ? ELSE status END, "
-        "last_checked_at = datetime('now') "
-        'WHERE id = ?',
-        (
-          domain, domain, clean_domain, clean_domain, vertical, confidence,
-          ats_provider, board_ref, careers_url, careers_url, status, status,
-          company_id,
-        ),
-      )
-      return company_id
+      except sqlite3.IntegrityError:
+        # A domain UNIQUE conflict means the row exists under a
+        # different normalized name; fall back to updating it.
+        if clean_domain is None:
+          raise
+        row = conn.execute(
+          'SELECT id FROM companies WHERE domain = ?',
+          (clean_domain,),
+        ).fetchone()
+        if row is None:
+          raise
+        conn.execute(
+          'UPDATE companies SET '
+          "name = CASE WHEN ? != '' THEN ? ELSE name END, "
+          'domain = CASE WHEN ? IS NOT NULL THEN ? ELSE domain END, '
+          'vertical = COALESCE(?, vertical), '
+          'vertical_confidence = COALESCE(?, vertical_confidence), '
+          'ats_provider = COALESCE(?, ats_provider), '
+          'board_ref = COALESCE(?, board_ref), '
+          "careers_url = CASE WHEN ? != '' THEN ? ELSE careers_url END, "
+          "status = CASE WHEN ? != 'active' THEN ? ELSE status END, "
+          "last_checked_at = datetime('now') WHERE id = ?",
+          (*params, int(row['id'])),
+        )
+        return int(row['id'])
+      row = conn.execute(
+        'SELECT id FROM companies WHERE normalized_name = ?',
+        (normalized,),
+      ).fetchone()
+      return int(row['id'])
 
-  def find_by_name(self, name: str, threshold: float = 92.0) -> Optional[Dict[str, Any]]:
+  def find_by_name(
+    self,
+    name: str,
+    threshold: float = 92.0,
+  ) -> Optional[Dict[str, Any]]:
     '''Find a company by fuzzy-normalized name.
 
     Args:
@@ -124,17 +223,18 @@ class CompaniesRepository:
     Returns:
       Row mapping or None.
     '''
-    rows = connect(self._db_path, readonly=True).execute(
+    with fetch_all(
+      self._db_path,
       'SELECT id, name, normalized_name FROM companies',
-    ).fetchall()
-    target = normalize_name(name)
-    best_id: Optional[int] = None
-    best_score = 0.0
-    for row in rows:
-      score = float(fuzz.token_sort_ratio(target, row['normalized_name']))
-      if score > best_score:
-        best_score = score
-        best_id = int(row['id'])
+    ) as rows:
+      target = normalize_name(name)
+      best_id: Optional[int] = None
+      best_score = 0.0
+      for row in rows:
+        score = float(fuzz.token_sort_ratio(target, row['normalized_name']))
+        if score > best_score:
+          best_score = score
+          best_id = int(row['id'])
     if best_id is not None and best_score >= threshold:
       return self.get(best_id)
     return None
@@ -148,10 +248,12 @@ class CompaniesRepository:
     Returns:
       Row mapping or None.
     '''
-    row = connect(self._db_path, readonly=True).execute(
-      'SELECT * FROM companies WHERE id = ?', (company_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    with fetch_one(
+      self._db_path,
+      'SELECT * FROM companies WHERE id = ?',
+      (company_id,),
+    ) as row:
+      return dict(row) if row else None
 
   def list_companies(
     self,
@@ -169,6 +271,7 @@ class CompaniesRepository:
     Returns:
       Rows as mappings.
     '''
+    limit = max(1, min(limit, 500))
     sql = 'SELECT * FROM companies WHERE 1=1'
     params: List[Any] = []
     if status:
@@ -179,28 +282,15 @@ class CompaniesRepository:
       params.append(vertical)
     sql += ' ORDER BY priority DESC, name LIMIT ?'
     params.append(limit)
-    rows = connect(self._db_path, readonly=True).execute(sql, params).fetchall()
-    return [dict(row) for row in rows]
+    with fetch_all(self._db_path, sql, params) as rows:
+      return [dict(row) for row in rows]
 
-  def due_for_refresh(self, days: int, chunk: int) -> List[Dict[str, Any]]:
-    '''Return active companies not verified recently.
-
-    Args:
-      days: Staleness threshold.
-      chunk: Max rows.
-
-    Returns:
-      Rows with an ATS provider configured.
-    '''
-    rows = connect(self._db_path, readonly=True).execute(
-      "SELECT * FROM companies WHERE status IN ('active','needs_review') "
-      'AND ats_provider IS NOT NULL AND (last_checked_at IS NULL OR '
-      "last_checked_at < datetime('now', ?)) ORDER BY last_checked_at LIMIT ?",
-      (f'-{days} days', chunk),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-  def set_status(self, company_id: int, status: str, notes: Optional[str] = None) -> None:
+  def set_status(
+    self,
+    company_id: int,
+    status: str,
+    notes: Optional[str] = None,
+  ) -> None:
     '''Update lifecycle status.
 
     Args:
@@ -210,7 +300,8 @@ class CompaniesRepository:
     '''
     with session(self._db_path) as conn:
       conn.execute(
-        'UPDATE companies SET status = ?, notes = COALESCE(?, notes) WHERE id = ?',
+        'UPDATE companies SET status = ?, notes = COALESCE(?, notes) '
+        'WHERE id = ?',
         (status, notes, company_id),
       )
 
@@ -222,13 +313,20 @@ class CompaniesRepository:
       fields: Column to value mapping.
     '''
     allowed = {
-      'priority', 'vertical', 'sub_vertical', 'careers_url', 'notes',
-      'ats_provider', 'board_ref', 'domain', 'name',
+      'priority',
+      'vertical',
+      'sub_vertical',
+      'careers_url',
+      'notes',
+      'ats_provider',
+      'board_ref',
+      'domain',
+      'name',
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
       return
-    marks = ', '.join(f'{key} = ?' for key in updates)
+    marks = ', '.join(f'{quote_identifier(key)} = ?' for key in updates)
     with session(self._db_path) as conn:
       conn.execute(
         f'UPDATE companies SET {marks} WHERE id = ?',
@@ -244,7 +342,8 @@ class CompaniesRepository:
     '''
     with session(self._db_path) as conn:
       conn.execute(
-        'INSERT OR IGNORE INTO company_aliases (alias, company_id) VALUES (?, ?)',
+        'INSERT OR IGNORE INTO company_aliases (alias, company_id) '
+        'VALUES (?, ?)',
         (normalize_name(alias), company_id),
       )
 
@@ -257,24 +356,12 @@ class CompaniesRepository:
     Returns:
       Company id or None.
     '''
-    row = connect(self._db_path, readonly=True).execute(
+    with fetch_one(
+      self._db_path,
       'SELECT company_id FROM company_aliases WHERE alias = ?',
       (normalize_name(name),),
-    ).fetchone()
-    if row:
-      return int(row['company_id'])
+    ) as row:
+      if row:
+        return int(row['company_id'])
     found = self.find_by_name(name)
     return int(found['id']) if found else None
-
-
-def stats_summary(row: Dict[str, Any]) -> Dict[str, Any]:
-  '''Prepare a JSON-safe company payload for API responses.
-
-  Args:
-    row: Company row.
-
-  Returns:
-    Cleaned mapping.
-  '''
-  clean = dict(row)
-  return {k: v for k, v in clean.items() if k != 'config_json'}

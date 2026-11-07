@@ -1,8 +1,7 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Remote-job aggregator adapters: Remotive, RemoteOK, WeWorkRemotely.'''
-
 
 from __future__ import annotations
 
@@ -10,21 +9,11 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import feedparser
-from bs4 import BeautifulSoup
+
 from job_hunter.adapters.base import SourceAdapter
+from job_hunter.core.errors import AdapterError
 from job_hunter.core.models import CompanyTarget, RawJobRecord
-
-
-def _strip_html(html: str) -> str:
-  '''Convert HTML to plain text.
-
-  Args:
-    html: Raw HTML fragment.
-
-  Returns:
-    Plain text.
-  '''
-  return ' '.join(BeautifulSoup(html or '', 'html.parser').get_text(' ').split())
+from job_hunter.services.normalizer import html_to_text
 
 
 def parse_himalayas(payload: list) -> List[RawJobRecord]:
@@ -39,7 +28,12 @@ def parse_himalayas(payload: list) -> List[RawJobRecord]:
   Returns:
     Raw job records.
   '''
-  items = payload.get('jobs') if isinstance(payload, dict) else payload
+  if isinstance(payload, dict):
+    items = payload.get('jobs')
+  elif isinstance(payload, list):
+    items = payload
+  else:
+    return []
   records: List[RawJobRecord] = []
   for item in items or []:
     if not isinstance(item, dict):
@@ -48,23 +42,27 @@ def parse_himalayas(payload: list) -> List[RawJobRecord]:
     title = str(item.get('title') or '').strip()
     if not title or not url:
       continue
-    records.append(RawJobRecord(
-      source_key='himalayas',
-      external_id=str(item.get('guid') or item.get('id') or url),
-      url=url,
-      company_name=str(item.get('companyName') or item.get('company_name') or '').strip(),
-      title=title,
-      location_text=_himalayas_location(item),
-      description_text=_strip_html(str(item.get('description') or '')),
-      employment_type_raw=str(item.get('employmentType') or ''),
-      work_mode_hint='remote',
-      salary_raw=_himalayas_salary(item),
-      posted_at=_epoch_to_iso(item.get('pubDate') or item.get('posted_at')),
-      extra={
-        'company_slug': str(item.get('companySlug') or ''),
-        'seniority': str(item.get('seniority') or ''),
-      },
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='himalayas',
+        external_id=str(item.get('guid') or item.get('id') or url),
+        url=url,
+        company_name=str(
+          item.get('companyName') or item.get('company_name') or ''
+        ).strip(),
+        title=title,
+        location_text=_himalayas_location(item),
+        description_text=html_to_text(str(item.get('description') or '')),
+        employment_type_raw=str(item.get('employmentType') or ''),
+        work_mode_hint='remote',
+        salary_raw=_himalayas_salary(item),
+        posted_at=_epoch_to_iso(item.get('pubDate') or item.get('posted_at')),
+        extra={
+          'company_slug': str(item.get('companySlug') or ''),
+          'seniority': str(item.get('seniority') or ''),
+        },
+      )
+    )
   return records
 
 
@@ -123,22 +121,28 @@ def parse_remotive(payload: dict) -> List[RawJobRecord]:
   Returns:
     Raw job records.
   '''
+  if not isinstance(payload, dict):
+    return []
   records: List[RawJobRecord] = []
   for item in payload.get('jobs') or []:
+    if not isinstance(item, dict):
+      continue
     salary = str(item.get('salary') or '')
-    records.append(RawJobRecord(
-      source_key='remotive',
-      external_id=str(item.get('id') or ''),
-      url=str(item.get('url') or ''),
-      company_name=str(item.get('company_name') or ''),
-      title=str(item.get('title') or '').strip(),
-      location_text=str(item.get('candidate_required_location') or ''),
-      description_text=_strip_html(str(item.get('description') or '')),
-      employment_type_raw=str(item.get('job_type') or ''),
-      work_mode_hint='remote',
-      salary_raw=salary,
-      posted_at=item.get('publication_date'),
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='remotive',
+        external_id=str(item.get('id') or ''),
+        url=str(item.get('url') or ''),
+        company_name=str(item.get('company_name') or ''),
+        title=str(item.get('title') or '').strip(),
+        location_text=str(item.get('candidate_required_location') or ''),
+        description_text=html_to_text(str(item.get('description') or '')),
+        employment_type_raw=str(item.get('job_type') or ''),
+        work_mode_hint='remote',
+        salary_raw=salary,
+        posted_at=item.get('publication_date'),
+      )
+    )
   return [record for record in records if record.title and record.url]
 
 
@@ -151,23 +155,36 @@ def parse_remoteok(payload: list) -> List[RawJobRecord]:
   Returns:
     Raw job records.
   '''
+  if not isinstance(payload, list):
+    return []
   records: List[RawJobRecord] = []
-  tail = payload[1:] if payload and isinstance(payload[0], dict) and 'legal' in (payload[0] or {}) else payload
+  tail = (
+    payload[1:]
+    if payload and isinstance(payload[0], dict) and 'legal' in payload[0]
+    else payload
+  )
   for item in tail or []:
     if not isinstance(item, dict):
       continue
-    records.append(RawJobRecord(
-      source_key='remoteok',
-      external_id=str(item.get('id') or item.get('slug') or ''),
-      url=str(item.get('url') or ''),
-      company_name=str(item.get('company') or '').strip(),
-      title=str(item.get('position') or '').strip(),
-      location_text='Remote' if item.get('location') in (None, '', 'Worldwide') else str(item['location']),
-      description_text=_strip_html(str(item.get('description') or '')),
-      salary_raw=f"{item.get('salary_min', '')}-{item.get('salary_max', '')}".strip('-'),
-      posted_at=str(item.get('date') or '') or None,
-      extra={'tags': item.get('tags') or []},
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='remoteok',
+        external_id=str(item.get('id') or item.get('slug') or ''),
+        url=str(item.get('url') or ''),
+        company_name=str(item.get('company') or '').strip(),
+        title=str(item.get('position') or '').strip(),
+        location_text='Remote'
+        if item.get('location') in (None, '', 'Worldwide')
+        else str(item['location']),
+        description_text=html_to_text(str(item.get('description') or '')),
+        salary_raw=(
+          f"{item.get('salary_min', '')}"
+          f"-{item.get('salary_max', '')}".strip('-')
+        ),
+        posted_at=str(item.get('date') or '') or None,
+        extra={'tags': item.get('tags') or []},
+      )
+    )
   return [record for record in records if record.title and record.url]
 
 
@@ -180,6 +197,8 @@ def parse_wwr_rss(text: str) -> List[RawJobRecord]:
   Returns:
     Raw job records (title format often "Company: Role").
   '''
+  if not isinstance(text, str):
+    return []
   records: List[RawJobRecord] = []
   feed = feedparser.parse(text)
   for entry in feed.entries:
@@ -188,17 +207,19 @@ def parse_wwr_rss(text: str) -> List[RawJobRecord]:
     if not role.strip():
       company, role = '', title
     link = str(entry.get('link') or '')
-    records.append(RawJobRecord(
-      source_key='weworkremotely',
-      external_id=link,
-      url=link,
-      company_name=company.strip(),
-      title=role.strip(),
-      location_text='Remote',
-      work_mode_hint='remote',
-      description_text=_strip_html(str(entry.get('summary') or '')),
-      posted_at=None,
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='weworkremotely',
+        external_id=link,
+        url=link,
+        company_name=company.strip(),
+        title=role.strip(),
+        location_text='Remote',
+        work_mode_hint='remote',
+        description_text=html_to_text(str(entry.get('summary') or '')),
+        posted_at=None,
+      )
+    )
   return [record for record in records if record.title and record.url]
 
 
@@ -214,6 +235,8 @@ def parse_arbeitnow(payload: dict) -> List[RawJobRecord]:
   Returns:
     Raw job records.
   '''
+  if not isinstance(payload, dict):
+    return []
   records: List[RawJobRecord] = []
   for item in payload.get('data') or []:
     if not isinstance(item, dict):
@@ -222,19 +245,21 @@ def parse_arbeitnow(payload: dict) -> List[RawJobRecord]:
     if not url:
       continue
     location = str(item.get('location') or '').strip()
-    records.append(RawJobRecord(
-      source_key='arbeitnow',
-      external_id=str(item.get('slug') or ''),
-      url=url,
-      company_name=str(item.get('company_name') or '').strip(),
-      title=str(item.get('title') or '').strip(),
-      location_text=location,
-      description_text=_strip_html(str(item.get('description') or '')),
-      employment_type_raw='; '.join(item.get('job_types') or []),
-      work_mode_hint='remote' if item.get('remote') else '',
-      posted_at=_epoch_to_iso(item.get('created_at')),
-      extra={'tags': item.get('tags') or []},
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='arbeitnow',
+        external_id=str(item.get('slug') or ''),
+        url=url,
+        company_name=str(item.get('company_name') or '').strip(),
+        title=str(item.get('title') or '').strip(),
+        location_text=location,
+        description_text=html_to_text(str(item.get('description') or '')),
+        employment_type_raw='; '.join(item.get('job_types') or []),
+        work_mode_hint='remote' if item.get('remote') else '',
+        posted_at=_epoch_to_iso(item.get('created_at')),
+        extra={'tags': item.get('tags') or []},
+      )
+    )
   return [record for record in records if record.title]
 
 
@@ -247,6 +272,8 @@ def parse_jobicy(payload: dict) -> List[RawJobRecord]:
   Returns:
     Raw job records.
   '''
+  if not isinstance(payload, dict):
+    return []
   records: List[RawJobRecord] = []
   for item in payload.get('jobs') or []:
     if not isinstance(item, dict):
@@ -254,20 +281,22 @@ def parse_jobicy(payload: dict) -> List[RawJobRecord]:
     url = str(item.get('url') or '')
     if not url:
       continue
-    records.append(RawJobRecord(
-      source_key='jobicy',
-      external_id=str(item.get('jobSlug') or item.get('id') or ''),
-      url=url,
-      company_name=str(item.get('companyName') or '').strip(),
-      title=str(item.get('jobTitle') or '').strip(),
-      location_text=str(item.get('jobGeo') or ''),
-      description_text=_strip_html(str(item.get('jobDescription') or '')),
-      employment_type_raw='; '.join(item.get('jobType') or []),
-      work_mode_hint='remote',
-      salary_raw=_jobicy_salary(item),
-      posted_at=item.get('pubDate'),
-      extra={'industry': item.get('jobIndustry') or []},
-    ))
+    records.append(
+      RawJobRecord(
+        source_key='jobicy',
+        external_id=str(item.get('jobSlug') or item.get('id') or ''),
+        url=url,
+        company_name=str(item.get('companyName') or '').strip(),
+        title=str(item.get('jobTitle') or '').strip(),
+        location_text=str(item.get('jobGeo') or ''),
+        description_text=html_to_text(str(item.get('jobDescription') or '')),
+        employment_type_raw='; '.join(item.get('jobType') or []),
+        work_mode_hint='remote',
+        salary_raw=_jobicy_salary(item),
+        posted_at=item.get('pubDate'),
+        extra={'industry': item.get('jobIndustry') or []},
+      )
+    )
   return [record for record in records if record.title]
 
 
@@ -328,7 +357,9 @@ class AggregatorAdapter(SourceAdapter):
     'jobicy': ('json', 'https://jobicy.com/api/v2/remote-jobs?count=100'),
   }
 
-  async def fetch(self, target: CompanyTarget, limit: int = 200) -> List[RawJobRecord]:
+  async def fetch(
+    self, target: CompanyTarget, limit: int = 200
+  ) -> List[RawJobRecord]:
     '''Fetch and parse one aggregator feed.
 
     Args:
@@ -341,6 +372,11 @@ class AggregatorAdapter(SourceAdapter):
     Raises:
       AdapterError: On unknown source key.
     '''
+    if target.source_key not in self.SOURCE_URLS:
+      raise AdapterError(
+        f'unknown source key: {target.source_key}',
+        source=target.source_key,
+      )
     kind, url = self.SOURCE_URLS[target.source_key]
     if kind == 'rss':
       text = await self._http.get_text(url, rpm=10)
@@ -359,11 +395,12 @@ class AggregatorAdapter(SourceAdapter):
     if target.board_ref:
       lowered = target.board_ref.lower()
       records = [
-        record for record in records
+        record
+        for record in records
         if lowered in record.company_name.lower()
         or lowered in record.url.lower()
       ]
-    return records[:limit]
+    return records[:max(1, limit)]
 
   async def _fetch_himalayas(self, url: str, limit: int) -> List[RawJobRecord]:
     '''Page through the Himalayas feed using its cursor.
@@ -378,12 +415,19 @@ class AggregatorAdapter(SourceAdapter):
     Returns:
       Raw job records across as many pages as needed to reach the limit.
     '''
+    limit = max(1, limit)
+    page_size = min(20, max(1, limit))
     records: List[RawJobRecord] = []
     cursor: Optional[str] = None
     seen_cursors: set = set()
     while len(records) < limit:
+      params: dict = {'limit': page_size}
+      if cursor:
+        params['cursor'] = cursor
       payload = await self._http.get_json(
-        url, params={'cursor': cursor} if cursor else None, rpm=10,
+        url,
+        params=params,
+        rpm=10,
       )
       if not isinstance(payload, dict):
         break
@@ -395,24 +439,4 @@ class AggregatorAdapter(SourceAdapter):
       if not cursor or cursor in seen_cursors:
         break
       seen_cursors.add(cursor)
-    return records[:limit]
-
-  async def health(self, target: CompanyTarget) -> bool:
-    '''Probe the configured feed URL.
-
-    Args:
-      target: Company whose source_key selects the feed.
-
-    Returns:
-      True when the feed answers.
-    '''
-    try:
-      kind, url = self.SOURCE_URLS[target.source_key]
-      if kind == 'rss':
-        return bool(await self._http.get_text(url, rpm=10))
-      await self._http.get_json(url, rpm=10)
-      return True
-    except Exception:
-      return False
-
-
+    return records[:max(1, limit)]

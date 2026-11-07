@@ -56,12 +56,17 @@ Append-only log. Format: **Context** → Lesson → Rule.
 
 ## MCP child processes need explicit PYTHONPATH
 - Context: spawned `-m job_hunter.mcp_servers.*` died with ModuleNotFound
-  despite working in the parent shell.
+  despite working in the interactive shell.
 - Lesson: env vars are not inherited from an interactive shell by spawned
   service processes.
-- Rule: `MCPClientManager._child_env()` injects the src root into
-  PYTHONPATH plus JH_APP_CONFIG for every child; per-server launch
-  failures are logged and skipped, never fatal.
+- Rule (historical, superseded): `MCPClientManager._child_env()` injected
+  the src root into PYTHONPATH plus JH_APP_CONFIG for every child; default
+  client-side failures were logged and skipped, never fatal.
+- Rule (post-deletion truth): `MCPClientManager` (`llm/mcp_tools.py`) is
+  deleted — the MCP servers are now standalone stdio subprocesses launched
+  via `python main.py mcp <server>` or the `mcp:` stdio commands in
+  `config/app.yaml`. Each server self-boots its path via `ensure_sys_path()`
+  (`mcp_servers/common.py`) instead of any client-injected PYTHONPATH.
 
 ## Cron vs APScheduler day-of-week numbering
 - Context: standard cron `0=Sun`; APScheduler uses `0=Mon..6=Sun`.

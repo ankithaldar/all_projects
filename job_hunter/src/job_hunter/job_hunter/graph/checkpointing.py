@@ -1,14 +1,15 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 '''Checkpointing wiring for resumable graph runs.'''
 
-
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -24,11 +25,19 @@ async def open_checkpointer(db_path: str | Path):
   try:
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     import aiosqlite
-  except ImportError:
+  except ImportError as exc:
+    logger.warning(
+      'checkpoint dependency missing, running without checkpointer: %s', exc
+    )
     yield None
     return
-  conn = await aiosqlite.connect(str(db_path))
+  path = Path(db_path)
+  path.parent.mkdir(parents=True, exist_ok=True)
+  conn = await aiosqlite.connect(str(path))
   try:
+    await conn.execute('PRAGMA journal_mode=WAL')
+    await conn.execute('PRAGMA busy_timeout=5000')
+    await conn.execute('PRAGMA foreign_keys=ON')
     saver = AsyncSqliteSaver(conn)
     await saver.setup()
     yield saver
@@ -46,9 +55,10 @@ def thread_config(run_id: int, settings=None) -> dict:
   Returns:
     LangGraph config dict.
   '''
-  configurable: dict = {'thread_id': f'run-{run_id}'}
+  configurable: dict = {
+    'thread_id': f'run-{run_id}',
+    'checkpoint_ns': '',
+  }
   if settings is not None:
     configurable['settings'] = settings
   return {'configurable': configurable}
-
-
