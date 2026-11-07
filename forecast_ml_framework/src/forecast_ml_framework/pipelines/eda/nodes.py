@@ -55,6 +55,8 @@ import pandas as pd
 
 from forecast_ml_framework.core.params import (
   flatten_params,
+  parse_float,
+  parse_int,
 )
 
 LOG = logging.getLogger(__name__)
@@ -73,22 +75,6 @@ _RECOMMENDATIONS = {
 _DEFAULT_LEAKAGE_KEYWORDS = [
   'target', 'attrition', 'label', 'outcome', 'result', 'after', 'post',
 ]
-
-
-def _float(value, default):
-  '''Return value as float, or default when missing/invalid.'''
-  try:
-    return float(value)
-  except (TypeError, ValueError):
-    return float(default)
-
-
-def _int(value, default):
-  '''Return value as int, or default when missing/invalid.'''
-  try:
-    return int(value)
-  except (TypeError, ValueError):
-    return int(default)
 
 
 def _scalar(value):
@@ -175,10 +161,10 @@ def eda_summary(df, params=None, variables=None):
     target = _target_col(params, variables, df)
     summary['target_col'] = target
     return summary
-  top_values_n = _int(params.get('top_values', 3), 3)
-  top_corr_n = _int(params.get('top_correlations',
+  top_values_n = parse_int(params.get('top_values', 3), 3)
+  top_corr_n = parse_int(params.get('top_correlations',
                                params.get('n_top_correlations', 10)), 10)
-  z_threshold = _float(params.get('zscore_threshold', 3.0), 3.0)
+  z_threshold = parse_float(params.get('zscore_threshold', 3.0), 3.0)
   numeric_cols = [c for c in columns if _is_numeric(df, c)]
   cat_cols = [c for c in columns if c not in numeric_cols]
   missing = {c: int(df[c].isna().sum()) for c in columns}
@@ -283,11 +269,11 @@ def eda_quality_checks(summary, params=None):
   summary = summary or {}
   if not summary or summary.get('n_rows', 0) == 0:
     return []
-  missing_threshold = _float(params.get('missing_threshold', 0.2), 0.2)
-  cardinality_threshold = _int(params.get(
+  missing_threshold = parse_float(params.get('missing_threshold', 0.2), 0.2)
+  cardinality_threshold = parse_int(params.get(
     'cardinality_threshold', params.get('max_cardinality', 50)), 50)
-  leakage_threshold = _float(params.get('leakage_threshold', 0.95), 0.95)
-  imbalance_threshold = _float(
+  leakage_threshold = parse_float(params.get('leakage_threshold', 0.95), 0.95)
+  imbalance_threshold = parse_float(
     params.get('imbalance_ratio_threshold', 5.0), 5.0)
   findings = []
   for col, rate in (summary.get('missing_rate') or {}).items():
@@ -463,7 +449,10 @@ def detect_leakage(df, target, params=None):
     separation (numeric AUC, categorical pure categories),
     post-outcome name keywords (warning), constant /
     near-constant features, and features identical or
-    mapped 1-1 to the target.
+    mapped 1-1 to the target. Rows with a missing
+    target are dropped for the leakage computation
+    (with a warning); an all-missing target yields
+    no findings.
   '''
   params = flatten_params(params, 'eda_params')
   if df is None or not isinstance(df, pd.DataFrame) or df.empty:
@@ -476,17 +465,30 @@ def detect_leakage(df, target, params=None):
                 % (target_name,))
     return []
   target_series = target_series.reset_index(drop=True)
-  corr_threshold = _float(params.get(
+  n_nan_target = int(target_series.isna().sum())
+  if n_nan_target:
+    LOG.warning(
+      'detect_leakage: target %r has %d NaN row(s); '
+      'dropping them for leakage computation',
+      target_name, n_nan_target)
+    valid_target = target_series.notna().to_numpy()
+    if len(df) == len(target_series):
+      df = df.iloc[valid_target]
+    target_series = target_series[valid_target].reset_index(
+      drop=True)
+    if len(target_series) == 0:
+      return []
+  corr_threshold = parse_float(params.get(
     'leakage_corr_threshold',
     params.get('leakage_threshold',
                params.get('corr_threshold', 0.95))), 0.95)
-  duplicate_threshold = _float(
+  duplicate_threshold = parse_float(
     params.get('duplicate_corr_threshold', 0.99), 0.99)
-  auc_threshold = _float(params.get(
+  auc_threshold = parse_float(params.get(
     'leakage_auc_threshold',
     params.get('separability_auc_threshold',
                params.get('separability_threshold', 0.99))), 0.99)
-  near_constant_threshold = _float(
+  near_constant_threshold = parse_float(
     params.get('near_constant_threshold', 0.95), 0.95)
   keywords = params.get('leakage_name_keywords',
                         params.get('name_keywords',
@@ -499,7 +501,9 @@ def detect_leakage(df, target, params=None):
   if target_numeric.notna().all():
     target_values = target_numeric.astype(float)
   else:
-    target_values = pd.factorize(target_series)[0].astype(float)
+    codes = pd.factorize(target_series)[0].astype(float)
+    codes = np.where(codes == -1, np.nan, codes)
+    target_values = pd.Series(codes, index=target_series.index)
   target_binary = target_series.nunique(dropna=True) == 2
   if target_binary:
     unique = sorted(target_series.dropna().unique(), key=str)

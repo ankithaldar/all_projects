@@ -50,14 +50,22 @@ jobs:
         working-directory: forecast_ml_framework
         run: uv sync --frozen
 
+      # Lockfile freshness (cheap, runs in ms): fails if uv.lock
+      # does not match pyproject.toml, before any job resolves.
+      - name: Check lockfile freshness
+        run: uv lock --check --project forecast_ml_framework
+
       # .pylintrc lives at the repo root, not inside forecast_ml_framework/,
       # so run from the root with an explicit --rcfile. pylint is not a
-      # project dependency, hence --with pylint. --fail-under=9.0 gates on
-      # the overall score (9.72/10 at introduction) without disabling any
-      # check from the root rcfile.
+      # project dependency, hence --with pylint. The version is PINNED
+      # (MLops-17): an unpinned resolve would let an upstream pylint
+      # release flip the gate with no repo change. Bump deliberately.
+      # --fail-under=9.0 gates on the overall score without disabling
+      # any check from the root rcfile.
       - name: Lint with pylint
         run: >-
-          uv run --project forecast_ml_framework --with pylint
+          uv run --frozen --project forecast_ml_framework
+          --with 'pylint==4.1.3'
           pylint --rcfile=.pylintrc --fail-under=9.0 forecast_ml_framework/src
 
   test:
@@ -87,10 +95,21 @@ jobs:
       - name: Run tests
         working-directory: forecast_ml_framework
         run: >-
-          uv run pytest -q
+          uv run --frozen pytest -q
           --cov=src/forecast_ml_framework
           --cov-report=term-missing
           --cov-fail-under=85
+
+      # Wheel check (O2): build the wheel and assert the zip
+      # namelist contains the packaged catalog (force-include
+      # in pyproject.toml), not just that the string exists.
+      - name: Wheel build check (packaged conf)
+        working-directory: forecast_ml_framework
+        run: >-
+          rm -rf .wheel-check &&
+          uv build --wheel --out-dir .wheel-check &&
+          python3 -c 'import sys, zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert "forecast_ml_framework/conf/base/catalog.yml" in names, [n for n in names if "catalog" in n]; print("wheel namelist ok: forecast_ml_framework/conf/base/catalog.yml")' .wheel-check/*.whl &&
+          rm -rf .wheel-check
 
   demo:
     name: demo
@@ -120,7 +139,7 @@ jobs:
       - name: Registry / import smoke check
         working-directory: forecast_ml_framework
         run: >-
-          uv run python -c
+          uv run --frozen python -c
           "from forecast_ml_framework.pipeline_registry import register_pipelines;
           pipelines = register_pipelines();
           assert pipelines, 'no pipelines registered';
@@ -145,3 +164,17 @@ jobs:
         # Terraform is present via setup-terraform, so no
         # continue-on-error is needed.
         run: terraform fmt -check -recursive forecast_ml_framework/infra
+
+      - name: Terraform validate (both stacks)
+        # init -backend=false needs no credentials and no state: it
+        # resolves providers against the committed
+        # .terraform.lock.hcl, then validate checks both stacks
+        # semantically (MLops-9). fmt alone passed stacks whose
+        # provider schema no longer matched (now fixed + gated).
+        run: >-
+          for stack in aws gcp; do
+          echo "--- infra/${stack} ---";
+          (cd forecast_ml_framework/infra/${stack}
+          && terraform init -backend=false -input=false
+          && terraform validate);
+          done

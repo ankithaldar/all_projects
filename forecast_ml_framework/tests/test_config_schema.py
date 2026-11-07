@@ -66,11 +66,21 @@ def test_parameters_shipped_conf_passes():
   assert 'validation_params' in cfg.model_dump()
 
 
-def test_parameters_extra_allow():
-  '''Unknown top-level keys are allowed (extra=allow).'''
-  cfg = ParametersConfig(unknown_section={'x': 1})
-  assert cfg.model_extra == {'unknown_section': {'x': 1}} or (
-    cfg.unknown_section == {'x': 1})
+def test_parameters_extra_forbid():
+  '''Unknown top-level keys are forbidden (extra=forbid, V4/F12).
+
+  A typo'd section name must fail validation, not silently
+  pass as an extra. Named extension subkeys *inside* a typed
+  section are still allowed (submodels keep extra=allow).
+  '''
+  from pydantic import ValidationError
+  with pytest.raises(ValidationError):
+    ParametersConfig(unknown_section={'x': 1})
+  with pytest.raises(ValidationError):
+    validate_parameters({'cost_tracking_param': {'x': 1}})
+  # Named section + extension subkey inside it: allowed.
+  cfg = ParametersConfig(modeling_params={'my_extension': 1})
+  assert cfg.modeling_params.model_extra == {'my_extension': 1}
 
 
 def test_load_config_base_plain_dict():
@@ -317,7 +327,11 @@ import os as _os
   '${ OC.ENV:SECRET,default}',
 ])
 def test_load_config_rejects_spaced_oc(tmp_path, monkeypatch, expr):
-  '''Spaced/case oc interpolations are rejected, never leak env.'''
+  '''Spaced/case oc interpolations are rejected, never leak env.
+
+  Fails if load_config stops rejecting spaced or case-variant
+  oc interpolations and resolves them from the environment.
+  '''
   monkeypatch.setenv('SECRET', 'leaked-secret-value')
   conf = _write_conf(tmp_path, "x: '%s'\n" % expr)
   with pytest.raises(ValueError, match='oc\\.'):
@@ -588,7 +602,7 @@ def test_settings_reject_oc_list_and_tuple_branches():
   assert Path(settings.CONF_SOURCE).is_absolute()
   assert (Path(settings.CONF_SOURCE) / 'base' / 'catalog.yml').exists()
   from forecast_ml_framework.hooks import ForecastHooks
-  assert ForecastHooks in settings.HOOKS
+  assert any(isinstance(h, ForecastHooks) for h in settings.HOOKS)
   assert settings.__all__ == [
     'CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']
   cls._reject_oc({'a': [1, 2], 'b': ('x', 'y'), 'c': 'plain'})
@@ -739,3 +753,137 @@ def test_blocked_oc_resolvers_interleaved_no_leak(monkeypatch):
   assert 'b' not in results
   assert 'oc.' in results.get('b_error', '')
   assert 'leaked-secret-value' not in str(results)
+
+
+def _shipped_params_raw_v2():
+  '''Return merged shipped base parameters/*.yml as a dict.'''
+  import yaml
+  raw = {}
+  for path in sorted((_root() / 'conf' / 'base' / 'parameters').glob('*.yml')):
+    with path.open() as handle:
+      raw.update(yaml.safe_load(handle) or {})
+  return raw
+
+
+def test_cost_tracking_params_bucket_and_alias():
+  '''cost_tracking_params bucket exists; cost_params kept (V1).'''
+  from forecast_ml_framework.core.config_schema import (
+    CostParams, CostTrackingParams)
+  raw = _shipped_params_raw_v2()
+  assert 'cost_tracking_params' in raw, 'missing conf bucket'
+  assert 'cost_params' in raw, 'cost_params alias must stay'
+  for key in ('compute_price_per_hour', 'storage_price_per_gb_month',
+              'data_scan_price_per_gb'):
+    assert key in raw['cost_tracking_params'], key
+  cfg = validate_parameters(raw)
+  assert isinstance(cfg.cost_tracking_params, CostTrackingParams)
+  assert isinstance(cfg.cost_params, CostParams)
+  assert (cfg.cost_tracking_params.model_dump()
+          == cfg.cost_params.model_dump())
+
+
+def test_interpretability_params_bucket_and_schema():
+  '''interpretability_params bucket + schema (V2).'''
+  from forecast_ml_framework.core.config_schema import (
+    InterpretabilityParams)
+  raw = _shipped_params_raw_v2()
+  assert 'interpretability_params' in raw, 'missing conf bucket'
+  for key in ('max_rows', 'top_k', 'n_repeats', 'random_state',
+              'n_grid', 'pdp_features', 'n_calibration_bins',
+              'segment_col', 'scorer'):
+    assert key in raw['interpretability_params'], key
+  cfg = validate_parameters(raw)
+  assert isinstance(cfg.interpretability_params, InterpretabilityParams)
+  dumped = cfg.model_dump()['interpretability_params']
+  assert dumped['max_rows'] == raw['interpretability_params']['max_rows']
+  assert dumped['top_k'] == raw['interpretability_params']['top_k']
+
+
+def test_pipeline_params_refs_exist_in_conf():
+  '''Every params:* wired in pipelines exists in shipped conf (V1).'''
+  import re
+  from pathlib import Path
+  raw = _shipped_params_raw_v2()
+  refs = set()
+  src_root = _root() / 'src' / 'forecast_ml_framework' / 'pipelines'
+  for path in sorted(src_root.rglob('pipeline.py')):
+    text = path.read_text()
+    for match in re.findall(r'''['"]params:([A-Za-z0-9_.]+)['"]''', text):
+      refs.add(match.split('.')[0])
+  assert refs, 'no pipeline params refs found'
+  missing = refs - set(raw)
+  assert not missing, f'pipeline params missing in conf: {sorted(missing)}'
+
+
+def test_runtime_params_flat_fields_and_run_date():
+  '''RuntimeParams flat fields + GlobalParams.run_date (V5).'''
+  from forecast_ml_framework.core.config_schema import (
+    GlobalParams, RuntimeParams)
+  assert GlobalParams().run_date == '2026-11-06'
+  rt = RuntimeParams()
+  for key in ('score_model_id', 'output_gcs_location',
+              'model_id_prefix', 'suffix', 'data_project',
+              'db_staging_data', 'etl_project', 'etl_dataset',
+              'etl_table', 'external_project', 'tmp_bucket',
+              'is_external_platform', 'run_date', 'train_run_dt',
+              'score_run_dt', 'brand'):
+    assert key in RuntimeParams.model_fields, key
+    assert hasattr(rt, key), key
+  # Shipped flat keys validate as top-level fields (not extras);
+  # resolved (interpolated) values match the schema defaults.
+  cfg = validate_parameters(_shipped_params_raw_v2())
+  assert 'score_model_id' not in (cfg.model_extra or {})
+  assert 'output_gcs_location' not in (cfg.model_extra or {})
+  resolved = load_config('base')['parameters']
+  assert resolved['score_model_id'] == 'demo_model_v1'
+  assert resolved['output_gcs_location'] == 'artifacts'
+  assert resolved['run_date'] == '2026-11-06'
+
+
+def test_catalog_params_interpolations_resolve_to_schema():
+  '''Every ${params:x} in catalog.yml resolves to a schema field (V5).'''
+  import re
+  raw_text = (_root() / 'conf' / 'base' / 'catalog.yml').read_text()
+  keys = set(re.findall(r'\$\{params:([^}]+)\}', raw_text))
+  keys.discard('<key>')
+  assert keys, 'no catalog interpolations found'
+  fields = set(ParametersConfig.model_fields)
+  # Nested refs like params:modeling_params.task_type resolve via
+  # the top-level section; flat refs must be top-level fields.
+  missing = []
+  for key in sorted(keys):
+    top = key.split('.')[0].split('[')[0]
+    if top not in fields:
+      missing.append(key)
+  assert not missing, f'catalog ${{params:x}} without schema field: {missing}'
+
+
+def test_eda_schema_defaults_match_shipped_conf():
+  '''EdaParams defaults single-source shipped eda.yml (F10).'''
+  import yaml
+  from forecast_ml_framework.core.config_schema import EdaParams
+  shipped = yaml.safe_load(
+    (_root() / 'conf' / 'base' / 'parameters' / 'eda.yml').read_text()
+  )['eda_params']
+  schema = EdaParams().model_dump()
+  for key, value in shipped.items():
+    assert schema[key] == value, (key, schema[key], value)
+
+
+def test_monitoring_params_tier_thresholds():
+  '''MonitoringParams carries critical/missing tier keys (V6/W9).'''
+  from forecast_ml_framework.core.config_schema import MonitoringParams
+  m = MonitoringParams()
+  assert m.epsilon == 1e-4
+  assert m.min_rows == 10
+  tiers = m.thresholds
+  assert tiers['psi']['warning'] == 0.1
+  assert tiers['psi']['critical'] == 0.25
+  assert tiers['missing_rate_delta']['warning'] == 0.05
+  assert tiers['missing_rate_delta']['critical'] == 0.1
+  # Shipped conf provides the same tiers.
+  raw = _shipped_params_raw_v2()
+  cfg = validate_parameters(raw)
+  assert (cfg.monitoring_params.thresholds['psi']['critical'] == 0.25)
+  assert (cfg.monitoring_params.thresholds[
+    'missing_rate_delta']['critical'] == 0.1)

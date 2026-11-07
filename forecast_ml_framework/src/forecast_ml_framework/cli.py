@@ -10,6 +10,34 @@ prints the planned command. Stdlib argparse only.
 
 Optional API-key auth is supported via FORECAST_API_KEY in the
 serving app (see README Serving API); no Docker is provided.
+
+Registry aliases (V12): ``train`` runs the ``modeling``
+pipeline, ``predict`` runs ``scoring``, ``run`` runs the
+default pipeline (no ``--pipeline`` flag), and ``serve`` runs
+the uvicorn app (never a Kedro pipeline). The twelve registry
+display names are real subparsers mapping to
+``kedro run --pipeline <alias>``: ``data``, ``preprocessing``,
+``feature_selection``, ``modeling``, ``evaluation``,
+``predict`` (scoring alias), ``scoring``, ``eda``,
+``monitoring``, ``retraining``, ``cost_tracking`` and
+``interpretability``. In the registry, ``data`` /
+``preprocessing`` / ``feature_selection`` are served by
+``pipelines.data_prep`` and ``evaluation`` / ``modeling`` /
+``predict`` by ``pipelines.modeling`` (``data_prep``).
+``serve`` calls
+``serving.app.validate_bind_host`` before spawning uvicorn
+and exits 2 on RuntimeError, so a non-loopback bind without a
+valid API key is refused at the CLI entry point.
+
+Name divergence (``predict``, intentional and pinned by
+``test_cli.py``): ``forecast-ml predict`` runs the
+``scoring`` pipeline, whereas
+``kedro run --pipeline predict`` runs the ``modeling``
+pipeline (registry ``predict`` maps to
+``pipelines.modeling`` in ``pipeline_registry``). The same
+name therefore selects different pipelines depending on the
+entry point; aligning the two would break the pinned CLI
+mapping, so the divergence is documented, not removed.
 '''
 
 import argparse
@@ -61,6 +89,14 @@ _COMMAND_PIPELINES = {
 }
 
 _ALLOWED_ENVS = frozenset({'base', 'local', 'gcp', 'aws'})
+
+#: Registry display names exposed as real subparsers
+#: (``predict`` is already a subparser, so it is excluded
+#: here to avoid a duplicate registration).
+_REGISTRY_ALIASES = (
+  'data', 'preprocessing', 'feature_selection', 'modeling',
+  'evaluation', 'scoring', 'eda', 'monitoring', 'retraining',
+  'cost_tracking', 'interpretability')
 
 
 def _env_allowed(env: str) -> bool:
@@ -167,12 +203,23 @@ def _run_kedro(
 
   Returns:
     Process exit code, or 2 when the Kedro project root
-    cannot be found.
+    cannot be found, the env is invalid, or ``serve`` is
+    refused by ``validate_bind_host`` (non-loopback bind
+    without a valid API key) -- in which case nothing is
+    spawned.
   '''
   if not _env_allowed(env):
     print('forecast-ml: error: invalid env: ' + str(env),
           file=sys.stderr)
     return 2
+  if command == 'serve':
+    try:
+      # pylint: disable=import-outside-toplevel
+      from forecast_ml_framework.serving.app import validate_bind_host
+      validate_bind_host(host)
+    except RuntimeError as exc:
+      print('forecast-ml: error: ' + str(exc), file=sys.stderr)
+      return 2
   root = _find_project_root()
   if root is None:
     print('forecast-ml: error: Kedro project not found '
@@ -218,11 +265,12 @@ def _validate_config(env: str) -> int:
     # pylint: disable=import-outside-toplevel
     from forecast_ml_framework.core import config_schema
     plain = config_schema.load_config(env)
-    validated = config_schema.validate_parameters(plain['parameters'])
-    extras = getattr(validated, 'model_extra', None) or {}
-    if extras:
-      print('warning: unknown top-level keys: '
-            + ', '.join(sorted(extras)), file=sys.stderr)
+    # Unreachable-by-design: no model_extra warning branch.
+    # ParametersConfig sets extra='forbid', so
+    # validate_parameters raises on unknown top-level keys
+    # (handled by the except below -> exit 2) instead of
+    # returning extras worth warning about.
+    config_schema.validate_parameters(plain['parameters'])
     print(f'config ok ({env})')
     return 0
   except Exception as exc:  # pylint: disable=broad-except
@@ -259,6 +307,15 @@ def _build_parser() -> argparse.ArgumentParser:
   sub = parser.add_subparsers(dest='command', required=True)
   for name in ('train', 'predict', 'serve', 'run'):
     child = sub.add_parser(name, help=f'Run the {name} pipeline.')
+    child.add_argument(
+      '--env', default='local', help='Kedro environment.')
+    child.add_argument(
+      '--artifact', default=None, help='Model artifact path.')
+    child.add_argument('--host', default='127.0.0.1')
+    child.add_argument('--port', type=int, default=8000)
+  for alias in _REGISTRY_ALIASES:
+    child = sub.add_parser(
+        alias, help=f'Run the {alias} pipeline.')
     child.add_argument(
       '--env', default='local', help='Kedro environment.')
     child.add_argument(

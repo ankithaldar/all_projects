@@ -17,12 +17,14 @@ here):
 
 Params (``params:retraining_params``, a dict). Expected
 keys for conf alignment:
-  drift_alert_threshold: drift alerts at/above this fire
-    (default 1; ``null`` disables).
+  drift_alert_threshold: drift fraction/value at/above this
+    fires (default 0.2, fraction/value semantics; explicit
+    thresholds >= 1 keep legacy count semantics; ``null``
+    disables).
   performance_decay_threshold: decay above this fires
     (default 0.05; ``null`` disables).
   schedule_days: days since ``last_train_at`` at/above
-    this fire (default 30; ``null`` disables).
+    this fire (default 7; ``null`` disables).
   data_volume_growth_threshold: row growth at/above this
     fires (default 0.20; ``null`` disables).
   now: injected current time (datetime or ISO string) for

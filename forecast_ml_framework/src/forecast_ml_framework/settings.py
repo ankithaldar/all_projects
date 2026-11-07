@@ -3,8 +3,8 @@
 
 '''Kedro settings for the forecast ML framework.
 
-Hooks are empty by design in the landed Phase 4 framework;
-do not add business logic to this module.
+Hooks are ``ForecastHooks`` (see ``HOOKS``); do not add
+business logic to this module.
 
 ``CONFIG_LOADER_CLASS`` is
 ``RestrictedOmegaConfigLoader``, a Kedro
@@ -18,9 +18,22 @@ principle as ``core.config_schema.load_config`` /
 ``core.config_loader.ConfigLoader``. Non-Kedro callers
 must use ``load_config`` and must never use the stock
 ``OmegaConfigLoader`` directly.
+
+``CONF_SOURCE`` is resolved by :func:`_resolve_conf_source`
+(V10): an ``importlib.resources``-packaged ``conf`` wins
+when the installed wheel ships one; otherwise the
+checkout layout (``<project>/conf``) is used. An
+installed layout without a packaged ``conf`` has no
+checkout to fall back to, so the checkout path is still
+returned and the CLI reports "project not found" (exit 2)
+rather than crashing here.
 '''
 
+import logging
+
 from pathlib import Path
+
+LOG = logging.getLogger(__name__)
 
 try:
   import re
@@ -96,9 +109,35 @@ except ImportError:  # pragma: no cover - kedro optional at import
 try:
   from forecast_ml_framework.hooks import ForecastHooks
 
-  HOOKS = (ForecastHooks,)
-except ImportError:  # pragma: no cover - hooks optional at import
+  HOOKS = (ForecastHooks(),)
+except ImportError as exc:  # pragma: no cover - hooks optional at import
+  LOG.warning(
+      'ForecastHooks unavailable code=%s type=%s',
+      'hooks_unavailable', type(exc).__name__)
   HOOKS = ()
 
-CONF_SOURCE = str(Path(__file__).resolve().parents[2] / 'conf')
+
+def _resolve_conf_source():
+  '''Resolve the ``conf`` directory for this checkout/install.
+
+  Returns:
+    Absolute path string: the ``importlib.resources``-
+    packaged ``conf`` (``<package>/conf``) when present,
+    else the checkout layout ``<project>/conf`` (the
+    ``parents[2]`` fallback, kept for source checkouts).
+  '''
+  try:
+    import importlib.resources
+    packaged = (
+        importlib.resources.files('forecast_ml_framework')
+        .joinpath('conf'))
+    if Path(str(packaged)).is_dir():
+      return str(packaged)
+  except (ImportError, OSError, TypeError, ValueError,
+          AttributeError) as exc:
+    LOG.debug('_resolve_conf_source: packaged conf skipped (%s)', exc)
+  return str(Path(__file__).resolve().parents[2] / 'conf')
+
+
+CONF_SOURCE = _resolve_conf_source()
 __all__ = ['CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']

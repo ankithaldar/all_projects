@@ -146,7 +146,7 @@ def resolve_handle(handle):
   '''Resolve a dotted handle under the scoring allowlist.
 
   Delegates to
-  ``pipelines.scoring.nodes._resolve_handle_strict`` so
+  ``core.handle.resolve_handle_strict`` so
   modeling handles share its allowlist (sklearn / xgboost /
   lightgbm / catboost / h2o / forecast_ml_framework) and
   estimator check (class with ``fit`` and ``predict``).
@@ -166,8 +166,8 @@ def resolve_handle(handle):
     ValueError: If handle is not allowlisted, cannot be
       resolved, or is not an estimator-like class.
   '''
-  from forecast_ml_framework.pipelines.scoring.nodes import (
-    _resolve_handle_strict,
+  from forecast_ml_framework.core.handle import (
+    resolve_handle_strict as _resolve_handle_strict,
   )
   if not isinstance(handle, str) or '.' not in handle:
     raise ValueError(
@@ -319,6 +319,8 @@ def _loss_kwargs(adapter_name, params):
     try:
       kwargs['objective'] = get_loss(adapter_name, objective)
     except ValueError:
+      # Safe: unrecognised native objective passes through
+      # unchanged (back-compat, see _loss_kwargs docstring).
       pass
   loss = params.get('loss_function')
   if loss is not None:
@@ -574,14 +576,29 @@ class SklearnAdapter(ModelAdapter):
   name = 'sklearn'
 
   def _build(self, task_type=None, y=None):
-    '''Build the underlying sklearn estimator.'''
+    '''Build the underlying sklearn estimator.
+
+    Raises:
+      ValueError: On an unknown ``model_type`` or a
+        classifier/regressor ``model_type`` that mismatches
+        the task (fail loud, never silently train the wrong
+        kind of model).
+    '''
     from sklearn.ensemble import (GradientBoostingClassifier,
                                   GradientBoostingRegressor,
                                   RandomForestClassifier,
                                   RandomForestRegressor)
     from sklearn.linear_model import (LinearRegression,
                                       LogisticRegression)
-    kind = self.params.get('model_type', 'logistic_regression')
+    task = normalize_task_kind(
+        task_type or self.params.get('task_type', 'classification'))
+    kind = self.params.get('model_type')
+    if kind is None:
+      # No explicit model_type: default follows the task, so
+      # a regression adapter without model_type builds a
+      # regressor instead of silently training a classifier.
+      kind = ('linear_regression' if task == 'regression'
+              else 'logistic_regression')
     table = {
       'logistic_regression': LogisticRegression,
       'linear_regression': LinearRegression,
@@ -590,7 +607,36 @@ class SklearnAdapter(ModelAdapter):
       'gradient_boosting': GradientBoostingClassifier,
       'gradient_boosting_regressor': GradientBoostingRegressor,
     }
-    cls = table.get(kind, LogisticRegression)
+    if kind not in table:
+      raise ValueError(
+        f'Unknown model_type {kind!r} for sklearn adapter: '
+        f'model_type must be one of {sorted(table)}')
+    cls = table[kind]
+    # NOTE: 'logistic_regression' ends with '_regression' but is
+    # a classifier, so membership is explicit, not suffix-based.
+    is_regressor = kind in {'linear_regression',
+                            'random_forest_regressor',
+                            'gradient_boosting_regressor'}
+    # Mismatch is only enforced when the task was declared
+    # explicitly: without a task_type, model_type itself
+    # declares the estimator kind (back-compat for callers
+    # that pass e.g. linear_regression alone).
+    explicit_task = (task_type is not None
+                     or 'task_type' in self.params)
+    if not explicit_task:
+      task = 'regression' if is_regressor else 'classification'
+    if task == 'regression' and not is_regressor:
+      raise ValueError(
+        f'model_type {kind!r} is a classifier but task_type is '
+        'regression: use an explicit *_regressor model_type '
+        '(random_forest_regressor / gradient_boosting_regressor / '
+        'linear_regression) for regression')
+    if task == 'classification' and is_regressor:
+      raise ValueError(
+        f'model_type {kind!r} is a regressor but task_type is '
+        'classification: use a classifier model_type '
+        '(logistic_regression / random_forest / gradient_boosting) '
+        'for classification')
     kwargs = _loss_kwargs(self.name, self.params)
     if y is not None:
       task = normalize_task_kind(
@@ -610,6 +656,12 @@ class SklearnAdapter(ModelAdapter):
   def fit(self, x, y):
     '''Fit the sklearn model, tuning first if configured.'''
     tuning = _tuning_config(self.params)
+    if tuning is not None and self.params.get('balance'):
+      # Let tune_model recompute balance weights per CV fold
+      # (via _FoldBalancedEstimator) instead of reusing the
+      # full-train weights baked into ``base``.
+      tuning = dict(tuning)
+      tuning.setdefault('balance', True)
     base = self._build(y=y)
     if tuning is not None:
       from forecast_ml_framework.pipelines.modeling.tuning import (
@@ -768,6 +820,9 @@ class HandleAdapter(ModelAdapter):
         f'(including loss): {exc}. Check loss_function and '
         'model hyperparameters for this handle.') from exc
     tuning = _tuning_config(self.params)
+    if tuning is not None and self.params.get('balance'):
+      tuning = dict(tuning)
+      tuning.setdefault('balance', True)
     if tuning is not None:
       from forecast_ml_framework.pipelines.modeling.tuning import (
         tune_model,
@@ -846,66 +901,148 @@ def _pick_best(per_model, params):
   return best
 
 
-def train_models(x_train, y_train, x_test, y_test, params):
-  '''Train every model in the zoo and pick the best.
+def _model_names(params):
+  '''Return the deduplicated, capped model names to train.'''
+  raw_names = params.get('models_to_use', ['sklearn'])
+  if params.get('model_handle') and 'models_to_use' not in params:
+    raw_names = [params['model_handle']]
+  return list(dict.fromkeys(raw_names))[:MAX_MODELS]
+
+
+def _per_model_params(name, params, task):
+  '''Build the hyperparameter dict for one model name.'''
+  model_params = params.get('model_params', {}) or {}
+  by_name = params.get('model_params_by_name', {}) or {}
+  source = model_params.get(name)
+  if not isinstance(source, dict):
+    source = by_name.get(name, {})
+  if not isinstance(source, dict):
+    source = {}
+  if not source and model_params and not any(
+      isinstance(v, dict) for v in model_params.values()):
+    source = model_params
+  mp = dict(source)
+  if params.get('model_handle'):
+    mp.setdefault('model_handle', params['model_handle'])
+  if params.get('loss_function') is not None:
+    mp.setdefault('loss_function', params['loss_function'])
+  for key in TUNING_KEYS:
+    if isinstance(params.get(key), dict):
+      mp.setdefault(key, params[key])
+  if params.get('balance') is not None:
+    mp.setdefault('balance', params['balance'])
+  mp.setdefault('task_type', task)
+  return mp
+
+
+def _selection_split(x_train, y_train, params, task):
+  '''Split x_train into fit/validation parts for selection.
 
   Args:
     x_train: Training features.
     y_train: Training target.
-    x_test: Test features.
-    y_test: Test target.
+    params: modeling_params dict (``random_state`` and
+      optional ``selection_test_size`` are honoured).
+    task: Normalised task kind.
+
+  Returns:
+    Tuple (x_fit, y_fit, x_val, y_val), or None when the
+    training set is too small for a held-out slice
+    (< 10 rows): selection then falls back to scoring on
+    the full training set.
+  '''
+  y_values = np.asarray(y_train)
+  if len(y_values) < 10:
+    return None
+  from sklearn.model_selection import train_test_split
+  test_size = params.get('selection_test_size', 0.2)
+  seed = params.get('random_state', 42)
+  stratify = None
+  if task == 'classification':
+    _, counts = np.unique(y_values, return_counts=True)
+    if counts.min() >= 2:
+      stratify = y_values
+  try:
+    return train_test_split(
+        x_train, y_values, test_size=test_size,
+        random_state=seed, stratify=stratify)
+  except ValueError:
+    return train_test_split(
+        x_train, y_values, test_size=test_size, random_state=seed)
+
+
+def _score_on(adapter, x, y, task):
+  '''Fit is assumed done; score adapter predictions on (x, y).'''
+  from forecast_ml_framework.pipelines.modeling.metrics import (
+    compute_metrics,
+  )
+  y_pred = adapter.predict(x)
+  proba = None
+  if task == 'classification':
+    proba = adapter.predict_proba(x)
+  return compute_metrics(y, y_pred, proba, task)
+
+
+def _train_one(name, params, task, x_train, y_train, split):
+  '''Fit, select-score and refit one model; return its parts.
+
+  The selection score is computed on a held-out slice of
+  ``x_train`` (fit on the other slice), never on the test
+  set. The returned adapter is then refitted on the full
+  ``x_train`` so the shipped model uses all training data.
+  '''
+  mp = _per_model_params(name, params, task)
+  if split is None:
+    adapter = create_adapter(name, mp)
+    adapter.fit(x_train, y_train)
+    metrics = _score_on(adapter, x_train, y_train, task)
+  else:
+    x_fit, x_val, y_fit, y_val = split
+    adapter = create_adapter(name, mp)
+    adapter.fit(x_fit, y_fit)
+    metrics = _score_on(adapter, x_val, y_val, task)
+    adapter = create_adapter(name, mp)
+    adapter.fit(x_train, y_train)
+  tuning_report = getattr(adapter, 'tuning_report', None)
+  if tuning_report is not None:
+    metrics['tuning'] = tuning_report
+  return adapter, metrics
+
+
+def train_models(x_train, y_train, x_test, y_test, params):
+  '''Train every model in the zoo and pick the best.
+
+  Model selection uses a held-out validation slice INSIDE
+  ``x_train`` (fit on the rest of train, scored on the
+  slice); ``x_test``/``y_test`` are never read here, so the
+  test set stays an honest hold-out for the final report.
+  The chosen adapter is refitted on the full ``x_train``.
+  ``per_model`` metrics are those train-validation scores.
+
+  Args:
+    x_train: Training features.
+    y_train: Training target.
+    x_test: Test features (unused; kept for pipeline compat).
+    y_test: Test target (unused; never used for selection).
     params: modeling_params dict (see pipeline header).
 
   Returns:
     Tuple of (best fitted adapter, per-model metrics, best name).
   '''
-  from forecast_ml_framework.pipelines.modeling.metrics import (
-    compute_metrics,
-  )
+  # pylint: disable=unused-argument
   task = normalize_task_kind(
       params.get('task_type', 'classification'))
-  raw_names = params.get('models_to_use', ['sklearn'])
-  if params.get('model_handle') and 'models_to_use' not in params:
-    raw_names = [params['model_handle']]
-  names = list(dict.fromkeys(raw_names))[:MAX_MODELS]
-  model_params = params.get('model_params', {}) or {}
-  by_name = params.get('model_params_by_name', {}) or {}
+  names = _model_names(params)
   for key in ('calibration_handle', 'tuning_handle'):
     value = params.get(key)
     if isinstance(value, str) and '.' in value:
       resolve_handle(value)
+  split = _selection_split(x_train, y_train, params, task)
   per_model, fitted = {}, {}
   for name in names:
-    source = model_params.get(name)
-    if not isinstance(source, dict):
-      source = by_name.get(name, {})
-    if not isinstance(source, dict):
-      source = {}
-    if not source and model_params and not any(
-        isinstance(v, dict) for v in model_params.values()):
-      source = model_params
-    mp = dict(source)
-    if params.get('model_handle'):
-      mp.setdefault('model_handle', params['model_handle'])
-    if params.get('loss_function') is not None:
-      mp.setdefault('loss_function', params['loss_function'])
-    for key in TUNING_KEYS:
-      if isinstance(params.get(key), dict):
-        mp.setdefault(key, params[key])
-    if params.get('balance') is not None:
-      mp.setdefault('balance', params['balance'])
-    mp.setdefault('task_type', task)
-    adapter = create_adapter(name, mp)
-    adapter.fit(x_train, y_train)
-    y_pred = adapter.predict(x_test)
-    proba = None
-    if task == 'classification':
-      proba = adapter.predict_proba(x_test)
-    per_model[name] = compute_metrics(
-        y_test, y_pred, proba, task)
-    tuning_report = getattr(adapter, 'tuning_report', None)
-    if tuning_report is not None:
-      per_model[name]['tuning'] = tuning_report
+    adapter, metrics = _train_one(
+        name, params, task, x_train, y_train, split)
+    per_model[name] = metrics
     fitted[name] = adapter
   best = _pick_best(per_model, params) or names[0]
   return fitted[best], per_model, best

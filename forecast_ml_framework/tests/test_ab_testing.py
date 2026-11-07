@@ -181,3 +181,73 @@ def test_shadow_challenger_exception_returns_champion():
   assert len(router.logs) == 1
   assert router.logs[0]['champion_prediction'] == 10.0
   assert router.logs[0]['challenger_prediction'] is None
+
+
+# --- W3 RED: salt, bounded logs, scrubbed request ids ---
+
+def test_default_salt_is_process_random_and_warns(monkeypatch, caplog):
+  '''Env-unset salt uses per-process random salt + WARNING.'''
+  import logging
+  from forecast_ml_framework.serving.ab_testing import ABRouter
+  monkeypatch.delenv('FORECAST_AB_TEST_SALT', raising=False)
+  with caplog.at_level(logging.WARNING):
+    router = ABRouter(
+        lambda: FakeModel(1.0), lambda: FakeModel(2.0),
+        mode='ab', salt=None)
+  assert router.salt
+  assert any(
+      record.levelno == logging.WARNING
+      and 'salt' in record.getMessage().lower()
+      for record in caplog.records)
+
+
+def test_explicit_empty_salt_warns_and_uses_process_salt(caplog):
+  '''Explicit empty salt is treated as unset, with WARNING.'''
+  import logging
+  from forecast_ml_framework.serving.ab_testing import ABRouter
+  with caplog.at_level(logging.WARNING):
+    router = ABRouter(
+        lambda: FakeModel(1.0), lambda: FakeModel(2.0),
+        mode='ab', salt='')
+  assert router.salt
+  assert any(
+      record.levelno == logging.WARNING
+      for record in caplog.records)
+
+
+def test_logs_are_bounded_deque():
+  '''Router logs are a bounded deque(10000).'''
+  from collections import deque
+  router = _make_router(mode='shadow')
+  assert isinstance(router.logs, deque)
+  assert router.logs.maxlen == 10000
+  for i in range(10005):
+    router.route(f'req-{i}', [[1.0]])
+  assert len(router.logs) == 10000
+
+
+def test_request_id_scrubbed_from_logs():
+  '''Raw request_id never appears in router logs.'''
+  router = _make_router(mode='ab', split=0.5)
+  raw_id = 'secret-request-id-xyz-12345'
+  router.route(raw_id, [[1.0]])
+  assert raw_id not in str(list(router.logs))
+  assert 'request_id_hash' in router.logs[0]
+
+
+def test_shadow_challenger_secret_exception_not_logged(caplog):
+  '''Secret detail from challenger failure is not logged raw.'''
+  import logging
+  from forecast_ml_framework.serving.ab_testing import ABRouter
+  secret = 'supersecretpassword55555'
+
+  class BadModel:
+    def predict(self, features):
+      raise RuntimeError(f'password={secret}')
+
+  router = ABRouter(
+      lambda: FakeModel(10.0), lambda: BadModel(), mode='shadow',
+      salt='fixed-salt-for-test')
+  with caplog.at_level(logging.DEBUG):
+    router.route('req-1', [[1.0]])
+  assert secret not in caplog.text

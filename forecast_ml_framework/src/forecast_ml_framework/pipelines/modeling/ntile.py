@@ -176,7 +176,13 @@ def assign_ntile(score, kind='decile', n=10):
   Returns:
     Integer array of tile ids in [1, n] (lowest scores in tile
     1); 'overall' returns all zeros, constant scores all
-    tile 1, and NaN scores tile 1 (never tile 0).
+    tile 1, and NaN scores tile 1 (never tile 0). This is the
+    single 1-based tiling used everywhere (evaluation,
+    lift tables and scoring). When ``n`` exceeds the number
+    of rows, the tile count degrades to at most one tile per
+    row and a ``UserWarning`` is issued: the maximum tile
+    may then be below ``n`` (e.g. a centile request on 50
+    rows yields at most 50 tiles).
   '''
   values = pd.Series(np.asarray(score, dtype=float))
   if len(values) == 0:
@@ -187,6 +193,12 @@ def assign_ntile(score, kind='decile', n=10):
   q = int(n) if n else _KIND_N.get(kind_name, 10)
   if q <= 0:
     return np.zeros(len(values), dtype=int)
+  if q > len(values):
+    warnings.warn(
+        f'requested {q} tiles for only {len(values)} rows: tile '
+        'count degrades to at most one tile per row (max tile '
+        f'<= {len(values)})',
+        UserWarning, stacklevel=2)
   try:
     labels = pd.qcut(values, q=min(q, len(values)),
                      labels=False, duplicates='drop')

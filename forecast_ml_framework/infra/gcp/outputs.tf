@@ -42,3 +42,8 @@ output "dataproc_cluster_id" {
   description = "ID of the Dataproc cluster (empty when enable_dataproc is false)."
   value       = var.enable_dataproc ? google_dataproc_cluster.dev[0].id : ""
 }
+
+output "workloads_service_account_email" {
+  description = "Email of the dedicated workload service account (Dataproc nodes + scheduler OIDC identity)."
+  value       = google_service_account.workloads.email
+}

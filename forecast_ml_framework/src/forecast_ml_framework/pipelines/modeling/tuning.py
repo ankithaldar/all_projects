@@ -5,12 +5,17 @@
 # pylint: disable=unused-import,import-outside-toplevel
 # pylint: disable=broad-exception-caught,unexpected-keyword-arg
 
+import inspect
+import logging
 import os
 
 import numpy as np
+from sklearn.base import BaseEstimator
 
 _MAX_CANDIDATES = 1000
 _MAX_N_ITER = 1000
+
+LOG = logging.getLogger(__name__)
 
 #: Exact method map: normalised name -> search class name.
 _METHODS = {
@@ -33,6 +38,95 @@ _METHODS = {
 _GRID_KEYS = ('param_grid', 'param_distributions', 'grid', 'params')
 _TUNING_KEYS = ('tuning', 'tuning_params', 'tuning_config',
                 'hyperparameter_tuning')
+
+
+class _FoldBalancedEstimator(BaseEstimator):
+  '''Estimator wrapper recomputing balance weights per fit.
+
+  ``fit(x, y)`` clones the wrapped estimator, computes
+  imbalance statistics from the ``y`` it is actually fitted
+  on (one CV fold inside ``GridSearchCV``, the full data on
+  the final refit) and injects ``scale_pos_weight`` /
+  ``class_weight`` / ``class_weights`` into the clone before
+  fitting -- so folds with different class ratios get
+  different weights instead of one full-train constant.
+  Each fit appends its ``scale_pos_weight`` to the shared
+  class-level ``balance_fit_log`` audit list (clones made by
+  the search share the class, so the log aggregates across
+  folds and candidates). Parameter grids tune the wrapped
+  estimator via ``estimator__<param>`` keys (rewritten by
+  ``tune_model`` when balance is on).
+  '''
+
+  #: Audit log of per-fit scale_pos_weight values (shared).
+  balance_fit_log = []
+
+  def __init__(self, estimator=None, balance=True):
+    '''Store the wrapped estimator and balance flag.
+
+    Args:
+      estimator: Unfitted sklearn-style estimator to wrap.
+      balance: When True (default), recompute balance
+        weights from each fit's ``y``.
+    '''
+    self.estimator = estimator
+    self.balance = balance
+
+  def _balance_param(self, estimator, info):
+    '''Return (param_name, value) to inject, or (None, None).'''
+    try:
+      signature = inspect.signature(type(estimator))
+    except (TypeError, ValueError):
+      return None, None
+    names = set(signature.parameters)
+    has_var_kw = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in signature.parameters.values())
+    if 'scale_pos_weight' in names or has_var_kw:
+      return 'scale_pos_weight', info['scale_pos_weight']
+    if 'class_weight' in names:
+      return 'class_weight', info['class_weights']
+    if 'class_weights' in names:
+      return 'class_weights', info['class_weights']
+    return None, None
+
+  def fit(self, x, y):
+    '''Clone, rebalance on this fit's y, and fit the clone.'''
+    from sklearn.base import clone
+    from forecast_ml_framework.pipelines.modeling.imbalance import (
+      compute_imbalance,
+    )
+    fitted = clone(self.estimator)
+    if self.balance:
+      info = compute_imbalance(y, 'classification')
+      name, value = self._balance_param(fitted, info)
+      if name is not None and name in fitted.get_params():
+        fitted.set_params(**{name: value})
+      type(self).balance_fit_log.append(
+          float(info['scale_pos_weight']))
+    fitted.fit(x, y)
+    self.estimator_ = fitted
+    self.classes_ = getattr(fitted, 'classes_', None)
+    return self
+
+  def predict(self, x):
+    '''Predict with the fitted clone.'''
+    return self.estimator_.predict(x)
+
+  def predict_proba(self, x):
+    '''Predict probas with the fitted clone.'''
+    return self.estimator_.predict_proba(x)
+
+  def score(self, x, y):
+    '''Score with the fitted clone (search default scoring).'''
+    return self.estimator_.score(x, y)
+
+  def __getattr__(self, name):
+    '''Delegate unknown attributes to the fitted clone.'''
+    fitted = self.__dict__.get('estimator_')
+    if fitted is None:
+      raise AttributeError(name)
+    return getattr(fitted, name)
 
 
 def _min_class_count(y):
@@ -107,8 +201,8 @@ def _is_regression(estimator, params):
     from sklearn.base import is_regressor
     if is_regressor(estimator):
       return True
-  except Exception:  # noqa: BLE001
-    pass
+  except (ImportError, AttributeError, TypeError, ValueError) as exc:
+    LOG.debug('is_regressor probe failed; using class-name check: %r', exc)
   name = type(estimator).__name__.lower()
   return 'regressor' in name
 
@@ -230,6 +324,16 @@ def tune_model(estimator, x, y, params):
   cv = params.get('cv', 3)
   cv = _validate_cv(cv, y, is_regression=is_regression)
   n_jobs = _validate_n_jobs(params.get('n_jobs', 1))
+  balance = bool(params.get('balance'))
+  if balance:
+    # Recompute balance weights inside each CV fold instead
+    # of reusing one full-train constant baked into the
+    # estimator: wrap it and route grid keys to the wrapped
+    # estimator (estimator__<param>).
+    _FoldBalancedEstimator.balance_fit_log = []
+    estimator = _FoldBalancedEstimator(estimator, balance=True)
+    grid = {f'estimator__{key}': values
+            for key, values in grid.items()}
   random_state = params.get('random_state', params.get('seed'))
   common = {'cv': cv, 'scoring': scoring, 'n_jobs': n_jobs}
   if method == 'grid':
@@ -245,6 +349,8 @@ def tune_model(estimator, x, y, params):
     try:
       from sklearn.experimental import enable_halving_search_cv  # noqa
     except ImportError:
+      # Safe: older sklearn without the halving export;
+      # HalvingGridSearchCV import below is the real guard.
       pass
     from sklearn.model_selection import HalvingGridSearchCV
     search = HalvingGridSearchCV(
@@ -253,6 +359,8 @@ def tune_model(estimator, x, y, params):
     try:
       from sklearn.experimental import enable_halving_search_cv  # noqa
     except ImportError:
+      # Safe: older sklearn without the halving export;
+      # HalvingRandomSearchCV import below is the real guard.
       pass
     from sklearn.model_selection import HalvingRandomSearchCV
     # HalvingRandomSearchCV has no n_iter kwarg; it takes
@@ -283,4 +391,11 @@ def tune_model(estimator, x, y, params):
     report['n_candidates'] = params.get(
       'n_candidates', params.get('n_iter', 10))
     report['n_iter'] = report['n_candidates']
+  if balance:
+    # Per-fit weights seen during the search (CV folds plus
+    # the final full-data refit); folds with different class
+    # ratios show different values by construction.
+    report['balance'] = True
+    report['balance_per_fold_weights'] = list(
+        _FoldBalancedEstimator.balance_fit_log)
   return search.best_estimator_, best_params, report

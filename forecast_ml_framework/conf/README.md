@@ -1,7 +1,9 @@
 # Configuration guide — `conf/`
 
-Three files per environment (`conf/base/`, plus `local` / `gcp` /
-`aws` overlays that override only what they must):
+Per environment (`conf/base/`, plus `local` / `gcp` / `aws` overlays
+that override only what they must): `variables.yml` + 7 parameter
+buckets under `parameters/` (`global`, `data`, `preprocessing`,
+`modeling`, `evaluation`, `eda`, `platform`) + `catalog.yml`:
 
 | File | What it holds | Who reads it |
 |---|---|---|
@@ -27,10 +29,29 @@ overlay and inherit the merged base.
 | `parameters/preprocessing.yml` | `data_prep_params` (FE registry), `feature_selection_params` |
 | `parameters/evaluation.yml` | `evaluation_params` incl. `metrics_to_calculate` |
 | `parameters/modeling.yml` | `models_to_use`, `h2o_automl_params`, `modeling_params`, `modeling_reg_params` (incl. loss functions / objectives), `model_params_by_name`, `calibration_params`, `cv_params` |
-| `parameters/platform.yml` | `spark_params`, `artifact_store_params`, `mlflow_params`, `dvc_params`, `shap_params`, `chart_params`, `registry_params`, `scoring_params`, `infra_params`, `monitoring_params`, `retraining_params`, `feature_store_params`, `ab_params`, `cost_params`, `governance_params` |
+| `parameters/eda.yml` | `eda_params` (EDA + leakage thresholds) |
+| `parameters/platform.yml` | `spark_params`, `artifact_store_params`, `mlflow_params`, `dvc_params`, `shap_params`, `chart_params`, `registry_params`, `scoring_params`, `infra_params`, `monitoring_params`, `retraining_params`, `feature_store_params`, `ab_params`, `cost_params` + twin `cost_tracking_params` (identical keys/defaults), `interpretability_params`, `governance_params` |
 
 To edit a section, open its bucket file (e.g. loss functions live in
 `parameters/modeling.yml`, platform hooks in `parameters/platform.yml`).
+
+**Source-comment note (R4, `global.yml`):** the legacy comment at
+`parameters/global.yml:7-8` ("Structure follows the
+`conf/base/parameters.yml` layout") is stale — that monolith no longer
+exists. The current layout is the split buckets above (the header at
+`global.yml:1-4` is correct: the loader merges every `*.yml` in
+`conf/base/parameters/`). Do not recreate `parameters.yml` under
+`conf/base/`.
+
+**Artifacts bucket override (MLops R2, `artifacts_bucket` param):**
+do not edit the overlay `filepath` literals per bucket change. The
+override is one flat runtime param, `artifacts_bucket`, defined in
+`parameters/platform.yml:51-61` (default `'forecast-ml-artifacts'`,
+matching Terraform `var.artifacts_bucket`) and interpolated as
+`${params:artifacts_bucket}` in every `conf/gcp/catalog.yml` /
+`conf/aws/catalog.yml` `filepath` — mirroring the `params:tmp_bucket`
+pattern. Set that one param (or the Terraform variable to match) to
+repoint every overlay entry.
 
 ## How the files relate
 
@@ -55,7 +76,8 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   `score_run_dt`, `brand`). These are **new keys** — the pydantic
   config schema must allow them (`extra='allow'`).
 - **Pydantic validation.** Every shipped key must be accepted by the
-  core config-schema models (`extra` allow). New keys introduced by
+  core config-schema models (top-level `extra='forbid'`, submodels
+  `extra='allow'`; typo'd top-level section → `validate-config` exit 2). New keys introduced by
   this work: the runtime keys above, `loss_function` / `objective`
   (top-level and per-model), `tuning_handle`, per-model
   `model_handle` entries, and FE `handle:` keys. If you add a key,
@@ -85,8 +107,10 @@ catalog.yml ───── dataset name -> type (importable string) + filepath/
   (`'forecast_ml_framework.losses.huber_loss'` or
   `'sklearn.metrics.mean_absolute_error'`). No `loss_function` =
   library defaults.
-- **Feature selection:** toggle methods in
-  `feature_selection_params.methods` (`enabled: true|false`), or
+- **Feature selection:** toggle methods via the flat
+  `correlation` / `kbest` / `l1` / `tree` dicts in
+  `feature_selection_params` (`{enabled, …}`, `preprocessing.yml:199-223`;
+  there is no `feature_selection_params.methods` key), or
   force features via `variables.yml`:
   - `business_relevant_features` — always kept.
   - `override_features` — when non-empty, ONLY these are used.
@@ -232,9 +256,11 @@ By default only a **curated subset** of metrics is computed and shown
   `cohen_kappa`, `matthews_corrcoef`, plus regression `mae`, `rmse`,
   `r2`, `mape`, `smape`.
 - **Full registry:** the code's `METRIC_REGISTRY`
-  (`pipelines/modeling/metrics.py`) holds ~60 metrics (incl.
-  F-beta, KL divergence, NDCG, Huber, MASE, top-k accuracy,
+  (`pipelines/modeling/metrics.py`) holds 154 metrics (90 classification
+  at `metrics.py:1583-1611` + 64 regression at `metrics.py:1613-1634`;
+  incl. F-beta, KL divergence, NDCG, Huber, MASE, top-k accuracy,
   per-class rates). Only the selected ones are computed/shown.
+  `pr_auc` is trapezoidal PR AUC, separate from `average_precision`.
 - **Examples (commented in `parameters/evaluation.yml`):**
   `metrics_to_calculate: 'all'` computes every registry metric
   (slower, noisier — avoid for dashboards); a custom list such as
@@ -260,10 +286,19 @@ names, aligned with the pipeline headers parallel workers document):
   `artifacts/feature_store/offline`), `online_backend` (e.g. `redis`),
   `entity_key` (e.g. `id`).
 - `ab_params` — `traffic_split` (challenger share, 0–1, e.g. `0.1`),
-  `mode` (`shadow` | `canary` | `full`, e.g. `shadow`).
+  `mode` (`shadow` | `ab`, e.g. `shadow`; code `serving/ab_testing.py:225-226`
+  — `canary`/`full` are not valid modes). **Source-comment note (R4):**
+  the in-file comments at `parameters/platform.yml:330,336` still say
+  `shadow | canary | full` — that comment is stale; the only valid
+  modes are `shadow` | `ab`. Do not follow the YAML comment. The YAML
+  files themselves are not edited by this docs pass (owned by the conf
+  owner); this README is the contract.
 - `cost_params` — unit prices in USD: `compute_price_per_hour`
-  (e.g. `0.5`), `storage_price_per_gb` (e.g. `0.02`),
-  `scan_price_per_tb_scanned` (e.g. `5.0`).
+  (e.g. `0.5`), `storage_price_per_gb_month` (e.g. `0.02`),
+  `data_scan_price_per_gb` (e.g. `0.005`) (`platform.yml:354-360`;
+  `storage_price_per_gb` / `scan_price_per_tb_scanned` are
+  deprecated aliases). `cost_tracking_params` is the twin bucket
+  (V1, identical keys/defaults, `platform.yml:366-372`).
 - `governance_params` — `retention_days` (e.g. `365`),
   `audit_actor_required` (`true` — actors mandatory on audit records;
   always `true`, never disable).

@@ -178,6 +178,62 @@ def calibrate_probability(proba, real_rate, sample_rate):
   return out
 
 
+def _oof_proba(base, x_train, y_train, cv):
+  '''Return out-of-fold positive-class probas for base.
+
+  Fits a clone of ``base`` on each training fold and predicts
+  the held-out fold, so the returned probas never come from
+  rows the scoring clone was fitted on (unlike in-sample
+  probas from the already-fitted ``base``).
+
+  Args:
+    base: Fitted sklearn-style estimator with predict_proba.
+    x_train: Training features.
+    y_train: Training target.
+    cv: Number of stratified folds.
+
+  Returns:
+    1-D array of out-of-fold positive-class probabilities.
+
+  Raises:
+    ValueError: If base cannot be cloned for OOF fitting or
+      its predict_proba is not binary (n, 2).
+  '''
+  import copy
+  from sklearn.base import clone
+  from sklearn.model_selection import StratifiedKFold
+  y_values = np.asarray(y_train)
+  splitter = StratifiedKFold(n_splits=cv, shuffle=True,
+                             random_state=42)
+  oof = np.zeros(len(y_values), dtype=float)
+  for fit_idx, val_idx in splitter.split(x_train, y_values):
+    try:
+      fold_model = clone(base)
+    except Exception:  # noqa: BLE001 - deepcopy fallback
+      try:
+        fold_model = copy.deepcopy(base)
+      except Exception as exc:
+        raise ValueError(
+            'betacal calibration requires a cloneable base '
+            f'estimator for out-of-fold probas: {exc}') from exc
+    fold_model.fit(_take(x_train, fit_idx), y_values[fit_idx])
+    proba = np.asarray(
+        fold_model.predict_proba(_take(x_train, val_idx)), dtype=float)
+    if proba.ndim != 2 or proba.shape[1] != 2:
+      raise ValueError(
+          'betacal calibration requires binary (n, 2) proba, '
+          f'got shape {proba.shape}')
+    oof[val_idx] = proba[:, 1]
+  return oof
+
+
+def _take(x, idx):
+  '''Return rows ``idx`` of array-like or DataFrame ``x``.'''
+  if hasattr(x, 'iloc'):
+    return x.iloc[idx]
+  return np.asarray(x)[idx]
+
+
 def calibrate_model(model, x_train, y_train, params):
   '''Calibrate a fitted classification model.
 
@@ -187,14 +243,21 @@ def calibrate_model(model, x_train, y_train, params):
     y_train: Training target.
     params: modeling_params dict with calibration
       {method: sigmoid|isotonic|betacal|none, cv: int}.
+      Betacal (binary only) is fitted on out-of-fold probas
+      from ``_oof_proba``; when the ``betacal`` library is
+      missing it warns and falls back to sigmoid, recording
+      both the requested and the used method in meta.
 
   Returns:
-    Tuple (calibrated model, meta dict).
+    Tuple (calibrated model, meta dict) with keys
+    calibrated, method (used), requested_method, and
+    fallback (True only on the betacal->sigmoid fallback).
 
   Raises:
     ValueError: If method is not one of sigmoid|isotonic|betacal
       (or 'none' for passthrough), cv is not an int in
-      [2, smallest class count], or y_train has < 2 classes.
+      [2, smallest class count], y_train has < 2 classes, or
+      betacal is requested for a non-binary target.
   '''
   params = params or {}
   cfg = params.get('calibration', {}) or {}
@@ -218,7 +281,8 @@ def calibrate_model(model, x_train, y_train, params):
       _ = resolve_handle(handle)
   if (normalize_task_kind(params.get('task_type', 'classification'))
           != 'classification' or method == 'none'):
-    return model, {'calibrated': False, 'method': method}
+    return model, {'calibrated': False, 'method': method,
+                   'requested_method': method, 'fallback': False}
   if not isinstance(method, str):
     raise ValueError(
       f'calibration method must be one of '
@@ -230,18 +294,35 @@ def calibrate_model(model, x_train, y_train, params):
       f'{list(_CALIBRATION_METHODS)}, got {method!r}')
   cv = _validate_calibrate_cv(cfg.get('cv', 5), y_train)
   base = getattr(model, 'model', model)
+  requested = method
   if method == 'betacal':
+    classes = np.unique(np.asarray(y_train))
+    if len(classes) != 2:
+      raise ValueError(
+          'betacal calibration requires a binary target, got '
+          f'{len(classes)} classes: betacal only supports '
+          'binary (n, 2) proba')
     try:
       from betacal import BetaCalibration
+    except ImportError:
+      import warnings
+      warnings.warn(
+          'betacal calibration requested but the betacal library '
+          'is not installed; falling back to sigmoid calibration',
+          UserWarning, stacklevel=2)
+      method = 'sigmoid'
+    else:
       fitted = BetaCalibration()
-      fitted.fit(base.predict_proba(x_train)[:, 1], y_train)
+      fitted.fit(_oof_proba(base, x_train, y_train, cv), y_train)
       wrapped = _BetaCalWrapper(base, fitted)
       return _wrap(wrapped), {'calibrated': True,
-                              'method': 'betacal'}
-    except ImportError:
-      method = 'sigmoid'
+                              'method': 'betacal',
+                              'requested_method': 'betacal',
+                              'fallback': False}
   from sklearn.calibration import CalibratedClassifierCV
   calibrator_cls = calibrator_cls or CalibratedClassifierCV
   calibrated = calibrator_cls(base, method=method, cv=cv)
   calibrated.fit(x_train, y_train)
-  return _wrap(calibrated), {'calibrated': True, 'method': method}
+  return _wrap(calibrated), {'calibrated': True, 'method': method,
+                             'requested_method': requested,
+                             'fallback': requested != method}

@@ -14,7 +14,13 @@ from sklearn.metrics import (
 
 
 def _round_threshold(value):
-  '''Round per parity: <0.0001 to 6dp, <0.01 to 4dp, else 2dp.'''
+  '''Round a threshold for display only (never for selection).
+
+  Parity display rounding: <0.0001 to 6dp, <0.01 to 4dp,
+  else 2dp. ``select_threshold`` returns the full-precision
+  optimum; callers that display a threshold may pass it
+  through this helper.
+  '''
   if value < 0.0001:
     return float(np.round(value, 6))
   if value < 0.01:
@@ -23,7 +29,14 @@ def _round_threshold(value):
 
 
 def _mcc_curve(y_true, proba):
-  '''Return threshold maximising MCC over parity step grids.'''
+  '''Return the MCC-optimal threshold plateau midpoint.
+
+  Scores the parity 0.01 grid by MCC, then returns the
+  midpoint of the contiguous plateau of thresholds tied at
+  the best score (the first argmax is the fragile left
+  edge of the plateau). Finer grids are probed when the
+  coarse optimum sits at 0.
+  '''
   def score(thresholds):
     '''Score thresholds by MCC, 0 where undefined.'''
     scores = []
@@ -35,14 +48,29 @@ def _mcc_curve(y_true, proba):
         scores.append(matthews_corrcoef(y_true, pred))
     return np.asarray(scores, dtype=float)
 
+  def plateau_midpoint(thresholds, scores):
+    '''Return midpoint of the best-score plateau around argmax.'''
+    best_idx = int(np.argmax(scores))
+    best_score = scores[best_idx]
+    if best_score == 0:
+      return float(thresholds[best_idx])
+    left = best_idx
+    while left > 0 and scores[left - 1] == best_score:
+      left -= 1
+    right = best_idx
+    while right < len(scores) - 1 and scores[right + 1] == best_score:
+      right += 1
+    return float((thresholds[left] + thresholds[right]) / 2.0)
+
   thresholds = np.arange(0, 1, 0.01)
-  best = thresholds[np.argmax(score(thresholds))]
+  scores = score(thresholds)
+  best = plateau_midpoint(thresholds, scores)
   if best == 0:
     thresholds = np.arange(0, 0.01, 0.0001)
-    best = thresholds[np.argmax(score(thresholds))]
+    best = plateau_midpoint(thresholds, score(thresholds))
     if best == 0:
       thresholds = np.arange(0, 0.0001, 0.000001)
-      best = thresholds[np.argmax(score(thresholds))]
+      best = plateau_midpoint(thresholds, score(thresholds))
   return float(best)
 
 
@@ -60,7 +88,8 @@ def select_threshold(y_true, proba, method):
       ks_statistics. Unknown methods return 0.5.
 
   Returns:
-    Selected threshold as float, rounded per parity.
+    Selected threshold as float at full precision (use
+    ``_round_threshold`` only to display it).
   '''
   y_true = np.asarray(y_true)
   try:
@@ -147,7 +176,7 @@ def _select_threshold_method(y_true, proba, method_name, method):
     method: Original method (for warnings).
 
   Returns:
-    Selected threshold as float, rounded per parity.
+    Selected threshold as float at full precision.
 
   Raises:
     ValueError: Propagated from sklearn metrics, caught by
@@ -191,4 +220,4 @@ def _select_threshold_method(y_true, proba, method_name, method):
     warnings.warn(f'unknown threshold method {method!r}: '
                   f'using default 0.5', stacklevel=2)
     return 0.5
-  return _round_threshold(selected)
+  return float(selected)

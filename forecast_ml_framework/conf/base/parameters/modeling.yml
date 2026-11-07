@@ -124,6 +124,10 @@ modeling_params:
       loss_function: 'binary:logistic'
       tree_method: 'hist'
       random_state: 42
+      # Pinned thread count: multithreaded 'hist' histogram building
+      # is not bit-reproducible across varying core counts, so the
+      # thread budget is fixed (MLops-23) instead of planner-driven.
+      n_jobs: 4
     lightgbm:
       model_handle: 'lightgbm.LGBMClassifier'
       n_estimators: 300
@@ -133,6 +137,7 @@ modeling_params:
       objective: 'binary'
       loss_function: 'binary'
       random_state: 42
+      n_jobs: 4
     catboost:
       model_handle: 'catboost.CatBoostClassifier'
       iterations: 500
@@ -140,6 +145,7 @@ modeling_params:
       learning_rate: 0.05
       loss_function: 'Logloss'
       random_state: 42
+      thread_count: 4
     sklearn:
       model_handle: 'sklearn.ensemble.RandomForestClassifier'
       n_estimators: 300
@@ -178,10 +184,15 @@ modeling_reg_params:
   # eval_metric: 'RMSE_CENTILE_100'
   random_state: 42
   test_size: 0.2
+  # No stratify_col here (R7): the regression target is
+  # continuous, so stratifying on it guarantees the
+  # stratified-split fallback warning on every run. The
+  # random method is used as-is; stratify_col stays on
+  # the classification modeling_params above, where the
+  # target is discrete.
   sampling_params:
     method: 'random'
     test_size: 0.2
-    stratify_col: 'target'
   calibration:
     method: 'none'
     cv: 5
@@ -205,6 +216,7 @@ modeling_reg_params:
       loss_function: 'reg:squarederror'
       tree_method: 'hist'
       random_state: 42
+      n_jobs: 4
     lightgbm:
       model_handle: 'lightgbm.LGBMRegressor'
       n_estimators: 200
@@ -213,6 +225,7 @@ modeling_reg_params:
       objective: 'regression'
       loss_function: 'regression'
       random_state: 42
+      n_jobs: 4
     catboost:
       model_handle: 'catboost.CatBoostRegressor'
       iterations: 500
@@ -220,6 +233,7 @@ modeling_reg_params:
       learning_rate: 0.05
       loss_function: 'RMSE'
       random_state: 42
+      thread_count: 4
     sklearn:
       model_handle: 'sklearn.ensemble.RandomForestRegressor'
       n_estimators: 200
@@ -248,6 +262,8 @@ model_params_by_name:
     learning_rate: 0.05
     objective: 'binary:logistic'
     loss_function: 'binary:logistic'
+    random_state: 42
+    n_jobs: 4
   lightgbm:
     model_handle: 'lightgbm.LGBMClassifier'
     n_estimators: 300
@@ -256,12 +272,16 @@ model_params_by_name:
     num_leaves: 31
     objective: 'binary'
     loss_function: 'binary'
+    random_state: 42
+    n_jobs: 4
   catboost:
     model_handle: 'catboost.CatBoostClassifier'
     iterations: 500
     depth: 6
     learning_rate: 0.05
     loss_function: 'Logloss'
+    random_state: 42
+    thread_count: 4
   sklearn:
     model_handle: 'sklearn.ensemble.RandomForestClassifier'
     n_estimators: 300

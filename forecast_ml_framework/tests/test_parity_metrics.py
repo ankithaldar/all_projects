@@ -58,6 +58,32 @@ def test_confusion_rates_table():
   assert 'Actual Negative' in labels
 
 
+def test_confusion_rates_table_rows_differ_asymmetric():
+  '''ML-24b: Actual Positive/Negative rows differ on asymmetric cm.
+
+  y_true=[0,0,1,1], y_pred=[0,1,1,1] gives tn=1, fp=1,
+  fn=0, tp=2, so tpr=1.0, fpr=0.5, fnr=0.0, tnr=0.5.
+  The Actual Positive row carries those rates; the
+  Actual Negative row inverts roles (Negative as the
+  reference class), so its tpr is tnr and its tnr is
+  tpr. Identical rows would mean the old duplicated
+  dict bug is still present.
+  '''
+  rows = confusion_rates_table([0, 0, 1, 1], [0, 1, 1, 1])
+  pos, neg = rows[0], rows[1]
+  assert pos['label'] == 'Actual Positive'
+  assert neg['label'] == 'Actual Negative'
+  assert pos['tpr'] == pytest.approx(1.0)
+  assert pos['fnr'] == pytest.approx(0.0)
+  assert pos['fpr'] == pytest.approx(0.5)
+  assert pos['tnr'] == pytest.approx(0.5)
+  assert neg['tpr'] == pytest.approx(0.5)
+  assert neg['tnr'] == pytest.approx(1.0)
+  assert neg['fpr'] == pytest.approx(0.0)
+  assert neg['fnr'] == pytest.approx(0.5)
+  assert pos['tpr'] != neg['tpr']
+
+
 def test_adj_r2_n_features():
   '''adj_r2 with n_features=2 differs from old approx.'''
   from sklearn.metrics import r2_score

@@ -15,23 +15,30 @@ readme = 'README.md'
 requires-python = '>=3.14'
 license = { text = 'MIT' }
 authors = [{ name = 'Forecast ML Framework Team' }]
+# Version bounds (Sec-F10 / MLops-21): every direct dependency
+# carries a lower + upper bound so a fresh resolve cannot silently
+# jump a major version (e.g. kedro 1.x -> 2.x) through the non-uv
+# PyPI path. All bounds contain the versions in uv.lock; `uv lock`
+# was re-run after adding them and no resolved version changed
+# (verified by diff). Reproducibility still rests on uv.lock --
+# the bounds only cap what a future re-resolve may select.
 dependencies = [
-  'kedro',
-  'kedro-datasets',
-  'scikit-learn',
-  'pandas',
-  'numpy',
-  'scipy',
-  'pyarrow',
-  'pydantic',
-  'sqlalchemy',
-  'omegaconf',
-  'matplotlib',
-  'fastapi',
-  'uvicorn',
-  'xgboost',
-  'lightgbm',
-  'catboost',
+  'kedro>=1,<2',
+  'kedro-datasets>=9,<11',
+  'scikit-learn>=1.5,<2',
+  'pandas>=2,<4',
+  'numpy>=1.26,<3',
+  'scipy>=1.11,<2',
+  'pyarrow>=17,<27',
+  'pydantic>=2,<3',
+  'sqlalchemy>=2,<3',
+  'omegaconf>=2.3,<3',
+  'matplotlib>=3.7,<4',
+  'fastapi>=0.110,<1',
+  'uvicorn>=0.29,<1',
+  'xgboost>=3,<4',
+  'lightgbm>=4,<5',
+  'catboost>=1,<2',
 ]
 
 [project.optional-dependencies]
@@ -42,7 +49,7 @@ extras-314-failures = []
 # polars/seaborn/dvc are not imported by src/ (grep verified
 # 2026-11-05: no `import polars`/`seaborn`/`dvc` in src/);
 # kept as opt-in extras rather than core dependencies.
-optional = ['polars', 'seaborn', 'dvc']
+optional = ['polars>=1,<3', 'seaborn>=0.13,<1', 'dvc>=3,<4']
 
 # Lazy-only heavy deps (verified 2026-11-05: no module-level
 # import of pyspark/h2o/shap/mlflow in src/; all are lazy
@@ -51,23 +58,23 @@ optional = ['polars', 'seaborn', 'dvc']
 # used at import time plus lazy-optional gradient-boosting
 # libraries (xgboost/lightgbm/catboost are also lazy in
 # adapters but retained in core for the default models).
-spark = ['pyspark']  # lazy: core/spark_factory only
-tracking = ['mlflow']  # lazy: serving/model_loader only
-explain = ['shap']  # lazy: interpretability nodes only
-maximal = ['h2o']  # lazy: modeling adapters (h2o_automl) only
+spark = ['pyspark>=3.5,<5']  # lazy: core/spark_factory only
+tracking = ['mlflow>=3,<4']  # lazy: serving/model_loader only
+explain = ['shap>=0.44,<1']  # lazy: interpretability nodes only
+maximal = ['h2o>=3.46,<4']  # lazy: modeling adapters (h2o_automl) only
 
 [dependency-groups]
 dev = [
-  'pytest',
+  'pytest>=8,<10',
   # Coverage gate: CI and ci/run_checks.sh run pytest with
   # --cov=src/forecast_ml_framework --cov-fail-under=85.
-  'pytest-cov',
+  'pytest-cov>=5,<8',
   # pyyaml is used only by tests (yaml.safe_load), not by src/.
-  'pyyaml',
+  'pyyaml>=6,<7',
   # starlette TestClient (fastapi.testclient) requires httpx at test
   # runtime; keep it in dev so `uv run pytest` serving tests pass
   # without bloating production dependencies.
-  'httpx',
+  'httpx>=0.27,<1',
 ]
 
 [project.scripts]
@@ -81,6 +88,13 @@ kedro_init_version = '1.7.0'
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/forecast_ml_framework']
+# R4: ship conf/ inside the wheel at
+# forecast_ml_framework/conf so an installed CLI can
+# resolve CONF_SOURCE via importlib.resources (see
+# settings._resolve_conf_source) without a source
+# checkout. Source layout is unchanged (conf/ at the
+# project root); only the wheel layout is affected.
+force-include = { 'conf' = 'forecast_ml_framework/conf' }
 
 [tool.pytest.ini_options]
 testpaths = ['tests']

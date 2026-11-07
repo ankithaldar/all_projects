@@ -49,15 +49,17 @@ To enable the EMR stub (off by default):
 terraform apply -var="enable_emr=true" -var="emr_subnet_id=subnet-xxxxxxxx"
 ```
 
-**EMR prerequisites (validation + docs, chosen over creating an IAM
-role resource):** `emr_subnet_id` is **required** when
-`enable_emr = true` — enforced by a Terraform `validation` block on
-`var.emr_subnet_id` (plan fails if unset). The stub uses
-`service_role = "EMR_DefaultRole"`, which **must pre-exist** in the
-AWS account (the default EMR service-linked role, auto-created on
-first EMR use). This stack does not create that IAM role; if it does
-not exist, EMR cluster creation will fail with an IAM error — create
-/ enable the default role out of band before enabling.
+**EMR prerequisites (validation + docs):** `emr_subnet_id` and
+`emr_service_role_arn` are **required** when `enable_emr = true` —
+enforced by Terraform `validation` blocks (plan fails if unset).
+The stub uses `service_role = var.emr_service_role_arn` (ARN of a
+scoped IAM role) plus `var.emr_ec2_instance_profile_arn`
+(`infra/aws/main.tf:203`, `infra/aws/variables.tf:60-67`;
+W5/MLops-8). The old bare `EMR_DefaultRole` string no longer
+ships (previously prose said it must pre-exist; that requirement
+is gone — now the ARN variable must pre-exist). This stack
+does not create that IAM role; provision it out of band before
+enabling.
 
 ## 100M-row sizing / EMR autoscaling
 
@@ -77,8 +79,8 @@ Local pandas is capped by `pandas_conversion_params.max_rows_for_pandas`
   (defaults 1 / 10 — the max bounds cost). It scales CORE capacity
   out on YARN memory pressure.
 - **Shuffle:** same `spark_params` as GCP (`spark.sql.shuffle.partitions
-  = 1000`, dynamic allocation on, AQE on in
-  `conf/base/parameters.yml`) — ~100k rows/partition at 100M rows.
+  = 1000`, dynamic allocation on (min 2 / max 20 executors), AQE on in
+  `conf/base/parameters/platform.yml`) — ~100k rows/partition at 100M rows.
 - **Athena:** keep staging tables partitioned (by `run_date`) the
   way the catalog does, so 100M-row scans prune partitions.
 - **Cost note:** EMR is **off by default** (`enable_emr = false`);
@@ -93,7 +95,7 @@ The retraining schedule ships as a **commented stub** —
 `aws_cloudwatch_event_rule`, EventBridge). It mirrors the GCP
 `google_cloud_scheduler_job` (weekly, matching
 `retraining_params.schedule_days = 7` in
-`conf/base/parameters.yml`). To provision: uncomment the rule and the
+`conf/base/parameters/platform.yml`). To provision: uncomment the rule and the
 `aws_cloudwatch_event_target` stub, and set the target to a real
 retraining trigger (Lambda / Step Functions / CodeBuild ARN). While
 commented it creates nothing and costs nothing; when provisioned,
@@ -105,16 +107,27 @@ a separate change if needed.
 ## State
 
 Local state by default (`terraform.tfstate`, gitignored — do not commit it).
-For shared use, configure a remote backend with locking (e.g. S3 backend with
-a DynamoDB lock table) in a `backend.tf` added separately.
+For shared use, adopt the shipped `aws/backend.tf.example` (S3 +
+DynamoDB, A6) by copying it to `backend.tf` and running
+`terraform init -migrate-state`.
 
 ## Outputs → conf overlays
 
 - `artifacts_bucket_url` (`s3://forecast-ml-artifacts`) — already the default
-  in `conf/aws/catalog.yml`; if you override `artifacts_bucket`, update the
-  `filepath` values there to match.
+  in `conf/aws/catalog.yml`; if you override `artifacts_bucket`, set
+  the matching `params:artifacts_bucket` runtime param
+  (`conf/base/parameters/platform.yml:51-61`, see `conf/README.md`).
 - `athena_database` — Athena database name for staging/metrics tables.
 - `emr_cluster_id` — empty unless `enable_emr = true`.
+
+## Encryption (CMEK) — production MUST set
+
+- **CMEK — production MUST set `kms_key_id`** (R-06): empty (default)
+  uses AWS-managed `AES256`; setting it switches the artifacts and
+  Athena-results buckets to `aws:kms` (`infra/aws/main.tf:52-56,139-140`,
+  `infra/aws/variables.tf:96-105`). Production MUST set a real KMS key
+  ARN. Validation enforces it (D7/X7): `production = true` with an
+  empty `kms_key_id` fails `terraform plan`.
 
 ## Costs
 

@@ -13,7 +13,10 @@ module never breaks environments without mlflow installed.
 import importlib
 import ipaddress
 import logging
+import math
 import re
+import socket
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -43,6 +46,69 @@ _SCHEME_RE = re.compile(r'^([a-zA-Z][a-zA-Z0-9+.-]*):')
 
 #: One numeric host label: decimal/octal digits or 0x hex.
 _NUMERIC_PART_RE = re.compile(r'(?:0[xX][0-9a-fA-F]+|[0-9]+)')
+
+#: Max characters kept for URIs in error messages.
+_SAFE_URI_MAX_LEN = 120
+
+#: Redact ``user:pass@`` userinfo on raw URI text before parsing,
+#: so opaque URIs (``scheme:user:pass@host``) also lose credentials
+#: (C2-F4). The scheme form preserves the ``scheme:``/``scheme://``
+#: prefix; the netloc form preserves a leading ``//``.
+_USERINFO_SCHEME_RE = re.compile(
+  r'^([a-zA-Z][a-zA-Z0-9+.-]*:)(//)?[^/@\s?#]+@')
+_USERINFO_NETLOC_RE = re.compile(r'^(//)[^/@\s?#]+@')
+_USERINFO_BARE_RE = re.compile(r'^[^/@\s?#:]+(?::[^/@\s?#]*)?@')
+
+
+def _safe_uri(uri):
+  '''Return a redacted, truncated form of ``uri`` for errors.
+
+  Userinfo (username/password), query string and fragment
+  are stripped so passwords and tokens never appear in
+  ``ValueError`` messages (Sec-F3). Userinfo is redacted on
+  the raw text before ``urlparse`` runs, so opaque URIs such
+  as ``https:user:pass@host`` (which ``urlparse`` treats as
+  scheme + path, not an authority) are covered too (C2-F4);
+  scheme-less values have any ``?query``/``#fragment`` cut.
+  The result is cut to ``_SAFE_URI_MAX_LEN`` characters with
+  an ellipsis when longer.
+
+  Args:
+    uri: Registry/tracking URI as given by the caller.
+
+  Returns:
+    Redacted URI string safe to include in errors.
+  '''
+  if not isinstance(uri, str):
+    text = repr(uri)
+    if len(text) > _SAFE_URI_MAX_LEN:
+      return text[:_SAFE_URI_MAX_LEN] + '...'
+    return text
+  redacted = _USERINFO_SCHEME_RE.sub(r'\1\2', uri, count=1)
+  redacted = _USERINFO_NETLOC_RE.sub(r'\1', redacted, count=1)
+  redacted = _USERINFO_BARE_RE.sub('', redacted, count=1)
+  parsed = urlparse(redacted)
+  if parsed.scheme or parsed.netloc:
+    host = parsed.hostname or ''
+    if ':' in host and not host.startswith('['):
+      host = f'[{host}]'
+    try:
+      port = parsed.port
+    except ValueError:
+      port = None
+    authority = host
+    if port is not None:
+      authority = f'{host}:{port}'
+    path = parsed.path or ''
+    if parsed.scheme:
+      text = f'{parsed.scheme}://{authority}{path}'
+    else:
+      text = f'//{authority}{path}'
+  else:
+    text = re.split(r'[?#]', redacted, maxsplit=1)[0]
+  if len(text) > _SAFE_URI_MAX_LEN:
+    return text[:_SAFE_URI_MAX_LEN] + '...'
+  return text
 
 
 def _is_numeric_host(host):
@@ -92,6 +158,42 @@ def _embedded_ip_blocked(ip):
       or ip.is_unspecified or str(ip) == '100.100.100.200')
 
 
+def _validate_dns_host(uri, host):
+  '''Reject DNS names resolving to any non-public IP.
+
+  Args:
+    uri: Registry/tracking URI for error messages.
+    host: DNS hostname to resolve.
+
+  Raises:
+    ValueError: When DNS lookup fails or any resolved
+      address is non-public (SSRF guard, fail closed).
+  '''
+  try:
+    infos = socket.getaddrinfo(
+      host, None, type=socket.SOCK_STREAM)
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    raise ValueError(
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'DNS resolution failed.') from exc
+  if not infos:
+    raise ValueError(
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'DNS resolution failed.')
+  for info in infos:
+    try:
+      raw = info[4][0]
+      resolved = ipaddress.ip_address(raw)
+    except (IndexError, TypeError, ValueError) as exc:
+      raise ValueError(
+        f'Invalid registry URI {_safe_uri(uri)!r}: '
+        'DNS resolution failed.') from exc
+    if _embedded_ip_blocked(resolved):
+      raise ValueError(
+        f'Invalid registry URI {_safe_uri(uri)!r}: '
+        'metadata host.')
+
+
 def _validate_uri_host(uri, host):
   '''Reject metadata/encoded/non-public hosts for ``uri``.
 
@@ -112,20 +214,28 @@ def _validate_uri_host(uri, host):
   reserved/multicast/unspecified IP is rejected (SSRF
   guard).
 
+  DNS names are resolved via ``socket.getaddrinfo`` and
+  every resolved address is judged by ``_embedded_ip_blocked``;
+  one non-public address rejects the URI and any DNS
+  failure fails closed (Sec-F4/Antisec-F04).
+
   Raises:
     ValueError: When the host contains non-ASCII characters,
       is %-encoded, blocked, non-public, or numeric in a
-      non-canonical form.
+      non-canonical form, or resolves to a non-public IP.
   '''
   if host and not host.isascii():
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
   if '%' in host:
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
   if host in _BLOCKED_HOSTS:
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
   # *.localhost, localhost.localdomain and
   # *.localhost.localdomain resolve to ::1 just like
   # localhost, but only the exact canonical 'localhost'
@@ -134,7 +244,8 @@ def _validate_uri_host(uri, host):
   if host == 'localhost.localdomain' or host.endswith(
           ('.localhost', '.localhost.localdomain')):
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
   if not host or host == 'localhost':
     return
   try:
@@ -143,7 +254,8 @@ def _validate_uri_host(uri, host):
     ip = None
   if _is_numeric_host(host) and (ip is None or str(ip) != host):
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
   if ip is not None and str(ip) in _EXPLICIT_LOCALHOST_IPS:
     # Explicit canonical localhost only; mapped/encoded
     # loopback (e.g. ::ffff:127.0.0.1) does not reach here
@@ -152,7 +264,10 @@ def _validate_uri_host(uri, host):
     return
   if ip is not None and _embedded_ip_blocked(ip):
     raise ValueError(
-      f'Invalid registry URI {uri!r}: metadata host.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'metadata host.')
+  if ip is None:
+    _validate_dns_host(uri, host)
 
 
 def _is_mlflow_exception(exc):
@@ -172,6 +287,26 @@ def _is_mlflow_exception(exc):
         and (klass.__module__ or '').startswith('mlflow'):
       return True
   return False
+
+
+def _is_not_found(exc):
+  '''Return True only when ``exc`` means the alias is absent.
+
+  A missing alias (``RESOURCE_DOES_NOT_EXIST``) is the only
+  lookup failure that may promote as a first version. Any
+  other MLflow failure (e.g. ``INTERNAL_ERROR``) is not a
+  not-found signal and must fail closed, so a transient
+  registry outage can never promote blindly. When the
+  exception carries an ``error_code`` it decides; otherwise
+  the ``ResourceDoesNotExistException`` class name is the
+  fallback.
+  '''
+  code = getattr(exc, 'error_code', None)
+  if code is not None:
+    return 'RESOURCE_DOES_NOT_EXIST' in str(code).upper()
+  return any(
+    klass.__name__ == 'ResourceDoesNotExistException'
+    for klass in type(exc).__mro__)
 
 
 def validate_alias(alias):
@@ -254,6 +389,10 @@ def validate_registry_uri(uri):
   ``*.localhost.localdomain`` hosts (which also resolve
   to ::1) are rejected; only the exact ``localhost``
   hostname is allowed.
+  DNS hostnames are resolved via ``socket.getaddrinfo``;
+  any non-public resolved address rejects the URI and
+  DNS failures fail closed. Error messages redact
+  userinfo, query and fragment, truncated to 120 chars.
 
   Args:
     uri: Tracking/registry URI, or ''/None for ambient.
@@ -272,7 +411,8 @@ def validate_registry_uri(uri):
       or uri != uri.strip() \
       or any(ord(ch) < 32 or ord(ch) == 127 for ch in uri) \
       or ' ' in uri:
-    raise ValueError(f'Invalid registry URI {uri!r}.')
+    raise ValueError(
+      f'Invalid registry URI {_safe_uri(uri)!r}.')
   match = _SCHEME_RE.match(uri)
   if match is None:
     # Scheme-less local path (e.g. 'mlruns', './mlruns').
@@ -282,26 +422,31 @@ def validate_registry_uri(uri):
       parsed = urlparse(uri)
       if parsed.username is not None or parsed.password is not None:
         raise ValueError(
-          f'Invalid registry URI {uri!r}: userinfo embedded.')
+          f'Invalid registry URI {_safe_uri(uri)!r}: '
+          'userinfo embedded.')
       host = (parsed.hostname or '').lower().rstrip('.')
       _validate_uri_host(uri, host)
     return uri
   scheme = match.group(1).lower()
   if scheme not in ALLOWED_URI_SCHEMES:
     raise ValueError(
-      f'Invalid registry URI {uri!r}: scheme {scheme!r} '
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      f'scheme {scheme!r} '
       'is not allowed (http, https, sqlite only).')
   parsed = urlparse(uri)
   if scheme in ('http', 'https') and not uri.lower().startswith(
       scheme + '://'):
-    raise ValueError(f'Invalid registry URI {uri!r}.')
+    raise ValueError(
+      f'Invalid registry URI {_safe_uri(uri)!r}.')
   if scheme == 'sqlite' and not uri.lower().startswith(
       'sqlite://'):
-    raise ValueError(f'Invalid registry URI {uri!r}.')
+    raise ValueError(
+      f'Invalid registry URI {_safe_uri(uri)!r}.')
   # Reject any userinfo in the authority component.
   if parsed.username is not None or parsed.password is not None:
     raise ValueError(
-      f'Invalid registry URI {uri!r}: userinfo embedded.')
+      f'Invalid registry URI {_safe_uri(uri)!r}: '
+      'userinfo embedded.')
   host = (parsed.hostname or '').lower().rstrip('.')
   _validate_uri_host(uri, host)
   return uri
@@ -326,22 +471,40 @@ def _higher_better(metric):
 class ModelRegistry:
   '''MLflow-backed model registry with aliases.
 
+  Library API by design: no pipeline or serving code in this
+  repository calls :class:`ModelRegistry`/`register_model`;
+  callers wire it explicitly. The promotion gate therefore
+  only protects callers that pass shipped config through:
+  when ``config`` carries ``promote_on_metric`` (top-level,
+  or nested under ``registry_params``/``mlflow_params`` as
+  shipped in ``parameters/platform.yml``, where it is
+  ``'f1_weighted'``) that metric becomes the default gate
+  for :meth:`register_model`. Constructing without such
+  config leaves the gate disabled, by design for bare
+  library use. The gate compares via ``compare_runs``, so
+  it also needs an ``experiment_id``/``experiment_name`` in
+  config to function (other than first-version promotion).
+
   Args:
     config: Mapping with 'tracking_uri', 'registry_uri'
-      and optionally 'experiment_name'/'experiment_id'.
-      A nested 'mlflow_params' (or 'mlflow') mapping is
-      unwrapped automatically. Local sqlite URIs such as
+      and optionally 'experiment_name'/'experiment_id'
+      and 'promote_on_metric'. Nested 'registry_params',
+      'mlflow_params' (or 'mlflow') mappings are unwrapped
+      automatically. Local sqlite URIs such as
       'sqlite:////tmp/mlflow.db' need no server.
     tracking_uri: Tracking URI, overriding ``config``.
     registry_uri: Registry URI, overriding ``config``.
       Defaults to the tracking URI when unset.
     experiment_id: Experiment ID for compare_runs.
     experiment_name: Experiment name for compare_runs.
+    promote_on_metric: Registry default promotion gate
+      metric (e.g. 'f1_weighted'); ''/None disables
+      the gate. Per-call value overrides.
   '''
 
   def __init__(self, config=None, tracking_uri=None,
                registry_uri=None, experiment_id=None,
-               experiment_name=None):
+               experiment_name=None, promote_on_metric=None):
     '''Store config; do not import mlflow yet.
 
     Args:
@@ -350,13 +513,16 @@ class ModelRegistry:
       registry_uri: Registry URI override.
       experiment_id: Experiment ID override.
       experiment_name: Experiment name override.
+      promote_on_metric: Promotion gate metric override;
+        None falls back to ``config``.
     '''
     cfg = dict(config) if config else {}
-    nested = cfg.get('mlflow_params') or cfg.get('mlflow')
-    if isinstance(nested, dict):
-      merged = dict(cfg)
-      merged.update(nested)
-      cfg = merged
+    for nested_key in ('registry_params', 'mlflow_params', 'mlflow'):
+      nested = cfg.get(nested_key)
+      if isinstance(nested, Mapping):
+        merged = dict(cfg)
+        merged.update(dict(nested))
+        cfg = merged
     self.tracking_uri = (
       tracking_uri or cfg.get('tracking_uri') or 'mlruns')
     self.registry_uri = (
@@ -367,6 +533,10 @@ class ModelRegistry:
       'experiment_id')
     self.experiment_name = experiment_name or cfg.get(
       'experiment_name') or cfg.get('experiment')
+    if promote_on_metric is not None:
+      self.promote_on_metric = promote_on_metric
+    else:
+      self.promote_on_metric = cfg.get('promote_on_metric') or None
     self._mlflow = None
     self._sklearn = None
     self._client = None
@@ -443,8 +613,94 @@ class ModelRegistry:
         mlflow, 'set_registry_uri'):
       mlflow.set_registry_uri(self.registry_uri)
 
+  def _gate_promotion(self, name, alias, candidate_run_id,
+                      gate_metric):
+    '''Decide whether the gate allows alias promotion.
+
+    The candidate run is compared with the incumbent behind
+    ``alias`` (via ``get_model_by_alias``) using
+    ``compare_runs`` rows for ``gate_metric``. Direction
+    follows ``_higher_better`` (e.g. f1/_weighted higher
+    wins; other metrics lower wins, matching the
+    validation default) and only strict improvement
+    promotes. No incumbent promotes; any missing data or
+    comparison failure fails closed (no promotion). Only a
+    genuinely missing alias (``KeyError`` or an MLflow
+    ``RESOURCE_DOES_NOT_EXIST`` error) counts as "no
+    incumbent"; any other incumbent-lookup failure (e.g.
+    ``INTERNAL_ERROR``) also fails closed rather than
+    promoting blindly.
+
+    Args:
+      name: Registered model name.
+      alias: Alias to gate.
+      candidate_run_id: New run ID for the candidate.
+      gate_metric: Metric name to compare on.
+
+    Returns:
+      True when the candidate strictly improves and the
+      alias may move, False otherwise.
+    '''
+    try:
+      incumbent = self.get_model_by_alias(name, alias)
+    except KeyError:
+      return True
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+      if _is_not_found(exc):
+        return True
+      logger.warning(
+        'promotion gate failed closed for %r %r: %s',
+        name, alias, type(exc).__name__)
+      return False
+    incumbent_run_id = getattr(incumbent, 'run_id', None)
+    if not candidate_run_id or not incumbent_run_id:
+      logger.warning(
+        'promotion gate failed closed for %r %r: '
+        'missing run id', name, alias)
+      return False
+    try:
+      rows = self.compare_runs(metric=str(gate_metric))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+      logger.warning(
+        'promotion gate failed closed for %r %r: %s',
+        name, alias, type(exc).__name__)
+      return False
+    candidate = next(
+      (row for row in rows
+       if row.get('run_id') == candidate_run_id), None)
+    current = next(
+      (row for row in rows
+       if row.get('run_id') == incumbent_run_id), None)
+    if candidate is None or current is None:
+      logger.warning(
+        'promotion gate failed closed for %r %r: '
+        'candidate/incumbent row missing', name, alias)
+      return False
+    try:
+      candidate_value = float(candidate['metric_value'])
+      current_value = float(current['metric_value'])
+    except (TypeError, ValueError):
+      logger.warning(
+        'promotion gate failed closed for %r %r: '
+        'metric is not numeric', name, alias)
+      return False
+    if not math.isfinite(candidate_value) or not math.isfinite(
+        current_value):
+      logger.warning(
+        'promotion gate failed closed for %r %r: '
+        'metric is not finite', name, alias)
+      return False
+    if _higher_better(str(gate_metric)):
+      return candidate_value > current_value
+    return candidate_value < current_value
+
   def _find_version(self, name, run_id):
     '''Find a model version for ``run_id`` under ``name``.
+
+    Only an exact ``run_id`` match wins; there is no
+    wrong-version fallback, so typos return None and the
+    caller raises instead of promoting an unrelated
+    version (MLops-2).
 
     Args:
       name: Registered model name.
@@ -461,32 +717,44 @@ class ModelRegistry:
       if not _is_mlflow_exception(exc):
         raise
       logger.warning(
-        'search_model_versions failed for %r: %s', name, exc)
+        'search_model_versions failed for %r: %s', name,
+        type(exc).__name__)
       versions = []
     for item in list(versions or []):
       if getattr(item, 'run_id', None) == run_id:
         return str(getattr(item, 'version', '') or '')
-    if versions:
-      first = list(versions)[0]
-      return str(getattr(first, 'version', '') or '')
     return None
 
-  def register_model(self, model, name, alias='production',
-                     metrics=None, params=None, tags=None):
-    '''Register ``model`` and point ``alias`` at it.
+  def register_model(self, model, name, alias=None,
+                     metrics=None, params=None, tags=None,
+                     promote_on_metric=None):
+    '''Register ``model`` and optionally point ``alias`` at it.
+
+    Promotion is explicit: ``alias`` defaults to None
+    (no alias move) so routine registrations never hit
+    production silently (MLops-4). Pass an alias to opt
+    in. When a gate metric is set, the candidate must
+    strictly improve on the incumbent behind the alias
+    (via ``get_model_by_alias`` + ``compare_runs``);
+    worse metrics leave the alias unchanged. Direction
+    follows ``_higher_better`` (higher-better for f1 etc,
+    lower-better otherwise); equal scores do not promote.
+    A missing alias (first version) promotes.
 
     Args:
       model: Fitted sklearn model to log/register.
       name: Registered model name.
-      alias: Alias to set ('production' by default);
-        pass None to skip aliasing.
+      alias: Alias to set; None (default) skips aliasing.
       metrics: Metric dict to log on the run.
       params: Param dict to log on the run.
       tags: Tag dict to log on the run.
+      promote_on_metric: Per-call gate metric; None uses
+        the registry default, '' disables the gate.
 
     Returns:
       Dict with 'run_id', 'uri', 'model_uri', 'version',
-      'name' and 'alias' keys.
+      'name', 'alias' and 'promoted' (True only when the
+      alias was actually set).
 
     Raises:
       ImportError: When mlflow is not installed.
@@ -531,15 +799,35 @@ class ModelRegistry:
           if not _is_mlflow_exception(exc):
             raise
           logger.warning(
-            'register_model fallback failed for %r: %s', name, exc)
+            'register_model fallback failed for %r: %s', name,
+            type(exc).__name__)
           version = None
     if run_id and not version:
       version = self._find_version(name, run_id)
     if not model_uri and run_id:
       model_uri = f'runs:/{run_id}/model'
+    if promote_on_metric is not None:
+      gate_metric = promote_on_metric
+    else:
+      gate_metric = self.promote_on_metric
+    promoted = False
     if alias and version is not None:
-      self._get_client().set_registered_model_alias(
-        name, alias, str(version))
+      if not gate_metric:
+        self._get_client().set_registered_model_alias(
+          name, alias, str(version))
+        promoted = True
+      else:
+        candidate_run_id = str(run_id) if run_id else None
+        promoted = self._gate_promotion(
+          name, alias, candidate_run_id,
+          str(gate_metric))
+        if promoted:
+          self._get_client().set_registered_model_alias(
+            name, alias, str(version))
+        else:
+          logger.warning(
+            'promotion gate blocked %r %r (candidate %s)',
+            name, alias, candidate_run_id)
     return {
       'run_id': str(run_id) if run_id else None,
       'uri': model_uri,
@@ -547,6 +835,7 @@ class ModelRegistry:
       'version': str(version) if version is not None else None,
       'name': name,
       'alias': alias,
+      'promoted': promoted,
     }
 
   def get_model_by_alias(self, name, alias):
@@ -574,9 +863,11 @@ class ModelRegistry:
     Args:
       name: Registered model name.
       alias: Alias to promote (validated).
-      run_id: Run ID whose version should win. May
-        also be a numeric version string when the
-        run lookup finds nothing.
+      run_id: Run ID whose version should win; lookup
+        is exact with no fallback, so digit-only run IDs
+        are never treated as version strings (MLops-3).
+        Pass an explicit ``version`` for version-based
+        promotion.
       version: Explicit version, overriding run lookup.
 
     Returns:
@@ -594,8 +885,6 @@ class ModelRegistry:
         raise ValueError(
           'promote_alias requires a run_id or version.')
       resolved = self._find_version(name, str(run_id))
-      if not resolved and str(run_id).isdigit():
-        resolved = str(run_id)
       if not resolved:
         raise ValueError(
           f'No model version found for run_id {run_id!r} '

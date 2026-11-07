@@ -2,7 +2,12 @@
 
 Single-page, offline dashboard (vanilla HTML/JS/CSS, no build step, no CDN).
 Shows KPIs, per-bucket metrics, classification + regression charts, and SHAP bars
-from the Phase 1 evaluation pipeline artifacts.
+from the Phase 1 evaluation pipeline artifacts. **Offline viewer only (A7):**
+this page never calls `/predict` (no live scoring UI by design); point
+`CONFIG.metricsUrl` at exported evaluation artifacts instead. Header sort
+buttons are real `<button type="button" data-col>` with `aria-sort`
+on the header cell, `aria-pressed` on the sort-direction button, and
+focus restored to the same column after re-render (W11).
 
 ## How to open
 
@@ -61,6 +66,10 @@ Drop these into `web/sample/` (or point `CONFIG` at a real artifacts folder):
   specificity, ks, ece, confusion_matrix, per_class_f1`; regression keys
   include `mae, medae, rmse, rmsle, mse, r2, adj_r2, mape, smape,
   explained_variance, max_error, bias`.
+- KPI cards: when `task` is `regression`, the page reads `regression_global`
+  (`mae, rmse, r2, mape, smape`, plus up to four other numeric keys); when
+  `regression_global` is absent it falls back to `global`. Classification
+  tasks read `global` with the `CONFIG.kpiKeys` list.
 - `buckets.segment` = `evaluate_model`'s `by_bucket` (grouped by
   `params.bucket_segment_col`, e.g. `region`); `buckets.decile` = `by_decile`
   (prediction-decile groups). `by_bucket`/`by_decile` aliases are also accepted.
@@ -68,11 +77,14 @@ Drop these into `web/sample/` (or point `CONFIG` at a real artifacts folder):
   (default `sample/`), so `charts/roc.png` → `sample/charts/roc.png`.
   Chart names follow `charts.py::make_charts`: classification
   (`roc, pr, confusion_heatmap, calibration_curve, threshold_curve, lift_gain,
-  ks_plot, prob_distribution, per_class_bars, cost_curve`) and regression
+  ks_plot, prob_distribution, per_class_bars` — `cost_curve` deleted in
+  W14/F5, do not expect it) and regression
   (`pred_vs_actual, residuals_vs_fitted, residuals_vs_actual, residual_hist_qq,
   scale_location, error_vs_actual, error_by_bucket, segment_curves,
   feature_vs_residual`). Each entry needs `caption` (what issue it diagnoses:
-  calibration, leakage, drift) and `alt`.
+  calibration, leakage, drift) and `alt`. `file`/`path` entries are allowlisted:
+  a bare filename or `charts/<filename>` with only `A-Za-z0-9._-` (no scheme,
+  absolute path, or `..`); entries failing the allowlist are skipped.
 - `shap_top` — `[{feature, importance}]`, descending importance (page re-sorts).
 
 The evaluation worker should write real `metrics.json` + PNGs with exactly this
@@ -86,7 +98,8 @@ Edit the single `CONFIG` const at the top of `app.js`:
 const CONFIG = {
   metricsUrl: "../artifacts/web/metrics.json", // or "sample/metrics.json"
   chartsBase: "../artifacts/web/",              // folder containing metrics.json
-  kpiKeys: ["roc_auc", "pr_auc", "f1_weighted", "accuracy", "ece"]
+  kpiKeys: ["roc_auc", "pr_auc", "f1_weighted", "accuracy", "ece"],
+  regressionKpiKeys: ["mae", "rmse", "r2", "mape", "smape"]
 };
 ```
 
@@ -96,7 +109,10 @@ are resolved relative to `chartsBase`).
 ## Accessibility / design notes
 
 - Landmarks (`header/nav/main/footer`), skip link, `label`led controls,
-  keyboard-sortable table headers, `alt` text, lazy-loaded chart images.
+  sort buttons in column headers (real `<button type="button">`, natively
+  keyboard-operable; `aria-sort` on the header cell and `aria-pressed` on the
+  sort-direction button; focus is restored to the same column after a
+  re-render), `alt` text, lazy-loaded chart images.
 - Responsive: KPI cards and chart gallery collapse to one column on narrow screens.
 - `prefers-reduced-motion` disables transitions; `@media print` hides nav/controls.
 - No external fonts, scripts, or CDN — works offline.
@@ -105,6 +121,7 @@ are resolved relative to `chartsBase`).
 
 ```bash
 node --check web/app.js
+node web/test_app.logic.js
 grep -RInE 'https?://' web/index.html web/app.js web/styles.css || true  # expect: no CDN refs
 python3 -m http.server 8000   # in web/, then curl -s localhost:8000/ | grep -c '<section'
 ```

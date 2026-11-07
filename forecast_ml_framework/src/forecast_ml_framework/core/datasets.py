@@ -1,7 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Kedro datasets for SQL sources and Spark SQL sources.'''
+'''Kedro datasets for SQL sources and Spark SQL sources.
+
+Read-only requirement: SQL datasets must be used with a
+read-only database role/account. The keyword denylist in
+:func:`_validate_read_only_query` is keyword enforcement,
+not a sandbox, so the account itself must be read-only
+(A8) — a SELECT against a sensitive table still reads it.
+'''
 # pylint: disable=import-outside-toplevel, super-init-not-called
 # pylint: disable=broad-exception-caught
 
@@ -26,6 +33,10 @@ _FORBIDDEN_SQL_KEYWORDS = (
     'PG_SLEEP', 'PG_TERMINATE_BACKEND', 'PG_CANCEL_BACKEND',
     'PG_RELOAD_CONF', 'PG_ROTATE_LOGFILE', 'SLEEP', 'BENCHMARK',
     'LOAD_FILE', 'WAITFOR', 'XP_CMDSHELL',
+    # A8: server-file / side-channel primitives that violate
+    # read-only intent even inside a SELECT.
+    'PG_READ_FILE', 'PG_LS_DIR', 'LO_EXPORT', 'DBLINK',
+    'PG_ADVISORY_LOCK',
 )
 _FORBIDDEN_SQL_RE = re.compile(
     r'\b(?:' + '|'.join(_FORBIDDEN_SQL_KEYWORDS) + r')\b',
@@ -461,6 +472,10 @@ class RestrictedPickleDataset(_KedroDataset):
   def _load(self):
     '''Load via the restricted unpickler.
 
+    The file is read via ``core.artifact_store._read_capped``,
+    so an oversized pickle is rejected without being fully
+    read into memory.
+
     Returns:
       The unpickled object.
 
@@ -469,11 +484,12 @@ class RestrictedPickleDataset(_KedroDataset):
         is missing, or the pickle is malformed/forbidden.
     '''
     from forecast_ml_framework.core.artifact_store import (
+      _read_capped,
       restricted_loads,
     )
     path = self._path()
     with open(path, 'rb') as handle:
-      raw = handle.read()
+      raw = _read_capped(handle)
     return restricted_loads(raw)
 
   def load(self):

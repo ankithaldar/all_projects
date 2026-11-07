@@ -202,7 +202,11 @@ def test_train_models_dedupes_models_to_use(monkeypatch):
     'model_params': {'sklearn': {'model_type': 'logistic_regression'}},
   }
   _, per_model, best = train_models(x, y, x, y, params)
-  assert count[0] == 1
+  # ML-1: each distinct model is fitted twice -- once on the
+  # selection sub-train (held-out slice inside x_train) and
+  # once refitted on the full x_train -- but duplicate names
+  # in models_to_use still resolve to a single distinct model.
+  assert count[0] == 2
   assert best == 'sklearn'
   assert list(per_model) == ['sklearn']
 

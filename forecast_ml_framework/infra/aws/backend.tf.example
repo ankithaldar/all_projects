@@ -1,0 +1,21 @@
+# Remote backend example for infra/aws (MLops-10 / adjudication A6).
+#
+# This file is an EXAMPLE only: it is NOT active. Terraform only
+# loads *.tf / *.tf.json, so `backend.tf.example` is ignored by
+# `terraform init` / `terraform validate` / `terraform fmt` and the
+# stack keeps working from a fresh checkout with local state.
+#
+# To adopt a remote backend with state locking (shared use / CI
+# applies): create the S3 state bucket and the DynamoDB lock table
+# out of band, copy this file to `backend.tf`, replace the
+# placeholders, and run `terraform init -migrate-state`.
+#
+# terraform {
+#   backend "s3" {
+#     bucket         = "forecast-ml-tfstate"       # create this bucket first, out of band
+#     key            = "forecast-ml/aws/terraform.tfstate"
+#     region         = "us-east-1"
+#     dynamodb_table = "forecast-ml-tf-locks"      # create this table first, out of band
+#     encrypt        = true
+#   }
+# }

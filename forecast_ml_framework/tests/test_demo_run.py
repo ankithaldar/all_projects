@@ -14,6 +14,7 @@ import io
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pytest
 
 from forecast_ml_framework.pipelines.data_prep.nodes import (
   preprocess,
@@ -115,6 +116,7 @@ def _prep_steps():
   ]
 
 
+@pytest.mark.serial
 def test_demo_pipeline_end_to_end_tiny():
   '''All demo stages run and return expected keys/shapes.'''
   df = _frame()

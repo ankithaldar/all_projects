@@ -13,6 +13,15 @@ loader functions such as ``pandas.read_pickle``/``read_csv``,
 ``numpy.load``, ``eval``/``exec``/``open``, and any
 ``os``/``subprocess``/``sys`` global are rejected, so a chained
 ``__reduce__`` payload cannot reach a file loader or shell.
+A ``pickletools`` pre-scan additionally rejects ``REDUCE`` /
+``NEWOBJ_EX`` construction of allowlisted ``Booster`` classes:
+framework pickles rebuild a ``Booster`` only via ``NEWOBJ``
+with empty args plus ``BUILD`` state, so a file-backed
+constructor call (valid model file, ``/etc/passwd``, a FIFO
+that would block forever) is pure attack surface and is
+rejected before any file is opened. Pickle payloads larger
+than ``MAX_ARTIFACT_BYTES`` (default 512 MB, env-overridable)
+are rejected before unpickling.
 Path jail checks stop keys escaping a store root.
 '''
 # pylint: disable=import-outside-toplevel, unused-variable
@@ -22,6 +31,7 @@ import abc
 import io
 import os
 import pickle
+import pickletools
 from pathlib import Path
 
 # EXACT (module, name) allowlist. No prefix/module-wide entries:
@@ -322,6 +332,337 @@ _SAFE_GLOBALS = {
   ('catboost.core', 'CatBoostClassifier'),
 }
 
+# Booster classes whose constructor accepts a filesystem path
+# (xgboost/lightgbm ``model_file``, 3rd positional parameter).
+# Their framework pickles use NEWOBJ with empty args + BUILD,
+# never REDUCE/NEWOBJ_EX, so those call shapes are rejected
+# by the pre-scan below.
+_BOOSTER_GLOBALS = frozenset({
+  ('xgboost.core', 'Booster'),
+  ('lightgbm.basic', 'Booster'),
+})
+
+_DEFAULT_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+
+_MARK = ('mark',)
+_UNKNOWN = ('unknown',)
+
+_VALUE_OPCODES = frozenset({
+  'INT', 'BININT', 'BININT1', 'BININT2', 'LONG', 'LONG1', 'LONG4',
+  'STRING', 'BINSTRING', 'SHORT_BINSTRING',
+  'BINBYTES', 'SHORT_BINBYTES', 'BINBYTES8', 'BYTEARRAY8',
+  'UNICODE', 'SHORT_BINUNICODE', 'BINUNICODE', 'BINUNICODE8',
+  'FLOAT', 'BINFLOAT', 'NONE', 'NEWTRUE', 'NEWFALSE',
+})
+
+
+def _max_artifact_bytes():
+  '''Return the artifact size cap in bytes.
+
+  Read from the ``MAX_ARTIFACT_BYTES`` environment variable on
+  every call so operators and tests can override it without
+  reimporting. Invalid or non-positive values fall back to
+  the default.
+
+  Returns:
+    Size cap in bytes.
+  '''
+  text = os.environ.get('MAX_ARTIFACT_BYTES')
+  if text:
+    try:
+      cap = int(text)
+    except ValueError:
+      cap = 0
+    if cap > 0:
+      return cap
+  return _DEFAULT_MAX_ARTIFACT_BYTES
+
+
+#: Chunk size for capped streaming reads (1 MiB).
+_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def _read_capped(handle, cap=None):
+  '''Read a binary stream in chunks, rejecting once over ``cap``.
+
+  Reads at most ``cap + 1 MiB`` bytes: each 1 MiB chunk is
+  checked against the running total before it is retained, and
+  the first chunk that pushes the total over ``cap`` raises
+  without reading further, so an oversized payload is never
+  fully materialised in memory (C2-F2/R-03). This single helper
+  backs local, GCS, S3, and pickle-dataset loads.
+
+  Args:
+    handle: Binary file-like object with a ``read(size)`` method.
+    cap: Maximum bytes to accept; None uses
+      :func:`_max_artifact_bytes`.
+
+  Returns:
+    The stream bytes (at most ``cap`` bytes).
+
+  Raises:
+    ValueError: When the running total exceeds ``cap``.
+  '''
+  limit = _max_artifact_bytes() if cap is None else cap
+  chunks = []
+  total = 0
+  while True:
+    chunk = handle.read(_READ_CHUNK_BYTES)
+    if not chunk:
+      break
+    total += len(chunk)
+    if total > limit:
+      raise ValueError(
+        'Artifact exceeds MAX_ARTIFACT_BYTES size limit')
+    chunks.append(chunk)
+  return b''.join(chunks)
+
+
+def _is_booster_token(token):
+  '''Return True when ``token`` names an allowlisted Booster.
+
+  Args:
+    token: Symbolic pickle stack token.
+
+  Returns:
+    True for xgboost/lightgbm Booster global tokens.
+  '''
+  return (
+      isinstance(token, tuple) and len(token) == 3
+      and token[0] == 'global'
+      and (token[1], token[2]) in _BOOSTER_GLOBALS)
+
+
+def _token_string(token):
+  '''Return the string carried by a value token, if any.
+
+  Args:
+    token: Symbolic pickle stack token.
+
+  Returns:
+    The string value, or an empty string.
+  '''
+  if (isinstance(token, tuple) and len(token) == 2
+      and token[0] == 'value' and isinstance(token[1], str)):
+    return token[1]
+  return ''
+
+
+def _pop_token(stack):
+  '''Pop one symbolic token, or return unknown when empty.
+
+  Args:
+    stack: Mutable symbolic pickle stack.
+
+  Returns:
+    The popped token.
+  '''
+  if stack:
+    return stack.pop()
+  return _UNKNOWN
+
+
+def _pop_until_mark(stack):
+  '''Pop tokens up to and including the nearest mark.
+
+  Args:
+    stack: Mutable symbolic pickle stack.
+
+  Returns:
+    Tokens popped above the mark, in stack order.
+  '''
+  items = []
+  while stack and stack[-1] is not _MARK:
+    items.append(stack.pop())
+  if stack:
+    stack.pop()
+  items.reverse()
+  return items
+
+
+def _dict_with_item(token, key, value):
+  '''Return a dict token with one item added, when possible.
+
+  Args:
+    token: Base symbolic token.
+    key: Key symbolic token.
+    value: Value symbolic token.
+
+  Returns:
+    The updated dict token, or unknown for non-dict bases.
+  '''
+  if (isinstance(token, tuple) and token and token[0] == 'dict'):
+    return ('dict', token[1] + ((key, value),))
+  return _UNKNOWN
+
+
+def _global_token_from_arg(arg):
+  '''Build a global token from a GLOBAL/INST opcode argument.
+
+  Args:
+    arg: ``'<module> <name>'`` string from ``pickletools``.
+
+  Returns:
+    A global token, or unknown when malformed.
+  '''
+  if isinstance(arg, str):
+    parts = arg.split()
+    if len(parts) == 2:
+      return ('global', parts[0], parts[1])
+  return _UNKNOWN
+
+
+def _prescan_pickle(raw):
+  '''Reject Booster construction before any unpickling happens.
+
+  A symbolic ``pickletools`` stack walk identifies the target
+  of every ``REDUCE`` / ``NEWOBJ_EX`` / ``NEWOBJ`` / ``OBJ`` /
+  ``INST`` opcode, following memo references, so indirection
+  through ``MEMOIZE``/``BINGET`` cannot hide the target. Any
+  such call targeting an allowlisted ``Booster`` class is
+  rejected: framework pickles only rebuild a ``Booster`` via
+  ``NEWOBJ`` with empty args plus ``BUILD`` state, so a
+  constructor call carrying a model file (including a FIFO,
+  which would block the unpickler indefinitely) never occurs
+  in a legitimate artifact. The rejection message is static
+  and never echoes a probed path.
+
+  Args:
+    raw: Pickle byte string to scan.
+
+  Raises:
+    ValueError: When the pickle is malformed or constructs
+      a ``Booster`` via a rejected call shape.
+  '''
+  try:
+    ops = list(pickletools.genops(raw))
+  except Exception:
+    raise ValueError('Invalid or forbidden pickle payload') from None
+  stack = []
+  memo = {}
+  for opcode, arg, pos in ops:
+    name = opcode.name
+    if name == 'MARK':
+      stack.append(_MARK)
+    elif name in _VALUE_OPCODES:
+      stack.append(('value', arg))
+    elif name == 'GLOBAL':
+      stack.append(_global_token_from_arg(arg))
+    elif name == 'STACK_GLOBAL':
+      name_token = _pop_token(stack)
+      module_token = _pop_token(stack)
+      stack.append(
+          ('global', _token_string(module_token),
+           _token_string(name_token)))
+    elif name == 'MEMOIZE':
+      if stack:
+        memo[len(memo)] = stack[-1]
+    elif name in ('PUT', 'BINPUT', 'LONG_BINPUT'):
+      if stack:
+        memo[arg] = stack[-1]
+    elif name in ('GET', 'BINGET', 'LONG_BINGET'):
+      stack.append(memo.get(arg, _UNKNOWN))
+    elif name == 'EMPTY_TUPLE':
+      stack.append(('tuple', ()))
+    elif name == 'EMPTY_DICT':
+      stack.append(('dict', ()))
+    elif name == 'TUPLE':
+      stack.append(('tuple', tuple(_pop_until_mark(stack))))
+    elif name in ('TUPLE1', 'TUPLE2', 'TUPLE3'):
+      items = [_pop_token(stack) for _ in range(int(name[-1]))]
+      items.reverse()
+      stack.append(('tuple', tuple(items)))
+    elif name == 'DICT':
+      items = _pop_until_mark(stack)
+      if len(items) % 2 == 0:
+        pairs = tuple(
+            (items[i], items[i + 1])
+            for i in range(0, len(items), 2))
+        stack.append(('dict', pairs))
+      else:
+        stack.append(_UNKNOWN)
+    elif name in ('LIST', 'FROZENSET'):
+      _pop_until_mark(stack)
+      stack.append(_UNKNOWN)
+    elif name == 'SETITEM':
+      value = _pop_token(stack)
+      key = _pop_token(stack)
+      base = _pop_token(stack)
+      stack.append(_dict_with_item(base, key, value))
+    elif name == 'SETITEMS':
+      items = _pop_until_mark(stack)
+      base = _pop_token(stack)
+      for i in range(0, len(items) - 1, 2):
+        base = _dict_with_item(base, items[i], items[i + 1])
+      stack.append(base)
+    elif name == 'APPEND':
+      _pop_token(stack)
+      stack.append(_pop_token(stack))
+    elif name in ('APPENDS', 'ADDITEMS'):
+      _pop_until_mark(stack)
+      stack.append(_pop_token(stack))
+    elif name == 'BUILD':
+      _pop_token(stack)
+      stack.append(_pop_token(stack))
+    elif name == 'REDUCE':
+      _pop_token(stack)
+      func = _pop_token(stack)
+      if _is_booster_token(func):
+        raise ValueError(
+            'Forbidden pickle payload: Booster construction '
+            'is not allowed')
+      stack.append(_UNKNOWN)
+    elif name == 'NEWOBJ':
+      args = _pop_token(stack)
+      cls = _pop_token(stack)
+      empty = (
+          isinstance(args, tuple) and len(args) == 2
+          and args[0] == 'tuple' and args[1] == ())
+      if _is_booster_token(cls) and not empty:
+        raise ValueError(
+            'Forbidden pickle payload: Booster construction '
+            'is not allowed')
+      stack.append(_UNKNOWN)
+    elif name == 'NEWOBJ_EX':
+      _pop_token(stack)
+      _pop_token(stack)
+      cls = _pop_token(stack)
+      if _is_booster_token(cls):
+        raise ValueError(
+            'Forbidden pickle payload: Booster construction '
+            'is not allowed')
+      stack.append(_UNKNOWN)
+    elif name == 'OBJ':
+      items = _pop_until_mark(stack)
+      if items and _is_booster_token(items[0]):
+        raise ValueError(
+            'Forbidden pickle payload: Booster construction '
+            'is not allowed')
+      stack.append(_UNKNOWN)
+    elif name == 'INST':
+      _pop_until_mark(stack)
+      if _is_booster_token(_global_token_from_arg(arg)):
+        raise ValueError(
+            'Forbidden pickle payload: Booster construction '
+            'is not allowed')
+      stack.append(_UNKNOWN)
+    elif name == 'POP':
+      _pop_token(stack)
+    elif name == 'POP_MARK':
+      _pop_until_mark(stack)
+    elif name == 'DUP':
+      if stack:
+        stack.append(stack[-1])
+    elif name in ('PERSID', 'EXT1', 'EXT2', 'EXT4', 'NEXT_BUFFER'):
+      stack.append(_UNKNOWN)
+    elif name == 'BINPERSID':
+      _pop_token(stack)
+      stack.append(_UNKNOWN)
+    elif name in ('PROTO', 'FRAME', 'STOP', 'READONLY_BUFFER'):
+      pass
+    else:
+      stack.append(_UNKNOWN)
+
 
 class _RestrictedUnpickler(pickle.Unpickler):
   '''Unpickler allowing only allowlisted sklearn/numpy/pandas/zoo
@@ -355,7 +696,10 @@ def restricted_loads(raw):
   Trusted-artifact boundary: only artifacts written by this
   framework (sklearn/numpy/pandas/zoo objects and safe builtin
   types) should be loaded. Untrusted pickles must be rejected
-  before this call; this function is defence in depth.
+  before this call; this function is defence in depth. The
+  size cap and the Booster pre-scan run before unpickling, so
+  an oversized payload or a file-backed ``Booster`` call is
+  rejected without reading any probed path.
 
   Args:
     raw: Pickle byte string.
@@ -364,11 +708,16 @@ def restricted_loads(raw):
     The unpickled object.
 
   Raises:
-    ValueError: When the pickle references a forbidden global
-      or is malformed.
+    ValueError: When the pickle exceeds the size cap,
+      references a forbidden global, constructs a ``Booster``
+      via a rejected call shape, or is malformed.
   '''
   if not isinstance(raw, (bytes, bytearray)):
     raise ValueError('restricted_loads requires bytes')
+  if len(raw) > _max_artifact_bytes():
+    raise ValueError(
+        'Artifact exceeds MAX_ARTIFACT_BYTES size limit')
+  _prescan_pickle(bytes(raw))
   # Preserve only our own forbidden-global error (its message
   # names the attacker-supplied module/attribute, not a probed
   # path). Every other error -- including ValueError subclasses
@@ -542,6 +891,8 @@ class LocalArtifactStore(ArtifactStore):
     '''Load the payload stored at ``path``.
 
     Pickle payloads go through :func:`restricted_loads`.
+    The file is read via :func:`_read_capped`, so an oversized
+    file is rejected without being fully read into memory.
 
     Args:
       path: Relative source path.
@@ -550,7 +901,7 @@ class LocalArtifactStore(ArtifactStore):
       The stored string, bytes, or picklable object.
     '''
     with open(self._full_path(path), 'rb') as handle:
-      raw = handle.read()
+      raw = _read_capped(handle)
     return _decode_payload(raw)
 
   def exists(self, path):
@@ -639,14 +990,30 @@ class GCSArtifactStore(ArtifactStore):
   def load(self, path):
     '''Download and decode the payload at ``path``.
 
+    The blob is streamed via :func:`_read_capped` (blob
+    ``open()``), so an oversized blob is rejected without
+    being fully downloaded into memory. There is no
+    ``download_as_bytes`` fallback: that call would
+    materialise the whole blob before the size cap could
+    be enforced.
+
     Args:
       path: Object key in the bucket.
 
     Returns:
       The stored string, bytes, or picklable object.
+
+    Raises:
+      RuntimeError: When the blob has no streaming
+        ``open()``, so a capped read is impossible.
     '''
     key = _validate_cloud_key(path)
-    raw = self._client().bucket(self.bucket).blob(key).download_as_bytes()
+    blob = self._client().bucket(self.bucket).blob(key)
+    open_method = getattr(blob, 'open', None)
+    if not callable(open_method):
+      raise RuntimeError('GCS blob has no streaming open()')
+    with open_method('rb') as handle:
+      raw = _read_capped(handle)
     return _decode_payload(raw)
 
   def exists(self, path):
@@ -730,6 +1097,9 @@ class S3ArtifactStore(ArtifactStore):
   def load(self, path):
     '''Download and decode the payload at ``path``.
 
+    The body is read via :func:`_read_capped`, so an oversized
+    body is rejected without being fully read into memory.
+
     Args:
       path: Object key in the bucket.
 
@@ -738,7 +1108,7 @@ class S3ArtifactStore(ArtifactStore):
     '''
     key = _validate_cloud_key(path)
     obj = self._client().get_object(Bucket=self.bucket, Key=key)
-    return _decode_payload(obj['Body'].read())
+    return _decode_payload(_read_capped(obj['Body']))
 
   def exists(self, path):
     '''Check whether ``path`` exists in the bucket.

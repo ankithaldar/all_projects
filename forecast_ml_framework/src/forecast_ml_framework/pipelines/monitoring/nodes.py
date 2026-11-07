@@ -27,10 +27,23 @@ Params keys (``params:monitoring_params`` dict, all optional):
 - ``thresholds`` (dict): alert thresholds by metric, each a
   ``{'warning': float, 'critical': float}`` mapping (or a
   single float, meaning the warning threshold). Defaults:
-  ``psi`` 0.1/0.25, ``ks`` 0.1/0.25,
-  ``missing_rate_delta`` 0.05/0.1. ``psi_threshold`` /
+  ``psi`` 0.1/0.25, ``ks`` 0.05/0.25,
+  ``missing_rate_delta`` 0.05/0.1 (aligned to ``conf``
+  ``psi_threshold`` / ``ks_threshold``). ``psi_threshold`` /
   ``ks_threshold`` scalars and ``alert_thresholds`` /
   ``severity_thresholds`` aliases are also accepted.
+  Flat critical/missing keys (proposed conf/schema keys,
+  see handoff to W10): ``psi_critical_threshold`` (0.25),
+  ``ks_critical_threshold`` (0.25),
+  ``missing_rate_delta_threshold`` (0.05),
+  ``missing_rate_delta_critical_threshold`` (0.1).
+  Flat keys override the ``thresholds`` dict.
+- PSI proportions are clipped to ``epsilon`` and then
+  renormalized so both reference and current vectors sum
+  to 1 before the log-ratio sum (see :func:`_psi_from_props`).
+  ``performance_decay`` reports ``decay`` with a per-metric
+  direction: positive always means worse (see
+  :func:`_is_lower_better`).
 - ``prediction_col`` (str, default 'prediction'): column
   used by :func:`prediction_drift` for DataFrame inputs.
 - ``prediction_type`` (str, default 'auto'): 'numeric',
@@ -56,7 +69,7 @@ MIN_EPSILON = 1e-9
 DEFAULT_MIN_ROWS = 10
 DEFAULT_THRESHOLDS = {
   'psi': {'warning': 0.1, 'critical': 0.25},
-  'ks': {'warning': 0.1, 'critical': 0.25},
+  'ks': {'warning': 0.05, 'critical': 0.25},
   'missing_rate_delta': {'warning': 0.05, 'critical': 0.1},
 }
 _PERFORMANCE_THRESHOLDS = {'warning': 0.05, 'critical': 0.1}
@@ -115,8 +128,26 @@ def _min_rows(params):
                      % (raw,)) from exc
 
 
-def _psi_from_props(ref_props, cur_props, epsilon):
-  '''Compute PSI from two aligned proportion arrays.'''
+def _clipped_props(props, epsilon):
+  '''Clip proportions to ``epsilon`` then renormalize to sum 1.
+
+  Args:
+    props: Aligned proportion array (reference or current).
+    epsilon: Proportion floor applied before renormalizing.
+
+  Returns:
+    Float array with the same shape whose entries sum to 1
+    (empty input yields an empty array). Clipping first
+    keeps log ratios finite; renormalizing removes the
+    epsilon bias that otherwise makes clipped sums exceed
+    1 (e.g. 100 zero bins at epsilon 0.01 sum to 2.0 before
+    renormalization and to 1.0 after).
+
+  Raises:
+    None: Non-finite or non-positive ``epsilon`` falls back
+      to ``MIN_EPSILON``; a non-finite total is returned
+      unrenormalized so callers surface NaN PSI.
+  '''
   try:
     epsilon = float(epsilon)
   except (TypeError, ValueError, OverflowError):
@@ -124,8 +155,29 @@ def _psi_from_props(ref_props, cur_props, epsilon):
   if not np.isfinite(epsilon) or epsilon <= 0:
     epsilon = MIN_EPSILON
   epsilon = max(epsilon, MIN_EPSILON)
-  ref = np.clip(np.asarray(ref_props, dtype=float), epsilon, None)
-  cur = np.clip(np.asarray(cur_props, dtype=float), epsilon, None)
+  clipped = np.clip(np.asarray(props, dtype=float), epsilon, None)
+  if clipped.size == 0:
+    return clipped
+  total = float(np.sum(clipped))
+  if np.isfinite(total) and total > 0:
+    return clipped / total
+  LOG.warning('monitoring: clipped proportions sum to %r;'
+              ' returning unrenormalized values', total)
+  return clipped
+
+
+def _psi_from_props(ref_props, cur_props, epsilon):
+  '''Compute PSI from two aligned proportion arrays.
+
+  Both vectors are clipped to ``epsilon`` and renormalized
+  to sum 1 (see :func:`_clipped_props`), so PSI is computed
+  on genuine distributions. Larger ``epsilon`` smooths
+  more and yields a smaller (more conservative) PSI for
+  the same shift; the effect is monotone in practice for
+  fixed inputs.
+  '''
+  ref = _clipped_props(ref_props, epsilon)
+  cur = _clipped_props(cur_props, epsilon)
   with np.errstate(invalid='ignore', divide='ignore'):
     value = float(np.sum((cur - ref) * np.log(cur / ref)))
   if not np.isfinite(value):
@@ -467,6 +519,52 @@ def prediction_drift(reference=None, current=None, params=None,
   return stats
 
 
+def _is_lower_better(metric):
+  '''Return True when lower values of ``metric`` are better.
+
+  Args:
+    metric: Metric name (case-insensitive; ``-``/space are
+      normalized to ``_``).
+
+  Returns:
+    True for metrics in ``metrics.LOWER_BETTER`` (RMSE, MAE,
+    log-loss, ...), False for higher-is-better metrics
+    (accuracy, F1, AUC, ...). The r2 family (``r2``,
+    ``adj_r2``, ``r2_log``, ...) is always higher-is-better
+    even if a future ``LOWER_BETTER`` entry lists it.
+  '''
+  name = str(metric).strip().lower().replace('-', '_')
+  name = name.replace(' ', '_')
+  if 'r2' in name:
+    return False
+  try:
+    # pylint: disable=import-outside-toplevel
+    from forecast_ml_framework.pipelines.modeling.metrics import (
+      LOWER_BETTER)
+    # pylint: enable=import-outside-toplevel
+  except ImportError:
+    LOG.warning('monitoring: metrics.LOWER_BETTER unavailable;'
+                ' treating %r as higher-is-better', metric)
+    return False
+  return name in LOWER_BETTER
+
+
+def _decay_for(metric, delta):
+  '''Return direction-adjusted decay for ``metric`` and ``delta``.
+
+  Args:
+    metric: Metric name (see :func:`_is_lower_better`).
+    delta: ``current - baseline`` for the metric.
+
+  Returns:
+    Decay where positive always means worse: ``delta`` for
+    lower-is-better metrics (an increase is worse) and
+    ``-delta`` for higher-is-better metrics (a drop is
+    worse).
+  '''
+  return float(delta) if _is_lower_better(metric) else float(-delta)
+
+
 def performance_decay(current_metrics=None, baseline_metrics=None,
                       params=None, **kwargs):
   '''Compare current metrics against baseline metrics.
@@ -483,10 +581,12 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
 
   Returns:
     Dict mapping each metric to ``current``, ``baseline``,
-    ``delta`` (current - baseline), ``decay`` (baseline -
-    current, positive when a higher-is-better metric drops),
-    and ``relative_delta``. Empty input returns ``{}`` plus
-    a warning, never an exception.
+    ``delta`` (current - baseline), ``decay`` (positive
+    always means worse, direction-adjusted per metric via
+    :func:`_is_lower_better`), ``lower_better`` (bool), and
+    ``relative_delta`` (raw ``delta / baseline``). Empty
+    input returns ``{}`` plus a warning, never an
+    exception.
   '''
   params = flatten_params(params, 'monitoring_params')
   if callable(current_metrics):
@@ -525,6 +625,14 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
                 ' report')
     return {}
   report = {}
+
+  def _nan_entry(cur_entry, base_entry):
+    '''Build a NaN decay entry preserving raw values.'''
+    return {'current': cur_entry, 'baseline': base_entry,
+            'delta': float('nan'), 'decay': float('nan'),
+            'lower_better': _is_lower_better(metric),
+            'relative_delta': float('nan')}
+
   for metric in dict.fromkeys(
           list(baseline_metrics) + list(current_metrics)):
     cur = current_metrics.get(metric)
@@ -532,9 +640,7 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
     if cur is None or base is None:
       LOG.warning('performance_decay: metric %r missing on one side;'
                   ' returning NaN delta' % (metric,))
-      nan = float('nan')
-      report[metric] = {'current': cur, 'baseline': base, 'delta': nan,
-                        'decay': nan, 'relative_delta': nan}
+      report[metric] = _nan_entry(cur, base)
       continue
     try:
       cur_value = float(cur)
@@ -543,26 +649,19 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
       LOG.warning('performance_decay: metric %r has non-numeric'
                   ' values (current=%r, baseline=%r); returning NaN'
                   ' delta' % (metric, cur, base))
-      nan = float('nan')
-      report[metric] = {'current': cur, 'baseline': base, 'delta': nan,
-                        'decay': nan, 'relative_delta': nan}
+      report[metric] = _nan_entry(cur, base)
       continue
     if not (np.isfinite(cur_value) and np.isfinite(base_value)):
       LOG.warning('performance_decay: metric %r has non-finite'
                   ' values (current=%r, baseline=%r); returning NaN'
                   ' delta' % (metric, cur, base))
-      nan = float('nan')
-      report[metric] = {'current': cur, 'baseline': base, 'delta': nan,
-                        'decay': nan, 'relative_delta': nan}
+      report[metric] = _nan_entry(cur_value, base_value)
       continue
     delta = cur_value - base_value
     if not np.isfinite(delta):
       LOG.warning('performance_decay: metric %r delta is non-finite;'
                   ' returning NaN delta' % (metric,))
-      nan = float('nan')
-      report[metric] = {'current': cur_value, 'baseline': base_value,
-                        'delta': nan, 'decay': nan,
-                        'relative_delta': nan}
+      report[metric] = _nan_entry(cur_value, base_value)
       continue
     relative = (delta / base_value if base_value != 0
                 else float('nan'))
@@ -572,7 +671,8 @@ def performance_decay(current_metrics=None, baseline_metrics=None,
       'current': cur_value,
       'baseline': base_value,
       'delta': delta,
-      'decay': -delta,
+      'decay': _decay_for(metric, delta),
+      'lower_better': _is_lower_better(metric),
       'relative_delta': relative,
     }
   return report
@@ -621,6 +721,15 @@ def _resolve_thresholds(params):
     scalar = params.get(metric + '_threshold')
     if scalar is not None:
       merged[metric]['warning'] = float(scalar)
+  # Flat critical keys (proposed conf/schema keys for W10):
+  # ``psi_critical_threshold``, ``ks_critical_threshold``,
+  # ``missing_rate_delta_critical_threshold``. Flat keys win
+  # over the ``thresholds`` dict, matching the scalar rule.
+  for metric in ('psi', 'ks', 'missing_rate_delta',
+                 'missing_delta'):
+    critical = params.get(metric + '_critical_threshold')
+    if critical is not None:
+      merged[metric]['critical'] = float(critical)
   merged['missing_delta'] = merged['missing_rate_delta']
   return merged
 
@@ -668,8 +777,9 @@ def evaluate_alerts(drift_report=None, params=None, **kwargs):
       :func:`build_monitoring_report` with ``features``,
       ``prediction``, and ``performance`` sections.
     params: Optional dict; see module docstring for the
-      ``thresholds`` keys. Defaults: psi/ks warning 0.1,
-      critical 0.25; missing-rate delta 0.05/0.1; performance
+      ``thresholds`` keys. Defaults: psi warning 0.1,
+      critical 0.25; ks warning 0.05, critical 0.25;
+      missing-rate delta 0.05/0.1; performance
       delta 0.05/0.1.
     **kwargs: Alias ``report`` for ``drift_report``.
 

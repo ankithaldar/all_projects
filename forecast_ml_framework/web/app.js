@@ -5,14 +5,45 @@
 const CONFIG = {
   metricsUrl: "sample/metrics.json",
   chartsBase: "sample/",
-  kpiKeys: ["roc_auc", "pr_auc", "f1_weighted", "accuracy", "ece", "brier", "log_loss", "ks"]
+  kpiKeys: ["roc_auc", "pr_auc", "f1_weighted", "accuracy", "ece", "brier", "log_loss", "ks"],
+  regressionKpiKeys: ["mae", "rmse", "r2", "mape", "smape"]
 };
+const CHART_DIR = "charts/";
+const CHART_ALLOWED = /^[A-Za-z0-9._-]+$/;
 const $ = (id) => document.getElementById(id);
 const fmt = (v) => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(4).replace(/0+$/, "").replace(/\.$/, ".0") : String(v ?? "—"));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let DATA = null;
 let sortState = { col: "", dir: 1 };
+
+function nextSortDir(prevCol, prevDir, nextCol) {
+  const same = prevCol === nextCol;
+  return same && prevDir === 1 ? -1 : 1;
+}
+function selectBuckets(data, type) {
+  return data?.buckets?.[type] ?? (type === "segment" ? data?.by_bucket : data?.by_decile) ?? {};
+}
+function shapBarWidth(importance, max) {
+  const n = Number(importance) || 0;
+  const m = Number(max) || 0;
+  const raw = m > 0 ? (n / m) * 100 : 0;
+  return Math.min(100, Math.max(0, raw));
+}
+function safeChartFile(file) {
+  const f = String(file ?? "").trim();
+  if (!f || f.includes("..") || f.includes(":") || f.includes("\\") || f.startsWith("/")) return "";
+  const base = f.startsWith(CHART_DIR) ? f.slice(CHART_DIR.length) : f;
+  if (!CHART_ALLOWED.test(base) || base === "." || base === "..") return "";
+  return f;
+}
+function selectKpi(data) {
+  const task = (data && data.task) || (data && data.meta && data.meta.task) || "";
+  if (task === "regression") {
+    return { source: (data && data.regression_global) || (data && data.global) || {}, keys: CONFIG.regressionKpiKeys };
+  }
+  return { source: (data && data.global) || {}, keys: CONFIG.kpiKeys };
+}
 
 function renderHeader(data) {
   const m = data.meta || {};
@@ -21,15 +52,16 @@ function renderHeader(data) {
   $("hash").textContent = m.reproducibility_hash || "placeholder";
 }
 function renderKpis(data) {
-  const g = data.global || {};
-  const keys = CONFIG.kpiKeys.filter((k) => k in g);
+  const picked = selectKpi(data);
+  const g = picked.source;
+  const keys = picked.keys.filter((k) => k in g);
   const extra = Object.keys(g).filter((k) => !keys.includes(k) && typeof g[k] === "number" && !Array.isArray(g[k])).slice(0, 4);
   $("kpi-cards").innerHTML = [...keys, ...extra].map((k) =>
     `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(fmt(g[k]))}</div></div>`).join("");
 }
 function bucketRows() {
   const type = $("bucket-type").value;
-  const buckets = (DATA.buckets && DATA.buckets[type]) || {};
+  const buckets = selectBuckets(DATA, type);
   const filter = $("bucket-filter").value.trim().toLowerCase();
   let rows = Object.entries(buckets).filter(([k]) => !filter || k.toLowerCase().includes(filter));
   if (sortState.col) {
@@ -43,25 +75,39 @@ function bucketRows() {
 function renderTable() {
   const rows = bucketRows();
   const cols = rows.length ? Object.keys(rows[0][1]).filter((k) => typeof rows[0][1][k] === "number") : [];
-  $("metrics-head").innerHTML = `<th scope="col">Bucket</th>` + cols.map((c) => `<th scope="col" data-col="${esc(c)}" tabindex="0">${esc(c)}</th>`).join("");
+  const active = document.activeElement;
+  const focusCol = active && active.dataset ? active.dataset.col || "" : "";
+  const ariaSortFor = (c) => sortState.col === c ? (sortState.dir === 1 ? "ascending" : "descending") : "none";
+  $("metrics-head").innerHTML = `<th scope="col">Bucket</th>` + cols.map((c) => `<th scope="col" aria-sort="${ariaSortFor(c)}"><button type="button" data-col="${esc(c)}">${esc(c)}</button></th>`).join("");
   const sel = $("sort-col");
   sel.innerHTML = `<option value="">— none —</option>` + cols.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
   sel.value = sortState.col;
   $("metrics-body").innerHTML = rows.length
     ? rows.map(([k, v]) => `<tr><th scope="row">${esc(k)}</th>${cols.map((c) => `<td>${esc(fmt(v[c]))}</td>`).join("")}</tr>`).join("")
     : `<tr><td colspan="${cols.length + 1}">No buckets match the filter.</td></tr>`;
-  document.querySelectorAll("#metrics-head th[data-col]").forEach((th) => {
-    const apply = () => { sortState.col = th.dataset.col; sortState.dir = sortState.col === th.dataset.col && sortState.dir === 1 ? -1 : 1; $("sort-dir").textContent = `Sort: ${sortState.dir === 1 ? "asc" : "desc"}`; renderTable(); };
-    th.addEventListener("click", apply);
-    th.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); apply(); } });
+  document.querySelectorAll("#metrics-head button[data-col]").forEach((btn) => {
+    const apply = () => {
+      sortState.dir = nextSortDir(sortState.col, sortState.dir, btn.dataset.col);
+      sortState.col = btn.dataset.col;
+      $("sort-dir").textContent = `Sort: ${sortState.dir === 1 ? "asc" : "desc"}`;
+      $("sort-dir").setAttribute("aria-pressed", String(sortState.dir === 1));
+      renderTable();
+    };
+    btn.addEventListener("click", apply);
   });
+  if (focusCol) {
+    const target = [...document.querySelectorAll("#metrics-head button[data-col]")].find((b) => b.dataset.col === focusCol);
+    if (target) target.focus();
+  }
 }
 function renderCharts(data) {
   const charts = data.charts || [];
   const make = (c) => {
+    const file = safeChartFile(c.file || c.path || "");
+    if (!file) return null;
     const fig = document.createElement("figure");
     const img = document.createElement("img");
-    img.src = CONFIG.chartsBase + (c.file || c.path || "");
+    img.src = CONFIG.chartsBase + file;
     img.alt = c.alt || c.name || "Chart";
     img.loading = "lazy";
     const cap = document.createElement("figcaption");
@@ -71,14 +117,15 @@ function renderCharts(data) {
   };
   const cls = charts.filter((c) => (c.set || "classification") === "classification");
   const reg = charts.filter((c) => c.set === "regression");
-  $("charts-classification").replaceChildren(...cls.map(make));
-  $("charts-regression").replaceChildren(...reg.map(make));
+  $("charts-classification").replaceChildren(...cls.map(make).filter(Boolean));
+  $("charts-regression").replaceChildren(...reg.map(make).filter(Boolean));
 }
 function renderShap(data) {
-  const top = [...(data.shap_top || [])].sort((a, b) => (b.importance || 0) - (a.importance || 0)).slice(0, 10);
-  const max = Math.max(1e-9, ...top.map((f) => f.importance || 0));
+  const num = (v) => Number(v) || 0;
+  const top = [...(data.shap_top || [])].sort((a, b) => num(b.importance) - num(a.importance)).slice(0, 10);
+  const max = Math.max(1e-9, ...top.map((f) => num(f.importance)));
   $("shap-bars").innerHTML = top.map((f) =>
-    `<div class="shap-row"><span>${esc(f.feature)}</span><span class="bar" style="width:${(((f.importance || 0) / max) * 100).toFixed(1)}%"></span><span>${esc(fmt(f.importance))}</span></div>`).join("");
+    `<div class="shap-row"><span>${esc(f.feature)}</span><span class="bar" style="width:${shapBarWidth(f.importance, max).toFixed(1)}%"></span><span>${esc(fmt(f.importance))}</span></div>`).join("");
   $("shap-list").innerHTML = top.map((f) => `<li>${esc(f.feature)}: ${esc(fmt(f.importance))}</li>`).join("");
 }
 function showStatus(msg) { $("status").textContent = msg; }
@@ -98,8 +145,13 @@ async function init() {
     $("metrics-body").innerHTML = `<tr><td>Metrics unavailable — see status message above.</td></tr>`;
   }
 }
-$("bucket-type").addEventListener("change", renderTable);
-$("bucket-filter").addEventListener("input", renderTable);
-$("sort-col").addEventListener("change", (e) => { sortState.col = e.target.value; renderTable(); });
-$("sort-dir").addEventListener("click", () => { sortState.dir *= -1; $("sort-dir").textContent = `Sort: ${sortState.dir === 1 ? "asc" : "desc"}`; renderTable(); });
-document.addEventListener("DOMContentLoaded", init);
+if (typeof document !== "undefined") {
+  $("bucket-type").addEventListener("change", renderTable);
+  $("bucket-filter").addEventListener("input", renderTable);
+  $("sort-col").addEventListener("change", (e) => { sortState.col = e.target.value; renderTable(); });
+  $("sort-dir").addEventListener("click", () => { sortState.dir *= -1; $("sort-dir").textContent = `Sort: ${sortState.dir === 1 ? "asc" : "desc"}`; $("sort-dir").setAttribute("aria-pressed", String(sortState.dir === 1)); renderTable(); });
+  document.addEventListener("DOMContentLoaded", init);
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { CONFIG, fmt, esc, nextSortDir, selectBuckets, shapBarWidth, safeChartFile, selectKpi, renderHeader, renderKpis, bucketRows, renderTable, renderCharts, renderShap };
+}

@@ -485,11 +485,41 @@ train_data_selected:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'data/processed/train_data_selected.parquet'
 
-# modeling_input: frame consumed by modeling split node.
+# modeling_input: DEPRECATED (A9 split-first, breaking
+# at 0.1.0). No pipeline produces or consumes it any
+# more: data_prep splits raw data first and modeling
+# consumes train_data_selected / test_data_selected
+# (sampling_method='presplit'). Kept only so old
+# catalogs/configs that reference the name still
+# resolve; new code must not use it.
 # Type: kedro_datasets.pandas.ParquetDataset.
 modeling_input:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'data/processed/modeling_input.parquet'
+
+# train_raw / test_raw: raw validated frames split by
+# data_prep split_raw_data (split-first, A9).
+# Type: kedro.io.MemoryDataset (in-memory; kedro-datasets
+# 10.x ships no MemoryDataset, kedro core does).
+train_raw:
+  type: 'kedro.io.MemoryDataset'
+
+test_raw:
+  type: 'kedro.io.MemoryDataset'
+
+# test_preprocessed_data: test_raw after replaying the
+# train-fitted registry (apply_preprocess node).
+# Type: kedro.io.MemoryDataset.
+test_preprocessed_data:
+  type: 'kedro.io.MemoryDataset'
+
+# test_data_selected: test frame after applying the
+# train-fitted feature selection (apply_selection
+# node). Consumed with train_data_selected by the
+# modeling presplit node.
+# Type: kedro.io.MemoryDataset.
+test_data_selected:
+  type: 'kedro.io.MemoryDataset'
 
 # x_train / x_test / y_train / y_test: modeling split outputs.
 # Type: kedro.io.MemoryDataset (in-memory; kedro-datasets 10.x
@@ -509,6 +539,14 @@ y_test:
 # split_meta: split sizes / indices metadata from modeling split.
 # Type: kedro.io.MemoryDataset.
 split_meta:
+  type: 'kedro.io.MemoryDataset'
+
+# split_meta_raw: honest split meta from data_prep
+# split_raw_data_with_meta (actual sampling_method,
+# requested_method, shuffle, time_col). Consumed by the
+# modeling presplit node, which merges it into split_meta
+# as raw_* keys (R6). Type: kedro.io.MemoryDataset.
+split_meta_raw:
   type: 'kedro.io.MemoryDataset'
 
 # eda_summary: eda_summary node output dict.
@@ -610,3 +648,111 @@ fitted_registry:
 # dict default). Type: kedro.io.MemoryDataset.
 score_prep_params:
   type: 'kedro.io.MemoryDataset'
+
+# --- Interpretability inputs ---------------------------------------------------
+# X / y: feature frame and target for interpretability nodes.
+# Type: kedro.io.MemoryDataset (in-memory frames).
+X:
+  type: 'kedro.io.MemoryDataset'
+
+y:
+  type: 'kedro.io.MemoryDataset'
+
+# explanations: explain_model output (SHAP + permutation dict).
+# Type: kedro.io.MemoryDataset.
+explanations:
+  type: 'kedro.io.MemoryDataset'
+
+# interpretation: interpret_features output (PDP + LIME rows dict).
+# Type: kedro.io.MemoryDataset.
+interpretation:
+  type: 'kedro.io.MemoryDataset'
+
+# diagnostics_report: run_diagnostics output dict.
+# Type: kedro.io.MemoryDataset.
+diagnostics_report:
+  type: 'kedro.io.MemoryDataset'
+
+# interpretability_charts / diagnostics_charts: name -> Figure dicts.
+# Type: kedro.io.MemoryDataset.
+interpretability_charts:
+  type: 'kedro.io.MemoryDataset'
+
+diagnostics_charts:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Cost tracking -------------------------------------------------------------
+# run_info: one run's usage/metadata dict. Type: kedro.io.MemoryDataset.
+run_info:
+  type: 'kedro.io.MemoryDataset'
+
+# cost_estimate / cost_record / cost_summary: cost node dict outputs.
+# Type: kedro.io.MemoryDataset.
+cost_estimate:
+  type: 'kedro.io.MemoryDataset'
+
+cost_record:
+  type: 'kedro.io.MemoryDataset'
+
+cost_summary:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Monitoring inputs / drift ---------------------------------------------------
+# reference_data / current_data: baseline and current windows.
+# Type: kedro_datasets.pandas.ParquetDataset.
+reference_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/reference_data.parquet'
+
+current_data:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/current_data.parquet'
+
+# reference_predictions / current_predictions: baseline/current predictions.
+# Type: kedro_datasets.pandas.ParquetDataset.
+reference_predictions:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/reference_predictions.parquet'
+
+current_predictions:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/monitoring/current_predictions.parquet'
+
+# current_metrics: current performance metrics dict.
+# Type: kedro_datasets.json.JSONDataset.
+current_metrics:
+  type: 'kedro_datasets.json.JSONDataset'
+  filepath: 'artifacts/monitoring/current_metrics.json'
+
+# drift_report: compute_drift output dict. Type: kedro.io.MemoryDataset.
+drift_report:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Retraining ------------------------------------------------------------------
+# last_train_info: last training timestamp/row count dict.
+# Type: kedro.io.MemoryDataset.
+last_train_info:
+  type: 'kedro.io.MemoryDataset'
+
+# retrain_decision / retrain_plan: trigger decision + plan dicts.
+# Type: kedro.io.MemoryDataset.
+retrain_decision:
+  type: 'kedro.io.MemoryDataset'
+
+retrain_plan:
+  type: 'kedro.io.MemoryDataset'
+
+# --- Data prep / scoring -----------------------------------------------------------
+# selection_report: select_features report dict. Type: kedro.io.MemoryDataset.
+selection_report:
+  type: 'kedro.io.MemoryDataset'
+
+# scoring_data: score_data_prep output frame. Type: kedro.io.MemoryDataset.
+scoring_data:
+  type: 'kedro.io.MemoryDataset'
+
+# scored_predictions: scored frame written by the scoring pipeline.
+# Type: kedro_datasets.pandas.ParquetDataset.
+scored_predictions:
+  type: 'kedro_datasets.pandas.ParquetDataset'
+  filepath: 'artifacts/scoring/scored_predictions.parquet'

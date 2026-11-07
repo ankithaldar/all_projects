@@ -3,11 +3,13 @@
 
 '''Console entry point for the forecast ML framework.
 
-Declared in pyproject.toml as the sole console script,
-``forecast-ml``. Delegates to
+Declared in pyproject.toml as the ``forecast-ml`` and
+``forecast-ml-framework`` console scripts. Delegates to
 ``forecast_ml_framework.cli.main`` (train/predict/serve/run);
 ``--version`` and ``--help`` are preserved. Importing this
-module is side-effect free.
+module is side-effect free. On the Kedro fallback path the
+caller's ``argv`` is forwarded via ``sys.argv`` (V12), so
+Kedro sees the same arguments the CLI would have parsed.
 '''
 
 import importlib.metadata
@@ -40,6 +42,14 @@ def main(argv=None):
     try:
       from kedro.framework.cli import main as kedro_main
 
+      # Kedro's Click entry point reads sys.argv; forward
+      # the caller's argv so it is never discarded (V12).
+      if argv is not None:
+        saved, sys.argv = sys.argv, [sys.argv[0], *argv]
+        try:
+          return kedro_main()
+        finally:
+          sys.argv = saved
       return kedro_main()
     except ImportError:
       print('forecast-ml: train, predict, serve, run')

@@ -22,20 +22,21 @@ accepts a forest via its first estimator.
 Every public function returns a Figure or None on
 insufficient data, never raises, and closes its
 figure in a finally block so no figure slot leaks.
+Matplotlib is imported lazily on first chart call
+(V8); importing this module never requires the
+plotting stack.
 '''
 
 import logging
 from statistics import NormalDist
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import numpy as np
 
 from forecast_ml_framework.pipelines.modeling.charts import (
   _new_fig,
   _pairs,
   _safe_fig,
+  plt,
   cooks_distance,
   cv_scores_box,
   decision_boundary,

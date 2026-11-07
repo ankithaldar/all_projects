@@ -47,8 +47,6 @@ so there is no driver OOM. Pandas input keeps the existing
 chunked-by-``batch_size`` path.
 '''
 
-import importlib
-import inspect
 import logging
 import math
 import os
@@ -59,6 +57,8 @@ import numpy as np
 import pandas as pd
 
 from forecast_ml_framework.core import spark_factory
+from forecast_ml_framework.core.handle import (
+  ALLOWED_MODEL_MODULES, resolve_handle_strict)
 from forecast_ml_framework.core.predictions import (
   check_predictions_finite, materialize_predictions)
 
@@ -72,21 +72,13 @@ DEFAULT_MAX_ROWS = 100_000
 DEFAULT_MAX_COLS = 1000
 DEFAULT_PARTITION_BATCH_SIZE = 10_000
 
-_ALLOWED_MODEL_MODULES = (
-  'sklearn',
-  'xgboost',
-  'lightgbm',
-  'catboost',
-  'h2o',
-  'forecast_ml_framework',
-)
+# Compat alias: the allowlist lives in core.handle (R1).
+_ALLOWED_MODEL_MODULES = ALLOWED_MODEL_MODULES
 
 
 def _is_classification(params):
   '''Return True when params task_type normalizes to classification.'''
-  from forecast_ml_framework.pipelines.modeling.ntile import (
-    normalize_task_kind,
-  )
+  from forecast_ml_framework.core.handle import normalize_task_kind
   return normalize_task_kind(
       (params or {}).get('task_type', 'classification')) == (
           'classification')
@@ -251,8 +243,19 @@ def _row_count(df):
   return len(df)
 
 
-def _resolve_handle_strict(handle):
+# Canonical resolver lives in core.handle (R1 layering); this
+# name is kept as a compat re-export so existing imports of
+# ``scoring.nodes._resolve_handle_strict`` keep working.
+_resolve_handle_strict = resolve_handle_strict  # pylint: disable=invalid-name
+
+
+def resolve_handle(handle):
   '''Resolve a dotted handle under the model-loader allowlist.
+
+  Compat wrapper (F7): the canonical implementation lives in
+  ``core.handle.resolve_handle_strict`` (R1 layering) so
+  there is a single owner of the policy; the private name
+  is kept as an alias for backwards compatibility.
 
   Args:
     handle: Dotted importable string, e.g.
@@ -262,38 +265,10 @@ def _resolve_handle_strict(handle):
     The estimator-like class named by handle.
 
   Raises:
-    ValueError: If handle is not a dotted string, its top-level
-      module is not allowlisted, it cannot be imported, or it
-      does not name a class with ``fit`` and ``predict``.
+    ValueError: If handle is not allowlisted, cannot be
+      resolved, or is not an estimator-like class.
   '''
-  if not isinstance(handle, str) or '.' not in handle:
-    raise ValueError(
-        'expected a dotted importable string, got %r' % (handle,))
-  top_level = handle.split('.', 1)[0]
-  if top_level not in _ALLOWED_MODEL_MODULES:
-    raise ValueError(
-        'model_handle %r is not allowlisted: top-level module %r '
-        'is not one of %s'
-        % (handle, top_level, ', '.join(_ALLOWED_MODEL_MODULES)))
-  module_path, _, attr = handle.rpartition('.')
-  try:
-    module = importlib.import_module(module_path)
-  except ImportError as exc:
-    raise ValueError(
-        'cannot resolve handle %r: module %r failed to import'
-        % (handle, module_path)) from exc
-  try:
-    obj = getattr(module, attr)
-  except AttributeError as exc:
-    raise ValueError(
-        'cannot resolve handle %r: module %r has no %r'
-        % (handle, module_path, attr)) from exc
-  if not inspect.isclass(obj) or not (
-          hasattr(obj, 'fit') and hasattr(obj, 'predict')):
-    raise ValueError(
-        'model_handle %r must resolve to an estimator-like class '
-        'with fit and predict, got %r' % (handle, obj))
-  return obj
+  return _resolve_handle_strict(handle)
 
 
 def _check_caps(df, params):
@@ -444,25 +419,24 @@ def _feature_cols(df, params, id_cols):
 def _ntile_labels(values, n):
   '''Assign 1-based ntile labels via qcut, fallback to 1s.
 
-  Uses ``assign_ntile`` from modeling.ntile when it has
-  landed; otherwise a local qcut. Constant/short input
-  falls back to all 1s, never a crash.
+  Uses ``assign_ntile`` from core.handle (which re-exports
+  modeling.ntile) when it has landed; otherwise a local
+  qcut. Constant/short input falls back to all 1s, never a
+  crash.
   '''
   scores = np.asarray(values, dtype=float)
   if len(scores) == 0:
     return np.array([], dtype=int)
   kind = 'decile' if n == 10 else 'centile'
   try:
-    from forecast_ml_framework.pipelines.modeling.ntile import (
-      assign_ntile,
-    )
+    from forecast_ml_framework.core.handle import assign_ntile
     labels = np.asarray(assign_ntile(scores, kind, n), dtype=int)
     if len(labels) == len(scores) and len(labels):
       if labels.min() == 0:
         labels = labels + 1
       return labels
-  except Exception:
-    pass
+  except (ImportError, ValueError, TypeError, AttributeError) as exc:
+    LOG.debug('_ntile_labels: assign_ntile fallback (%s)', exc)
   try:
     labels = pd.qcut(scores, q=min(n, max(2, len(scores) // 2)),
                      labels=False, duplicates='drop')
@@ -474,29 +448,37 @@ def _ntile_labels(values, n):
 
 
 def _positive_class_proba(raw):
-  '''Extract positive-class probabilities from predict_proba output.
+  '''Extract binary positive-class probabilities (ML-19).
 
-  For a 2-D ``(n, n_classes)`` array this is column 1 (column 0
-  for a single-column array). A 1-D array is already a
-  per-row probability: it is used as-is with a warning, never
-  reduced through ``max`` (which would collapse to a scalar).
-  Any other shape falls back to row-wise ``max`` with a warning.
+  Only a binary ``(n, 2)`` array (column 1) or a 1-D
+  per-row array is a valid positive-class proba. A 1-D
+  array is used as-is with a warning, never reduced
+  through ``max`` (which would collapse to a scalar).
+  Any other shape -- ``(n, 1)``, multiclass ``(n, >2)``,
+  or other ndim -- warns as non-binary and falls back
+  to row-wise ``max`` so multiclass output is never
+  silently mistaken for binary column 1.
+
+  Args:
+    raw: ``predict_proba`` output (array-like).
+
+  Returns:
+    1-D array of positive-class probabilities.
   '''
   arr = np.asarray(raw, dtype=float)
-  if arr.ndim == 2:
-    if arr.shape[1] > 1:
-      return arr[:, 1]
-    return arr[:, 0]
-  if arr.ndim == 1 and arr.size:
+  if arr.size == 0:
+    return np.asarray(
+        raw, dtype=float).reshape(0) if arr.ndim != 1 else arr
+  if arr.ndim == 2 and arr.shape[1] == 2:
+    return arr[:, 1]
+  if arr.ndim == 1:
     warnings.warn(
         'predict_proba returned 1-D probabilities; treating them '
         'as positive-class proba', stacklevel=3)
     return arr
-  if arr.size == 0:
-    return np.asarray(
-        raw, dtype=float).reshape(0) if arr.ndim != 1 else arr
   warnings.warn(
-      'predict_proba returned shape %r; falling back to row-wise '
+      'predict_proba shape %r is not binary; positive-class '
+      'proba requires (n, 2) or 1-D, falling back to row-wise '
       'max' % (getattr(arr, 'shape', None),), stacklevel=3)
   return np.max(arr, axis=-1)
 
@@ -595,6 +577,133 @@ def _calibrate_probability(proba, real_rate, sample_rate):
     return np.clip(numerator / denominator, 0.0, 1.0)
 
 
+def _ohe_with_caps(x, params):
+  '''One-hot encode non-numeric columns with caps (F6).
+
+  Args:
+    x: Feature frame with mixed numeric/categorical columns.
+    params: Scoring params dict for cap resolution.
+
+  Returns:
+    Numeric frame after ``astype(float)`` or one-hot
+    encoding, with non-finite values rejected.
+
+  Raises:
+    ValueError: If caps are exceeded, dummy names collide,
+      or feature values are non-finite.
+  '''
+  try:
+    x = x.astype(float)
+  except (TypeError, ValueError):
+    x = _ohe_encode(x, params)
+  for col in x.columns:
+    values = np.asarray(x[col], dtype=float)
+    if not np.isfinite(values).all():
+      raise ValueError(
+          'non-finite feature values in column %r' % (col,))
+  return x
+
+
+def _ohe_encode(x, params):
+  '''Expand categorical columns via get_dummies with caps.
+
+  Args:
+    x: Feature frame that failed ``astype(float)``.
+    params: Scoring params dict for cap resolution.
+
+  Returns:
+    One-hot encoded numeric frame.
+
+  Raises:
+    ValueError: If caps are exceeded or dummy names collide.
+  '''
+  cat_cols = [
+    c for c in x.columns if not pd.api.types.is_numeric_dtype(x[c])]
+  max_cols = _cap_value(
+    params or {}, 'max_cols', 'SCORING_MAX_COLS', DEFAULT_MAX_COLS)
+  if cat_cols and max_cols is not None:
+    # Cardinality cap before expansion: get_dummies would
+    # otherwise expand e.g. 2000 distinct categories into 2000
+    # columns, bypassing the max_cols check done on the
+    # pre-expansion frame (DoS amplification).
+    numeric_cols = len(x.columns) - len(cat_cols)
+    expanded = numeric_cols
+    for col in cat_cols:
+      distinct = int(x[col].nunique(dropna=False))
+      if distinct > max_cols:
+        raise ValueError(
+          'scoring input exceeds max_cols=%d: categorical '
+          'column %r has %d distinct values'
+          % (max_cols, col, distinct))
+      expanded += distinct
+    if expanded > max_cols:
+      raise ValueError(
+        'scoring input exceeds max_cols=%d: get_dummies '
+        'expansion would produce %d columns'
+        % (max_cols, expanded))
+  # Dummy-name collision check before expansion: distinct
+  # (column, category) pairs (or a dummy vs an existing
+  # column) can produce the same name, e.g. a/b_c and
+  # a_b/c both expand to a_b_c; get_dummies would then
+  # emit duplicate columns and silently misalign features.
+  expected_dummies = []
+  for col in cat_cols:
+    for cat in x[col].unique():
+      expected_dummies.append('%s_%s' % (col, cat))
+  seen_dummies = set()
+  for dummy in expected_dummies:
+    if dummy in seen_dummies:
+      raise ValueError(
+        'scoring OHE dummy name collision: duplicate dummy '
+        'column %r' % (dummy,))
+    seen_dummies.add(dummy)
+  existing = set(x.columns) - set(cat_cols)
+  for dummy in expected_dummies:
+    if dummy in existing:
+      raise ValueError(
+        'scoring OHE dummy name collision: dummy column %r '
+        'collides with existing column %r' % (dummy, dummy))
+  x = pd.get_dummies(x, columns=cat_cols)
+  if len(set(x.columns)) != len(x.columns):
+    raise ValueError(
+      'scoring OHE dummy name collision: duplicate dummy '
+      'columns %r' % (list(x.columns),))
+  # Re-check caps after expansion.
+  if max_cols is not None and len(x.columns) > max_cols:
+    raise ValueError(
+      'scoring input exceeds max_cols=%d: got %d columns '
+      'after get_dummies expansion'
+      % (max_cols, len(x.columns)))
+  return x
+
+
+def _align_to_fitted(x, model):
+  '''Reindex ``x`` to the model's fitted feature order (F6).
+
+  Appearance order after ``get_dummies`` may differ from
+  the order the model was fitted on, which would silently
+  misalign features positionally. Missing fitted features
+  are filled with 0; extra columns are dropped.
+
+  Args:
+    x: Encoded feature frame.
+    model: Fitted model exposing ``feature_names_in_``.
+
+  Returns:
+    Frame reindexed to fitted columns when available,
+    otherwise unchanged.
+  '''
+  fitted_names = getattr(model, 'feature_names_in_', None)
+  if fitted_names is not None:
+    try:
+      fitted_list = list(fitted_names)
+    except TypeError:
+      fitted_list = None
+    if fitted_list:
+      x = x.reindex(columns=fitted_list, fill_value=0)
+  return x
+
+
 def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
                         defer_ntile=False):
   '''Score one pandas chunk, returning a predictions frame.
@@ -620,6 +729,9 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
   binary ``predict_proba`` output; ``proba`` (positive-class
   probability) is left unchanged. Multiclass or ``(n, 1)``
   proba output warns and falls back to ``model.predict``.
+  ``high_score_ind`` uses the same ``>=`` threshold (ML-19),
+  so ``proba == threshold`` gives prediction 1 and ``Y``
+  when the tile is >= 5.
   When both ``real_rate`` and ``sample_rate`` are present, a
   ``calib_proba`` column corrected via ``calibrate_probability``
   is appended; ``proba``/``prediction`` are never mutated by
@@ -627,84 +739,8 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
   '''
   features = _feature_cols(df, params, id_cols)
   x = df[features] if features else df.drop(columns=id_cols)
-  try:
-    x = x.astype(float)
-  except (TypeError, ValueError):
-    cat_cols = [
-      c for c in x.columns if not pd.api.types.is_numeric_dtype(x[c])]
-    max_cols = _cap_value(
-      params or {}, 'max_cols', 'SCORING_MAX_COLS', DEFAULT_MAX_COLS)
-    if cat_cols and max_cols is not None:
-      # Cardinality cap before expansion: get_dummies would
-      # otherwise expand e.g. 2000 distinct categories into 2000
-      # columns, bypassing the max_cols check done on the
-      # pre-expansion frame (DoS amplification).
-      numeric_cols = len(x.columns) - len(cat_cols)
-      expanded = numeric_cols
-      for col in cat_cols:
-        distinct = int(x[col].nunique(dropna=False))
-        if distinct > max_cols:
-          raise ValueError(
-            'scoring input exceeds max_cols=%d: categorical '
-            'column %r has %d distinct values'
-            % (max_cols, col, distinct))
-        expanded += distinct
-      if expanded > max_cols:
-        raise ValueError(
-          'scoring input exceeds max_cols=%d: get_dummies '
-          'expansion would produce %d columns'
-          % (max_cols, expanded))
-    # Dummy-name collision check before expansion: distinct
-    # (column, category) pairs (or a dummy vs an existing
-    # column) can produce the same name, e.g. a/b_c and
-    # a_b/c both expand to a_b_c; get_dummies would then
-    # emit duplicate columns and silently misalign features.
-    expected_dummies = []
-    for col in cat_cols:
-      for cat in x[col].unique():
-        expected_dummies.append('%s_%s' % (col, cat))
-    seen_dummies = set()
-    for dummy in expected_dummies:
-      if dummy in seen_dummies:
-        raise ValueError(
-          'scoring OHE dummy name collision: duplicate dummy '
-          'column %r' % (dummy,))
-      seen_dummies.add(dummy)
-    existing = set(x.columns) - set(cat_cols)
-    for dummy in expected_dummies:
-      if dummy in existing:
-        raise ValueError(
-          'scoring OHE dummy name collision: dummy column %r '
-          'collides with existing column %r' % (dummy, dummy))
-    x = pd.get_dummies(x, columns=cat_cols)
-    if len(set(x.columns)) != len(x.columns):
-      raise ValueError(
-        'scoring OHE dummy name collision: duplicate dummy '
-        'columns %r' % (list(x.columns),))
-    # Re-check caps after expansion.
-    if max_cols is not None and len(x.columns) > max_cols:
-      raise ValueError(
-        'scoring input exceeds max_cols=%d: got %d columns '
-        'after get_dummies expansion'
-        % (max_cols, len(x.columns)))
-  for col in x.columns:
-    values = np.asarray(x[col], dtype=float)
-    if not np.isfinite(values).all():
-      raise ValueError(
-          'non-finite feature values in column %r' % (col,))
-  # Align to the model's fitted feature order when available:
-  # appearance order after get_dummies may differ from the
-  # order the model was fitted on, which would silently
-  # misalign features positionally. Missing fitted features
-  # are filled with 0; extra columns are dropped.
-  fitted_names = getattr(model, 'feature_names_in_', None)
-  if fitted_names is not None:
-    try:
-      fitted_list = list(fitted_names)
-    except TypeError:
-      fitted_list = None
-    if fitted_list:
-      x = x.reindex(columns=fitted_list, fill_value=0)
+  x = _ohe_with_caps(x, params)
+  x = _align_to_fitted(x, model)
   pred_parts = []
   proba_parts = []
   is_classification = (
@@ -773,7 +809,7 @@ def _score_pandas_chunk(df, model, params, id_cols, chunk_size,
     if is_classification:
       threshold = _model_threshold(params)
       out['high_score_ind'] = np.where(
-          (np.asarray(score_arr, dtype=float) > threshold)
+          (np.asarray(score_arr, dtype=float) >= threshold)
           & (out['score_decile'] >= 5), 'Y', 'N')
   out['score_model_id'] = (
       params.get('score_model_id') or params.get('model_id')
@@ -831,7 +867,7 @@ def _assign_global_ntiles_frame(scored, params):
   if is_classification:
     threshold = _model_threshold(params)
     scored['high_score_ind'] = np.where(
-        (np.asarray(score_arr, dtype=float) > threshold)
+        (np.asarray(score_arr, dtype=float) >= threshold)
         & (scored['score_decile'] >= 5), 'Y', 'N')
   return _order_predictions_columns(scored, is_classification)
 
@@ -914,7 +950,7 @@ def _spark_global_reassign(scored, params):
       part = part.drop(columns=['__calib_score'])
     if is_classification:
       part['high_score_ind'] = np.where(
-          (values > threshold) & (part['score_decile'] >= 5), 'Y', 'N')
+          (values >= threshold) & (part['score_decile'] >= 5), 'Y', 'N')
     return _order_predictions_columns(part, is_classification)
 
   mapper = getattr(scored, 'mapPartitions', None)
@@ -958,7 +994,7 @@ def load_scoring_data(data, params=None):
 
 
 def predict(data, params=None, model_loader=None):
-  """Score data with the loaded model.
+  '''Score data with the loaded model.
 
   Args:
     data: Scoring dataframe (pandas or Spark-like). When
@@ -987,7 +1023,7 @@ def predict(data, params=None, model_loader=None):
     the catalog to write (e.g. to BigQuery). Empty input
     returns an empty frame with that schema plus a warning,
     never a crash.
-  """
+  '''
   params = params or {}
   _check_caps(data, params)
   batch_size = int(params.get('batch_size', DEFAULT_BATCH_SIZE))
@@ -1004,7 +1040,7 @@ def predict(data, params=None, model_loader=None):
                if c in data.columns]
 
     def _score_partition(part):
-      """Score one Spark partition in sub-chunks."""
+      '''Score one Spark partition in sub-chunks.'''
       pandas_conversion_params = _pandas_conversion_params(params)
       part = (part if isinstance(part, pd.DataFrame)
               else spark_factory.to_pandas(part, pandas_conversion_params))

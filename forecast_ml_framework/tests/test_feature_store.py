@@ -678,3 +678,146 @@ def test_prepare_materialize_frame_normalizes_and_keeps():
     _prepare_materialize_frame(
         _df().iloc[0:0], as_of='2024-01-03', feature_names=None,
         entity_col=None, timestamp_col=None, label='offline')
+
+
+# --- W9 cycle-1 fixes (RED) ---
+
+def test_strict_pit_offline_raises_without_cutoff(tmp_path):
+  '''Offline strict_pit=True raises when no cutoff is given.'''
+  offline = _offline(tmp_path)
+  offline.materialize(_df(), as_of='2024-01-03')
+  with pytest.raises(ValueError, match='strict_pit'):
+    offline.get_features(['e1'], ['f1'], strict_pit=True)
+  # Non-strict mode still returns latest with a warning.
+  import warnings
+  with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    out = offline.get_features(['e1'], ['f1'])
+  assert list(out['f1']) == [3.0]
+  # Strict mode with a cutoff works normally.
+  out = offline.get_features(['e1'], ['f1'], as_of='2024-01-02',
+                             strict_pit=True)
+  assert list(out['f1']) == [1.0]
+
+
+def test_strict_pit_online_raises_without_cutoff():
+  '''Online strict_pit=True (method and constructor) raises.'''
+  from forecast_ml_framework.feature_store.online import (
+    OnlineFeatureStore)
+  online = OnlineFeatureStore()
+  online.set_features('e1', {'f1': 1.0}, as_of='2024-01-01')
+  with pytest.raises(ValueError, match='strict_pit'):
+    online.get_features(['e1'], ['f1'], strict_pit=True)
+  with pytest.raises(ValueError, match='strict_pit'):
+    online.get_features_df(['e1'], ['f1'], strict_pit=True)
+  strict = OnlineFeatureStore(strict_pit=True)
+  strict.set_features('e1', {'f1': 2.0}, as_of='2024-01-01')
+  with pytest.raises(ValueError, match='strict_pit'):
+    strict.get_features(['e1'], ['f1'])
+  assert strict.get_features(
+    ['e1'], ['f1'], as_of='2024-01-02', strict_pit=False) == {
+    'e1': {'f1': 2.0}}
+
+
+def test_online_merge_redis_and_memory_latest_wins():
+  '''Merged stores: newer memory beats stale Redis, and vice versa.'''
+  import json
+  from forecast_ml_framework.feature_store.online import (
+    OnlineFeatureStore)
+
+  class FakeRedis:
+    def __init__(self):
+      self.data = {}
+
+    def set(self, key, value):
+      self.data[key] = value
+
+    def get(self, key):
+      return self.data.get(key)
+
+  fake = FakeRedis()
+  online = OnlineFeatureStore(redis_client=fake)
+  online.set_features('e1', {'f1': 5.0}, as_of='2024-01-05')
+  # Stale Redis payload (older than memory) must not win.
+  fake.data['feature:e1'] = json.dumps([
+    {'as_of': '2024-01-01', 'features': {'f1': 1.0}}])
+  assert online.get_features(['e1'], ['f1'], as_of='2024-01-10') == {
+    'e1': {'f1': 5.0}}
+  # Newer Redis payload (from another writer) must win.
+  fake.data['feature:e1'] = json.dumps([
+    {'as_of': '2024-01-09', 'features': {'f1': 99.0}},
+    {'as_of': '2024-01-01', 'features': {'f1': 1.0}}])
+  assert online.get_features(['e1'], ['f1'], as_of='2024-01-10') == {
+    'e1': {'f1': 99.0}}
+  # PIT filtering still applies to the merged view.
+  assert online.get_features(['e1'], ['f1'], as_of='2024-01-06') == {
+    'e1': {'f1': 5.0}}
+
+
+def test_online_redis_write_failure_is_logged(caplog):
+  '''Redis write failures surface as a warning, not silent pass.'''
+  import logging
+  from forecast_ml_framework.feature_store.online import (
+    OnlineFeatureStore)
+
+  class FailingRedis:
+    def set(self, key, value):
+      raise RuntimeError('redis down')
+
+    def get(self, key):
+      return None
+
+  store = OnlineFeatureStore(redis_client=FailingRedis())
+  with caplog.at_level(logging.WARNING):
+    store.set_features('e1', {'f1': 2.0}, as_of='2024-01-01')
+  assert any('redis' in r.message.lower() for r in caplog.records)
+  # In-memory record is still served.
+  assert store.get_features(['e1'], as_of='2024-01-02') == {
+    'e1': {'f1': 2.0}}
+
+
+def test_online_numpy_values_roundtrip_through_redis():
+  '''Numpy scalars are converted to natives and reach Redis.'''
+  import json
+  import numpy as np
+  from forecast_ml_framework.feature_store.online import (
+    OnlineFeatureStore)
+
+  class FakeRedis:
+    def __init__(self):
+      self.data = {}
+
+    def set(self, key, value):
+      self.data[key] = value
+
+    def get(self, key):
+      return self.data.get(key)
+
+  fake = FakeRedis()
+  online = OnlineFeatureStore(redis_client=fake)
+  online.set_features(
+    'e1', {'f1': np.int64(5), 'f2': np.float32(1.5),
+           'f3': np.array([1, 2])}, as_of='2024-01-01')
+  assert fake.data
+  payload = json.loads(fake.data['feature:e1'])
+  assert payload[0]['features'] == {'f1': 5, 'f2': 1.5, 'f3': [1, 2]}
+  out = online.get_features(['e1'], as_of='2024-01-02')
+  assert out['e1'] == {'f1': 5, 'f2': 1.5, 'f3': [1, 2]}
+  assert type(out['e1']['f1']) is int
+  assert type(out['e1']['f2']) is float
+
+
+def test_as_dict_frame_mapping_failure_is_logged(caplog):
+  '''_as_dict logs (not silently passes) frame mapping failures.'''
+  import logging
+  import pandas as pd
+  from forecast_ml_framework.feature_store.store import _as_dict
+
+  class _FrameStore:
+    def get_features(self, ids, names, as_of=None):
+      return pd.DataFrame({'entity_id': ['e1'], 'f1': [1.5]})
+
+  with caplog.at_level(logging.WARNING):
+    assert _as_dict(_FrameStore(), ['e1'], ['f1', 'missing'], None) == {}
+  assert any('consistency' in r.message.lower()
+             or 'frame' in r.message.lower() for r in caplog.records)

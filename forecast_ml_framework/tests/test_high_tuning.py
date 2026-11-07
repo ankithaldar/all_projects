@@ -18,6 +18,7 @@ def _data():
   return pd.DataFrame(x, columns=['f1', 'f2', 'f3']), y
 
 
+@pytest.mark.serial
 def test_grid_tuning_returns_best_and_report():
   '''Grid search returns fitted best, params and report.'''
   from sklearn.linear_model import LogisticRegression
@@ -42,6 +43,7 @@ def test_grid_tuning_returns_best_and_report():
   assert report['n_jobs'] == 1
 
 
+@pytest.mark.serial
 def test_random_tuning_returns_best():
   '''Randomized search returns a fitted best estimator.'''
   from sklearn.linear_model import LogisticRegression
@@ -61,6 +63,7 @@ def test_random_tuning_returns_best():
   assert hasattr(best, 'predict')
 
 
+@pytest.mark.serial
 def test_halving_tuning_returns_best():
   '''Successive halving returns a fitted best estimator.'''
   from sklearn.linear_model import LogisticRegression
@@ -303,6 +306,7 @@ def test_single_class_y_raises_pre_fit():
     tune_model(LogisticRegression(max_iter=1000), x, y, params)
 
 
+@pytest.mark.serial
 def test_halving_random_tuning_returns_best():
   '''Halving random search maps n_iter to n_candidates.'''
   from sklearn.linear_model import LogisticRegression

@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from forecast_ml_framework.pipelines.modeling.evaluate import evaluate_model
 
@@ -29,7 +30,12 @@ def _reg_data(n=1000):
 
 
 def test_cls_lift_decile_selected_ntile_matches_top_decile():
-  '''LIFT_DECILE_10 selects the top (0-based label 9) decile lift.'''
+  '''LIFT_DECILE_10 selects the top (1-based label 10) decile.
+
+  The selected score is the tile-vs-overall lift (top-tile
+  positive rate / overall prevalence), not the within-tile
+  lift_top_decile diagnostic stored in by_decile.
+  '''
   y_true, y_pred, y_proba, x = _cls_data()
   params = {
       'task_type': 'classification',
@@ -41,9 +47,15 @@ def test_cls_lift_decile_selected_ntile_matches_top_decile():
   assert out['selected_ntile']['metric'] == 'lift'
   assert out['selected_ntile']['ntile'] == 10
   assert isinstance(out['selected_ntile']['score'], float)
-  assert '9' in out['by_decile']
-  assert out['selected_ntile']['score'] == out['by_decile']['9'][
-      'lift_top_decile']
+  assert '10' in out['by_decile']
+  from forecast_ml_framework.pipelines.modeling.evaluate import (
+    _deciles,
+  )
+  labels = _deciles(y_true, y_pred, y_proba, 'classification')
+  top_mask = labels == labels.max()
+  prevalence = float(np.mean(np.asarray(y_true) == 1))
+  expected = float(np.mean(np.asarray(y_true)[top_mask] == 1)) / prevalence
+  assert out['selected_ntile']['score'] == pytest.approx(expected)
   assert 'by_centile' not in out
 
 
@@ -137,9 +149,12 @@ def test_lift_quintile_top_quintile():
   expected = _by_group(y_true, y_pred, y_proba, labels,
                        params['task_type'], effective)
   top_label = max(expected, key=lambda k: int(k))
-  assert top_label == '4'
-  assert out['selected_ntile']['score'] == expected[top_label][
-      'lift_top_decile']
+  assert top_label == '5'
+  top_mask = labels == labels.max()
+  prevalence = float(np.mean(np.asarray(y_true) == 1))
+  expected_lift = float(
+      np.mean(np.asarray(y_true)[top_mask] == 1)) / prevalence
+  assert out['selected_ntile']['score'] == pytest.approx(expected_lift)
 
 
 def test_evaluate_task_alias_cls_and_reg():

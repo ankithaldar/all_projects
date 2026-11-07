@@ -13,7 +13,9 @@ import hashlib
 import logging
 import math
 import os
+import secrets
 import time
+from collections import deque
 
 LOG = logging.getLogger(__name__)
 
@@ -23,10 +25,28 @@ _VALID_MODES = ('shadow', 'ab')
 # given (e.g. in production, set a secret value per experiment).
 _SALT_ENV_VAR = 'FORECAST_AB_TEST_SALT'
 
+# Bounded in-memory route log (F-08): a long-running service
+# must not grow ``logs`` without bound.
+_MAX_LOGS = 10000
+
+# Per-process random salt used when no env/explicit salt is
+# set, so bucketing is not predictable from an empty salt.
+_PROCESS_SALT = secrets.token_hex(16)
+
 
 def _default_salt():
-  '''Return the salt from the environment ('' when unset).'''
-  return os.environ.get(_SALT_ENV_VAR, '')
+  '''Return the env salt or the per-process random salt.'''
+  return os.environ.get(_SALT_ENV_VAR) or _PROCESS_SALT
+
+
+def _scrub_request_id(request_id):
+  '''Return a truncated hash of a request id for logging.
+
+  The raw request id may carry PII or caller-chosen values,
+  so log entries store only this one-way hash.
+  '''
+  return hashlib.sha256(
+      str(request_id).encode('utf-8')).hexdigest()[:16]
 
 
 def _bucket(request_id, salt=None) -> float:
@@ -210,8 +230,26 @@ class ABRouter:
     self.challenger_loader = challenger_loader
     self.traffic_split = float(traffic_split)
     self.mode = mode
-    self.salt = _default_salt() if salt is None else str(salt)
-    self.logs: list = []
+    if salt is None:
+      env_salt = os.environ.get(_SALT_ENV_VAR)
+      if env_salt:
+        self.salt = env_salt
+      else:
+        self.salt = _PROCESS_SALT
+        LOG.warning(
+            'FORECAST_AB_TEST_SALT is not set; using per-process '
+            'random salt for A/B bucketing. Set '
+            'FORECAST_AB_TEST_SALT to a secret value in '
+            'production.')
+    elif str(salt) == '':
+      self.salt = _PROCESS_SALT
+      LOG.warning(
+          'Empty A/B salt rejected; using per-process random '
+          'salt for A/B bucketing. Set FORECAST_AB_TEST_SALT '
+          'to a secret value in production.')
+    else:
+      self.salt = str(salt)
+    self.logs: deque = deque(maxlen=_MAX_LOGS)
 
   def _variant(self, request_id) -> str:
     '''Bucket a request id deterministically (salted).'''
@@ -237,11 +275,14 @@ class ABRouter:
         challenger_pred, challenger_latency = _predict(
           self.challenger_loader, features
         )
-      except Exception as exc:  # noqa: BLE001 - shadow must not lose champion
-        LOG.warning('shadow challenger failed, serving champion: %s', exc)
+      except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Shadow must not lose the champion prediction.
+        LOG.warning(
+            'shadow challenger failed code=%s type=%s',
+            'shadow_challenger_failed', type(exc).__name__)
         challenger_pred, challenger_latency = None, 0.0
       log = {
-        'request_id': request_id,
+        'request_id_hash': _scrub_request_id(request_id),
         'variant': 'champion',
         'prediction': champion_pred,
         'champion_prediction': champion_pred,
@@ -260,7 +301,7 @@ class ABRouter:
     )
     prediction, latency = _predict(loader, features)
     log = {
-      'request_id': request_id,
+      'request_id_hash': _scrub_request_id(request_id),
       'variant': variant,
       'prediction': prediction,
       'champion_prediction': (prediction if variant == 'champion' else None),

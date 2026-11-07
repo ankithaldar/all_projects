@@ -114,7 +114,7 @@ def test_settings_import_smoke():
   from forecast_ml_framework import settings
   from forecast_ml_framework.hooks import ForecastHooks
   assert Path(settings.CONF_SOURCE).is_absolute()
-  assert ForecastHooks in settings.HOOKS
+  assert any(isinstance(h, ForecastHooks) for h in settings.HOOKS)
   assert settings.__all__ == ['CONFIG_LOADER_CLASS', 'CONF_SOURCE', 'HOOKS']
   # Kedro is a declared dependency, so the loader class resolves.
   assert settings.CONFIG_LOADER_CLASS is not None
@@ -300,3 +300,63 @@ def test_cli_exposes_kedro_compatible_group():
   assert hasattr(cli_module, 'cli')
   assert cli_module.cli is not None
   assert isinstance(cli_module.cli, click.Group)
+
+
+# --- X1 RED: CLI serve bind-host gate (C2-F1/R-01) ---
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize('host', ['0.0.0.0', '192.168.1.10', '::'])
+def test_serve_non_loopback_without_key_refused_no_spawn(
+    host, capsys, monkeypatch, tmp_path):
+  '''Fails if serve spawns uvicorn on a non-loopback host without
+  a >=16-char FORECAST_API_KEY, or returns anything but exit 2.
+
+  Mutation kill: removing the validate_bind_host call in cli
+  before subprocess.run must make this test fail (spawn called
+  and/or rc 0 instead of 2).
+  '''
+  from forecast_ml_framework import cli
+  calls = []
+
+  def _fake_run(*args, **kwargs):
+    calls.append((args, kwargs))
+
+    class _R:
+      returncode = 0
+    return _R()
+
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.setattr(cli.shutil, 'which', lambda name: '/bin/uvicorn')
+  monkeypatch.setattr(cli.subprocess, 'run', _fake_run)
+  monkeypatch.setattr(cli, '_find_project_root', lambda: tmp_path)
+  monkeypatch.chdir(tmp_path)
+  rc = cli.main(['serve', '--env', 'local', '--host', host])
+  assert rc == 2
+  assert calls == []
+  assert 'forecast-ml: error:' in capsys.readouterr().err
+
+
+@_pytest.mark.parametrize(
+    'alias', ['data', 'preprocessing', 'feature_selection', 'modeling',
+              'evaluation', 'predict', 'scoring', 'eda', 'monitoring',
+              'retraining', 'cost_tracking', 'interpretability'])
+def test_registry_alias_subparsers_parse(alias):
+  '''Fails if any of the 12 registry display names is not a real
+  subparser mapping to ``kedro run --pipeline <alias>``.
+
+  Mutation kill: deleting an alias subparser (or mapping it to
+  a different pipeline) must make parse_args raise SystemExit
+  or _planned_command return a different pipeline.
+  '''
+  from forecast_ml_framework.cli import _build_parser, _planned_command
+  args = _build_parser().parse_args([alias])
+  assert args.command == alias
+  planned = _planned_command(alias, 'local')
+  # predict keeps its pinned scoring alias (see _COMMAND_PIPELINES);
+  # every other registry name maps to itself.
+  expected = 'scoring' if alias == 'predict' else alias
+  assert planned == [
+    'kedro', 'run', '--pipeline', expected, '--env', 'local']
+

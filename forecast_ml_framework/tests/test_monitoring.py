@@ -472,3 +472,110 @@ def test_build_monitoring_report_kwargs_forms():
   assert report['performance']['accuracy']['delta'] == pytest.approx(
     -0.1)
   assert 'prediction' in report
+
+
+# --- W9 cycle-1 fixes (RED) ---
+
+def test_psi_clipped_then_renormalized_value():
+  '''PSI matches clip-then-renormalize reference computation.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _psi_from_props)
+  ref = [0.1] * 10
+  cur = [0.1111111111111111] * 9 + [0.0]
+  eps = 1e-4
+
+  def _expected(ref_props, cur_props):
+    ref_c = np.clip(np.asarray(ref_props, dtype=float), eps, None)
+    cur_c = np.clip(np.asarray(cur_props, dtype=float), eps, None)
+    ref_n = ref_c / ref_c.sum()
+    cur_n = cur_c / cur_c.sum()
+    assert cur_c.sum() > 1.0
+    assert ref_n.sum() == pytest.approx(1.0)
+    assert cur_n.sum() == pytest.approx(1.0)
+    return float(np.sum((cur_n - ref_n) * np.log(cur_n / ref_n)))
+
+  assert _psi_from_props(ref, cur, eps) == pytest.approx(
+    _expected(ref, cur))
+
+
+def test_psi_epsilon_monotonic_sensible():
+  '''Larger epsilon smooths PSI downward for a fixed shift.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _psi_from_props)
+  ref = [0.1] * 10
+  cur = [0.1111111111111111] * 9 + [0.0]
+  small = _psi_from_props(ref, cur, 1e-4)
+  large = _psi_from_props(ref, cur, 0.01)
+  assert 0.0 < large < small
+
+
+def test_psi_clipped_props_sum_to_one():
+  '''Clipped proportion vectors are renormalized to sum 1.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _clipped_props)
+  for props in ([0.0] * 200, [0.1] * 10, [0.5, 0.0, 0.5]):
+    clipped = _clipped_props(props, 0.01)
+    assert float(np.sum(clipped)) == pytest.approx(1.0)
+    assert np.all(clipped >= 0.01 / 2.0)
+
+
+def test_performance_decay_rmse_improvement_is_negative():
+  '''RMSE improvement (lower is better) gives negative decay.'''
+  report = performance_decay(
+    {'rmse': 0.4}, _params(baseline_metrics={'rmse': 0.5}))
+  assert report['rmse']['decay'] == pytest.approx(-0.1)
+  assert report['rmse']['delta'] == pytest.approx(-0.1)
+
+
+def test_performance_decay_accuracy_drop_is_positive():
+  '''Accuracy drop (higher is better) gives positive decay.'''
+  report = performance_decay(
+    {'accuracy': 0.8}, _params(baseline_metrics={'accuracy': 0.9}))
+  assert report['accuracy']['decay'] == pytest.approx(0.1)
+
+
+def test_performance_decay_r2_family_higher_better():
+  '''r2-family metrics are higher-is-better, not lower.'''
+  report = performance_decay(
+    {'r2': 0.8, 'adj_r2': 0.85},
+    _params(baseline_metrics={'r2': 0.9, 'adj_r2': 0.8}))
+  assert report['r2']['decay'] == pytest.approx(0.1)
+  assert report['adj_r2']['decay'] == pytest.approx(-0.05)
+
+
+def test_performance_decay_lower_better_family():
+  '''MAE/log-loss worsening gives positive decay.'''
+  report = performance_decay(
+    {'mae': 1.2, 'log_loss': 0.3},
+    _params(baseline_metrics={'mae': 1.0, 'log_loss': 0.4}))
+  assert report['mae']['decay'] == pytest.approx(0.2)
+  assert report['log_loss']['decay'] == pytest.approx(-0.1)
+
+
+def test_resolve_thresholds_conf_aligned_defaults():
+  '''Defaults match conf: ks warning 0.05, psi 0.1/0.25.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _resolve_thresholds)
+  merged = _resolve_thresholds({})
+  assert merged['psi'] == {'warning': 0.1, 'critical': 0.25}
+  assert merged['ks'] == {'warning': 0.05, 'critical': 0.25}
+  assert merged['missing_rate_delta'] == {
+    'warning': 0.05, 'critical': 0.1}
+
+
+def test_resolve_thresholds_flat_critical_and_missing_keys():
+  '''Flat critical/missing params keys override thresholds.'''
+  from forecast_ml_framework.pipelines.monitoring.nodes import (
+    _resolve_thresholds)
+  merged = _resolve_thresholds({
+    'psi_critical_threshold': 0.3,
+    'ks_threshold': 0.07,
+    'ks_critical_threshold': 0.4,
+    'missing_rate_delta_threshold': 0.06,
+    'missing_rate_delta_critical_threshold': 0.2,
+  })
+  assert merged['psi']['critical'] == pytest.approx(0.3)
+  assert merged['ks'] == {'warning': 0.07, 'critical': 0.4}
+  assert merged['missing_rate_delta'] == {
+    'warning': 0.06, 'critical': 0.2}
+  assert merged['missing_delta'] == merged['missing_rate_delta']

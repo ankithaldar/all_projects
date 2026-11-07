@@ -15,6 +15,22 @@ Metric selection (for parameters.yml ``metrics`` /
   only ``mae`` is selected).
 - ``metrics='all'`` computes every registry metric; a list
   computes only those names (unknown -> ``ValueError``).
+
+Conventions (cycle-1 fixes):
+
+- Positive label is the maximum sorted label, consistent with
+  ``imbalance.compute_imbalance``; probability columns are
+  assumed to be in sorted-label order.
+- ``pr_auc``/``pr_auc_ovr`` are trapezoidal PR-curve AUC
+  (``auc(recall, precision)``), separate from the step-wise
+  ``average_precision``/``mean_average_precision``/``map``.
+- Binary ``g_mean`` is ``sqrt(sensitivity * specificity)`` from
+  the 2x2 table; multiclass ``g_mean`` is the documented macro
+  ``sqrt(mean sens * mean spec)``.
+- Deviances/MSLE return nan for out-of-support inputs (e.g.
+  negative ``y_true``) instead of clipping to a fabricated 0.0.
+- Multiclass at-k/top-decile formulas are documented on
+  ``_at_k``/``_top_decile``; binary formulas are unchanged.
 '''
 # pylint: disable=import-outside-toplevel,broad-exception-caught
 
@@ -100,22 +116,95 @@ def _labels(y_true, y_pred):
   return sorted(vals.tolist())
 
 
+def _label_column_index(label, labels, n_cols):
+  '''Return proba column index for a label (sorted order).
+
+  Args:
+    label: Label to locate.
+    labels: Sorted unique labels.
+    n_cols: Number of probability columns.
+
+  Returns:
+    Column index of label, assuming columns are in sorted
+    label order. For a single label, conventional negative
+    encodings (0, -1, False, 'no'/'false'/...) map to column
+    0 and any other label maps to column 1.
+  '''
+  if len(labels) >= 2:
+    return labels.index(label) if label in labels else 0
+  if n_cols < 2 or not labels:
+    return 0
+  single = labels[0]
+  if single == 0 or single == -1 or single is False:
+    return 0
+  if isinstance(single, str) and single.strip().lower() in (
+      '0', 'false', 'no', 'negative', 'neg'):
+    return 0
+  return 1
+
+
+def _binary_labels(y_true):
+  '''Return 0/1 labels with positive = maximum sorted label.
+
+  Args:
+    y_true: True labels.
+
+  Returns:
+    Integer array with 1 for the positive (maximum sorted)
+    label and 0 otherwise. A single label uses the same
+    conventional negative encoding as _label_column_index.
+  '''
+  values = np.asarray(y_true)
+  labels = _labels(values, values)
+  if len(labels) >= 2:
+    return (values == labels[-1]).astype(int)
+  if len(labels) == 1:
+    col = _label_column_index(labels[0], labels, 2)
+    return np.full(values.shape, col, dtype=int)
+  return np.asarray([], dtype=int)
+
+
+def _binary_pair_for_label(label):
+  '''Return the sorted binary pair containing a single label.
+
+  Args:
+    label: The sole observed label.
+
+  Returns:
+    Tuple of (negative, positive) for conventional binary
+    encodings, or None when no conventional pair matches.
+  '''
+  pairs = ((0, 1), (-1, 1), (False, True), ('no', 'yes'),
+           ('negative', 'positive'), ('neg', 'pos'),
+           ('false', 'true'), ('0', '1'))
+  for pair in pairs:
+    if label in pair:
+      return pair
+  return None
+
+
 def _pos_proba(proba, y_true):
   '''Return positive-class probability column.
 
+  The positive label is the maximum sorted label (see
+  ``imbalance.compute_imbalance``) and probability columns
+  are assumed to be in sorted-label order, so for binary
+  proba the positive column is the last column. This works
+  for {0, 1}, {-1, 1} and {'no', 'yes'} alike.
+
   Args:
     proba: Probability array.
-    y_true: True labels (unused, for symmetry).
+    y_true: True labels.
 
   Returns:
-    One-dimensional positive probability array, or nan array.
+    One-dimensional positive probability array.
   '''
   _ = y_true  # kept for symmetry with callers
   proba = np.asarray(proba, dtype=float)
   if proba.ndim == 1:
     return proba
   if proba.shape[1] >= 2:
-    return proba[:, 1]
+    return proba[:, -1]
   return proba[:, 0]
 
 
@@ -132,7 +221,7 @@ def _calibration(y_true, proba, n_bins=10):
   '''
   try:
     pos = np.asarray(_pos_proba(proba, y_true), dtype=float)
-    y = np.asarray(y_true, dtype=float)
+    y = np.asarray(_binary_labels(y_true), dtype=float)
     edges = np.linspace(0, 1, n_bins + 1)
     ece = 0.0
     mce = 0.0
@@ -200,15 +289,22 @@ def _top_k(y_true, proba, k):
   hits = 0
   for true, row in zip(np.asarray(y_true), top):
     if true in labels:
-      idx = labels.index(true)
+      idx = _label_column_index(true, labels, proba.shape[1])
       hits += int(idx in row)
-    else:
-      hits += 0
   return float(hits / max(len(y_true), 1))
 
 
 def _log_loss(y_true, proba):
   '''Compute log loss, handling single-class labels.
+
+  Single-class case (ML-5): sklearn requires at least two
+  labels, so the binary pair is supplied explicitly
+  (``labels=[0, 1]`` for 0/1 data, aligned to the proba
+  columns) and the result is ``-mean(log p_true)``. For
+  example ``_log_loss([1, 1, 1], [[0.2, 0.8]] * 3)`` is
+  ``-log(0.8)`` and the all-0 case is identical by symmetry.
+  Conventional pairs ({-1, 1}, {'no', 'yes'}, ...) are
+  handled the same way.
 
   Args:
     y_true: True labels.
@@ -225,12 +321,17 @@ def _log_loss(y_true, proba):
     return float(log_loss(y_true, proba))
   except Exception:  # noqa: BLE001
     labels = _labels(y_true, y_true)
-    if len(labels) == 1 and proba.shape[1] == 2:
-      # Single class present: keep only its column, renormalised.
-      col = labels[0]
-      proba = proba[:, col:col + 1] if col in (0, 1) else proba
-      proba = np.clip(proba, 1e-15, 1)
-    return float(log_loss(y_true, proba, labels=labels))
+    if len(labels) != 1:
+      raise
+    if proba.shape[1] == 1:
+      p_true = np.clip(proba[:, 0], 1e-15, 1.0)
+      return float(-np.mean(np.log(p_true)))
+    pair = _binary_pair_for_label(labels[0])
+    if pair is not None:
+      return float(log_loss(y_true, proba, labels=list(pair)))
+    col = _label_column_index(labels[0], labels, proba.shape[1])
+    p_true = np.clip(proba[:, col], 1e-15, 1.0)
+    return float(-np.mean(np.log(p_true)))
 
 
 def _hinge(y_true, proba):
@@ -249,9 +350,7 @@ def _hinge(y_true, proba):
   if proba.ndim == 2 and proba.shape[1] > 2:
     return float(hinge_loss(y, proba))
   pos = _pos_proba(proba, y)
-  labels = _labels(y, y)
-  pos_label = labels[-1] if labels else 1
-  signed = np.where(y == pos_label, 1, -1)
+  signed = np.where(_binary_labels(y) == 1, 1, -1)
   return float(hinge_loss(signed, pos * 2 - 1))
 
 
@@ -268,36 +367,73 @@ def _want(selected, *names):
   return selected is None or any(name in selected for name in names)
 
 
-def _classification(y_true, y_pred, proba, selected=None):
-  '''Compute selected classification metrics (None = all).
+def _pr_auc(y_true, proba):
+  '''Compute trapezoidal PR-curve AUC (ML-8).
+
+  The value is ``auc(recall, precision)`` from
+  ``precision_recall_curve`` (trapezoidal integration).
+  Trapezoidal PR AUC linearly interpolates between PR
+  points and can differ from step-wise average precision
+  (``average_precision_score``); the two are kept as
+  separate registry metrics and are not aliases. Binary
+  uses the positive (maximum sorted label) score.
+  Multiclass is the macro average of per-class PR AUCs,
+  with proba columns in sorted-label order.
 
   Args:
     y_true: True labels.
-    y_pred: Predicted labels.
     proba: Probability array.
-    selected: Set of metric names to compute, or None for all.
-      Shared intermediates (confusion matrix, ROC-AUC, ...)
-      are computed once and only if a dependent metric is
-      selected; unselected families are skipped entirely.
 
   Returns:
-    Dict of classification metric name to value.
+    PR-curve AUC as float.
+
+  Raises:
+    ValueError: If fewer than two classes are present or a
+      class has no positive/negative examples.
   '''
-  from sklearn.metrics import (
-    accuracy_score, average_precision_score, balanced_accuracy_score,
-    brier_score_loss, classification_report, cohen_kappa_score,
-    confusion_matrix, f1_score, fbeta_score, jaccard_score,
-    matthews_corrcoef, precision_score, recall_score, roc_auc_score,
-    zero_one_loss,
-  )
-  out = {}
-  y_true = np.asarray(y_true)
-  y_pred = np.asarray(y_pred)
+  from sklearn.metrics import auc, precision_recall_curve
   proba = np.asarray(proba, dtype=float)
   if proba.ndim == 1:
     proba = np.column_stack([1 - proba, proba])
-  is_binary = proba.shape[1] == 2
-  pos = proba[:, 1] if is_binary else proba
+  labels = _labels(y_true, y_true)
+  if len(labels) < 2:
+    raise ValueError('pr_auc undefined for single class')
+  if proba.shape[1] == 2:
+    y_bin = _binary_labels(y_true)
+    if np.sum(y_bin) in (0, len(y_bin)):
+      raise ValueError('pr_auc undefined for single class')
+    pos = _pos_proba(proba, y_true)
+    precision, recall, thresholds = precision_recall_curve(
+        y_bin, pos)
+    _ = thresholds
+    return float(auc(recall, precision))
+  values = []
+  for idx, label in enumerate(labels):
+    y_bin = (np.asarray(y_true) == label).astype(int)
+    if np.sum(y_bin) in (0, len(y_bin)):
+      continue
+    precision, recall, thresholds = precision_recall_curve(
+        y_bin, proba[:, idx])
+    _ = thresholds
+    values.append(float(auc(recall, precision)))
+  if not values:
+    raise ValueError('pr_auc undefined for given labels')
+  return float(np.mean(values))
+
+
+def _cls_accuracy_family(out, y_true, y_pred, selected):
+  '''Compute accuracy, error rate and balanced accuracy.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import accuracy_score, balanced_accuracy_score
   accuracy_val = float('nan')
   if _want(selected, 'accuracy', 'error_rate'):
     accuracy_val = _safe(accuracy_score, y_true, y_pred)
@@ -308,6 +444,22 @@ def _classification(y_true, y_pred, proba, selected=None):
   if _want(selected, 'balanced_accuracy'):
     out['balanced_accuracy'] = _safe(
         balanced_accuracy_score, y_true, y_pred)
+
+
+def _cls_average_family(out, y_true, y_pred, selected):
+  '''Compute averaged and per-class precision/recall/F1/jaccard.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import f1_score, jaccard_score
+  from sklearn.metrics import precision_score, recall_score
   for avg in ('macro', 'micro', 'weighted'):
     if _want(selected, f'precision_{avg}'):
       out[f'precision_{avg}'] = _safe(
@@ -334,13 +486,29 @@ def _classification(y_true, y_pred, proba, selected=None):
   if _want(selected, 'per_class_f1'):
     out['per_class_f1'] = _safe_list(
         f1_score, y_true, y_pred, average=None, zero_division=0)
-  # ROC AUC (ovr / ovo where multiclass) - shared intermediate.
+
+
+def _cls_roc_family(out, y_true, proba, selected, is_binary, pos, y_bin):
+  '''Compute ROC-AUC family (ovr/ovo where multiclass).
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+    is_binary: True for binary proba.
+    pos: Positive-class probabilities.
+    y_bin: Binary true labels.
+
+  Returns:
+    ROC-AUC value (nan when not computed).
+  '''
+  from sklearn.metrics import roc_auc_score
   roc_val = float('nan')
-  pr_val = float('nan')
   if _want(selected, 'roc_auc', 'roc_auc_ovr', 'roc_auc_ovo',
            'gini_coefficient'):
     if is_binary:
-      roc_val = _safe(roc_auc_score, y_true, pos)
+      roc_val = _safe(roc_auc_score, y_bin, pos)
     else:
       roc_val = _safe(
           roc_auc_score, y_true, proba, multi_class='ovr',
@@ -356,22 +524,68 @@ def _classification(y_true, y_pred, proba, selected=None):
         out['roc_auc_ovo'] = _safe(
             roc_auc_score, y_true, proba, multi_class='ovo',
             average='macro')
+  return roc_val
+
+
+def _cls_pr_family(out, y_true, proba, selected, is_binary, pos, y_bin):
+  '''Compute PR-AUC and average-precision family.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+    is_binary: True for binary proba.
+    pos: Positive-class probabilities.
+    y_bin: Binary true labels.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import average_precision_score
   if _want(selected, 'pr_auc', 'pr_auc_ovr', 'average_precision',
            'mean_average_precision', 'map'):
+    # ML-8: pr_auc is trapezoidal PR AUC; average_precision
+    # (and its aliases map/mean_average_precision) is step-
+    # wise AP. They are separate metrics, not aliases.
     if is_binary:
-      pr_val = _safe(average_precision_score, y_true, pos)
+      ap_val = _safe(average_precision_score, y_bin, pos)
+      pr_val = _safe(_pr_auc, y_true, proba)
     else:
-      pr_val = _safe(
+      ap_val = _safe(
           average_precision_score, y_true, proba, average='macro')
-    for name in ('pr_auc', 'pr_auc_ovr', 'average_precision',
-                 'mean_average_precision', 'map'):
+      pr_val = _safe(_pr_auc, y_true, proba)
+    if _want(selected, 'pr_auc'):
+      out['pr_auc'] = pr_val
+    if _want(selected, 'pr_auc_ovr'):
+      out['pr_auc_ovr'] = pr_val
+    for name in ('average_precision', 'mean_average_precision',
+                 'map'):
       if _want(selected, name):
-        out[name] = pr_val
+        out[name] = ap_val
+
+
+def _cls_prob_family(out, y_true, proba, selected, is_binary, pos, y_bin):
+  '''Compute log loss and Brier score.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+    is_binary: True for binary proba.
+    pos: Positive-class probabilities.
+    y_bin: Binary true labels.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import brier_score_loss
   if _want(selected, 'log_loss'):
     out['log_loss'] = _safe(_log_loss, y_true, proba)
   if _want(selected, 'brier', 'brier_score'):
     if is_binary:
-      brier_val = _safe(brier_score_loss, y_true, pos)
+      brier_val = _safe(brier_score_loss, y_bin, pos)
     else:
       brier_val = float('nan')
       warnings.warn('brier undefined for multiclass', stacklevel=2)
@@ -379,6 +593,22 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['brier'] = brier_val
     if _want(selected, 'brier_score'):
       out['brier_score'] = brier_val
+
+
+def _cls_kappa_family(out, y_true, y_pred, selected):
+  '''Compute kappa variants and Matthews correlation.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import cohen_kappa_score
+  from sklearn.metrics import matthews_corrcoef
   if _want(selected, 'kappa', 'cohen_kappa'):
     out['kappa'] = _safe(cohen_kappa_score, y_true, y_pred)
     if _want(selected, 'cohen_kappa'):
@@ -403,6 +633,22 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['mcc'] = val
     if _want(selected, 'matthews_corrcoef'):
       out['matthews_corrcoef'] = val
+
+
+def _cls_jaccard_family(out, y_true, y_pred, proba, selected):
+  '''Compute zero-one, hinge, top-k and jaccard metrics.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import jaccard_score, zero_one_loss
   if _want(selected, 'zero_one_loss'):
     out['zero_one_loss'] = _safe(zero_one_loss, y_true, y_pred)
   if _want(selected, 'hinge_loss'):
@@ -422,6 +668,20 @@ def _classification(y_true, y_pred, proba, selected=None):
     out['jaccard_binary'] = _safe(
         jaccard_score, y_true, y_pred, average='binary',
         zero_division=0)
+
+
+def _cls_cm_family(y_true, y_pred, selected):
+  '''Compute the confusion matrix shared intermediate.
+
+  Args:
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    Confusion matrix array (empty when not wanted).
+  '''
+  from sklearn.metrics import confusion_matrix
   # Confusion matrix: shared intermediate, computed once here
   # (reused for rates, DOR, confusion_matrix output below).
   cm_wanted = _want(
@@ -437,6 +697,25 @@ def _classification(y_true, y_pred, proba, selected=None):
       warnings.warn(f'confusion_matrix failed: {exc}',
                     stacklevel=2)
       cm = np.zeros((0, 0))
+  return cm
+
+
+def _cls_cm_rates_family(out, selected, cm):
+  '''Compute 2x2 rates from the confusion matrix.
+
+  Args:
+    out: Metrics dict to update in place.
+    selected: Set of metric names, or None for all.
+    cm: Confusion matrix array.
+
+  Returns:
+    Rates dict (empty when not wanted).
+  '''
+  cm_wanted = _want(
+      selected, 'sensitivity', 'specificity', 'npv', 'ppv', 'fpr',
+      'fnr', 'fdr', 'diagnostic_odds_ratio', 'fowlkes_mallows',
+      'g_mean', 'youden_j', 'markedness', 'prevalence_threshold',
+      'confusion_matrix')
   cm_rates = {}
   if cm_wanted:
     if cm.shape == (2, 2):
@@ -456,12 +735,42 @@ def _classification(y_true, y_pred, proba, selected=None):
     for key, val in cm_rates.items():
       if _want(selected, key):
         out[key] = val
+  return cm_rates
+
+
+def _cls_ks_family(out, y_true, proba, selected):
+  '''Compute KS statistic and its alias.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
   if _want(selected, 'ks', 'ks_statistic'):
     ks_val = _safe(_ks, y_true, proba)
     if _want(selected, 'ks'):
       out['ks'] = ks_val
     if _want(selected, 'ks_statistic'):
       out['ks_statistic'] = ks_val
+
+
+def _cls_fbeta_family(out, y_true, y_pred, selected):
+  '''Compute F-beta (0.5 and 2) metrics.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import fbeta_score
   # Phase-3 classification metrics.
   if _want(selected, 'f_beta_0_5', 'f0_5', 'f_beta'):
     f05 = _safe(
@@ -481,6 +790,22 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['f_beta_2'] = f2v
     if _want(selected, 'f2'):
       out['f2'] = f2v
+
+
+def _cls_rates_family(out, y_true, y_pred, selected, cm, cm_rates):
+  '''Compute g-mean from per-class rates.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    selected: Set of metric names, or None for all.
+    cm: Confusion matrix array.
+    cm_rates: Rates from the confusion matrix.
+
+  Returns:
+    Tuple (sens_m, spec_m, ppv_m, npv_m) means.
+  '''
   rates = (_safe_dict(_per_class_rates, y_true, y_pred)
            if _want(selected, 'g_mean', 'youden_j', 'markedness',
                     'prevalence_threshold', 'fowlkes_mallows')
@@ -493,7 +818,36 @@ def _classification(y_true, y_pred, proba, selected=None):
   else:
     sens_m = spec_m = ppv_m = npv_m = float('nan')
   if _want(selected, 'g_mean'):
-    out['g_mean'] = _safe(lambda: float(np.sqrt(sens_m * spec_m)))
+    # ML-6: binary g-mean is the geometric mean from the
+    # 2x2 table. Multiclass g-mean is the documented macro
+    # sqrt(mean sens * mean spec), not a per-class mean.
+    if cm.shape == (2, 2):
+      out['g_mean'] = _safe(
+          lambda: float(np.sqrt(
+              cm_rates['sensitivity']
+              * cm_rates['specificity'])))
+    elif cm.size and cm.shape[0] > 2:
+      out['g_mean'] = _safe(
+          lambda: float(np.sqrt(sens_m * spec_m)))
+    else:
+      out['g_mean'] = float('nan')
+  return sens_m, spec_m, ppv_m, npv_m
+
+
+def _cls_youden_family(out, selected, sens_m, spec_m, ppv_m, npv_m):
+  '''Compute Youden J and markedness.
+
+  Args:
+    out: Metrics dict to update in place.
+    selected: Set of metric names, or None for all.
+    sens_m: Mean per-class sensitivity.
+    spec_m: Mean per-class specificity.
+    ppv_m: Mean per-class ppv.
+    npv_m: Mean per-class npv.
+
+  Returns:
+    None.
+  '''
   if _want(selected, 'youden_j'):
     out['youden_j'] = _safe(lambda: float(sens_m + spec_m - 1))
   if _want(selected, 'markedness', 'prevalence_threshold'):
@@ -502,6 +856,22 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['markedness'] = marked
     if _want(selected, 'prevalence_threshold'):
       out['prevalence_threshold'] = marked
+
+
+def _cls_odds_family(out, selected, cm, cm_rates, sens_m, ppv_m):
+  '''Compute diagnostic odds ratio and Fowlkes-Mallows.
+
+  Args:
+    out: Metrics dict to update in place.
+    selected: Set of metric names, or None for all.
+    cm: Confusion matrix array.
+    cm_rates: Rates from the confusion matrix.
+    sens_m: Mean per-class sensitivity.
+    ppv_m: Mean per-class ppv.
+
+  Returns:
+    None.
+  '''
   if _want(selected, 'diagnostic_odds_ratio'):
     if cm.shape == (2, 2):
       tn_, fp_, fn_, tp_ = cm.ravel()
@@ -519,12 +889,33 @@ def _classification(y_true, y_pred, proba, selected=None):
     else:
       out['fowlkes_mallows'] = _safe(
           lambda: float(np.sqrt(ppv_m * sens_m)))
+
+
+def _cls_rank_family(out, y_true, y_pred, proba, selected,
+                     is_binary, pos, y_bin, roc_val):
+  '''Compute KL divergence, gini and ranking metrics.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+    is_binary: True for binary proba.
+    pos: Positive-class probabilities.
+    y_bin: Binary true labels.
+    roc_val: ROC-AUC value from the ROC family.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import roc_auc_score
   if _want(selected, 'kl_divergence'):
     out['kl_divergence'] = _safe(_kl_divergence, y_true, y_pred)
   if _want(selected, 'gini_coefficient'):
     if not _want(selected, 'roc_auc', 'roc_auc_ovr',
                  'roc_auc_ovo'):
-      roc_val = (_safe(roc_auc_score, y_true, pos) if is_binary
+      roc_val = (_safe(roc_auc_score, y_bin, pos) if is_binary
                  else _safe(roc_auc_score, y_true, proba,
                             multi_class='ovr', average='macro'))
     out['gini_coefficient'] = _safe(
@@ -539,6 +930,21 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['ndcg'] = ndcg_val
     if _want(selected, 'ndcg_at_10'):
       out['ndcg_at_10'] = ndcg_val
+
+
+def _cls_lift_family(out, y_true, y_pred, proba, selected):
+  '''Compute top-decile lift and cumulative gain.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
   if _want(selected, 'lift_top_decile',
            'cumulative_gain_top_decile', 'cum_gain_top_decile'):
     lift, gain = (float('nan'), float('nan'))
@@ -552,6 +958,21 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['cumulative_gain_top_decile'] = float(gain)
     if _want(selected, 'cum_gain_top_decile'):
       out['cum_gain_top_decile'] = float(gain)
+
+
+def _cls_atk_family(out, y_true, y_pred, proba, selected):
+  '''Compute precision/recall/F1 at k (5 and 10).
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
   for k in (5, 10):
     at_names = (f'precision_at_{k}', f'recall_at_{k}',
                 f'f1_at_{k}', f'precision_at_k_{k}',
@@ -575,6 +996,24 @@ def _classification(y_true, y_pred, proba, selected=None):
       out[f'recall_at_k_{k}'] = float(r_k)
     if _want(selected, f'f1_at_k_{k}'):
       out[f'f1_at_k_{k}'] = float(f_k)
+
+
+def _cls_output_family(out, y_true, y_pred, proba, selected, cm):
+  '''Compute confusion matrix, report and calibration.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names, or None for all.
+    cm: Confusion matrix array.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import classification_report
+  from sklearn.metrics import confusion_matrix
   if _want(selected, 'confusion_matrix'):
     try:
       out['confusion_matrix'] = cm.astype(int).tolist() if (
@@ -601,24 +1040,80 @@ def _classification(y_true, y_pred, proba, selected=None):
       out['calibration_mce'] = mce
     if _want(selected, 'brier_decomposition'):
       out['brier_decomposition'] = decomp
+
+
+def _classification(y_true, y_pred, proba, selected=None):
+  '''Compute selected classification metrics (None = all).
+
+  Args:
+    y_true: True labels.
+    y_pred: Predicted labels.
+    proba: Probability array.
+    selected: Set of metric names to compute, or None for all.
+      Shared intermediates (confusion matrix, ROC-AUC, ...)
+      are computed once and only if a dependent metric is
+      selected; unselected families are skipped entirely.
+
+  Returns:
+    Dict of classification metric name to value.
+  '''
+  out = {}
+  y_true = np.asarray(y_true)
+  y_pred = np.asarray(y_pred)
+  proba = np.asarray(proba, dtype=float)
+  if proba.ndim == 1:
+    proba = np.column_stack([1 - proba, proba])
+  is_binary = proba.shape[1] == 2
+  pos = _pos_proba(proba, y_true) if is_binary else proba
+  y_bin = _binary_labels(y_true) if is_binary else y_true
+  _cls_accuracy_family(out, y_true, y_pred, selected)
+  _cls_average_family(out, y_true, y_pred, selected)
+  roc_val = _cls_roc_family(out, y_true, proba, selected,
+                            is_binary, pos, y_bin)
+  _cls_pr_family(out, y_true, proba, selected,
+                 is_binary, pos, y_bin)
+  _cls_prob_family(out, y_true, proba, selected,
+                   is_binary, pos, y_bin)
+  _cls_kappa_family(out, y_true, y_pred, selected)
+  _cls_jaccard_family(out, y_true, y_pred, proba, selected)
+  cm = _cls_cm_family(y_true, y_pred, selected)
+  cm_rates = _cls_cm_rates_family(out, selected, cm)
+  _cls_ks_family(out, y_true, proba, selected)
+  _cls_fbeta_family(out, y_true, y_pred, selected)
+  sens_m, spec_m, ppv_m, npv_m = _cls_rates_family(
+      out, y_true, y_pred, selected, cm, cm_rates)
+  _cls_youden_family(out, selected, sens_m, spec_m, ppv_m, npv_m)
+  _cls_odds_family(out, selected, cm, cm_rates, sens_m, ppv_m)
+  _cls_rank_family(out, y_true, y_pred, proba, selected,
+                   is_binary, pos, y_bin, roc_val)
+  _cls_lift_family(out, y_true, y_pred, proba, selected)
+  _cls_atk_family(out, y_true, y_pred, proba, selected)
+  _cls_output_family(out, y_true, y_pred, proba, selected, cm)
   return out
-
-
 def _ks(y_true, proba):
   '''Compute the Kolmogorov-Smirnov statistic.
+
+  The positive label is the maximum sorted label, so
+  {-1, 1} and {'no', 'yes'} match their 0/1 remapping.
 
   Args:
     y_true: True binary labels.
     proba: Two-column probability array.
 
   Returns:
-    KS statistic as float.
+    KS statistic as float, or nan for single-class input.
   '''
   from scipy.stats import ks_2samp
   y = np.asarray(y_true)
-  pos = _pos_proba(proba, y)[y == 1]
-  neg = _pos_proba(proba, y)[y == 0]
-  return ks_2samp(pos, neg).statistic
+  if len(_labels(y, y)) != 2:
+    return float('nan')
+  y_bin = _binary_labels(y)
+  scores = _pos_proba(proba, y)
+  pos = scores[y_bin == 1]
+  neg = scores[y_bin == 0]
+  if len(pos) == 0 or len(neg) == 0:
+    return float('nan')
+  return float(ks_2samp(pos, neg).statistic)
 
 
 def _true_ranks(y_true, proba):
@@ -636,13 +1131,22 @@ def _true_ranks(y_true, proba):
   order = np.argsort(-proba, axis=1)
   ranks = np.empty(len(y_true), dtype=float)
   for i, true in enumerate(np.asarray(y_true)):
-    idx = labels.index(true) if true in labels else 0
+    idx = (_label_column_index(true, labels, proba.shape[1])
+           if true in labels else 0)
     ranks[i] = int(np.where(order[i] == idx)[0][0]) + 1
   return ranks
 
 
 def _at_k(y_true, y_pred, proba, k):
   '''Compute precision/recall/F1 at k by proba ranking.
+
+  Binary (unchanged): precision = TP_topk / kk and
+  recall = TP_topk / all positives, with positive =
+  maximum sorted label. Multiclass (documented framework
+  definition, ML-22): precision = correct_top / kk and
+  recall = correct_top / n, i.e. the fraction of all rows
+  that are top-k hits (not per-class recall); F1 is the
+  harmonic mean of those two values.
 
   Args:
     y_true: True labels.
@@ -659,11 +1163,12 @@ def _at_k(y_true, y_pred, proba, k):
   n = len(y_true)
   kk = max(1, min(int(k), n))
   if proba.shape[1] == 2:
-    score = proba[:, 1]
+    score = _pos_proba(proba, y_true)
     order = np.argsort(-score)
     top = order[:kk]
-    tp = int(np.sum(y_true[top] == 1))
-    positives = int(np.sum(y_true == 1))
+    y_bin = _binary_labels(y_true)
+    tp = int(np.sum(y_bin[top] == 1))
+    positives = int(np.sum(y_bin == 1))
     precision = tp / kk
     recall = tp / positives if positives else 0.0
   else:
@@ -681,6 +1186,12 @@ def _at_k(y_true, y_pred, proba, k):
 def _top_decile(y_true, y_pred, proba):
   '''Compute lift and cumulative gain at the top decile.
 
+  Binary: lift = precision_top / prevalence and gain =
+  TP_top / positives, with positive = maximum sorted
+  label. Multiclass (documented framework definition,
+  ML-22): lift = accuracy_top / accuracy_overall and
+  gain = correct_top / n (not binary lift/gain).
+
   Args:
     y_true: True labels.
     y_pred: Predicted labels.
@@ -695,11 +1206,12 @@ def _top_decile(y_true, y_pred, proba):
   n = len(y_true)
   kk = max(1, int(np.ceil(0.1 * n)))
   if proba.shape[1] == 2:
-    score = proba[:, 1]
+    score = _pos_proba(proba, y_true)
     order = np.argsort(-score)
     top = order[:kk]
-    tp = int(np.sum(y_true[top] == 1))
-    positives = int(np.sum(y_true == 1))
+    y_bin = _binary_labels(y_true)
+    tp = int(np.sum(y_bin[top] == 1))
+    positives = int(np.sum(y_bin == 1))
     prevalence = positives / n if n else 0.0
     precision_top = tp / kk
     lift = precision_top / prevalence if prevalence else float('nan')
@@ -800,34 +1312,107 @@ def _residual_moment(values, kind):
   return float(np.mean(z ** 4) - 3)
 
 
-def _regression(y_true, y_pred, selected=None, n_features=1):
-  '''Compute selected regression metrics (None = all).
+def _checked_msle(y_true, y_pred):
+  '''Compute MSLE, raising for negative inputs (ML-21).
 
   Args:
     y_true: True values.
     y_pred: Predicted values.
-    selected: Set of metric names to compute, or None for all.
-      Shared intermediates (MAE/MSE/residuals) are computed
-      once and only if a dependent metric is selected.
-    n_features: Feature count for adj_r2 (default 1).
 
   Returns:
-    Dict of regression metric name to value.
+    Mean squared log error as float.
+
+  Raises:
+    ValueError: If any true or predicted value is negative.
   '''
-  if n_features is None:
-    n_features = 1
-  from sklearn.metrics import (
-    d2_absolute_error_score, explained_variance_score, max_error,
-    mean_absolute_error, mean_absolute_percentage_error,
-    mean_gamma_deviance, mean_poisson_deviance,
-    mean_squared_error, mean_squared_log_error,
-    mean_tweedie_deviance, median_absolute_error, r2_score,
-  )
+  from sklearn.metrics import mean_squared_log_error
   y_true = np.asarray(y_true, dtype=float)
   y_pred = np.asarray(y_pred, dtype=float)
-  n = len(y_true)
-  resid = y_pred - y_true
-  out = {}
+  if np.any(y_true < 0) or np.any(y_pred < 0):
+    raise ValueError('msle undefined for negative values')
+  return float(mean_squared_log_error(y_true, y_pred))
+
+
+def _tweedie_deviance(y_true, y_pred):
+  '''Compute Tweedie deviance, raising for negatives (ML-21).
+
+  Args:
+    y_true: True values.
+    y_pred: Predicted values.
+
+  Returns:
+    Mean Tweedie deviance as float.
+
+  Raises:
+    ValueError: If any true or predicted value is negative.
+  '''
+  from sklearn.metrics import mean_tweedie_deviance
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
+  if np.any(y_true < 0) or np.any(y_pred < 0):
+    raise ValueError('tweedie_deviance undefined for negatives')
+  return float(mean_tweedie_deviance(y_true, y_pred))
+
+
+def _poisson_deviance(y_true, y_pred):
+  '''Compute Poisson deviance, raising out of support (ML-21).
+
+  Args:
+    y_true: True values.
+    y_pred: Predicted values.
+
+  Returns:
+    Mean Poisson deviance as float.
+
+  Raises:
+    ValueError: If y_true is negative or y_pred is not
+      strictly positive (sklearn support for this loss).
+  '''
+  from sklearn.metrics import mean_poisson_deviance
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
+  if np.any(y_true < 0) or np.any(y_pred <= 0):
+    raise ValueError('poisson_deviance out of support')
+  return float(mean_poisson_deviance(y_true, y_pred))
+
+
+def _gamma_deviance(y_true, y_pred):
+  '''Compute Gamma deviance, raising out of support (ML-21).
+
+  Args:
+    y_true: True values.
+    y_pred: Predicted values.
+
+  Returns:
+    Mean Gamma deviance as float.
+
+  Raises:
+    ValueError: If y_true or y_pred is not strictly
+      positive (sklearn support for this loss).
+  '''
+  from sklearn.metrics import mean_gamma_deviance
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
+  if np.any(y_true <= 0) or np.any(y_pred <= 0):
+    raise ValueError('gamma_deviance out of support')
+  return float(mean_gamma_deviance(y_true, y_pred))
+
+
+def _reg_basic_family(out, y_true, y_pred, selected):
+  '''Compute MAE, medAE, MSE and RMSE.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    MAE value (nan when not computed).
+  '''
+  from sklearn.metrics import mean_absolute_error
+  from sklearn.metrics import mean_squared_error
+  from sklearn.metrics import median_absolute_error
   mae_val = float('nan')
   if _want(selected, 'mae', 'mean_absolute_error', 'mase',
            'mean_absolute_scaled_error', 'wmae', 'weighted_mae'):
@@ -851,10 +1436,30 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
     out['rmse'] = rmse_val
   if _want(selected, 'root_mean_squared_error'):
     out['root_mean_squared_error'] = rmse_val
+  return mae_val
+
+
+def _reg_relative_family(out, y_true, y_pred, selected, n, n_features):
+  '''Compute MSLE, R2, MAPE and medAPE.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+    n: Number of samples.
+    n_features: Feature count for adj_r2.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import mean_absolute_percentage_error
+  from sklearn.metrics import r2_score
   msle_val = float('nan')
   if _want(selected, 'msle', 'rmsle'):
-    clipped = (np.clip(y_true, 0, None), np.clip(y_pred, 0, None))
-    msle_val = _safe(mean_squared_log_error, *clipped)
+    # ML-21: negative inputs are out of support -> nan,
+    # never clipped to a fabricated perfect score.
+    msle_val = _safe(_checked_msle, y_true, y_pred)
   if _want(selected, 'msle'):
     out['msle'] = msle_val
   if _want(selected, 'rmsle'):
@@ -879,6 +1484,21 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
       out['medape'] = med_val
     if _want(selected, 'median_absolute_percentage_error'):
       out['median_absolute_percentage_error'] = med_val
+
+
+def _reg_spread_family(out, y_true, y_pred, selected):
+  '''Compute sMAPE, explained variance and max error.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import explained_variance_score, max_error
   if _want(selected, 'smape'):
     out['smape'] = _safe(_smape, y_true, y_pred)
   if _want(selected, 'explained_variance'):
@@ -886,6 +1506,21 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
         explained_variance_score, y_true, y_pred)
   if _want(selected, 'max_error'):
     out['max_error'] = _safe(max_error, y_true, y_pred)
+
+
+def _reg_residual_family(out, y_true, y_pred, selected, resid):
+  '''Compute bias, residual moments and quantile losses.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+    resid: Residual array (pred minus true).
+
+  Returns:
+    None.
+  '''
   bias_val = float('nan')
   if _want(selected, 'bias', 'mean_residual',
            'mean_bias_deviation'):
@@ -913,23 +1548,54 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
       out[f'quantile_loss_{tag}'] = val
     if _want(selected, f'pinball_{tag}'):
       out[f'pinball_{tag}'] = val
-  pos_true = np.clip(y_true, 1e-9, None)
-  pos_pred = np.clip(y_pred, 1e-9, None)
+
+
+def _reg_deviance_family(out, y_true, y_pred, selected):
+  '''Compute deviance losses and D2 score.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import d2_absolute_error_score
+  # ML-21: no clipping to 1e-9; out-of-support inputs
+  # return nan via the checked helpers above.
   if _want(selected, 'tweedie_deviance'):
     out['tweedie_deviance'] = _safe(
-        mean_tweedie_deviance, pos_true, pos_pred)
+        _tweedie_deviance, y_true, y_pred)
   if _want(selected, 'poisson_deviance'):
     out['poisson_deviance'] = _safe(
-        mean_poisson_deviance, pos_true, pos_pred)
+        _poisson_deviance, y_true, y_pred)
   if _want(selected, 'gamma_deviance'):
     out['gamma_deviance'] = _safe(
-        mean_gamma_deviance, pos_true, pos_pred)
+        _gamma_deviance, y_true, y_pred)
   if _want(selected, 'd2_absolute_error_score', 'd2_abs'):
     d2_val = _safe(d2_absolute_error_score, y_true, y_pred)
     if _want(selected, 'd2_absolute_error_score'):
       out['d2_absolute_error_score'] = d2_val
     if _want(selected, 'd2_abs'):
       out['d2_abs'] = d2_val
+
+
+def _reg_scaled_family(out, y_true, selected, resid, mae_val, n):
+  '''Compute MASE and weighted MAE.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    selected: Set of metric names, or None for all.
+    resid: Residual array (pred minus true).
+    mae_val: MAE value from the basic family.
+    n: Number of samples.
+
+  Returns:
+    None.
+  '''
   # Phase-3 regression metrics.
   if _want(selected, 'mase', 'mean_absolute_scaled_error'):
     naive = float(np.mean(np.abs(np.diff(y_true)))) if n > 1 else 0.0
@@ -949,6 +1615,20 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
       out['wmae'] = wmae_val
     if _want(selected, 'weighted_mae'):
       out['weighted_mae'] = wmae_val
+
+
+def _reg_percent_family(out, y_true, y_pred, selected):
+  '''Compute percentage-error metrics.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
   mask = y_true != 0
   if np.any(mask):
     pct = (y_true[mask] - y_pred[mask]) / y_true[mask]
@@ -982,6 +1662,21 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
     if _want(selected,
              'mean_absolute_arctangent_percentage_error'):
       out['mean_absolute_arctangent_percentage_error'] = maape_val
+
+
+def _reg_correlation_family(out, y_true, y_pred, selected):
+  '''Compute correlations, huber, log-cosh and log-R2.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+
+  Returns:
+    None.
+  '''
+  from sklearn.metrics import r2_score
   if _want(selected, 'pearson_r', 'pearson'):
     pear_val = _safe(_pearson, y_true, y_pred)
     if _want(selected, 'pearson_r'):
@@ -1006,6 +1701,21 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
       out['r2_log'] = r2log_val
     if _want(selected, 'r2_log1p'):
       out['r2_log1p'] = r2log_val
+
+
+def _reg_descriptive_family(out, y_true, y_pred, selected, n):
+  '''Compute descriptive target/pred statistics.
+
+  Args:
+    out: Metrics dict to update in place.
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names, or None for all.
+    n: Number of samples.
+
+  Returns:
+    None.
+  '''
   # Descriptive stats (this framework model_evaluation_reg; only when selected).
   if _want(selected, 'target_sum'):
     out['target_sum'] = _safe(lambda: float(np.sum(y_true)))
@@ -1028,9 +1738,40 @@ def _regression(y_true, y_pred, selected=None, n_features=1):
   if _want(selected, 'max_pred_error'):
     err = y_true - y_pred
     out['max_pred_error'] = _safe(lambda: float(np.max(err)))
+
+
+def _regression(y_true, y_pred, selected=None, n_features=1):
+  '''Compute selected regression metrics (None = all).
+
+  Args:
+    y_true: True values.
+    y_pred: Predicted values.
+    selected: Set of metric names to compute, or None for all.
+      Shared intermediates (MAE/MSE/residuals) are computed
+      once and only if a dependent metric is selected.
+    n_features: Feature count for adj_r2 (default 1).
+
+  Returns:
+    Dict of regression metric name to value.
+  '''
+  if n_features is None:
+    n_features = 1
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
+  n = len(y_true)
+  resid = y_pred - y_true
+  out = {}
+  mae_val = _reg_basic_family(out, y_true, y_pred, selected)
+  _reg_relative_family(out, y_true, y_pred, selected,
+                       n, n_features)
+  _reg_spread_family(out, y_true, y_pred, selected)
+  _reg_residual_family(out, y_true, y_pred, selected, resid)
+  _reg_deviance_family(out, y_true, y_pred, selected)
+  _reg_scaled_family(out, y_true, selected, resid, mae_val, n)
+  _reg_percent_family(out, y_true, y_pred, selected)
+  _reg_correlation_family(out, y_true, y_pred, selected)
+  _reg_descriptive_family(out, y_true, y_pred, selected, n)
   return out
-
-
 def _medape(y_true, y_pred):
   '''Compute median absolute percentage error.
 
@@ -1057,6 +1798,8 @@ def _smape(y_true, y_pred):
   Returns:
     Symmetric mean absolute percentage error as float.
   '''
+  y_true = np.asarray(y_true, dtype=float)
+  y_pred = np.asarray(y_pred, dtype=float)
   denom = (np.abs(y_true) + np.abs(y_pred)) / 2
   denom = np.where(denom == 0, 1e-9, denom)
   return float(np.mean(np.abs(y_pred - y_true) / denom))
@@ -1121,6 +1864,11 @@ def _pearson(y_true, y_pred):
 def _huber(y_true, y_pred, delta=1.35):
   '''Compute Huber loss with given delta.
 
+  Single home (reviewer F4): the formula lives in
+  ``forecast_ml_framework.losses.huber_loss`` and this
+  wrapper delegates to it, preserving the metrics default
+  ``delta=1.35`` (losses default is 1.0).
+
   Args:
     y_true: True values.
     y_pred: Predicted values.
@@ -1129,11 +1877,8 @@ def _huber(y_true, y_pred, delta=1.35):
   Returns:
     Huber loss as float.
   '''
-  err = np.abs(np.asarray(y_pred, dtype=float)
-               - np.asarray(y_true, dtype=float))
-  quad = err <= delta
-  return float(np.mean(np.where(quad, 0.5 * err ** 2,
-                                delta * (err - 0.5 * delta))))
+  from forecast_ml_framework.losses import huber_loss
+  return float(huber_loss(y_true, y_pred, delta=delta))
 
 
 def _log_cosh(y_true, y_pred):
@@ -1196,6 +1941,13 @@ def adj_r2(y_true, y_pred, n_features=1):
 def confusion_rates_table(y_true, y_pred):
   '''Return parity-shaped confusion rates rows (tpr/fpr/fnr/tnr).
 
+  Per-row semantics (ML-24b): Actual Positive carries
+  the global rates; Actual Negative inverts roles
+  (Negative as reference class), so its tpr is the
+  global tnr, its tnr the global tpr, its fpr the
+  global fnr and its fnr the global fpr. Rows differ
+  on any asymmetric confusion matrix.
+
   Args:
     y_true: True binary labels.
     y_pred: Predicted binary labels.
@@ -1218,14 +1970,18 @@ def confusion_rates_table(y_true, y_pred):
         'fpr': float(fp / (fp + tn)) if fp + tn else 0.0,
         'fnr': float(fn / (fn + tp)) if fn + tp else 0.0,
         'tnr': float(tn / (tn + fp)) if tn + fp else 0.0}
+    neg_rates = {
+        'tpr': rates['tnr'], 'fpr': rates['fnr'],
+        'fnr': rates['fpr'], 'tnr': rates['tpr']}
   else:
     rates = {key: float('nan') for key in (
         'tpr', 'fpr', 'fnr', 'tnr')}
+    neg_rates = dict(rates)
   return [
       {'label': 'Actual Positive', 'Actual': 'Actual Positive',
        **rates},
       {'label': 'Actual Negative', 'Actual': 'Actual Negative',
-       **rates},
+       **neg_rates},
   ]
 
 

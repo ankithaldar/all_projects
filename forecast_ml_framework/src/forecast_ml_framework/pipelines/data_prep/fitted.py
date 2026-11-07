@@ -12,6 +12,16 @@ or unknown steps are rejected with ``ValueError`` at fit and
 at apply time -- never silently skipped. Registry values are
 JSON-serializable (numpy converted to lists) and carry a
 ``version`` / ``schema`` field.
+
+Split-first notes (A9): this registry is fitted on the
+train split only (``fit_preprocess`` receives
+``train_raw``). Standard scaling uses population sd
+(ddof=0, ML-9). TargetEncoding fits a full-train
+smoothed mapping for test/score apply, while the
+train frame returned by ``fit_preprocess`` carries
+leave-one-out OOF encodings (ML-3, smoothing ``m``
+from the step args, default 0.0; shipped config
+passes ``smoothing: 10``).
 '''
 
 import datetime
@@ -25,8 +35,10 @@ import pandas as pd
 
 from forecast_ml_framework.pipelines.data_prep.nodes import (
   _iter_steps,
+  _oof_encode_series,
   _resolve_cols,
   _resolve_ohe_max_cols,
+  _resolve_smoothing,
 )
 
 LOG = logging.getLogger(__name__)
@@ -408,7 +420,11 @@ def _apply_impute(df, state):
 
 
 def _fit_normalize(df, args, variables):
-  '''Fit normalization bounds per column.'''
+  '''Fit normalization bounds per column.
+
+  Standard scaling stores population sd (ddof=0),
+  matching sklearn ``StandardScaler`` (ML-9).
+  '''
   cols = _resolve_cols(args, variables.get('num_cols', []))
   handle = str(args.get('handle', 'MinMaxScaler'))
   _reject_inf_numeric(df, cols, 'Normalizations')
@@ -421,7 +437,7 @@ def _fit_normalize(df, args, variables):
         'Normalizations cannot fit all-NaN column %r' % (col,))
     if 'Standard' in handle or 'ZScore' in handle:
       mu = float(df[col].mean())
-      sd = float(df[col].std())
+      sd = float(df[col].std(ddof=0))
       if np.isnan(sd) or sd == 0.0:
         sd = 1.0
       if not _is_number(mu) or not _is_number(sd):
@@ -669,12 +685,24 @@ def _apply_encode_cat(df, state):
 
 
 def _fit_target_encode(df, args, variables):
-  '''Fit target encoding group means per column.'''
+  '''Fit smoothed target encoding group means per column.
+
+  The registry mapping is the full-train smoothed mean
+  ``(n * mean + m * global) / (n + m)`` with ``m``
+  from :func:`_resolve_smoothing` (ML-3; shipped config
+  ``smoothing: 10``, direct callers default to 0.0).
+  The train frame returned by :func:`fit_preprocess`
+  is encoded out-of-fold instead (see
+  :func:`_apply_oof_target_encode`); this mapping is
+  only for applying to held-out/test data, where an
+  unseen category falls back to ``global``.
+  '''
   cols = _resolve_cols(args, variables.get('cat_cols', []))
   target = variables.get('target_col', 'target')
   state = {}
   if target not in df.columns:
     return state
+  smoothing = _resolve_smoothing(args)
   if pd.api.types.is_numeric_dtype(df[target]):
     _reject_inf_numeric(df, [target], 'TargetEncoding')
   global_mean = float(df[target].mean())
@@ -685,18 +713,55 @@ def _fit_target_encode(df, args, variables):
   for col in cols:
     if col not in df.columns:
       continue
-    mapping = df.groupby(col)[target].mean()
-    pairs = [[_encode_typed(k), float(v)] for k, v in mapping.items()]
+    stats = df.groupby(col)[target].agg(['mean', 'count'])
+    pairs = []
+    for key, row in stats.iterrows():
+      mean_val = float(row['mean'])
+      n_val = int(row['count'])
+      if smoothing == 0.0:
+        smoothed = mean_val
+      else:
+        smoothed = (n_val * mean_val
+                    + smoothing * global_mean) / (
+                      n_val + smoothing)
+      pairs.append([_encode_typed(key), float(smoothed)])
     for _key, val in pairs:
       if not _is_number(val):
         raise ValueError(
           'TargetEncoding cannot fit column %r: non-finite mapping '
           'value %r' % (col, val))
     state[col] = {
-      'mapping': pairs, 'global': global_mean, 'target': target}
+      'mapping': pairs, 'global': global_mean, 'target': target,
+      'smoothing': smoothing}
   for col, st in state.items():
     _assert_finite_state(st, 'TargetEncoding', col)
   return state
+
+
+def _apply_oof_target_encode(df, state):
+  '''Encode a train frame with leave-one-out OOF means.
+
+  Args:
+    df: Train frame entering the TargetEncoding step.
+    state: Fitted state from :func:`_fit_target_encode`
+      (registry mapping is ignored here by design).
+
+  Returns:
+    Frame copy with each encoded column replaced by
+    its OOF encoding (own label excluded, ML-3).
+  '''
+  for col, st in (state or {}).items():
+    if col not in df.columns:
+      continue
+    target = (st or {}).get('target', 'target')
+    if target not in df.columns:
+      continue
+    raw = (st or {}).get('smoothing', 0.0)
+    smoothing = 0.0 if raw is None else _resolve_smoothing(
+      {'smoothing': raw})
+    df[col] = _oof_encode_series(
+      df[col].tolist(), df[target].tolist(), smoothing)
+  return df
 
 
 def _apply_target_encode(df, state):
@@ -862,7 +927,13 @@ def fit_preprocess(df, prep_params, variables):
     state = fit_fn(df, args, variables)
     _assert_finite_state(state, name)
     registry[name] = state
-    df = _APPLY[name](df, state)
+    if name == 'TargetEncoding':
+      # Train output is OOF (own label excluded, ML-3);
+      # the registry mapping (full-train smoothed) is
+      # only for applying to held-out/test data.
+      df = _apply_oof_target_encode(df, state)
+    else:
+      df = _APPLY[name](df, state)
   registry_out = {
     'version': FITTED_REGISTRY_VERSION,
     '__version__': FITTED_REGISTRY_VERSION,

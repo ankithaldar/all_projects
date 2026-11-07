@@ -1,0 +1,19 @@
+# Remote backend example for infra/gcp (MLops-10 / adjudication A6).
+#
+# This file is an EXAMPLE only: it is NOT active. Terraform only
+# loads *.tf / *.tf.json, so `backend.tf.example` is ignored by
+# `terraform init` / `terraform validate` / `terraform fmt` and the
+# stack keeps working from a fresh checkout with local state.
+#
+# To adopt a remote backend with state locking (shared use / CI
+# applies): create the GCS state bucket out of band (with versioning
+# on), copy this file to `backend.tf`, replace the placeholders,
+# and run `terraform init -migrate-state`. GCS backends lock state
+# automatically -- no separate lock table is needed.
+#
+# terraform {
+#   backend "gcs" {
+#     bucket = "forecast-ml-tfstate"  # create this bucket first, out of band
+#     prefix = "forecast-ml/gcp"
+#   }
+# }

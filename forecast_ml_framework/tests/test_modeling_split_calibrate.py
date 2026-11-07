@@ -161,7 +161,10 @@ def test_calibrate_betacal_missing_library_falls_back_to_sigmoid(
     'calibration': {'method': 'betacal', 'cv': 2},
   }
   calibrated, meta = calibrate_model(base, x, y, params)
-  assert meta == {'calibrated': True, 'method': 'sigmoid'}
+  assert meta['calibrated'] is True
+  assert meta['method'] == 'sigmoid'
+  assert meta['requested_method'] == 'betacal'
+  assert meta['fallback'] is True
   assert calibrated.predict_proba(x).shape[1] == 2
 
 

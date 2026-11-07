@@ -22,7 +22,10 @@ Cloud scaling (100M rows x 500 cols):
 '''
 # pylint: disable=import-outside-toplevel, broad-exception-caught
 
+import logging
 import os
+
+LOG = logging.getLogger(__name__)
 
 DEFAULT_MAX_ROWS_FOR_PANDAS = 5_000_000
 DEFAULT_SHUFFLE_PARTITIONS = 200
@@ -32,6 +35,124 @@ _AUTOSCALING_DEFAULTS = {
   'spark.sql.adaptive.enabled': 'true',
   'spark.sql.adaptive.coalescePartitions.enabled': 'true',
 }
+
+# Spark conf allowlist (cycle-1 F-11 / cycle-2 antisec R-10).
+# Only keys that cannot load or execute arbitrary code are
+# allowed: resource sizing (driver/executor memory + cores +
+# instances), shuffle partitions, dynamic allocation, AQE
+# (``spark.sql.adaptive.*``), and explicit query-tuning keys.
+# Everything else -- ``spark.jars`` / ``*.jars.*``,
+# ``*executorEnv*``, ``*extraClassPath*``,
+# ``*extraJavaOptions*``, ``*classloader*``,
+# ``*userClassPath*``, ``spark.kubernetes.*``, unknown keys --
+# raises ``ValueError`` naming the key (fail-closed, never
+# passed to ``SparkSession.builder.config``). Note the
+# ``spark.sql.*`` surface is an explicit key list, not a
+# prefix: a bare prefix would admit catalog/hive/provider
+# keys that can load code.
+_ALLOWED_SPARK_KEYS = frozenset({
+  # Shipped conf (conf/base/parameters/platform.yml).
+  'spark.sql.shuffle.partitions',
+  'spark.driver.memory',
+  'spark.driver.cores',
+  'spark.executor.memory',
+  'spark.executor.cores',
+  'spark.executor.instances',
+  # Documented query tuning (100M-row sizing, README/infra).
+  'spark.sql.autoBroadcastJoinThreshold',
+  'spark.sql.broadcastTimeout',
+  'spark.sql.codegen.wholeStage',
+  'spark.sql.files.maxPartitionBytes',
+  'spark.sql.files.openCostInBytes',
+})
+
+_ALLOWED_SPARK_PREFIXES = (
+  'spark.sql.adaptive.',
+  'spark.dynamicAllocation.',
+)
+
+# Keys that are not Spark conf entries: session wiring handled
+# elsewhere (master/app name/enabled) or aliases handled by
+# ``spark_builder_config`` itself (shuffle/dynamic allocation).
+_NON_CONF_KEYS = frozenset({
+  'shuffle_partitions',
+  'enabled',
+  'master',
+  'app_name',
+  'config',
+  'spark_params',
+  'spark_parameters',
+  'dynamic_allocation',
+})
+
+
+def _is_allowed_spark_key(key):
+  '''Return True when a Spark conf key is on the allowlist.
+
+  Args:
+    key: Candidate conf key.
+
+  Returns:
+    True for exact allowlist keys and for the
+    ``spark.sql.adaptive.*`` / ``spark.dynamicAllocation.*``
+    tuning prefixes, else False.
+  '''
+  if not isinstance(key, str):
+    return False
+  if key in _ALLOWED_SPARK_KEYS:
+    return True
+  return key.startswith(_ALLOWED_SPARK_PREFIXES)
+
+
+def _validate_spark_key(key):
+  '''Reject a Spark conf key that is not on the allowlist.
+
+  Args:
+    key: Candidate conf key.
+
+  Raises:
+    ValueError: Naming the rejected key; the caller must not
+      pass it to Spark (fail-closed, never merge-then-filter).
+  '''
+  if not _is_allowed_spark_key(key):
+    raise ValueError(
+      f'spark conf key {key!r} is not in the allowlist; only '
+      'shipped/tuning keys (shuffle, dynamic allocation, '
+      'spark.sql.adaptive.*, driver/executor sizing, explicit '
+      'query tuning) are allowed')
+
+
+def _apply_conf_source(merged, source):
+  '''Validate and merge one conf source dict into ``merged``.
+
+  Unwraps the shipped ``spark_params.spark`` nested shape and
+  the empty ``jar_packages`` placeholder; a non-empty
+  ``jar_packages`` is rejected like any other code-loading
+  key. Non-conf wiring keys are skipped.
+
+  Args:
+    merged: Destination conf dict (mutated in place).
+    source: Candidate conf mapping.
+
+  Raises:
+    ValueError: Naming the first non-allowlisted key.
+  '''
+  if not isinstance(source, dict):
+    return
+  for key, value in source.items():
+    if key in _NON_CONF_KEYS:
+      continue
+    if key == 'spark' and isinstance(value, dict):
+      _apply_conf_source(merged, value)
+      continue
+    if key == 'jar_packages':
+      if value:
+        raise ValueError(
+          f'spark conf key {key!r} is not in the allowlist; '
+          'arbitrary packages are not allowed')
+      continue
+    _validate_spark_key(key)
+    merged[key] = value
 
 
 def _spark_section(config):
@@ -108,11 +229,23 @@ def spark_builder_config(config=None):
   (Dataproc/EMR, ``master='yarn'``) uses the same config; only
   session creation happens here.
 
+  Only allowlisted keys (see ``_ALLOWED_SPARK_KEYS`` /
+  ``_ALLOWED_SPARK_PREFIXES``) may be supplied; any other key
+  from ``config`` raises ``ValueError`` naming it, so code
+  loading conf (``spark.jars``, ``executorEnv``,
+  ``extraClassPath``/``extraJavaOptions``, ``classloader``,
+  ``userClassPath``, ``spark.kubernetes.*``) never reaches
+  ``SparkSession.builder.config`` (cycle-1 F-11 / R-10).
+
   Args:
     config: Raw configuration mapping.
 
   Returns:
     Dict mapping Spark conf keys to values.
+
+  Raises:
+    ValueError: Naming a supplied conf key that is not on the
+      allowlist.
   '''
   section = _spark_section(config)
   params = _spark_params(config, section)
@@ -127,13 +260,8 @@ def spark_builder_config(config=None):
   if isinstance(section.get('dynamic_allocation'), bool):
     merged['spark.dynamicAllocation.enabled'] = (
       'true' if section['dynamic_allocation'] else 'false')
-  for source in (section.get('config'), params):
-    if isinstance(source, dict):
-      for key, value in source.items():
-        if key in ('shuffle_partitions', 'enabled', 'master',
-                   'app_name'):
-          continue
-        merged[key] = value
+  for source in (section, section.get('config'), params):
+    _apply_conf_source(merged, source)
   return merged
 
 
@@ -175,17 +303,23 @@ def _frame_row_count(df):
     import pandas as pd
     if isinstance(df, pd.DataFrame):
       return len(df)
-  except Exception:
-    pass
+  except (ImportError, TypeError, ValueError, AttributeError) as exc:
+    LOG.debug('_frame_row_count: pandas probe skipped (%s)',
+        type(exc).__name__)
   count = getattr(df, 'count', None)
   if callable(count):
     try:
       return int(count())
-    except Exception:
+    except (RuntimeError, TypeError, ValueError,
+            AttributeError) as exc:
+      LOG.debug('_frame_row_count: count() unreadable (%s)',
+          type(exc).__name__)
       return None
   try:
     return len(df)
-  except Exception:
+  except (RuntimeError, TypeError, AttributeError) as exc:
+    LOG.debug('_frame_row_count: len() unreadable (%s)',
+        type(exc).__name__)
     return None
 
 
@@ -195,7 +329,9 @@ def _frame_col_count(df):
   if columns is not None:
     try:
       return len(columns)
-    except Exception:
+    except (RuntimeError, TypeError, AttributeError) as exc:
+      LOG.debug('_frame_col_count: columns unreadable (%s)',
+          type(exc).__name__)
       return None
   return None
 
@@ -292,7 +428,9 @@ class SparkSessionFactory:
     section = _spark_section(config)
     try:
       from pyspark.sql import SparkSession
-    except ImportError:
+    except ImportError as exc:
+      LOG.debug('get_spark: pyspark unavailable (%s)',
+          type(exc).__name__)
       return None
     try:
       builder = SparkSession.builder
@@ -301,7 +439,9 @@ class SparkSessionFactory:
       for key, value in spark_builder_config(config).items():
         builder = builder.config(key, value)
       return builder.getOrCreate()
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+      LOG.debug('get_spark: session build failed (%s)',
+          type(exc).__name__)
       return None
 
   @staticmethod

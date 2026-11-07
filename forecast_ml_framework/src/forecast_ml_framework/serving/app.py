@@ -13,28 +13,62 @@ byte counter (chunked bodies without Content-Length are
 rejected mid-stream, not only header-checked). When the
 FORECAST_API_KEY env var is set, /predict requires the
 matching key via X-API-Key or Authorization: Bearer ...
-(401 otherwise); /health stays public for probes. API-key
-and security headers (nosniff, DENY, no-referrer,
-no-store, restrictive CSP) are applied to every response.
-No Docker is provided.
+(401 otherwise); /health stays public for probes. Auth
+is fail-closed: FORECAST_REQUIRE_AUTH=1 or a production
+profile (FORECAST_ENV/ENVIRONMENT/APP_ENV=prod) without
+a key raises RuntimeError at startup, a key shorter
+than MIN_API_KEY_LENGTH is refused, and a dev startup
+without a key logs a WARNING. Binding a non-loopback
+host without a valid key is refused (see
+:func:`validate_bind_host`). /predict is rate-limited
+in-app with a token bucket (429 when exceeded) and
+every /predict attempt writes a structured access log
+with an HMAC key-id, outcome, and latency (never the
+raw key or payload), plus a persisted audit entry
+(``governance.audit_log``, actor ``serving``) on the
+bounded ``app.state.audit_log`` list. The access/audit
+boundary covers the endpoint (success, 422, 500, 503
+and the ``_check_caps`` 413) and the middleware
+(401, 429, the streaming body-cap 413, and schema
+422s). Validation failures return a generic 422 detail
+(``validation failed``); offending field names are
+logged server-side only, scrubbed. Security headers
+(nosniff, DENY, no-referrer, no-store, restrictive CSP)
+are applied to every response, plus Strict-Transport-Security
+when the request arrives over TLS. No Docker is
+provided.
+
+Audit limits (accepted, documented): a single shared
+FORECAST_API_KEY, so revocation is all-or-nothing;
+HMAC key-id uses that key as the HMAC secret (or
+``anonymous`` when no server key is configured);
+the in-process rate bucket and audit list are
+single-process (use a gateway for distributed limits).
 '''
 # pylint: disable=import-outside-toplevel, broad-exception-raised
 
+import hashlib
+import hmac
+import ipaddress
 import logging
 import math
 import os
+import secrets
+import threading
+import time
 
 from forecast_ml_framework.core.predictions import (
   check_predictions_finite, materialize_predictions)
 
 try:
-  from fastapi import FastAPI, HTTPException
+  from fastapi import FastAPI, HTTPException, Request
   from pydantic import BaseModel, model_validator
   _IMPORT_ERROR = None
 except ImportError as _exc:  # pragma: no cover - missing deps
   FastAPI = None
   BaseModel = object
   HTTPException = Exception
+  Request = object  # type: ignore[no-redef]
   _IMPORT_ERROR = _exc
 
 _LOG = logging.getLogger(__name__)
@@ -42,6 +76,283 @@ _LOG = logging.getLogger(__name__)
 MAX_RECORDS = 10000
 MAX_FEATURE_KEYS = 1000
 MAX_BODY_BYTES = 10 * 1024 * 1024
+
+#: Minimum accepted FORECAST_API_KEY length.
+MIN_API_KEY_LENGTH = 16
+
+#: Default /predict token-bucket rate (requests/minute).
+DEFAULT_RATE_LIMIT_PER_MINUTE = 600
+
+#: Default health-cache TTL in seconds.
+DEFAULT_HEALTH_CACHE_TTL = 30.0
+
+#: Maximum entries kept in the bounded per-app audit list.
+MAX_AUDIT_ENTRIES = 1000
+
+
+def _truthy(value):
+  '''Return True for truthy env spellings (1/true/yes/on).'''
+  return str(value or '').strip().lower() in (
+      '1', 'true', 'yes', 'on')
+
+
+def _require_auth_enabled():
+  '''Return True when FORECAST_REQUIRE_AUTH is enabled.'''
+  return _truthy(os.environ.get('FORECAST_REQUIRE_AUTH'))
+
+
+def _is_production_profile():
+  '''Return True for prod/production env profiles.'''
+  for name in ('FORECAST_ENV', 'ENVIRONMENT', 'APP_ENV'):
+    if os.environ.get(name, '').strip().lower() in (
+        'prod', 'production'):
+      return True
+  return False
+
+
+def _is_loopback_host(host):
+  '''Return True when ``host`` is an explicit loopback bind.'''
+  if host is None:
+    return True
+  text = str(host).strip()
+  if text in ('127.0.0.1', 'localhost', '::1'):
+    return True
+  try:
+    return ipaddress.ip_address(text).is_loopback
+  except ValueError:
+    return False
+
+
+def validate_bind_host(host):
+  '''Refuse non-loopback binds without a valid API key.
+
+  Args:
+    host: Bind host (for example ``--host 0.0.0.0``).
+
+  Raises:
+    RuntimeError: When a non-loopback host is bound
+      without a configured key of at least
+      MIN_API_KEY_LENGTH characters.
+  '''
+  if _is_loopback_host(host):
+    return
+  key = os.environ.get('FORECAST_API_KEY')
+  if not key:
+    raise RuntimeError(
+        'refusing to bind non-loopback host without '
+        'FORECAST_API_KEY; set FORECAST_API_KEY or bind '
+        '127.0.0.1')
+  if len(key) < MIN_API_KEY_LENGTH:
+    raise RuntimeError(
+        'FORECAST_API_KEY is too short; minimum length '
+        f'is {MIN_API_KEY_LENGTH}')
+
+
+def _validate_auth_config():
+  '''Enforce fail-closed auth config at startup.
+
+  Raises:
+    RuntimeError: When auth is required (or the profile
+      is production) without a key, or the key is too
+      short.
+  '''
+  key = os.environ.get('FORECAST_API_KEY')
+  required = _require_auth_enabled() or _is_production_profile()
+  if required and not key:
+    raise RuntimeError(
+        'FORECAST_API_KEY is required when '
+        'FORECAST_REQUIRE_AUTH=1 or in production; '
+        'refusing to start without authentication')
+  if key and len(key) < MIN_API_KEY_LENGTH:
+    raise RuntimeError(
+        'FORECAST_API_KEY is too short; minimum length '
+        f'is {MIN_API_KEY_LENGTH}')
+  if not key and not required:
+    _LOG.warning(
+        'FORECAST_API_KEY is not set; /predict is '
+        'unauthenticated (dev mode). Set FORECAST_API_KEY '
+        'in production.')
+
+
+def _log_exception(event, exc, level=logging.ERROR):
+  '''Log a failure by event code and type only.
+
+  The exception message is never logged and no
+  traceback is attached, so secrets, paths, and URIs
+  carried by the exception cannot reach the log. The
+  scrubbed message is deliberately not logged either:
+  scrubbing can leave path prefixes intact.
+  '''
+  _LOG.log(
+      level, '%s code=%s type=%s', event, event,
+      type(exc).__name__)
+
+
+def _provided_key(headers):
+  '''Extract the provided API key from a header mapping.'''
+  provided = headers.get('x-api-key', '')
+  if provided:
+    return provided
+  auth = headers.get('authorization', '')
+  if auth.lower().startswith('bearer '):
+    return auth[7:].strip()
+  return ''
+
+
+def _hmac_key_id(provided):
+  '''Return a truncated HMAC-SHA256 key-id for a provided key.
+
+  The HMAC secret is the server FORECAST_API_KEY itself
+  (``anonymous`` when no server key is configured), so the
+  key-id differs per client key and cannot be reversed to
+  the raw key. Empty provided keys yield ``anonymous``.
+  '''
+  if not provided:
+    return 'anonymous'
+  secret = os.environ.get('FORECAST_API_KEY') or 'anonymous'
+  return hmac.new(
+      secret.encode('utf-8'), str(provided).encode('utf-8'),
+      hashlib.sha256).hexdigest()[:16]
+
+
+def _audit_predict(provided, outcome, latency, records=0,
+                   audit_list=None):
+  '''Persist one ``predict`` audit entry (actor ``serving``).
+
+  Details carry only the HMAC key-id, outcome, latency and
+  record count -- never the raw key or payload. The list
+  is bounded (oldest entries dropped). Audit failures are
+  logged by code+type only and never break a response.
+  '''
+  if audit_list is None:
+    return
+  try:
+    # pylint: disable=import-outside-toplevel
+    from forecast_ml_framework.governance import audit_log
+    details = {
+        'key_id_hmac': _hmac_key_id(provided),
+        'outcome': outcome,
+        'latency_ms': round(float(latency) * 1000.0, 3),
+        'records': int(records),
+    }
+    audit_log(
+        event='predict', actor='serving', details=details,
+        log=audit_list)
+    while len(audit_list) > MAX_AUDIT_ENTRIES:
+      del audit_list[0]
+  except Exception as exc:  # pylint: disable=broad-except
+    _log_exception('audit_failed', exc, level=logging.WARNING)
+
+
+def _log_access(provided, outcome, latency, records=0,
+                audit_list=None):
+  '''Write the structured /predict access log entry.
+
+  Only an HMAC key-id, outcome, latency, and record
+  count are logged; the raw key and payload never are.
+  Boundary: every /predict attempt in the endpoint and
+  the middleware, including the ``_check_caps`` 413 and
+  the streaming body-cap 413, plus 401/429. When
+  ``audit_list`` is given a matching audit entry is
+  persisted via :func:`_audit_predict`.
+  '''
+  _LOG.info(
+      'predict_access key_id=%s outcome=%s latency_ms=%s '
+      'records=%s', _hmac_key_id(provided), outcome,
+      round(float(latency) * 1000.0, 3), int(records))
+  _audit_predict(provided, outcome, latency, records,
+                 audit_list=audit_list)
+
+
+def _log_validation_error(exc):
+  '''Log a validation failure server-side only (scrubbed).
+
+  Field names are kept out of the 422 response body but
+  remain available to operators in the server log, after
+  scrubbing. Never raises.
+  '''
+  try:
+    # pylint: disable=import-outside-toplevel
+    from forecast_ml_framework.governance.scrub import scrub_text
+    detail = scrub_text(str(exc))
+  except Exception:  # pylint: disable=broad-except
+    detail = 'validation failed'
+  _LOG.warning(
+      'validation_error code=%s type=%s detail=%s',
+      'validation_failed', type(exc).__name__, detail)
+
+
+def _rate_limit_per_minute(explicit=None):
+  '''Return the effective /predict rate limit.
+
+  Args:
+    explicit: Caller-supplied limit, winning over env.
+
+  Returns:
+    Requests per minute.
+
+  Raises:
+    ValueError: When the configured limit is invalid.
+  '''
+  raw = explicit
+  if raw is None:
+    raw = os.environ.get('FORECAST_RATE_LIMIT_PER_MINUTE')
+  if raw is None or str(raw).strip() == '':
+    return DEFAULT_RATE_LIMIT_PER_MINUTE
+  try:
+    limit = int(str(raw), 10)
+  except (TypeError, ValueError):
+    raise ValueError('invalid rate limit') from None
+  if limit <= 0:
+    raise ValueError('invalid rate limit')
+  return limit
+
+
+def _health_cache_ttl(explicit=None):
+  '''Return the effective health-cache TTL in seconds.
+
+  Args:
+    explicit: Caller-supplied TTL, winning over env.
+
+  Returns:
+    TTL in seconds.
+  '''
+  raw = explicit
+  if raw is None:
+    raw = os.environ.get('FORECAST_HEALTH_CACHE_TTL')
+  if raw is None or str(raw).strip() == '':
+    return DEFAULT_HEALTH_CACHE_TTL
+  return float(str(raw))
+
+
+class _TokenBucket:
+  '''Thread-safe token bucket for /predict rate limiting.
+
+  Args:
+    per_minute: Sustained requests per minute. The
+      burst capacity equals the per-minute rate.
+  '''
+
+  def __init__(self, per_minute):
+    self._per_minute = float(per_minute)
+    self._capacity = float(per_minute)
+    self._tokens = float(per_minute)
+    self._updated = time.monotonic()
+    self._lock = threading.Lock()
+
+  def allow(self):
+    '''Consume one token, returning False when empty.'''
+    with self._lock:
+      now = time.monotonic()
+      elapsed = now - self._updated
+      self._updated = now
+      refill = elapsed * self._per_minute / 60.0
+      self._tokens = min(
+          self._capacity, self._tokens + refill)
+      if self._tokens < 1.0:
+        return False
+      self._tokens -= 1.0
+      return True
 
 
 if _IMPORT_ERROR is None:
@@ -285,53 +596,111 @@ def _header_map(scope):
   }
 
 
-async def _send_json(send, status_code, detail):
+def _security_headers(scope):
+  '''Return security headers, adding HSTS over TLS.
+
+  HSTS is sent when the ASGI scheme is https, when
+  X-Forwarded-Proto is https (TLS-terminating proxy),
+  or when FORECAST_TLS_ENABLED=1. Plain HTTP responses
+  omit it, as documented here and in the module
+  docstring; a TLS-terminating proxy should set
+  FORECAST_TLS_ENABLED=1 so HSTS is always sent.
+  '''
+  headers = dict(SECURITY_HEADERS)
+  raw_headers = _header_map(scope)
+  scheme = str(scope.get('scheme', 'http')).lower()
+  forwarded = raw_headers.get('x-forwarded-proto', '').lower()
+  if scheme == 'https' or forwarded == 'https' or _truthy(
+          os.environ.get('FORECAST_TLS_ENABLED')):
+    headers['strict-transport-security'] = (
+        'max-age=31536000; includeSubDomains')
+  return headers
+
+
+async def _send_json(send, status_code, detail, headers=None):
   '''Send a JSON error response (with security headers).'''
   import json as _json
   body = _json.dumps({'detail': detail}).encode('utf-8')
-  headers = [(b'content-type', b'application/json'),
-             (b'content-length', str(len(body)).encode('latin-1'))]
-  headers.extend(
+  raw_headers = [(b'content-type', b'application/json'),
+                 (b'content-length', str(len(body)).encode('latin-1'))]
+  raw_headers.extend(
       (k.encode('latin-1'), v.encode('latin-1'))
-      for k, v in SECURITY_HEADERS.items())
+      for k, v in (headers or SECURITY_HEADERS).items())
   await send({
       'type': 'http.response.start',
       'status': status_code,
-      'headers': headers,
+      'headers': raw_headers,
   })
   await send({'type': 'http.response.body', 'body': body})
 
 
 class _CapAuthHeadersMiddleware:
-  '''Pure ASGI: streaming body cap, optional API key, headers.
+  '''Pure ASGI: body cap, API key, rate limit, headers.
 
   The body cap counts bytes as ``http.request`` messages
   stream in (works for chunked bodies with no
   Content-Length) and aborts with 413 as soon as the
   running total passes MAX_BODY_BYTES, instead of
-  buffering the whole body. Bodies within the cap are
-  replayed to the app unchanged. When FORECAST_API_KEY
-  is set, every path except /health requires it (401).
+  buffering the whole body. The 413 branch writes an
+  access-log and audit entry (outcome
+  ``payload_too_large``) before responding. Bodies
+  within the cap are replayed to the app unchanged.
+  Schema 422s (FastAPI/pydantic) never reach the
+  endpoint, so the middleware logs them as
+  ``validation_error`` (access + audit) on the
+  response start, deduped via the per-request scope
+  marker (C4-R1) so an endpoint 422 is logged
+  exactly once.
+  When FORECAST_API_KEY is set, every path except
+  /health requires it (401, constant-time compare).
+  /predict is token-bucket rate-limited (429 when the
+  bucket is empty); use a gateway for distributed
+  limits in production.
+
+  Args:
+    app: Downstream ASGI application.
+    rate_limit_per_minute: /predict rate limit,
+      overriding FORECAST_RATE_LIMIT_PER_MINUTE.
+    audit_log: Bounded list receiving per-predict
+      audit entries (shared with ``app.state``).
   '''
 
-  def __init__(self, app):
+  def __init__(self, app, rate_limit_per_minute=None,
+               audit_log=None):
     self.app = app
+    self._bucket = _TokenBucket(
+        _rate_limit_per_minute(rate_limit_per_minute))
+    self._audit_log = audit_log
 
   async def __call__(self, scope, receive, send):
     if scope.get('type') != 'http':
       await self.app(scope, receive, send)
       return
+    started = time.monotonic()
+    sec_headers = _security_headers(scope)
     expected = os.environ.get('FORECAST_API_KEY')
+    headers = _header_map(scope)
+    provided = _provided_key(headers)
     if expected and scope.get('path') != '/health':
-      headers = _header_map(scope)
-      provided = headers.get('x-api-key', '')
-      auth = headers.get('authorization', '')
-      if not provided and auth.lower().startswith('bearer '):
-        provided = auth[7:].strip()
-      import secrets
       if not provided or not secrets.compare_digest(
               provided, expected):
-        await _send_json(send, 401, 'unauthorized')
+        if scope.get('path') == '/predict':
+          _log_access(
+              provided, 'unauthorized',
+              time.monotonic() - started,
+              audit_list=self._audit_log)
+        await _send_json(
+            send, 401, 'unauthorized', headers=sec_headers)
+        return
+    if scope.get('path') == '/predict':
+      if not self._bucket.allow():
+        _log_access(
+            provided, 'rate_limited',
+            time.monotonic() - started,
+            audit_list=self._audit_log)
+        await _send_json(
+            send, 429, 'rate limit exceeded',
+            headers=sec_headers)
         return
     total = 0
     chunks = []
@@ -344,7 +713,14 @@ class _CapAuthHeadersMiddleware:
       chunk = message.get('body') or b''
       total += len(chunk)
       if total > MAX_BODY_BYTES:
-        await _send_json(send, 413, 'request body too large')
+        if scope.get('path') == '/predict':
+          _log_access(
+              provided, 'payload_too_large',
+              time.monotonic() - started,
+              audit_list=self._audit_log)
+        await _send_json(
+            send, 413, 'request body too large',
+            headers=sec_headers)
         return
       chunks.append(chunk)
       if not message.get('more_body'):
@@ -364,13 +740,24 @@ class _CapAuthHeadersMiddleware:
 
     async def _send_with_headers(message):
       if message.get('type') == 'http.response.start':
+        status = message.get('status')
+        if status == 422 and scope.get('path') == '/predict':
+          # C4-R1: pydantic schema 422 never reached the
+          # endpoint, so record repudiation here unless
+          # the endpoint already logged this request.
+          if not scope.get('forecast_audit_logged', False):
+            _log_access(
+                provided, 'validation_error',
+                time.monotonic() - started,
+                audit_list=self._audit_log)
+            scope['forecast_audit_logged'] = True
         existing = [
             (k, v) for k, v in message.get('headers', [])
-            if k.decode('latin-1').lower() not in SECURITY_HEADERS
+            if k.decode('latin-1').lower() not in sec_headers
         ]
         existing.extend(
             (k.encode('latin-1'), v.encode('latin-1'))
-            for k, v in SECURITY_HEADERS.items())
+            for k, v in sec_headers.items())
         message = dict(message)
         message['headers'] = existing
       await send(message)
@@ -379,13 +766,15 @@ class _CapAuthHeadersMiddleware:
 
 
 def create_app(model_loader=None, registry_uri=None, model_name=None,
-               alias=None, artifact_path=None):
+               alias=None, artifact_path=None, host=None,
+               rate_limit_per_minute=None, health_cache_ttl=None):
   '''Create FastAPI app with injected or registry model loader.
 
   Never raises for a missing loader: without an injected
   loader, MODEL_ARTIFACT_PATH, or registry config, the
   app runs in degraded mode (health reports degraded and
-  /predict returns 503).
+  /predict returns 503). Auth is fail-closed (see
+  :func:`_validate_auth_config`).
 
   Args:
     model_loader: Callable returning a model, or a model.
@@ -398,13 +787,24 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     artifact_path: File-loader artifact path (or
       MODEL_ARTIFACT_PATH); takes precedence over
       registry config.
+    host: Bind host; non-loopback binds require a valid
+      API key (see :func:`validate_bind_host`).
+    rate_limit_per_minute: /predict rate limit,
+      overriding FORECAST_RATE_LIMIT_PER_MINUTE.
+    health_cache_ttl: Health-cache TTL in seconds,
+      overriding FORECAST_HEALTH_CACHE_TTL.
 
   Returns:
     Configured FastAPI application.
 
   Raises:
     ImportError: If fastapi or pydantic is not installed.
+    RuntimeError: When fail-closed auth or bind-host
+      validation refuses startup.
   '''
+  _validate_auth_config()
+  if host is not None:
+    validate_bind_host(host)
   model_loader = _resolve_loader(
       model_loader, registry_uri, model_name, alias,
       artifact_path=artifact_path)
@@ -413,59 +813,119 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
       'fastapi and pydantic are required to serve: install them '
       'with pip install fastapi pydantic'
     ) from _IMPORT_ERROR
+  ttl = _health_cache_ttl(health_cache_ttl)
   app = FastAPI(title='forecast-ml serving')
-  app.add_middleware(_CapAuthHeadersMiddleware)
+  # Bounded audit list shared by the middleware (413/401/429
+  # branches) and the endpoint; exposed as app.state.audit_log.
+  _audit_entries = []
+  app.add_middleware(
+      _CapAuthHeadersMiddleware,
+      rate_limit_per_minute=rate_limit_per_minute,
+      audit_log=_audit_entries)
+  app.state.audit_log = _audit_entries
+  app._audit_log = _audit_entries
   # Health probe cache on the app instance: dict with
-  # 'result' -> HealthResponse or None when not yet probed.
-  _health_cache = {'result': None}
+  # 'result' -> HealthResponse or None when not yet
+  # probed, and 'probed_at' -> monotonic timestamp of
+  # the last probe. The cache refreshes after its TTL
+  # and on every successful /predict.
+  _health_cache = {'result': None, 'probed_at': 0.0}
   app.state.health_cache = _health_cache
   app._health_cache = _health_cache
+
+  def _refresh_health_cache(result):
+    '''Store a health result with the current timestamp.'''
+    _health_cache['result'] = result
+    _health_cache['probed_at'] = time.monotonic()
 
   @app.get('/health', response_model=HealthResponse)
   def health() -> HealthResponse:
     '''Return service health and whether the model loads.'''
-    if _health_cache['result'] is not None:
+    fresh = (
+        _health_cache['result'] is not None
+        and time.monotonic() - _health_cache['probed_at'] < ttl)
+    if fresh:
       return _health_cache['result']
     try:
       _load_model(model_loader)
     except Exception:  # pylint: disable=broad-exception-caught
-      _health_cache['result'] = HealthResponse(
-        status='degraded', model_loaded=False)
+      _refresh_health_cache(HealthResponse(
+        status='degraded', model_loaded=False))
     else:
-      _health_cache['result'] = HealthResponse(
-        status='ok', model_loaded=True)
+      _refresh_health_cache(HealthResponse(
+        status='ok', model_loaded=True))
     return _health_cache['result']
 
   @app.post('/predict', response_model=PredictResponse)
-  def predict(request: PredictRequest) -> PredictResponse:
+  def predict(
+      request: PredictRequest,
+      http_request: Request) -> PredictResponse:
     '''Return predictions for supplied features or records.'''
+    started = time.monotonic()
+    headers = dict(http_request.headers)
+    provided = _provided_key(headers)
     records = _records_from(request)
-    _check_caps(records)
+    try:
+      _check_caps(records)
+    except HTTPException:
+      # C2-F5/R-04: the _check_caps 413 is inside the
+      # access/audit boundary.
+      _log_access(provided, 'payload_too_large',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
+      raise
     try:
       model = _load_model(model_loader)
     except ModelNotConfiguredError as exc:
-      _LOG.warning('model not configured')
+      _log_exception(
+          'model_not_configured', exc, level=logging.WARNING)
+      _log_access(provided, 'model_not_configured',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
       raise HTTPException(
-          status_code=503, detail='model not configured') from exc
+          status_code=503, detail='model not configured') from None
     except ModelNotFoundError as exc:
-      _LOG.warning('model not found')
+      _log_exception(
+          'model_not_found', exc, level=logging.WARNING)
+      _log_access(provided, 'model_not_found',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
       raise HTTPException(
-          status_code=503, detail='model artifact not found') from exc
+          status_code=503,
+          detail='model artifact not found') from None
     except ModelCorruptError as exc:
-      _LOG.exception('model corrupt')
+      _log_exception('model_corrupt', exc)
+      _log_access(provided, 'model_corrupt',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
       raise HTTPException(
-          status_code=500, detail='model failed to load') from exc
+          status_code=500, detail='model failed to load') from None
     except Exception as exc:  # pylint: disable=broad-exception-caught
-      _LOG.exception('model load failed')
+      _log_exception('model_load_failed', exc)
+      _log_access(provided, 'model_load_failed',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
       raise HTTPException(
-          status_code=500, detail='model failed to load') from exc
+          status_code=500, detail='model failed to load') from None
     # Validation separate from model execution: validation
-    # ValueError -> 422; model ValueError/other -> generic 500.
+    # ValueError -> generic 422; model ValueError/other -> 500.
     try:
       rows = _validate_records(model, records)
     except ValueError as exc:
+      # R-09: generic client detail; field names are logged
+      # scrubbed server-side only (see _log_validation_error).
+      _log_validation_error(exc)
+      _log_access(provided, 'validation_error',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
       raise HTTPException(status_code=422,
-                          detail=str(exc)) from exc
+                          detail='validation failed') from None
     try:
       if hasattr(model, 'predict'):
         raw = model.predict(rows)
@@ -478,23 +938,35 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
       predictions = _to_list(raw)
       _check_predictions_finite(predictions)
     except Exception as exc:  # pylint: disable=broad-exception-caught
-      # Log only; never leak model/internal detail to client.
-      _LOG.exception('prediction failed')
-      raise HTTPException(status_code=500,
-                          detail='prediction failed') from exc
+      # Log code+type only; never leak detail to client/log.
+      _log_exception('prediction_failed', exc)
+      _log_access(provided, 'prediction_failed',
+                  time.monotonic() - started, len(records),
+                  audit_list=_audit_entries)
+      http_request.scope['forecast_audit_logged'] = True
+      raise HTTPException(
+          status_code=500, detail='prediction failed') from None
+    _refresh_health_cache(HealthResponse(
+        status='ok', model_loaded=True))
+    _log_access(provided, 'success',
+                time.monotonic() - started, len(records),
+                audit_list=_audit_entries)
+    http_request.scope['forecast_audit_logged'] = True
     return PredictResponse(predictions=predictions)
 
   return app
 
 
 def create_app_from_registry(registry_uri, model_name,
-                             alias='production'):
+                             alias='production', tracking_uri=None):
   '''Create app loading its model from the MLflow registry.
 
   Args:
     registry_uri: MLflow registry URI, or None for ambient.
     model_name: Registered model name.
     alias: Registry alias, default ``production``.
+    tracking_uri: MLflow tracking URI, kept separate
+      from ``registry_uri``.
 
   Returns:
     Configured FastAPI application.
@@ -502,7 +974,9 @@ def create_app_from_registry(registry_uri, model_name,
   from forecast_ml_framework.serving.model_loader import (  # noqa: E501
     RegistryModelLoader,
   )
-  loader = RegistryModelLoader(registry_uri, model_name, alias=alias)
+  loader = RegistryModelLoader(
+      registry_uri, model_name, alias=alias,
+      tracking_uri=tracking_uri)
   return create_app(loader)
 
 

@@ -42,24 +42,16 @@ import pandas as pd
 
 from forecast_ml_framework.core.params import (
   flatten_params,
+  parse_int,
 )
 
 LOG = logging.getLogger(__name__)
 
 
-
-def _int(value, default):
-  '''Return value as int, or default when missing/invalid.'''
-  try:
-    return int(value)
-  except (TypeError, ValueError):
-    return int(default)
-
-
 def _seed(params):
   '''Resolve the random seed from params.'''
   params = flatten_params(params, 'interpretability_params')
-  return _int(params.get('random_state', params.get('seed', 42)), 42)
+  return parse_int(params.get('random_state', params.get('seed', 42)), 42)
 
 
 def _is_valid_X(X) -> bool:
@@ -148,7 +140,7 @@ def _sorted_importance(scores, top_k=None):
 def _pred_change_importance(model, frame, params):
   '''Permutation importance via prediction change (no y).'''
   rng = np.random.RandomState(_seed(params))
-  repeats = max(_int(flatten_params(
+  repeats = max(parse_int(flatten_params(
       params, 'interpretability_params').get(
           'n_repeats', 5), 5), 1)
   base = _predict(model, frame)
@@ -214,7 +206,7 @@ def shap_explain(model, X, params=None):
             'baseline': 0.0, 'method': 'none',
             'warnings': warnings}
   frame = _frame(X)
-  max_rows = _int(params.get('max_rows',
+  max_rows = parse_int(params.get('max_rows',
                              params.get('max_per_row_rows', 20)), 20)
   baseline = 0.0
   try:
@@ -275,7 +267,7 @@ def permutation_importance(model, X, y=None, params=None):
       from sklearn.inspection import permutation_importance as _pi
       result = _pi(model, frame, np.asarray(y),
                    n_repeats=max(
-                     _int(params.get('n_repeats', 5), 5), 1),
+                     parse_int(params.get('n_repeats', 5), 5), 1),
                    random_state=_seed(params),
                    scorer=params.get('scorer'))
       scores = list(zip(frame.columns, result.importances_mean))
@@ -312,7 +304,7 @@ def pdp_1d(model, X, feature, params=None):
     LOG.warning(warnings[-1])
     return {'feature': str(feature), 'grid': [], 'values': [],
             'warnings': warnings}
-  n_grid = _int(params.get('n_grid', params.get('grid_size', 20)), 20)
+  n_grid = parse_int(params.get('n_grid', params.get('grid_size', 20)), 20)
   column = frame[feature].astype(float).to_numpy()
   grid = np.unique(np.percentile(
     column, np.linspace(0, 100, max(n_grid, 1))))
@@ -334,7 +326,7 @@ def pdp_1d(model, X, feature, params=None):
 
 def _calibration_bins(preds, y, n_bins):
   '''Equal-width calibration bins of predictions.'''
-  n_bins = max(_int(n_bins, 10), 1)
+  n_bins = max(parse_int(n_bins, 10), 1)
   low, high = float(np.min(preds)), float(np.max(preds))
   if low == high:
     edges = np.array([low, high + 1.0])
@@ -415,7 +407,7 @@ def diagnostics(model, X, y, params=None):
       'mae': float(np.mean(np.abs(seg_res))),
       'rmse': float(np.sqrt(np.mean(seg_res ** 2))),
       'bias': float(np.mean(seg_res))})
-  n_bins = _int(params.get('n_calibration_bins',
+  n_bins = parse_int(params.get('n_calibration_bins',
                            params.get('calibration_bins',
                                       params.get('bins', 10))), 10)
   return {
@@ -453,9 +445,9 @@ def lime_explain(model, X, params=None):
     LOG.warning(warnings[-1])
     return {'method': 'none', 'rows': [], 'warnings': warnings}
   frame = _frame(X)
-  max_rows = _int(params.get('max_rows',
+  max_rows = parse_int(params.get('max_rows',
                              params.get('max_per_row_rows', 20)), 20)
-  top_k = _int(params.get('top_k', 10), 10)
+  top_k = parse_int(params.get('top_k', 10), 10)
   try:
     from lime.lime_tabular import LimeTabularExplainer  # lazy
     explainer = LimeTabularExplainer(

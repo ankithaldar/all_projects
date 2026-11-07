@@ -62,6 +62,74 @@ def _install_fake_mlflow(monkeypatch):
   return calls
 
 
+def _install_fake_mlflow_client(monkeypatch):
+  '''Install fake mlflow client downloading a real pickle.'''
+  import pickle
+  import tempfile
+  from pathlib import Path
+  from sklearn.linear_model import LinearRegression
+  fake = types.ModuleType('mlflow')
+  fake.__path__ = []
+  tracking = types.ModuleType('mlflow.tracking')
+  exceptions = types.ModuleType('mlflow.exceptions')
+  sklearn = types.ModuleType('mlflow.sklearn')
+  pyfunc = types.ModuleType('mlflow.pyfunc')
+
+  class MlflowException(Exception):
+    pass
+
+  MlflowException.__module__ = 'mlflow.exceptions'
+  exceptions.MlflowException = MlflowException
+  calls = {'client': [], 'version': [], 'download': [],
+           'set_tracking_uri': [], 'sklearn': [], 'pyfunc': []}
+  fake.set_tracking_uri = lambda uri: calls[
+      'set_tracking_uri'].append(uri)
+
+  class _Version:
+    version = '3'
+    run_id = 'run-1'
+    source = 'fake-source'
+
+  class _FakeClient:
+    def __init__(self, tracking_uri=None, registry_uri=None):
+      calls['client'].append(
+          {'tracking_uri': tracking_uri,
+           'registry_uri': registry_uri})
+
+    def get_model_version_by_alias(self, name, alias):
+      calls['version'].append((name, alias))
+      return _Version()
+
+    def download_artifacts(self, run_id, path, dst_path=None):
+      calls['download'].append((run_id, path, dst_path))
+      model = LinearRegression().fit([[1.0, 2.0]], [3.0])
+      base = Path(dst_path) if dst_path else Path(
+          tempfile.mkdtemp())
+      base.mkdir(parents=True, exist_ok=True)
+      target = base / 'model.pkl'
+      target.write_bytes(pickle.dumps(model))
+      return str(target)
+
+  tracking.MlflowClient = _FakeClient
+
+  def _sklearn_load(uri):
+    calls['sklearn'].append(uri)
+    raise AssertionError('sklearn.load_model must not be used')
+
+  sklearn.load_model = _sklearn_load
+  pyfunc.load_model = lambda uri: DummyModel()
+  fake.sklearn = sklearn
+  fake.pyfunc = pyfunc
+  fake.tracking = tracking
+  fake.exceptions = exceptions
+  monkeypatch.setitem(sys.modules, 'mlflow', fake)
+  monkeypatch.setitem(sys.modules, 'mlflow.tracking', tracking)
+  monkeypatch.setitem(sys.modules, 'mlflow.sklearn', sklearn)
+  monkeypatch.setitem(sys.modules, 'mlflow.pyfunc', pyfunc)
+  monkeypatch.setitem(sys.modules, 'mlflow.exceptions', exceptions)
+  return calls
+
+
 def test_health():
   '''Health returns status ok.'''
   from fastapi.testclient import TestClient
@@ -110,7 +178,8 @@ def test_predict_missing_feature_422():
   payload = {'records': [{'a': 1.0, 'b': 2.0}, {'a': 3.0}]}
   r = client.post('/predict', json=payload)
   assert r.status_code == 422
-  assert 'b' in r.text
+  # R-09: generic detail, no field-name echo.
+  assert r.json() == {'detail': 'validation failed'}
 
 
 def test_predict_nested_dict_422():
@@ -162,7 +231,7 @@ def test_create_app_from_registry_health_and_predict(monkeypatch):
   '''App built from registry loader serves health and predict.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app_from_registry
-  calls = _install_fake_mlflow(monkeypatch)
+  calls = _install_fake_mlflow_client(monkeypatch)
   client = TestClient(create_app_from_registry(
       'sqlite:///registry.db', 'my-model', alias='production'))
   assert client.get('/health').json() == {
@@ -170,8 +239,11 @@ def test_create_app_from_registry_health_and_predict(monkeypatch):
   r = client.post('/predict', json={'features': {'a': 1.0, 'b': 2.0}})
   assert r.status_code == 200
   assert r.json() == {'predictions': [3.0]}
-  assert calls['set_tracking_uri'] == ['sqlite:///registry.db']
-  assert calls['sklearn'] == ['models:/my-model@production']
+  assert calls['client'] == [{
+      'tracking_uri': 'sqlite:///registry.db',
+      'registry_uri': 'sqlite:///registry.db'}]
+  assert calls['version'] == [('my-model', 'production')]
+  assert calls['sklearn'] == []
 
 
 def test_create_app_from_env_registry_config(monkeypatch):
@@ -181,13 +253,16 @@ def test_create_app_from_env_registry_config(monkeypatch):
   monkeypatch.setenv('MODEL_REGISTRY_URI', 'sqlite:///registry.db')
   monkeypatch.setenv('MODEL_NAME', 'my-model')
   monkeypatch.setenv('MODEL_ALIAS', 'production')
-  calls = _install_fake_mlflow(monkeypatch)
+  calls = _install_fake_mlflow_client(monkeypatch)
   client = TestClient(create_app())
   assert client.get('/health').status_code == 200
-  r = client.post('/predict', json={'features': {'a': 2.0}})
-  assert r.json() == {'predictions': [2.0]}
-  assert calls['set_tracking_uri'] == ['sqlite:///registry.db']
-  assert calls['sklearn'] == ['models:/my-model@production']
+  r = client.post(
+      '/predict', json={'features': {'a': 1.0, 'b': 2.0}})
+  assert r.json() == {'predictions': [3.0]}
+  assert calls['client'] == [{
+      'tracking_uri': 'sqlite:///registry.db',
+      'registry_uri': 'sqlite:///registry.db'}]
+  assert calls['version'] == [('my-model', 'production')]
 
 
 def test_create_app_loader_injection_preferred_over_env(monkeypatch):
@@ -242,7 +317,9 @@ def test_predict_unknown_feature_key_422():
   r = client.post(
       '/predict', json={'features': {'a': 1.0, 'b': 2.0, 'c': 3.0}})
   assert r.status_code == 422
-  assert 'c' in r.text
+  # R-09: generic detail, no field-name echo.
+  assert r.json() == {'detail': 'validation failed'}
+  assert 'unknown feature' not in r.text
 
 
 def test_predict_nonfinite_output_500():
@@ -293,7 +370,9 @@ def test_predict_second_record_unknown_feature_422():
                          {'a': 3.0, 'b': 4.0, 'evil': 5.0}]}
   r = client.post('/predict', json=payload)
   assert r.status_code == 422
-  assert 'evil' in r.text
+  # R-09: generic detail, no field-name echo.
+  assert r.json() == {'detail': 'validation failed'}
+  assert 'evil' not in r.text
 
 
 def test_predict_second_record_unknown_vs_model_features_422():
@@ -311,7 +390,8 @@ def test_predict_second_record_unknown_vs_model_features_422():
                          {'a': 3.0, 'b': 4.0, 'c': 9.0}]}
   r = client.post('/predict', json=payload)
   assert r.status_code == 422
-  assert 'c' in r.text
+  # R-09: generic detail, no field-name echo.
+  assert r.json() == {'detail': 'validation failed'}
 
 
 def test_predict_chunked_body_over_cap_413_no_content_length():
@@ -335,17 +415,19 @@ def test_api_key_auth_401_without_and_200_with(monkeypatch):
   '''FORECAST_API_KEY set: missing/wrong key 401, correct 200.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
-  monkeypatch.setenv('FORECAST_API_KEY', 's3cret-test-key')
+  monkeypatch.setenv('FORECAST_API_KEY', 's3cret-test-key-1234567890')
   client = TestClient(create_app(dummy_loader))
   payload = {'features': {'a': 1.0}}
   assert client.post('/predict', json=payload).status_code == 401
   assert client.post('/predict', json=payload,
                      headers={'X-API-Key': 'wrong'}).status_code == 401
   r = client.post('/predict', json=payload,
-                  headers={'X-API-Key': 's3cret-test-key'})
+                  headers={'X-API-Key': 's3cret-test-key-1234567890'})
   assert r.status_code == 200
-  r2 = client.post('/predict', json=payload,
-                   headers={'Authorization': 'Bearer s3cret-test-key'})
+  r2 = client.post(
+      '/predict', json=payload,
+      headers={'Authorization':
+               'Bearer s3cret-test-key-1234567890'})
   assert r2.status_code == 200
   # Health stays public for probes.
   assert client.get('/health').status_code == 200
@@ -536,12 +618,13 @@ def test_predict_model_value_error_generic_500_no_leak():
 
 
 def test_predict_validation_error_still_422():
-  '''_validate_records ValueError stays 422 with field detail.'''
+  '''_validate_records ValueError stays 422 with generic detail.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
   r = client.post('/predict', json={'features': {'a': 'x'}})
   assert r.status_code == 422
+  assert r.json() == {'detail': 'validation failed'}
 
 
 def test_health_caches_probe_on_app_instance():
@@ -749,3 +832,542 @@ def test_predict_masked_output_500():
   r = client.post('/predict', json={'features': {'a': 1.0}})
   assert r.status_code == 500
   assert r.json() == {'detail': 'prediction failed'}
+
+
+# --- W3 RED: fail-closed auth ---
+
+def test_require_auth_no_key_raises_at_startup(monkeypatch):
+  '''FORECAST_REQUIRE_AUTH=1 without key raises RuntimeError.'''
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.setenv('FORECAST_REQUIRE_AUTH', '1')
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  monkeypatch.delenv('ENVIRONMENT', raising=False)
+  monkeypatch.delenv('APP_ENV', raising=False)
+  with pytest.raises(RuntimeError, match='FORECAST_API_KEY'):
+    create_app(dummy_loader)
+
+
+def test_prod_profile_no_key_raises_at_startup(monkeypatch):
+  '''Production profile without key raises RuntimeError.'''
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.setenv('FORECAST_ENV', 'prod')
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  with pytest.raises(RuntimeError, match='FORECAST_API_KEY'):
+    create_app(dummy_loader)
+
+
+def test_unset_key_dev_logs_warning(monkeypatch, caplog):
+  '''Dev without key still serves but logs a WARNING.'''
+  import logging
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  monkeypatch.delenv('ENVIRONMENT', raising=False)
+  monkeypatch.delenv('APP_ENV', raising=False)
+  with caplog.at_level(logging.WARNING):
+    app = create_app(dummy_loader)
+  assert app is not None
+  assert any(
+      record.levelno == logging.WARNING
+      and 'FORECAST_API_KEY' in record.getMessage()
+      for record in caplog.records)
+
+
+def test_short_api_key_raises_at_startup(monkeypatch):
+  '''API key shorter than the minimum is refused at startup.'''
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.setenv('FORECAST_API_KEY', 'short')
+  with pytest.raises(RuntimeError, match='FORECAST_API_KEY'):
+    create_app(dummy_loader)
+
+
+def test_non_loopback_bind_without_key_in_prod_refuses(monkeypatch):
+  '''--host 0.0.0.0 without key in prod is refused.'''
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.setenv('FORECAST_ENV', 'prod')
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  with pytest.raises(RuntimeError):
+    create_app(dummy_loader, host='0.0.0.0')
+
+
+def test_non_loopback_bind_helper_refuses_without_key(monkeypatch):
+  '''validate_bind_host refuses non-loopback without a key.'''
+  from forecast_ml_framework.serving.app import validate_bind_host
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  with pytest.raises(RuntimeError):
+    validate_bind_host('0.0.0.0')
+  validate_bind_host('127.0.0.1')
+
+
+# --- W3 RED: scrubbed exception logging ---
+
+def test_secret_exception_never_in_caplog(monkeypatch, caplog):
+  '''Secret-bearing loader exception never reaches logs.'''
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  secret = 'supersecretpassword12345'
+
+  def bad_loader():
+    raise RuntimeError(f'password={secret} /secret/dir/model.pkl')
+
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  with caplog.at_level(logging.DEBUG):
+    client = TestClient(create_app(bad_loader))
+    r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert secret not in caplog.text
+  assert '/secret' not in caplog.text
+  assert 'model.pkl' not in caplog.text
+
+
+def test_secret_predict_exception_never_in_caplog(monkeypatch, caplog):
+  '''Secret-bearing predict exception never reaches logs.'''
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  secret = 'supersecretpassword99999'
+
+  class SecretModel:
+    def predict(self, rows):
+      raise ValueError(f'token={secret} internal-detail')
+
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  with caplog.at_level(logging.DEBUG):
+    client = TestClient(create_app(lambda: SecretModel()))
+    r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 500
+  assert secret not in caplog.text
+  assert 'internal-detail' not in caplog.text
+
+
+# --- W3 RED: rate limiting ---
+
+def test_rate_limit_429_on_predict(monkeypatch):
+  '''Exceeding the per-minute rate limit returns 429.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  monkeypatch.setenv('FORECAST_RATE_LIMIT_PER_MINUTE', '3')
+  client = TestClient(create_app(dummy_loader))
+  codes = [
+      client.post(
+          '/predict', json={'features': {'a': 1.0}}).status_code
+      for _ in range(5)
+  ]
+  assert 429 in codes
+  assert codes[:3] == [200, 200, 200]
+
+
+# --- W3 RED: HSTS + access log + health refresh ---
+
+def test_hsts_header_when_tls(monkeypatch):
+  '''HTTPS responses carry Strict-Transport-Security.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  client = TestClient(
+      create_app(dummy_loader), base_url='https://testserver')
+  r = client.get('/health')
+  assert 'max-age=' in r.headers.get(
+      'strict-transport-security', '')
+  assert r.headers.get('x-content-type-options') == 'nosniff'
+
+
+def test_access_log_hashed_key_id_no_raw_key(monkeypatch, caplog):
+  '''/predict access log hashes key-id and omits raw key.'''
+  import hashlib
+  import hmac
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  # R-04: key-id is HMAC-SHA256 keyed by the server secret.
+  hashed = hmac.new(
+      key.encode(), key.encode(), hashlib.sha256).hexdigest()[:16]
+  with caplog.at_level(logging.INFO):
+    client = TestClient(create_app(dummy_loader))
+    r = client.post(
+        '/predict', json={'features': {'a': 1.0}},
+        headers={'X-API-Key': key})
+  assert r.status_code == 200
+  assert 'predict_access' in caplog.text
+  assert hashed in caplog.text
+  assert key not in caplog.text
+  assert 'outcome=success' in caplog.text
+
+
+def test_health_cache_refresh_after_ttl(monkeypatch):
+  '''Health cache re-probes after its TTL expires.'''
+  import time
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  calls = {'n': 0}
+
+  def counting_loader():
+    calls['n'] += 1
+    return DummyModel()
+
+  app = create_app(counting_loader)
+  client = TestClient(app)
+  assert client.get('/health').json()['status'] == 'ok'
+  assert calls['n'] == 1
+  cache = app.state.health_cache
+  cache['probed_at'] = time.monotonic() - 1000.0
+  assert client.get('/health').json()['status'] == 'ok'
+  assert calls['n'] == 2
+
+
+def test_health_cache_refresh_on_predict_success(monkeypatch):
+  '''Successful /predict refreshes a degraded health cache.'''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  state = {'fail': True}
+
+  def flaky_loader():
+    if state['fail']:
+      raise RuntimeError('not yet')
+    return DummyModel()
+
+  client = TestClient(create_app(flaky_loader))
+  assert client.get('/health').json() == {
+      'status': 'degraded', 'model_loaded': False}
+  state['fail'] = False
+  r = client.post('/predict', json={'features': {'a': 1.0}})
+  assert r.status_code == 200
+  assert client.get('/health').json() == {
+      'status': 'ok', 'model_loaded': True}
+
+
+# --- X1 RED: audit persistence, 413 logging, generic 422 ---
+
+@pytest.mark.parametrize(
+    'payload,marker', [
+        ({'records': [{'a': 1.0, 'b': 2.0}, {'a': 3.0}]}, 'b'),
+        ({'records': [{'a': 1.0, 'b': 2.0},
+                      {'a': 3.0, 'b': 4.0, 'evil_field': 5.0}]},
+         'evil_field'),
+        ({'features': {'a': 'not-a-number'}}, 'a'),
+    ])
+def test_validation_422_generic_no_field_echo(payload, marker):
+  '''Fails if a 422 response echoes the offending field name.
+
+  Mutation kill: restoring ``detail=str(exc)`` in the predict
+  endpoint must make this test fail ('validation failed' gone
+  and the field marker present in the body).
+  '''
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  client = TestClient(create_app(dummy_loader))
+  r = client.post('/predict', json=payload)
+  assert r.status_code == 422
+  assert r.json() == {'detail': 'validation failed'}
+  assert 'unknown feature' not in r.text
+  assert 'missing feature' not in r.text
+  assert 'must be a finite number' not in r.text
+  # Single-char markers ('a','b') can appear spuriously; only
+  # assert absence for distinctive markers.
+  if len(marker) > 1:
+    assert marker not in r.text
+
+
+def test_predict_413_leaves_access_and_audit_entries(
+    monkeypatch, caplog):
+  '''_check_caps 413 writes access log AND audit entry.'''
+  import json
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app)
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+        '/predict', json={'records': [{'a': 1.0}] * 10001},
+        headers={'X-API-Key': key})
+  assert r.status_code == 413
+  assert 'predict_access' in caplog.text
+  assert 'outcome=payload_too_large' in caplog.text
+  audit = app.state.audit_log
+  assert audit
+  entry = audit[-1]
+  assert entry['event'] == 'predict'
+  assert entry['actor'] == 'serving'
+  assert entry['details']['outcome'] == 'payload_too_large'
+  assert entry['details']['records'] == 10001
+  assert 'latency_ms' in entry['details']
+  assert 'key_id_hmac' in entry['details']
+  blob = json.dumps(entry)
+  assert key not in blob
+  assert key not in caplog.text
+
+
+def test_middleware_body_413_leaves_access_and_audit_entries(
+    monkeypatch, caplog):
+  '''Streaming body-cap 413 writes access log AND audit entry.'''
+  import json
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app)
+  body = '{"features": {"a": 1.0}, "pad": "' + ('x' * (11 * 1024 * 1024)) + '"}'
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+        '/predict', content=body,
+        headers={'Content-Type': 'application/json',
+                 'X-API-Key': key,
+                 'Content-Length': str(len(body))})
+  assert r.status_code == 413
+  assert 'predict_access' in caplog.text
+  assert 'outcome=payload_too_large' in caplog.text
+  audit = app.state.audit_log
+  assert audit
+  entry = audit[-1]
+  assert entry['event'] == 'predict'
+  assert entry['actor'] == 'serving'
+  assert entry['details']['outcome'] == 'payload_too_large'
+  assert key not in json.dumps(entry)
+
+
+def test_predict_success_writes_audit_entry_no_raw_key(
+    monkeypatch):
+  '''Successful /predict persists an audit entry without raw key.'''
+  import json
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app)
+  r = client.post(
+      '/predict', json={'features': {'a': 1.0}},
+      headers={'X-API-Key': key})
+  assert r.status_code == 200
+  audit = app.state.audit_log
+  assert audit
+  entry = audit[-1]
+  assert entry['details']['outcome'] == 'success'
+  assert entry['details']['records'] == 1
+  assert key not in json.dumps(audit)
+
+
+def test_hmac_key_id_differs_per_key_and_hides_raw(monkeypatch):
+  '''HMAC key-id differs per key and never equals the raw key.'''
+  from forecast_ml_framework.serving.app import _hmac_key_id
+  monkeypatch.setenv('FORECAST_API_KEY', 'server-secret-1234567890')
+  first = _hmac_key_id('client-key-aaaaaaaa')
+  second = _hmac_key_id('client-key-bbbbbbbb')
+  assert first != second
+  assert first != 'client-key-aaaaaaaa'
+  assert 'client-key' not in first
+  assert _hmac_key_id('') == 'anonymous'
+
+
+# --- N1 S3-R2 RED: schema 422 repudiation ---
+def test_predict_schema_422_leaves_access_and_audit_entries(
+    monkeypatch, caplog):
+  '''Schema-invalid body (pydantic 422) leaves access+audit entries.
+
+  Fails if middleware does not log FastAPI/pydantic schema 422s —
+  repudiation must cover malformed-schema attempts that never
+  reach the endpoint.
+  '''
+  import json
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app)
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+        '/predict', json={'features': 123},
+        headers={'X-API-Key': key})
+  assert r.status_code == 422
+  assert 'predict_access' in caplog.text
+  assert 'outcome=validation_error' in caplog.text
+  audit = app.state.audit_log
+  assert audit
+  entry = audit[-1]
+  assert entry['event'] == 'predict'
+  assert entry['actor'] == 'serving'
+  assert entry['details']['outcome'] == 'validation_error'
+  assert key not in json.dumps(entry)
+  assert key not in caplog.text
+
+
+# --- C4-R1 RED: per-request scope marker dedup ---
+
+
+def test_middleware_schema_422_logged_despite_concurrent_growth(
+    monkeypatch, caplog):
+  '''Concurrent growth must not mask a schema-422 log.
+
+  Simulates a concurrent success appending to the audit
+  list between the middleware snapshot and its 422 check
+  (list growth without endpoint logging). The schema 422
+  must still leave exactly one access + one audit entry.
+  Fails under length-based dedup (lost log); passes with
+  the scope-marker check.
+  '''
+  import asyncio
+  import logging
+  from forecast_ml_framework.serving.app import (
+    _CapAuthHeadersMiddleware,
+  )
+  monkeypatch.delenv('FORECAST_API_KEY', raising=False)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  audit = []
+
+  async def downstream(scope, receive, send):
+    # Concurrent success grows the list during downstream.
+    audit.append({
+      'event': 'predict', 'actor': 'serving',
+      'details': {'outcome': 'success',
+                  'key_id_hmac': 'concurrent',
+                  'latency_ms': 1.0, 'records': 1},
+      'timestamp': '2026-01-01T00:00:00+00:00'})
+    await send({'type': 'http.response.start',
+                'status': 422, 'headers': []})
+    await send({'type': 'http.response.body',
+                'body': b'{"detail": "validation failed"}'})
+
+  middleware = _CapAuthHeadersMiddleware(
+    downstream, rate_limit_per_minute=600, audit_log=audit)
+  scope = {'type': 'http', 'path': '/predict',
+           'method': 'POST', 'headers': [], 'scheme': 'http'}
+
+  async def receive():
+    return {'type': 'http.request', 'body': b'{}',
+            'more_body': False}
+
+  sent = []
+
+  async def send(message):
+    sent.append(message)
+
+  with caplog.at_level(logging.INFO):
+    asyncio.run(middleware(scope, receive, send))
+  assert sent[0]['status'] == 422
+  accesses = [r for r in caplog.records
+              if 'predict_access' in r.getMessage()]
+  assert len(accesses) == 1
+  validation = [e for e in audit
+                if e['details']['outcome'] == 'validation_error']
+  assert len(validation) == 1
+  assert len(audit) == 2
+
+
+def test_saturated_audit_endpoint_422_single_access_and_audit(
+    monkeypatch, caplog):
+  '''Saturated audit list: endpoint 422 logs exactly once.
+
+  With the list at MAX_AUDIT_ENTRIES (append+trim leaves
+  len unchanged) length-based dedup double-logs. Exactly
+  one access log and one validation_error audit entry
+  must remain; the list stays capped.
+  '''
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import (
+    MAX_AUDIT_ENTRIES,
+    create_app,
+  )
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  audit = app.state.audit_log
+  for _ in range(MAX_AUDIT_ENTRIES):
+    audit.append({
+      'event': 'predict', 'actor': 'serving',
+      'details': {'outcome': 'seed', 'key_id_hmac': 'seed',
+                  'latency_ms': 0.0, 'records': 0},
+      'timestamp': '2026-01-01T00:00:00+00:00'})
+  assert len(audit) == MAX_AUDIT_ENTRIES
+  client = TestClient(app)
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+      '/predict', json={'features': {'a': 'not-a-number'}},
+      headers={'X-API-Key': key})
+  assert r.status_code == 422
+  accesses = [row for row in caplog.records
+              if 'predict_access' in row.getMessage()]
+  assert len(accesses) == 1
+  validation = [e for e in audit
+                if e['details']['outcome'] == 'validation_error']
+  assert len(validation) == 1
+  assert len(audit) == MAX_AUDIT_ENTRIES
+
+
+def test_audit_failure_middleware_does_not_double_log(
+    monkeypatch, caplog):
+  '''Audit failure: endpoint 422 leaves single access log.
+
+  When audit persistence raises, the list does not grow;
+  length-based dedup lets the middleware log a second
+  access. Exactly one access log must remain and no
+  audit entry is persisted.
+  '''
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+
+  def failing_audit_log(*args, **kwargs):
+    raise RuntimeError('audit sink down')
+
+  monkeypatch.setattr(
+    'forecast_ml_framework.governance.audit_log',
+    failing_audit_log)
+  app = create_app(dummy_loader)
+  client = TestClient(app)
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+      '/predict', json={'features': {'a': 'not-a-number'}},
+      headers={'X-API-Key': key})
+  assert r.status_code == 422
+  accesses = [row for row in caplog.records
+              if 'predict_access' in row.getMessage()]
+  assert len(accesses) == 1
+  assert app.state.audit_log == []

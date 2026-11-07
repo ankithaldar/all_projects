@@ -509,7 +509,12 @@ def test_infra_readmes_100m_sizing():
 
 
 def test_infra_aws_emr_validation_and_docs():
-  '''AWS: EMR subnet validation + role pre-existence documented.'''
+  '''AWS: EMR subnet validation + scoped role ARN (MLops-8).
+
+  The shared default role string must NOT appear in main.tf;
+  the service role is var.emr_service_role_arn, required
+  when EMR is enabled.
+  '''
   vars_tf = (_root() / 'infra' / 'aws' / 'variables.tf').read_text()
   main_tf = (_root() / 'infra' / 'aws' / 'main.tf').read_text()
   assert 'validation' in vars_tf
@@ -518,7 +523,11 @@ def test_infra_aws_emr_validation_and_docs():
   # validation block requires subnet when enable_emr
   idx = vars_tf.find('validation')
   assert idx >= 0
-  assert 'EMR_DefaultRole' in main_tf
+  # MLops-8: no shared/bare default role; scoped ARN instead.
+  assert 'EMR_DefaultRole' not in main_tf
+  assert 'var.emr_service_role_arn' in main_tf
+  assert 'emr_service_role_arn' in vars_tf
+  assert 'must be set when enable_emr' in vars_tf
   readme = (_root() / 'infra' / 'aws' / 'README.md').read_text()
   assert 'EMR_DefaultRole' in readme
   assert 'pre-exist' in readme.lower() or 'pre-exists' in readme.lower()

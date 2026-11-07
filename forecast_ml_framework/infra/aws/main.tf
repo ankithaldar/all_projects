@@ -11,7 +11,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = "~> 5.0"
     }
   }
 }
@@ -21,7 +21,10 @@ provider "aws" {
 }
 
 locals {
-  athena_results_bucket = var.athena_results_bucket == "" ? var.artifacts_bucket : var.athena_results_bucket
+  # Dedicated Athena results bucket (MLops-15): query results land
+  # in their own bucket with its own lifecycle/encryption boundary,
+  # never mixed into the artifacts bucket.
+  athena_results_bucket = aws_s3_bucket.athena_results.id
 }
 
 # --- Artifacts bucket ---------------------------------------------------------
@@ -46,7 +49,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      # CMEK (F-12): customer-managed KMS key when var.kms_key_id
+      # is set; AES256 otherwise (dev default -- production must
+      # set kms_key_id, see variables.tf).
+      sse_algorithm     = var.kms_key_id != "" ? "aws:kms" : "AES256"
+      kms_master_key_id = var.kms_key_id != "" ? var.kms_key_id : null
     }
   }
 }
@@ -57,6 +64,113 @@ resource "aws_s3_bucket_public_access_block" "artifacts" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Deny-public hardening (F-12): explicit bucket policy denying
+# non-TLS access. Combined with the public-access block above, no
+# anonymous/public principal can read or write this bucket.
+resource "aws_s3_bucket_policy" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.artifacts.arn,
+          "${aws_s3_bucket.artifacts.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Bucket lifecycle (MLops-14): without these rules old object
+# versions and abandoned multipart uploads are billed forever.
+resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# --- Athena results bucket (dedicated, MLops-15) ------------------------------
+# Query results get their own encryption/lifecycle boundary instead
+# of sharing the artifacts bucket.
+
+resource "aws_s3_bucket" "athena_results" {
+  bucket = var.athena_results_bucket
+  tags   = var.tags
+}
+
+resource "aws_s3_bucket_versioning" "athena_results" {
+  bucket = aws_s3_bucket.athena_results.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "athena_results" {
+  bucket = aws_s3_bucket.athena_results.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = var.kms_key_id != "" ? "aws:kms" : "AES256"
+      kms_master_key_id = var.kms_key_id != "" ? var.kms_key_id : null
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "athena_results" {
+  bucket                  = aws_s3_bucket.athena_results.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "athena_results" {
+  bucket = aws_s3_bucket.athena_results.id
+
+  rule {
+    id     = "expire-results"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 90
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 # --- Athena database ----------------------------------------------------------
@@ -70,29 +184,44 @@ resource "aws_athena_database" "forecast" {
 # --- EMR cluster stub (disabled by default) -----------------------------------
 # count = var.enable_emr ? 1 : 0, and var.enable_emr defaults to false,
 # so nothing is created (and nothing is billed) until explicitly enabled.
-# To enable: set enable_emr = true and emr_subnet_id to a subnet in
-# var.aws_region. This is a stub for config parity with the GCP Dataproc
-# cluster — it is not a tuned production EMR setup.
-# NOTE: service_role "EMR_DefaultRole" must PRE-EXIST in the AWS account
-# (the default EMR service-linked role, created automatically on first
-# EMR use or by AWS). This stack does NOT create the IAM role; if it does
-# not exist, cluster creation fails. See infra/aws/README.md. A subnet
-# is required when enable_emr is true (enforced by the validation block
-# on var.emr_subnet_id).
+# To enable: set enable_emr = true, emr_subnet_id to a subnet in
+# var.aws_region, and emr_service_role_arn to the ARN of a scoped
+# IAM role for this cluster. This is a stub for config parity with
+# the GCP Dataproc cluster — it is not a tuned production EMR setup.
+# NOTE (MLops-8, Antisec F-07): service_role must be a role ARN,
+# never a bare role name -- the AWS provider rejects bare names at
+# apply. This stack neither creates nor looks up any default/shared
+# role: the operator supplies a least-privilege role for this
+# cluster via var.emr_service_role_arn (required when enabled,
+# enforced by its validation block). See infra/aws/README.md.
 
 resource "aws_emr_cluster" "stub" {
   count         = var.enable_emr ? 1 : 0
   name          = "forecast-ml-emr-stub"
   release_label = var.emr_release_label
   applications  = ["Spark"]
-  service_role  = "EMR_DefaultRole"
+  service_role  = var.emr_service_role_arn
 
   ec2_attributes {
-    subnet_id = var.emr_subnet_id
+    subnet_id        = var.emr_subnet_id
+    instance_profile = var.emr_ec2_instance_profile_arn
   }
 
-  master_instance_type = var.emr_master_instance_type
-  instance_count       = 1
+  # aws provider ~> 5.0 schema: legacy master_instance_type /
+  # instance_count arguments were removed -- instance groups are
+  # required. Master-only stub (parity with the old
+  # instance_count = 1): one master, zero core workers. To run
+  # real Spark work, raise the core count (or uncomment the
+  # autoscaling stub below) -- that is billed per instance-hour.
+  master_instance_group {
+    instance_type  = var.emr_master_instance_type
+    instance_count = 1
+  }
+
+  core_instance_group {
+    instance_type  = var.emr_master_instance_type
+    instance_count = 0
+  }
 
   log_uri = "s3://${aws_s3_bucket.artifacts.id}/emr-logs/"
 

@@ -12,6 +12,10 @@ usable age are conservatively kept.
 
 from datetime import datetime, timezone
 
+from forecast_ml_framework.core.params import (
+  parse_datetime as _canonical_parse_datetime,
+)
+
 _DATE_KEYS = ('created_at', 'timestamp', 'created', 'date',
               'mtime', 'modified_at', 'updated_at')
 
@@ -59,13 +63,16 @@ def _resolve_now(now, clock):
 
 
 def _parse_datetime(value):
-  '''Parse an ISO-8601 string (or epoch float) to datetime.'''
+  '''Parse an ISO-8601 string (or epoch number) to datetime.
+
+  Epoch numbers use ``fromtimestamp`` (UTC); every other value
+  delegates to :func:`core.params.parse_datetime`, which
+  normalises naive datetimes to UTC. Retention keeps the
+  epoch branch because canonical parsing rejects numbers.
+  '''
   if isinstance(value, (int, float)):
     return datetime.fromtimestamp(value, tz=timezone.utc)
-  text = str(value).strip()
-  if text.endswith('Z'):
-    text = text[:-1] + '+00:00'
-  return datetime.fromisoformat(text)
+  return _canonical_parse_datetime(value)
 
 
 def _align(reference, stamp):

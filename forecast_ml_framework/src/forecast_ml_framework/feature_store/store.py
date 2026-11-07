@@ -5,6 +5,9 @@
 # pylint: disable=import-outside-toplevel, broad-exception-caught
 
 import abc
+import logging
+
+LOG = logging.getLogger(__name__)
 
 ENTITY_COL = 'entity_id'
 TIMESTAMP_COLS = ('as_of', 'event_timestamp', 'timestamp',
@@ -129,7 +132,9 @@ def _snapshot_timestamp(key):
       continue
   try:
     return _strip_tz(_to_timestamp(stem))
-  except Exception:
+  except (TypeError, ValueError, OverflowError) as exc:
+    LOG.debug('feature_store: unparseable snapshot key %r: %s',
+              key, exc)
     return None
 
 
@@ -177,6 +182,59 @@ def _check_not_empty(dataframe):
         'feature store is empty')
 
 
+def _native_value(value):
+  '''Convert numpy scalars/arrays to plain Python values.
+
+  Args:
+    value: Feature value (scalar, list/tuple, dict, or a
+      numpy scalar/array).
+
+  Returns:
+    Equivalent plain Python value (``int``/``float``/
+    ``bool``/``str``/list/dict) suitable for ``json``.
+    Non-numpy values pass through unchanged.
+
+  Raises:
+    TypeError: When a numpy array cannot be converted to
+      a plain list (defensive; ``tolist`` is the fallback).
+  '''
+  import numpy as np
+  if isinstance(value, np.bool_):
+    return bool(value)
+  if isinstance(value, np.integer):
+    return int(value)
+  if isinstance(value, np.floating):
+    return float(value)
+  if isinstance(value, np.ndarray):
+    try:
+      return value.tolist()
+    except (TypeError, ValueError) as exc:
+      raise TypeError(
+          f'cannot convert numpy array {value!r} to a plain'
+          f' list: {exc}') from exc
+  if isinstance(value, dict):
+    return {key: _native_value(item)
+            for key, item in value.items()}
+  if isinstance(value, (list, tuple)):
+    return [_native_value(item) for item in value]
+  return value
+
+
+def _native_features(features):
+  '''Return ``features`` with every value made JSON-native.
+
+  Args:
+    features: Mapping of feature name to value.
+
+  Returns:
+    Dict with the same keys and plain-Python values (see
+    :func:`_native_value`), so Redis JSON round-trips
+    numpy inputs instead of silently dropping them.
+  '''
+  return {key: _native_value(item)
+          for key, item in dict(features).items()}
+
+
 def _prepare_materialize_frame(dataframe, as_of=None,
                                feature_names=None, entity_col=None,
                                timestamp_col=None, label=''):
@@ -218,15 +276,32 @@ def _prepare_materialize_frame(dataframe, as_of=None,
   return frame
 
 
-def _as_dict(store, entity_ids, feature_names, when):
+def _as_dict(store, entity_ids, feature_names, when,
+             strict_pit=False):
   '''Read features from ``store`` as ``{entity: {feature: value}}``.
 
   Handles both store shapes: a dict return is copied with
   stringified keys; a DataFrame return is row-mapped on
   ``entity_id``. This is the single implementation behind
   :func:`_offline_as_dict` and :func:`_online_as_dict`.
+
+  Args:
+    store: Store with a ``get_features`` method.
+    entity_ids: Entity ids to read.
+    feature_names: Feature names to read.
+    when: Point-in-time cutoff passed as ``as_of``.
+    strict_pit: Forwarded to ``get_features`` when True.
+
+  Returns:
+    Dict mapping stringified entity id to feature dict.
+    Frame-mapping failures are logged and yield an empty
+    dict (never a silent pass).
   '''
-  out = store.get_features(entity_ids, feature_names, as_of=when)
+  if strict_pit:
+    out = store.get_features(entity_ids, feature_names,
+                             as_of=when, strict_pit=True)
+  else:
+    out = store.get_features(entity_ids, feature_names, as_of=when)
   if isinstance(out, dict):
     return {str(k): dict(v) for k, v in out.items()}
   result = {}
@@ -236,23 +311,30 @@ def _as_dict(store, entity_ids, feature_names, when):
       for _, row in out.iterrows():
         result[str(row[ENTITY_COL])] = {
             name: row[name] for name in feature_names}
-  except Exception:
-    pass
+  except (TypeError, ValueError, KeyError, AttributeError,
+          ImportError) as exc:
+    LOG.warning('feature_store: consistency frame mapping failed:'
+                ' %s; returning empty comparison', exc)
   return result
 
 
-def _offline_as_dict(offline, entity_ids, feature_names, when):
+def _offline_as_dict(offline, entity_ids, feature_names, when,
+                     strict_pit=False):
   '''Read offline features as ``{entity: {feature: value}}``.'''
-  return _as_dict(offline, entity_ids, feature_names, when)
+  return _as_dict(offline, entity_ids, feature_names, when,
+                  strict_pit=strict_pit)
 
 
-def _online_as_dict(online, entity_ids, feature_names, when):
+def _online_as_dict(online, entity_ids, feature_names, when,
+                    strict_pit=False):
   '''Read online features as ``{entity: {feature: value}}``.'''
-  return _as_dict(online, entity_ids, feature_names, when)
+  return _as_dict(online, entity_ids, feature_names, when,
+                  strict_pit=strict_pit)
 
 
 def check_consistency(offline, online, entity_ids, feature_names,
-                      as_of=None, request_time=None):
+                      as_of=None, request_time=None,
+                      strict_pit=False):
   '''Compare offline vs online values for sample entities.
 
   Args:
@@ -262,14 +344,26 @@ def check_consistency(offline, online, entity_ids, feature_names,
     feature_names: Feature names to compare.
     as_of: Point-in-time cutoff.
     request_time: Point-in-time cutoff (wins over ``as_of``).
+    strict_pit: When True, require a cutoff (raise without
+      one) and forward strict mode to both stores.
 
   Returns:
     Dict with ``max_abs_diff`` (float), ``n_compared`` (int), and
     ``diffs`` mapping ``entity:feature`` to absolute differences.
+
+  Raises:
+    ValueError: When ``strict_pit`` is True and no cutoff
+      is given.
   '''
   when = _resolve_time(as_of=as_of, request_time=request_time)
-  off = _offline_as_dict(offline, entity_ids, feature_names, when)
-  on = _online_as_dict(online, entity_ids, feature_names, when)
+  if strict_pit and when is None:
+    raise ValueError(
+        'check_consistency with strict_pit=True requires'
+        ' as_of/request_time cutoff')
+  off = _offline_as_dict(offline, entity_ids, feature_names, when,
+                         strict_pit=strict_pit)
+  on = _online_as_dict(online, entity_ids, feature_names, when,
+                       strict_pit=strict_pit)
   diffs = {}
   for entity in entity_ids:
     entity = str(entity)
@@ -321,19 +415,22 @@ class FeatureStore(abc.ABC):
 
   @abc.abstractmethod
   def get_features(self, entity_ids, feature_names=None, as_of=None,
-                   request_time=None):
+                   request_time=None, strict_pit=None):
     '''Serve features for ``entity_ids`` at a point in time.
 
     Without a cutoff (both ``as_of``/``request_time`` None)
     implementations return the latest available features and
     warn; callers must pass a cutoff for point-in-time-correct
-    (training) use to avoid future leakage.
+    (training) use to avoid future leakage. With
+    ``strict_pit=True`` (or a store constructed with it) a
+    missing cutoff raises ``ValueError`` instead.
 
     Args:
       entity_ids: Entity ids to look up.
       feature_names: Feature names to return (all when None).
       as_of: Point-in-time cutoff.
       request_time: Point-in-time cutoff (wins over ``as_of``).
+      strict_pit: When True, raise without a cutoff.
 
     Returns:
       Served features (DataFrame offline, dict online).

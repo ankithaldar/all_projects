@@ -249,3 +249,102 @@ def test_non_dict_report_raises_value_error():
   '''Non-dict monitoring reports raise an informative ValueError.'''
   with pytest.raises(ValueError, match='monitoring_report must be'):
     should_retrain('bad', _clean_last_train(), _params())
+
+
+# --- W9 cycle-1 fixes (RED) ---
+
+def test_default_schedule_is_seven_days():
+  '''Default schedule_days aligns to conf (7, not 30).'''
+  info = _clean_last_train()
+  info['last_train_at'] = datetime(
+    2026, 10, 29, tzinfo=timezone.utc)
+  out = should_retrain(_clean_report(), info, {'now': NOW})
+  assert out['retrain'] is True
+  assert any('schedule' in r for r in out['reasons'])
+
+
+def test_default_drift_fraction_single_alert_does_not_fire():
+  '''Default 0.2 fraction: one bare alert count does not fire.'''
+  report = _clean_report()
+  report['drift_alerts'] = 1
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is False
+
+
+def test_drift_fraction_of_features_fires_at_threshold():
+  '''1 alert among 5 features is fraction 0.2 and fires.'''
+  report = _clean_report()
+  report['drift_alerts'] = 1
+  report['features'] = {f'f{i}': {} for i in range(5)}
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is True
+  assert any('drift' in r for r in out['reasons'])
+
+
+def test_drift_fraction_below_threshold_does_not_fire():
+  '''1 alert among 10 features is fraction 0.1 and does not fire.'''
+  report = _clean_report()
+  report['drift_alerts'] = 1
+  report['features'] = {f'f{i}': {} for i in range(10)}
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is False
+
+
+def test_drift_value_threshold_fires():
+  '''A drift value at/above the 0.2 threshold fires.'''
+  report = _clean_report()
+  report['drift_value'] = 0.3
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is True
+  assert any('drift' in r for r in out['reasons'])
+
+
+def test_drift_count_semantics_preserved_for_threshold_ge_one():
+  '''Explicit count thresholds (>=1) keep count semantics.'''
+  report = _clean_report()
+  report['drift_alerts'] = 1
+  out = should_retrain(report, _clean_last_train(), _params())
+  assert out['retrain'] is False
+  report['drift_alerts'] = 2
+  out = should_retrain(report, _clean_last_train(), _params())
+  assert out['retrain'] is True
+
+
+def test_drift_value_from_features_psi_fires():
+  '''Max PSI across features fires under fraction threshold.'''
+  report = _clean_report()
+  report['features'] = {'a': {'psi': 0.3}, 'b': {'psi': 0.05}}
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is True
+  assert any('drift_value' in r for r in out['reasons'])
+
+
+def test_drift_fraction_explicit_denominator_fires():
+  '''Explicit n_features denominator drives the fraction.'''
+  report = _clean_report()
+  report['drift_alerts'] = 2
+  report['n_features'] = 10
+  out = should_retrain(report, _clean_last_train(), {'now': NOW})
+  assert out['retrain'] is True
+  assert any('drift_alert_fraction' in r for r in out['reasons'])
+
+
+def test_retraining_nodes_use_canonical_parse_helpers():
+  '''Retraining nodes use canonical get_first/parse_datetime.
+
+  Fails if retraining nodes redefine _get/_parse_datetime copies
+  instead of importing get_first/parse_datetime from core.params,
+  or if naive datetimes stop being treated as UTC.
+  '''
+  import forecast_ml_framework.pipelines.retraining.nodes as nodes
+  assert not hasattr(nodes, '_get')
+  assert not hasattr(nodes, '_parse_datetime')
+  # Naive now/last-train pair: schedule trigger must compare
+  # both sides as UTC without raising on tz mismatch.
+  params = _params(now=datetime(2026, 12, 5),
+                   schedule_days=30)
+  info = {'last_train_at': datetime(2026, 11, 1),
+          'last_train_rows': 1000}
+  out = should_retrain(_clean_report(), info, params)
+  assert out['retrain'] is True
+  assert any('schedule_elapsed' in r for r in out['reasons'])

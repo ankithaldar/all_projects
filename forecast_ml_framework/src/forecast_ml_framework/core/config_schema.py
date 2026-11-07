@@ -33,19 +33,63 @@ _oc_blocked_registry = None
 
 
 class _Allow(BaseModel):
-  '''Base model allowing unknown keys.
+  '''Base model allowing unknown keys inside a section.
 
-  ``extra='allow'`` is deliberate forward-compatibility: shipped
-  conf gains new keys (e.g. a new bucket in
-  ``conf/base/parameters/``) without breaking older schemas.
-  Known sections are typed fields on ``ParametersConfig`` (not
-  extras), so a typo in a known top-level section name is
-  caught by the round-trip test asserting every shipped key
-  lands in a typed field; unknown keys inside a section are
-  preserved rather than silently dropped.
+  Submodels keep ``extra='allow'`` so named extension
+  subkeys inside a typed section are preserved rather than
+  silently dropped. The top-level ``ParametersConfig``
+  overrides this to ``extra='forbid'`` (V4/F12): an unknown
+  top-level section name is a typo and must fail
+  validation, surfaced by ``validate-config`` as exit 2.
   '''
 
   model_config = ConfigDict(extra='allow')
+
+
+class RuntimeParams(_Allow):
+  '''Flat runtime keys interpolated from the catalog.
+
+  Every ``${params:<key>}`` in ``conf/base/catalog.yml``
+  resolves to one of these top-level fields (V5). Defaults
+  match ``conf/base/parameters/global.yml``.
+
+  Attributes:
+    score_model_id: Model id stub.
+    output_gcs_location: Artifact root.
+    model_id_prefix: Artifact name prefix.
+    suffix: Version suffix.
+    data_project: Staging project.
+    db_staging_data: Staging dataset.
+    etl_project: ETL project.
+    etl_dataset: ETL dataset.
+    etl_table: ETL table.
+    external_project: External platform project.
+    tmp_bucket: Temporary bucket.
+    artifacts_bucket: Artifacts bucket name (gcp/aws catalog).
+    is_external_platform: External platform flag.
+    run_date: Run date (mirrors global_params.run_date).
+    train_run_dt: Training run date.
+    score_run_dt: Scoring run date.
+    brand: Brand string.
+  '''
+
+  score_model_id: str = 'demo_model_v1'
+  output_gcs_location: str = 'artifacts'
+  model_id_prefix: str = 'demo_model_v1'
+  suffix: str = 'v1'
+  data_project: str = ''
+  db_staging_data: str = ''
+  etl_project: str = ''
+  etl_dataset: str = ''
+  etl_table: str = ''
+  external_project: str = ''
+  tmp_bucket: str = ''
+  artifacts_bucket: str = 'forecast-ml-artifacts'
+  is_external_platform: bool = False
+  run_date: str = '2026-11-06'
+  train_run_dt: str = '2026-11-06'
+  score_run_dt: str = '2026-11-06'
+  brand: str = ''
 
 
 class VariablesConfig(_Allow):
@@ -99,6 +143,7 @@ class GlobalParams(_Allow):
   random_state: int = 42
   target_col: str = 'target'
   key_cols_list: List[str] = Field(default_factory=list)
+  run_date: str = '2026-11-06'
 
 
 class DataParams(_Allow):
@@ -348,13 +393,26 @@ class InfraParams(_Allow):
 
 
 class MonitoringParams(_Allow):
-  '''Monitoring / drift parameters (Phase 3).'''
+  '''Monitoring / drift parameters (Phase 3).
+
+  ``thresholds`` carries the per-metric warning/critical
+  tiers (V6/W9), mirroring the monitoring nodes defaults
+  so drift vs performance alerting is config-driven.
+  '''
 
   psi_threshold: float = 0.1
   ks_threshold: float = 0.05
   bins: int = 10
   alert_severities: List[str] = Field(
     default_factory=lambda: ['warn', 'critical'])
+  epsilon: float = 1e-4
+  min_rows: int = 10
+  baseline_metrics: Dict[str, Any] = Field(default_factory=dict)
+  thresholds: Dict[str, Any] = Field(default_factory=lambda: {
+    'psi': {'warning': 0.1, 'critical': 0.25},
+    'ks': {'warning': 0.05, 'critical': 0.25},
+    'missing_rate_delta': {'warning': 0.05, 'critical': 0.1},
+  })
 
 
 class RetrainingParams(_Allow):
@@ -419,6 +477,46 @@ class CostParams(_Allow):
     return data
 
 
+class CostTrackingParams(CostParams):
+  '''Cost tracking parameters (V1).
+
+  Same canonical keys/defaults as :class:`CostParams`:
+  ``cost_tracking_params`` is the bucket wired by
+  ``pipelines.cost_tracking``; ``cost_params`` is kept as
+  a compat alias with identical defaults.
+  '''
+
+
+class InterpretabilityParams(_Allow):
+  '''Interpretability parameters (V2).
+
+  Field-for-field with the keys consumed by
+  ``pipelines.interpretability.nodes`` and shipped in
+  ``conf/base/parameters/platform.yml``.
+
+  Attributes:
+    max_rows: Cap on per-row explanations.
+    top_k: Features kept per row / global lists.
+    n_repeats: Permutation repeats.
+    random_state: Random seed.
+    n_grid: PDP grid size.
+    pdp_features: Features for PDP (empty = all).
+    n_calibration_bins: Calibration bins.
+    segment_col: Segment column, if any.
+    scorer: Sklearn scorer, if any.
+  '''
+
+  max_rows: int = 20
+  top_k: int = 10
+  n_repeats: int = 5
+  random_state: int = 42
+  n_grid: int = 20
+  pdp_features: List[str] = Field(default_factory=list)
+  n_calibration_bins: int = 10
+  segment_col: Optional[str] = None
+  scorer: Optional[str] = None
+
+
 class GovernanceParams(_Allow):
   '''Governance / audit parameters (Phase 3).'''
 
@@ -426,14 +524,21 @@ class GovernanceParams(_Allow):
   audit_actor_required: bool = True
 
 
-class ParametersConfig(_Allow):
+class ParametersConfig(RuntimeParams):
   '''Parameters (parameters.yml) contract.
 
-  Every shipped top-level section is a nested model with
-  sensible defaults; unknown sections/keys pass through
-  via ``extra='allow'`` (see ``_Allow``) so shipped conf
-  always validates and round-trips.
+  Every shipped top-level section is a typed field
+  (nested model, flat :class:`RuntimeParams` keys, or a
+  plain list/dict) with sensible defaults. Unknown
+  top-level keys are forbidden (``extra='forbid'``,
+  V4/F12) so a typo'd section like ``cost_tracking_param``
+  fails validation and ``validate-config`` exits 2 rather
+  than passing silently to a Kedro KeyError at runtime.
+  Extension subkeys *inside* a named section remain
+  allowed (submodels inherit ``_Allow``).
   '''
+
+  model_config = ConfigDict(extra='forbid')
 
   global_params: GlobalParams = Field(
     default_factory=GlobalParams)
@@ -487,6 +592,10 @@ class ParametersConfig(_Allow):
     default_factory=FeatureStoreParams)
   ab_params: AbParams = Field(default_factory=AbParams)
   cost_params: CostParams = Field(default_factory=CostParams)
+  cost_tracking_params: CostTrackingParams = Field(
+    default_factory=CostTrackingParams)
+  interpretability_params: InterpretabilityParams = Field(
+    default_factory=InterpretabilityParams)
   governance_params: GovernanceParams = Field(
     default_factory=GovernanceParams)
 

@@ -30,6 +30,7 @@ import pandas as pd
 
 from forecast_ml_framework.core import spark_factory
 from forecast_ml_framework.core.config_loader import ConfigLoader
+from forecast_ml_framework.core.handle import resolve_handle_strict
 
 LOG = logging.getLogger(__name__)
 
@@ -85,23 +86,118 @@ def _iter_steps(prep_params):
       yield name, bool(cfg.get('skip', False)), cfg.get('args', {}) or {}
 
 
-# Imported after _resolve_ohe_max_cols/_resolve_cols/_iter_steps
-# so that fitted.py, which imports those helpers, can load while
-# this module is still initializing (scoring -> fitted ->
-# data_prep.nodes).
-from forecast_ml_framework.pipelines.scoring.nodes import (  # noqa: E402
-  _resolve_handle_strict as _resolve_handle_strict,
-)
+def _resolve_smoothing(args):
+  '''Resolve target-encoding smoothing strength ``m``.
+
+  Args:
+    args: TargetEncoding step args dict.
+
+  Returns:
+    Float ``m >= 0``; missing/None means 0.0 (unsmoothed
+    raw category mean). The shipped config passes
+    ``smoothing: 10`` explicitly, so pipeline runs smooth
+    while direct callers without the key keep raw means.
+
+  Raises:
+    ValueError: If ``smoothing`` is not a finite,
+      non-negative number.
+  '''
+  args = args or {}
+  raw = args.get('smoothing')
+  if raw is None:
+    return 0.0
+  if isinstance(raw, (bool, np.bool_)):
+    raise ValueError(
+      'Invalid smoothing for TargetEncoding: %r' % (raw,))
+  try:
+    value = float(raw)
+  except (TypeError, ValueError) as exc:
+    raise ValueError(
+      'Invalid smoothing for TargetEncoding: %r' % (raw,)) from exc
+  if not np.isfinite(value) or value < 0.0:
+    raise ValueError(
+      'Invalid smoothing for TargetEncoding: %r' % (raw,))
+  return value
+
+
+def _oof_encode_series(cats, targets, smoothing):
+  '''Compute leave-one-out OOF target encodings for one column.
+
+  Each row's encoding is computed from the other rows only
+  (its own label never contributes, ML-3), smoothed as
+  ``(n_oof * mean_oof + m * global_oof) / (n_oof + m)``
+  where ``global_oof`` is the target mean of the other
+  rows. A category seen only in this row (``n_oof == 0``)
+  falls back to ``global_oof`` (never its own label and
+  never NaN from an unseen category). Leave-one-out is
+  the deterministic ``n``-fold OOF scheme: no shuffle or
+  seed is needed and single-row categories are always
+  leak-free. Degenerate ``n == 1`` frame: there are no
+  other rows, so the encoding is the global prior 0.0
+  (ML R3), never the row's own label.
+
+  Args:
+    cats: Category values, one per row.
+    targets: Numeric target values, one per row.
+    smoothing: Float ``m >= 0`` (0 = raw OOF mean).
+
+  Returns:
+    Float numpy array of OOF encodings, aligned to rows.
+  '''
+  y = np.asarray(targets, dtype=float)
+  n = len(y)
+  if n == 0:
+    return np.asarray([], dtype=float)
+  codes = np.asarray(pd.factorize(pd.Series(list(cats)))[0])
+  n_codes = int(codes.max()) + 1 if n and codes.max() >= 0 else 0
+  counts = np.zeros(n_codes, dtype=float)
+  sums = np.zeros(n_codes, dtype=float)
+  finite = ~np.isnan(y)
+  total_n = float(finite.sum())
+  total = float(y[finite].sum()) if total_n else 0.0
+  for code, val in zip(codes, y):
+    if code >= 0 and not np.isnan(val):
+      counts[code] += 1.0
+      sums[code] += float(val)
+  out = np.empty(n, dtype=float)
+  m = float(smoothing)
+  for i, (code, val) in enumerate(zip(codes, y)):
+    if total_n == 0.0:
+      out[i] = 0.0
+      continue
+    if np.isnan(val):
+      global_oof = total / total_n
+    elif total_n > 1.0:
+      global_oof = (total - float(val)) / (total_n - 1.0)
+    else:
+      # n == 1: no other rows exist, so the leak-free
+      # global fallback is the 0.0 prior (ML R3), not the
+      # row's own label.
+      global_oof = 0.0
+    if code < 0:
+      out[i] = global_oof
+      continue
+    n_oof = counts[code] - (0.0 if np.isnan(val) else 1.0)
+    sum_oof = sums[code] - (0.0 if np.isnan(val) else float(val))
+    if n_oof <= 0.0:
+      out[i] = global_oof
+    elif m == 0.0:
+      out[i] = sum_oof / n_oof
+    else:
+      out[i] = (sum_oof + m * global_oof) / (n_oof + m)
+  return out
 
 
 def resolve_handle(handle):
   '''Resolve a dotted handle under the allowlist (reused).
 
-  Delegates to scoring's ``_resolve_handle_strict`` so both
-  pipelines share one allowlist (sklearn / xgboost / lightgbm /
-  catboost / h2o / forecast_ml_framework) and estimator check
-  (a class with ``fit`` and ``predict``); handles such as
-  ``os.system`` never resolve.
+  Delegates to ``core.handle.resolve_handle_strict`` (R1
+  layering: the canonical resolver lives in core, so this
+  pipeline no longer imports scoring) sharing one allowlist
+  (sklearn / xgboost / lightgbm / catboost / h2o /
+  forecast_ml_framework) and estimator check (a class with
+  ``fit`` and ``predict``); handles such as ``os.system``
+  never resolve.
 
   Args:
     handle: Dotted importable string, e.g.
@@ -116,7 +212,7 @@ def resolve_handle(handle):
     ValueError: If handle is not allowlisted, cannot be
       resolved, or is not an estimator-like class.
   '''
-  return _resolve_handle_strict(handle)
+  return resolve_handle_strict(handle)
 
 
 def _seq_list(val):
@@ -286,14 +382,21 @@ def _discretize(df, args, variables):
 
 
 def _normalize(df, args, variables):
-  '''Apply normalization step.'''
+  '''Apply normalization step.
+
+  Standard scaling uses population sd (ddof=0), matching
+  sklearn ``StandardScaler`` to machine precision (ML-9).
+  '''
   cols = _resolve_cols(args, variables.get('num_cols', []))
   handle = str(args.get('handle', 'MinMaxScaler'))
   for col in cols:
     if col not in df.columns:
       continue
     if 'Standard' in handle or 'ZScore' in handle:
-      mu, sd = df[col].mean(), df[col].std() or 1.0
+      mu = df[col].mean()
+      sd = df[col].std(ddof=0)
+      if pd.isna(sd) or sd == 0.0:
+        sd = 1.0
       df[col] = (df[col] - mu) / sd
     else:
       lo, hi = df[col].min(), df[col].max()
@@ -390,16 +493,24 @@ def _encode_cat(df, args, variables):
 
 
 def _target_encode(df, args, variables):
-  '''Apply target encoding step (train only).'''
+  '''Apply OOF target encoding step (train only, ML-3).
+
+  Train rows are encoded out-of-fold (leave-one-out, see
+  :func:`_oof_encode_series`) with smoothing ``m`` from
+  ``args['smoothing']`` (default 0.0) and a global-mean
+  fallback of the other rows, so a row never encodes to
+  its own label.
+  '''
   cols = _resolve_cols(args, variables.get('cat_cols', []))
   target = variables.get('target_col', 'target')
   if target not in df.columns:
     return df
+  smoothing = _resolve_smoothing(args)
   for col in cols:
     if col not in df.columns:
       continue
-    mapping = df.groupby(col)[target].mean()
-    df[col] = df[col].map(mapping).astype(float)
+    df[col] = _oof_encode_series(
+      df[col].tolist(), df[target].tolist(), smoothing)
   return df
 
 
@@ -720,6 +831,143 @@ def fit_preprocess(df, prep_params, variables,
     fit_preprocess as _fitted_fit_preprocess,
   )
   return _fitted_fit_preprocess(df, prep_params, variables)
+
+
+def apply_preprocess(df, registry):
+  '''Replay fitted registry state on a held-out frame.
+
+  Kedro node wrapper around
+  ``data_prep.fitted.apply_preprocess`` (lazy import,
+  same pattern as :func:`fit_preprocess`) so the
+  data_prep pipeline can wire the test-side apply
+  step without a top-level fitted import.
+
+  Args:
+    df: Test dataframe (raw split frame).
+    registry: Dict from :func:`fit_preprocess`.
+
+  Returns:
+    Transformed dataframe copy.
+  '''
+  from forecast_ml_framework.pipelines.data_prep.fitted import (
+    apply_preprocess as _fitted_apply_preprocess,
+  )
+  return _fitted_apply_preprocess(df, registry)
+
+
+def split_raw_data_with_meta(df, params, variables=None):
+  '''Split raw validated frame, keeping the honest split meta.
+
+  Split-first step (A9/ML-2): the row split happens on
+  raw validated data, before any preprocessing or
+  feature-selection fit, so test rows never contribute
+  to fitted statistics. The actual split reuses
+  ``modeling.data_split.split_data`` (W8b API:
+  stratified/random/time, shuffle handling, honest
+  meta) and does not reimplement splitting here.
+  Every non-target column (including id/time columns)
+  is carried into the raw frames; downstream steps
+  decide which columns are features, and modeling
+  excludes id columns by default (ML-24c).
+
+  R6: the split meta (actual ``sampling_method``,
+  ``requested_method``, ``shuffle``, ``time_col``) is
+  returned as ``split_meta_raw`` for the catalog ->
+  modeling presplit merge chain, instead of being
+  discarded.
+
+  Args:
+    df: Validated raw dataframe.
+    params: Modeling-params style dict (target_col,
+      task_type, test_size, random_state,
+      sampling_params). ``feature_cols`` is ignored:
+      all non-target columns are carried.
+    variables: Optional dict with ``target_col``;
+      used when params has no target.
+
+  Returns:
+    Tuple of (train_raw, test_raw, split_meta_raw):
+    DataFrames with the original columns in original
+    order, plus the split meta dict from
+    ``split_data``.
+  '''
+  from forecast_ml_framework.pipelines.modeling.data_split import (
+    split_data,
+  )
+  params = params or {}
+  variables = variables or {}
+  target = params.get('target_col') or variables.get(
+    'target_col', 'target')
+  effective = dict(params)
+  effective['target_col'] = target
+  effective['feature_cols'] = [
+    c for c in df.columns if c != target]
+  x_train, x_test, y_train, y_test, meta = split_data(
+    df, effective)
+  train_raw = x_train.copy()
+  test_raw = x_test.copy()
+  train_raw[target] = np.asarray(y_train)
+  test_raw[target] = np.asarray(y_test)
+  order = [c for c in df.columns if c in train_raw.columns]
+  return (train_raw.reindex(columns=order),
+          test_raw.reindex(columns=order), dict(meta))
+
+
+def split_raw_data(df, params, variables=None):
+  '''Split raw validated frame into train/test raw frames.
+
+  Compat wrapper around :func:`split_raw_data_with_meta`
+  (R6) for direct-caller compat only: returns only
+  the two frames, discarding the split meta. The
+  pipeline uses ``split_raw_data_with_meta`` directly
+  (wired to ``split_meta_raw``); existing two-tuple
+  direct callers keep working via this wrapper,
+  while new code should call the ``_with_meta``
+  variant and wire its third output to the
+  ``split_meta_raw`` catalog dataset.
+
+  Args:
+    df: Validated raw dataframe.
+    params: Modeling-params style dict (see
+      :func:`split_raw_data_with_meta`).
+    variables: Optional dict with ``target_col``.
+
+  Returns:
+    Tuple of (train_raw, test_raw) DataFrames with
+    the original columns in original order.
+  '''
+  train_raw, test_raw, _ = split_raw_data_with_meta(
+      df, params, variables)
+  return train_raw, test_raw
+
+
+def apply_feature_selection(df, selected, variables=None):
+  '''Apply train-fitted feature selection to a frame.
+
+  Drops ``variables['feature_cols']`` not in
+  ``selected``, preserving the target, id columns and
+  any non-feature columns (e.g. one-hot dummies
+  produced by preprocessing), mirroring the drop
+  logic in :func:`select_features`.
+
+  Args:
+    df: Preprocessed frame (e.g. test frame after
+      ``apply_preprocess``).
+    selected: Selected feature names fitted on train.
+    variables: Optional dict with ``feature_cols``.
+
+  Returns:
+    Frame with only the selected features kept.
+  '''
+  variables = variables or {}
+  selected = list(selected or [])
+  out = df.copy()
+  features = list(variables.get('feature_cols') or [])
+  drop = [c for c in features
+          if c in out.columns and c not in selected]
+  if drop:
+    out = out.drop(columns=drop)
+  return out
 
 
 def select_features(train_df, params, variables):

@@ -52,8 +52,8 @@ Other variables are optional (`terraform plan -var="region=europe-west1" ...`).
 ## State
 
 Local state by default (`terraform.tfstate`, gitignored — do not commit it).
-For shared use, configure a remote backend with locking (e.g. GCS backend)
-in a `backend.tf` added separately; the commented pattern is:
+For shared use, adopt the shipped `gcp/backend.tf.example` (GCS, A6)
+by copying it to `backend.tf`; the pattern is:
 
 ```hcl
 # terraform {
@@ -69,17 +69,37 @@ in a `backend.tf` added separately; the commented pattern is:
 After apply, `terraform output` gives values to wire into the Kedro env overlay:
 
 - `artifacts_bucket_url` (`gs://forecast-ml-artifacts`) — already the default
-  in `conf/gcp/catalog.yml`; if you override `artifacts_bucket`, update the
-  `filepath` values there to match.
+  in `conf/gcp/catalog.yml`; if you override `artifacts_bucket`, set
+  the matching `params:artifacts_bucket` runtime param
+  (`conf/base/parameters/platform.yml:51-61`, see `conf/README.md`).
 - `temp_bucket_name` — set `params:tmp_bucket` in your run parameters.
 - `bigquery_dataset_id` — set `params:db_staging_data` (and
   `params:data_project` to the same project).
 - `dataproc_cluster_name` — identifies the dev cluster for Spark jobs.
 
+## Encryption (CMEK) + workload IAM scope
+
+- **CMEK — production MUST set `kms_key_name`** (R-06):
+  `kms_key_name = ""` (default) uses Google-managed encryption
+  (dev only). Production MUST set it to a real KMS key path
+  (`infra/gcp/variables.tf:121-130`; applied at `infra/gcp/main.tf:78-83,123-128`).
+  Validation enforces it (D7/X7): `production = true` with an empty
+  `kms_key_name` fails `terraform plan`.
+- **Workload IAM scope (R-08):** the dedicated workload SA
+  (`forecast-ml-workloads`) gets `roles/storage.objectViewer` on the
+  artifacts bucket (read-only — it never writes artifacts directly)
+  and `roles/storage.objectAdmin` only on the separate temp bucket
+  for Dataproc/Spark staging writes (`infra/gcp/main.tf:39-56`).
+  Do not widen the artifacts binding back to `objectAdmin`; a job
+  that must write artifacts needs a separate, narrow, reviewed
+  write binding.
+
 ## Costs
 
-- GCS: storage + requests for the artifacts/temp buckets (temp objects
-  auto-delete after 7 days).
+- GCS: storage + requests for the artifacts/temp buckets (artifacts
+  noncurrent versions expire after 90 days, `with_state = "ARCHIVED"`,
+  `infra/gcp/main.tf:94-102`; temp objects auto-delete after 7 days,
+  `with_state = "ANY"`, `infra/gcp/main.tf:134-142`).
 - BigQuery: dataset itself is free; storage/queries against tables cost.
 - Dataproc: **off by default (`enable_dataproc = false`, count = 0)**
   so no billing until enabled; when enabled it is billed per
@@ -104,11 +124,14 @@ Local pandas is capped by `pandas_conversion_params.max_rows_for_pandas`
 - **Worker tiers:** dev = single-node (0 workers); 100M rows =
   autoscaling up to `autoscaling_max_workers` (raise the max only
   for the run — it bounds cost).
-- **Shuffle:** `spark_params` in `conf/base/parameters.yml` sets
+- **Shuffle:** `spark_params` in `conf/base/parameters/platform.yml`
+  (`platform.yml:19-24`) sets
   `spark.sql.shuffle.partitions = 1000` (~100k rows/partition at
   100M rows), `spark.dynamicAllocation.enabled = 'true'`
-  (min 2 / max 20 executors) and `spark.sql.adaptive.enabled =
-  'true'` (AQE coalesces small partitions).
+  (min 2 / max 20 *executors*, `conf/base/parameters/platform.yml:29-32`)
+  and `spark.sql.adaptive.enabled = 'true'` (AQE coalesces small
+  partitions). Dataproc autoscaling (`autoscaling_min/max_workers`,
+  *workers*) is a separate knob — do not conflate the two.
 - **BigQuery:** catalog tables are partitioned by `run_date` (DAY)
   and clustered on `score_model_id` — keep new tables the same so
   100M-row scans prune partitions.

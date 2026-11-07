@@ -74,6 +74,61 @@ variable "dataproc_image_version" {
   default     = ""
 }
 
+# --- Dataproc network (MLops-13: explicit, never implicit default VPC) -------
+# Both are required when enable_dataproc is true (enforced by the
+# validation blocks below, mirroring the AWS emr_subnet_id pattern).
+# They are passed explicitly to gce_cluster_config so the cluster
+# never silently inherits the project default VPC / default SA.
+
+variable "dataproc_network" {
+  description = "VPC network (self-link or name) for the Dataproc cluster. Required when enable_dataproc is true; unused otherwise."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_dataproc || (var.dataproc_network != null && var.dataproc_network != "")
+    error_message = "dataproc_network must be set when enable_dataproc is true."
+  }
+}
+
+variable "dataproc_subnetwork" {
+  description = "Subnetwork (self-link or name) for the Dataproc cluster. Required when enable_dataproc is true; unused otherwise."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = !var.enable_dataproc || (var.dataproc_subnetwork != null && var.dataproc_subnetwork != "")
+    error_message = "dataproc_subnetwork must be set when enable_dataproc is true."
+  }
+}
+
+# --- CMEK for artifacts buckets (Antisec F-12 / R-06) -------------------------
+# Full path of a customer-managed encryption key, e.g.
+# projects/<project>/locations/<location>/keyRings/<ring>/cryptoKeys/<key>.
+# Empty string (default) uses Google-managed encryption; production
+# deployments MUST set this to a real CMEK key (deny-public + CMEK is
+# the F-12 control; the key itself is managed out of band). The
+# production flag below enforces that precondition at plan time
+# (D7): production = true without a key fails validation, so CMEK
+# can never be silently optional in production.
+
+variable "production" {
+  description = "Mark this deployment as production. When true, kms_key_name must be set (enforced by the validation block below). Default false (dev)."
+  type        = bool
+  default     = false
+}
+
+variable "kms_key_name" {
+  description = "GCS customer-managed encryption key name for the artifacts/temp buckets. Empty string uses Google-managed encryption (dev); production must set a real CMEK key."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.production || var.kms_key_name != ""
+    error_message = "kms_key_name must be set when production is true (CMEK is required in production; set a customer-managed encryption key name)."
+  }
+}
+
 # --- Dataproc autoscaling (100M-row cloud scaling) ---------------------------
 # Off by default: no autoscaling policy (and no surprise worker
 # billing) until explicitly enabled. COST NOTE: enabling scales
@@ -123,9 +178,14 @@ variable "retraining_schedule_cron" {
 }
 
 variable "retraining_job_uri" {
-  description = "URI the retraining scheduler job invokes (e.g. a Cloud Run / Cloud Build trigger URL). Empty string means the job body is a stub placeholder and must be set before enabling."
+  description = "URI the retraining scheduler job invokes (e.g. a Cloud Run / Cloud Build trigger URL). Required when enable_retraining_scheduler is true (enforced by the validation block below); the job authenticates to this URI with OIDC, so the stub placeholder is never a valid target."
   type        = string
   default     = ""
+
+  validation {
+    condition     = !var.enable_retraining_scheduler || var.retraining_job_uri != ""
+    error_message = "retraining_job_uri must be set when enable_retraining_scheduler is true (the scheduler POSTs to it with OIDC auth; no unauthenticated stub target)."
+  }
 }
 
 variable "alerts_topic_name" {

@@ -13,14 +13,23 @@ import copy
 import hashlib
 import json
 
+from forecast_ml_framework.core.params import (
+  get_first,
+)
+
 
 def _get(source, *names, default=None):
-  '''Return the first present, non-None value among ``names``.'''
+  '''Return the first non-None value among ``names``.
+
+  Dict sources delegate to :func:`core.params.get_first`;
+  non-dict sources fall back to ``getattr`` (object run_info).
+  ``default`` is returned when no name matches: canonical
+  ``get_first`` has no default parameter, so this wrapper
+  retains lineage's object and default support.
+  '''
   if isinstance(source, dict):
-    for name in names:
-      if source.get(name) is not None:
-        return source[name]
-    return default
+    value = get_first(source, *names)
+    return default if value is None else value
   for name in names:
     value = getattr(source, name, None)
     if value is not None:

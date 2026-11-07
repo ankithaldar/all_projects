@@ -21,7 +21,11 @@ ones that matter here are ``bins`` (PSI bins, default 10),
 ``epsilon`` (PSI smoothing), ``min_rows`` (small-input
 threshold), ``baseline_metrics`` (performance baseline),
 and ``thresholds`` (per-metric ``{'warning', 'critical'}``
-alert thresholds by severity, e.g. psi 0.1/0.25).
+alert thresholds by severity, e.g. psi 0.1/0.25, ks
+0.05/0.25) plus flat ``psi_critical_threshold`` /
+``ks_critical_threshold`` /
+``missing_rate_delta_threshold`` /
+``missing_rate_delta_critical_threshold`` keys.
 
 Back-compat defaults: when ``create_pipeline`` is called
 without ``monitoring_params``, the canonical dataset names

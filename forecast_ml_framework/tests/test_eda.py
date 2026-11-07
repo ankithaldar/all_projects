@@ -402,3 +402,24 @@ def test_eda_report_no_data_charts_without_df():
   summary = eda_summary(_synthetic(), _params(), _variables())
   report = eda_report(summary, _params())
   assert report.get('data_charts') == {}
+
+
+def test_eda_nodes_use_canonical_parse_helpers():
+  '''EDA nodes coerce string thresholds via canonical helpers.
+
+  Fails if eda nodes redefine _float/_int copies instead of
+  importing parse_float/parse_int from core.params: string and
+  invalid thresholds must still coerce to numbers/defaults.
+  '''
+  import forecast_ml_framework.pipelines.eda.nodes as nodes
+  assert not hasattr(nodes, '_float')
+  assert not hasattr(nodes, '_int')
+  frame = _synthetic()
+  summary = eda_summary(frame, _params(
+    missing_threshold='0.3', top_values='3', top_correlations='5',
+    zscore_threshold='3.0'), _variables())
+  assert summary['n_rows'] == len(frame)
+  assert summary['missing_rate']
+  findings = eda_quality_checks(
+    summary, _params(missing_threshold='bad', cardinality_threshold='10'))
+  assert isinstance(findings, list)

@@ -71,9 +71,16 @@ Params (params:modeling_params, a dict):
   shap_params: {method: 'shap'|'permutation'|'auto',
     n_repeats: int, sample_rows: int, random_state: int}.
 
-Datasets:
-  modeling_input (in) -> x_train/x_test/y_train/y_test/split_meta
-  -> best_model/per_model_metrics/best_model_name
+Datasets (split-first, A9, breaking at 0.1.0):
+  train_data_selected + test_data_selected (in, already
+  split in data_prep) + split_meta_raw (in, data_prep
+  honest split meta, merged as raw_* keys) ->
+  x_train/x_test/y_train/y_test/split_meta
+  (sampling_method='presplit', no shuffle)
+  -> best_model/per_model_metrics/best_model_name.
+  ``modeling_input`` is deprecated and no longer
+  consumed by this pipeline (kept in the catalog for
+  back-compat only).
   -> calibrated_model/calibration_meta
   -> evaluation_metrics, plus y_pred/y_pred_proba
   -> lift_table, promotion (parity: lift table from
@@ -121,6 +128,112 @@ from forecast_ml_framework.pipelines.modeling.threshold import (
 from forecast_ml_framework.pipelines.modeling.validation import (
   should_promote,
 )
+
+
+def split_presplit_data(train_df, test_df, params=None,
+                        split_meta_raw=None):
+  '''Split pre-split train/test frames into X/y (presplit).
+
+  Split-first step (A9): data_prep already split raw
+  data and fitted preprocessing/selection on train
+  only, so this node does not split or shuffle at
+  all -- it slices the two selected frames into
+  features/target and reports
+  ``sampling_method='presplit'``. When
+  ``feature_cols`` is None, id columns are excluded
+  by default (ML-24c): the ``id_cols`` param when
+  given, otherwise ``['id']``.
+
+  R6: when ``split_meta_raw`` (the data_prep
+  ``split_meta_raw`` catalog dataset: actual
+  ``sampling_method``, ``requested_method``,
+  ``shuffle``, ``time_col``) is given, it is merged
+  into the returned meta as ``raw_*`` keys, so the
+  modeling meta records how data_prep actually split
+  the raw frame. ``sampling_method`` itself stays
+  ``'presplit'`` (this node did not split).
+
+  For direct-use compat ``split_data`` stays
+  available: called as ``(df, params)`` (second
+  argument a params dict, no third argument) this
+  function delegates to ``split_data``. The Kedro
+  pipeline never uses the legacy path -- it wires
+  only the presplit inputs.
+
+  Args:
+    train_df: Pre-split, preprocessed, selected
+      train frame (legacy path: the full frame).
+    test_df: Pre-split test frame, or the params
+      dict in the legacy direct-use call.
+    params: Modeling-params dict (presplit path).
+    split_meta_raw: Optional data_prep split meta
+      dict to merge as ``raw_*`` keys.
+
+  Returns:
+    Tuple (x_train, x_test, y_train, y_test, meta).
+
+  Raises:
+    ValueError: If either frame is empty/missing or
+      the target column is absent.
+  '''
+  if params is None and isinstance(test_df, dict):
+    return split_data(train_df, test_df)
+  if train_df is None or test_df is None:
+    raise ValueError(
+      'split_presplit_data requires non-empty train '
+      'and test frames')
+  if len(train_df) == 0 or len(test_df) == 0:
+    raise ValueError(
+      'split_presplit_data requires non-empty train '
+      'and test frames')
+  params = params or {}
+  sampling = params.get('sampling_params', {}) or {}
+  target = params.get('target_col', 'target')
+  if target not in train_df.columns:
+    raise ValueError('target column not found: %s' % target)
+  if target not in test_df.columns:
+    raise ValueError('target column not found: %s' % target)
+  features = params.get('feature_cols')
+  if features is None:
+    if params.get('id_cols') is not None:
+      raw_ids = params.get('id_cols')
+    elif params.get('id_col') is not None:
+      raw_ids = params.get('id_col')
+    else:
+      raw_ids = ['id']
+    id_set = ({raw_ids} if isinstance(raw_ids, str)
+              else set(raw_ids or []))
+    features = [c for c in train_df.columns
+                if c != target and c not in id_set]
+  else:
+    features = [c for c in features if c != target]
+  x_train = train_df[features]
+  x_test = test_df[features]
+  y_train = np.asarray(train_df[target])
+  y_test = np.asarray(test_df[target])
+  test_size = sampling.get('test_size', params.get('test_size'))
+  if test_size is None:
+    total = len(y_train) + len(y_test)
+    test_size = float(len(y_test) / total) if total else 0.0
+  raw = split_meta_raw or {}
+  raw = raw if isinstance(raw, dict) else {}
+  meta = {
+    'task_type': params.get('task_type', 'classification'),
+    'test_size': test_size,
+    'random_state': params.get(
+      'random_state', sampling.get('random_state', 42)),
+    'sampling_method': 'presplit',
+    'requested_method': 'presplit',
+    'shuffle': False,
+    'time_col': params.get('time_col', sampling.get('time_col')),
+    'n_train': int(len(y_train)),
+    'n_test': int(len(y_test)),
+    'raw_sampling_method': raw.get('sampling_method'),
+    'raw_requested_method': raw.get('requested_method'),
+    'raw_shuffle': raw.get('shuffle'),
+    'raw_time_col': raw.get('time_col'),
+  }
+  return x_train, x_test, y_train, y_test, meta
 
 
 def _predict(model, x_test):
@@ -320,8 +433,9 @@ def create_pipeline(**kwargs):
     -> charts + shap.
   '''
   pipe = Pipeline([
-    node(func=split_data,
-         inputs=['modeling_input', 'params:modeling_params'],
+    node(func=split_presplit_data,
+         inputs=['train_data_selected', 'test_data_selected',
+                 'params:modeling_params', 'split_meta_raw'],
          outputs=['x_train', 'x_test', 'y_train', 'y_test',
                   'split_meta'],
          name='split_data_node'),

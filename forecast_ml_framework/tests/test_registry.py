@@ -6,6 +6,7 @@
 # pylint: disable=unused-variable, invalid-name
 
 import logging
+import socket
 import sys
 import types
 import uuid
@@ -581,5 +582,507 @@ def test_validate_registry_uri_rejects_localhost_localdomain_subdomains(uri):
   '''
   from forecast_ml_framework.registry.model_registry import (
     validate_registry_uri)
+  with pytest.raises(ValueError):
+    validate_registry_uri(uri)
+
+
+# --- W4 registry hardening (cycle-1 MLops 1-5, Sec F3/F4) ---
+
+
+@pytest.fixture(autouse=True)
+def _public_dns_stub(monkeypatch):
+  '''Stub DNS to a public IP so URI tests are offline-safe.
+
+  Production code resolves hostnames via ``socket.getaddrinfo``
+  and fails closed on DNS errors. Existing good-URI tests use
+  ``tracking.example.com`` which is not guaranteed to resolve
+  in CI, so the default stub returns a public IP. DNS tests
+  below override this stub via ``monkeypatch.setattr`` to
+  private/error cases.
+  '''
+  def _stub(host, port, *args, **kwargs):
+    return [
+      (socket.AF_INET, socket.SOCK_STREAM, 6, '',
+       ('8.8.8.8', 0)),
+    ]
+  monkeypatch.setattr(socket, 'getaddrinfo', _stub)
+  yield
+
+
+def _gate_run(run_id, metric, value):
+  '''Build one fake MLflow run row for gate tests.'''
+  return SimpleNamespace(
+    info=SimpleNamespace(run_id=run_id, status='FINISHED'),
+    data=SimpleNamespace(
+      metrics={metric: value}, params={}, tags={}))
+
+
+def _setup_incumbent(registry, name, alias, version, run_id):
+  '''Set incumbent alias and fake alias lookup.'''
+  registry._get_client()
+  registry._client.aliases[(name, alias)] = version
+
+  def _by_alias(model_name, model_alias):
+    return SimpleNamespace(
+      name=model_name, alias=model_alias,
+      version=version, run_id=run_id)
+
+  registry._client.get_model_version_by_alias = _by_alias
+
+
+def test_find_version_returns_none_on_mismatch(monkeypatch):
+  '''Unknown run_id yields no version (no wrong fallback).'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  assert registry._find_version('my-model', 'run-999') is None
+
+
+def test_promote_alias_typo_run_id_raises(monkeypatch):
+  '''Typo run_id raises instead of promoting wrong version.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  registry.register_model(
+    object(), 'my-model', alias='staging')
+  with pytest.raises(ValueError):
+    registry.promote_alias('my-model', 'production', 'run-000')
+
+
+def test_promote_alias_digit_run_id_not_version(monkeypatch):
+  '''Digit-only run_id is not treated as a version string.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  registry.register_model(
+    object(), 'my-model', alias='staging')
+  with pytest.raises(ValueError):
+    registry.promote_alias('my-model', 'production', '123')
+  assert ('my-model', 'production') not in registry._client.aliases
+
+
+def test_register_model_default_alias_none(monkeypatch):
+  '''Default alias is None: no silent production promotion.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  result = registry.register_model(object(), 'my-model')
+  assert result['alias'] is None
+  assert result['promoted'] is False
+  assert registry._get_client().aliases == {}
+
+
+def test_register_model_explicit_alias_promoted_true(monkeypatch):
+  '''Explicit alias promotes and reports promoted=True.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  result = registry.register_model(
+    object(), 'my-model', alias='production')
+  assert result['promoted'] is True
+  assert result['alias'] == 'production'
+  assert registry._client.aliases[('my-model', 'production')] == '1'
+
+
+def test_register_model_gate_worse_not_promoted(monkeypatch):
+  '''Worse candidate metric leaves alias unchanged.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'rmse',
+  })
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'rmse', 0.5),
+    _gate_run('run-old', 'rmse', 0.2),
+  ]
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'rmse': 0.5})
+  assert result['promoted'] is False
+  assert registry._client.aliases[('my-model', 'production')] == '0'
+
+
+def test_register_model_gate_better_promoted(monkeypatch):
+  '''Better candidate metric promotes the new version.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'rmse',
+  })
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'rmse', 0.1),
+    _gate_run('run-old', 'rmse', 0.2),
+  ]
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'rmse': 0.1})
+  assert result['promoted'] is True
+  assert registry._client.aliases[('my-model', 'production')] == '1'
+
+
+def test_register_model_gate_higher_better_f1(monkeypatch):
+  '''F1 is higher-better: higher candidate wins, lower loses.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'f1',
+  })
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'f1', 0.9),
+    _gate_run('run-old', 'f1', 0.8),
+  ]
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'f1': 0.9})
+  assert result['promoted'] is True
+  assert registry._client.aliases[('my-model', 'production')] == '1'
+  # Reset incumbent, then try a worse F1 candidate.
+  registry._client.aliases[('my-model', 'production')] = '0'
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'f1', 0.7),
+    _gate_run('run-old', 'f1', 0.8),
+  ]
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'f1': 0.7})
+  assert result['promoted'] is False
+  assert registry._client.aliases[('my-model', 'production')] == '0'
+
+
+def test_register_model_gate_calls_compare_runs(monkeypatch):
+  '''Promotion gate must call compare_runs at runtime.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'rmse',
+  })
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'rmse', 0.1),
+    _gate_run('run-old', 'rmse', 0.2),
+  ]
+  calls = []
+  original = registry.compare_runs
+
+  def _spy(*args, **kwargs):
+    calls.append((args, kwargs))
+    return original(*args, **kwargs)
+
+  registry.compare_runs = _spy
+  registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'rmse': 0.1})
+  assert calls, 'compare_runs was not called by the gate'
+
+
+def test_validate_uri_redacts_password_in_error():
+  '''Error messages must not echo passwords or query secrets.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  uri = (
+    'http://user:supersecret@localhost:5000'
+    '/path?token=abc123')
+  with pytest.raises(ValueError) as excinfo:
+    validate_registry_uri(uri)
+  message = str(excinfo.value)
+  assert 'supersecret' not in message
+  assert 'abc123' not in message
+  assert 'token' not in message
+
+
+def test_validate_uri_error_truncates_long_uri():
+  '''Long URIs are redacted and truncated in error messages.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  long_path = 'a' * 500
+  uri = (
+    'http://user:supersecret@10.0.0.1/%s'
+    '?token=xyz' % long_path)
+  with pytest.raises(ValueError) as excinfo:
+    validate_registry_uri(uri)
+  message = str(excinfo.value)
+  assert 'supersecret' not in message
+  assert 'xyz' not in message
+  assert long_path not in message
+  assert len(message) < 400
+
+
+def test_validate_uri_dns_private_rejected(monkeypatch):
+  '''Hostnames resolving to private IPs are rejected.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+
+  def _private(host, port, *args, **kwargs):
+    return [
+      (socket.AF_INET, socket.SOCK_STREAM, 6, '',
+       ('10.0.0.8', 0)),
+    ]
+
+  monkeypatch.setattr(socket, 'getaddrinfo', _private)
+  with pytest.raises(ValueError):
+    validate_registry_uri('http://evil.example.com:5000')
+
+
+def test_validate_uri_dns_public_allowed(monkeypatch):
+  '''Hostnames resolving only to public IPs are allowed.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+
+  def _public(host, port, *args, **kwargs):
+    return [
+      (socket.AF_INET, socket.SOCK_STREAM, 6, '',
+       ('8.8.8.8', 0)),
+    ]
+
+  monkeypatch.setattr(socket, 'getaddrinfo', _public)
+  uri = 'http://public.example.com:5000'
+  assert validate_registry_uri(uri) == uri
+
+
+def test_validate_uri_dns_any_private_rejected(monkeypatch):
+  '''Any single non-public resolved IP rejects the URI.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+
+  def _mixed(host, port, *args, **kwargs):
+    return [
+      (socket.AF_INET, socket.SOCK_STREAM, 6, '',
+       ('8.8.8.8', 0)),
+      (socket.AF_INET, socket.SOCK_STREAM, 6, '',
+       ('169.254.169.254', 0)),
+    ]
+
+  monkeypatch.setattr(socket, 'getaddrinfo', _mixed)
+  with pytest.raises(ValueError):
+    validate_registry_uri('http://mixed.example.com:5000')
+
+
+def test_validate_uri_dns_failure_fails_closed(monkeypatch):
+  '''DNS errors fail closed instead of allowing the URI.'''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+
+  def _fail(host, port, *args, **kwargs):
+    raise socket.gaierror('no such host')
+
+  monkeypatch.setattr(socket, 'getaddrinfo', _fail)
+  with pytest.raises(ValueError):
+    validate_registry_uri('http://unresolvable.example.com:5000')
+
+
+# --- X2: C2-F3/C2-F4, MLops R1 gate, R-05 TTL-0 ---
+
+
+@pytest.mark.parametrize('uri,secret', [
+  ('https:user:SUPERSECRET@host.invalid/path?token=QUERYSECRET',
+   'SUPERSECRET'),
+  ('https:user:SUPERSECRET@host.invalid/path?token=QUERYSECRET',
+   'QUERYSECRET'),
+  ('sqlite:user:SUPERSECRET@/tmp/x.db?token=QUERYSECRET',
+   'SUPERSECRET'),
+  ('mlruns?token=QUERYSECRET#frag', 'QUERYSECRET'),
+  ('mlruns?token=QUERYSECRET#frag', 'frag'),
+  ('https://user:SUPERSECRET@host.invalid/path?token=QUERYSECRET#frag',
+   'SUPERSECRET'),
+  ('//user:SUPERSECRET@host.invalid/path?token=QUERYSECRET',
+   'SUPERSECRET'),
+])
+def test_safe_uri_redacts_opaque_and_query(uri, secret):
+  '''Fails if _safe_uri echoes userinfo, query or fragment from
+  opaque or scheme-less URIs.'''
+  from forecast_ml_framework.registry.model_registry import _safe_uri
+  out = _safe_uri(uri)
+  assert secret not in out
+  assert '?' not in out and '#' not in out
+
+
+def _mlflow_exc_class(error_code='INTERNAL_ERROR'):
+  '''Build a fake MlflowException class with an error_code.'''
+
+  class MlflowException(Exception):
+    '''Fake MlflowException carrying an error_code.'''
+
+    def __init__(self, message):
+      super().__init__(message)
+      self.error_code = error_code
+
+  MlflowException.__module__ = 'mlflow.exceptions'
+  return MlflowException
+
+
+def test_find_version_log_type_only(monkeypatch, caplog):
+  '''_find_version logs only the exception type name (C2-F3).'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  exc_cls = _mlflow_exc_class()
+
+  class RaisingClient:
+    def search_model_versions(self, filter_string=None, **kw):
+      raise exc_cls(
+        'boom http://user:SUPERSECRET@host/path?token=QUERYSECRET')
+
+  registry._client = RaisingClient()
+  with caplog.at_level(logging.WARNING):
+    assert registry._find_version('my-model', 'run-1') is None
+  assert 'SUPERSECRET' not in caplog.text
+  assert 'QUERYSECRET' not in caplog.text
+  assert 'boom' not in caplog.text
+  assert 'MlflowException' in caplog.text
+
+
+def test_register_fallback_log_type_only(monkeypatch, caplog):
+  '''register_model fallback logs only the exception type name.'''
+  fake, sklearn, _cls, _calls = _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  exc_cls = _mlflow_exc_class()
+  sklearn.log_model = lambda **kw: SimpleNamespace(
+    model_uri='models:/my-model/1', version=None, run_id='run-123')
+
+  def _boom(*args, **kwargs):
+    raise exc_cls(
+      'boom http://user:SUPERSECRET@host/path?token=QUERYSECRET')
+
+  fake.register_model = _boom
+  registry = ModelRegistry({'tracking_uri': 'mlruns'})
+  with caplog.at_level(logging.WARNING):
+    result = registry.register_model(object(), 'my-model')
+  assert result['promoted'] is False
+  assert 'SUPERSECRET' not in caplog.text
+  assert 'QUERYSECRET' not in caplog.text
+  assert 'boom' not in caplog.text
+  assert 'MlflowException' in caplog.text
+
+
+@pytest.mark.parametrize('config', [
+  {'tracking_uri': 'mlruns', 'experiment_id': 'exp-1',
+   'promote_on_metric': 'f1_weighted'},
+  {'registry_params': {'tracking_uri': 'mlruns',
+                       'experiment_id': 'exp-1',
+                       'promote_on_metric': 'f1_weighted'}},
+  {'mlflow_params': {'tracking_uri': 'mlruns',
+                     'experiment_id': 'exp-1',
+                     'promote_on_metric': 'f1_weighted'}},
+])
+def test_registry_config_promote_on_metric_defaults_gate(
+    monkeypatch, config):
+  '''Fails if ModelRegistry ignores promote_on_metric in the
+  supplied config and promotes unconditionally.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry(config)
+  assert registry.promote_on_metric == 'f1_weighted'
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  registry._client.search_runs = lambda experiment_ids, **kw: [
+    _gate_run('run-123', 'f1_weighted', 0.7),
+    _gate_run('run-old', 'f1_weighted', 0.8),
+  ]
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'f1_weighted': 0.7})
+  assert result['promoted'] is False
+  assert registry._client.aliases[('my-model', 'production')] == '0'
+
+
+def test_gate_internal_error_fails_closed(monkeypatch):
+  '''INTERNAL_ERROR during incumbent lookup fails closed.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'f1_weighted',
+  })
+  _setup_incumbent(
+    registry, 'my-model', 'production', '0', 'run-old')
+  exc_cls = _mlflow_exc_class('INTERNAL_ERROR')
+
+  def _boom(model_name, model_alias):
+    raise exc_cls('internal failure')
+
+  registry._client.get_model_version_by_alias = _boom
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'f1_weighted': 0.9})
+  assert result['promoted'] is False
+  assert registry._client.aliases[('my-model', 'production')] == '0'
+
+
+def test_gate_not_found_still_promotes_first_version(monkeypatch):
+  '''RESOURCE_DOES_NOT_EXIST lookup means no incumbent: promote.'''
+  _fake_mlflow(monkeypatch)
+  from forecast_ml_framework.registry.model_registry import (
+    ModelRegistry)
+  registry = ModelRegistry({
+    'tracking_uri': 'sqlite:////tmp/r.db',
+    'experiment_id': 'exp-1',
+    'promote_on_metric': 'f1_weighted',
+  })
+  registry._get_client()
+  exc_cls = _mlflow_exc_class('RESOURCE_DOES_NOT_EXIST')
+
+  def _missing(model_name, model_alias):
+    raise exc_cls('alias not found')
+
+  registry._client.get_model_version_by_alias = _missing
+  result = registry.register_model(
+    object(), 'my-model', alias='production',
+    metrics={'f1_weighted': 0.9})
+  assert result['promoted'] is True
+  assert registry._client.aliases[('my-model', 'production')] == '1'
+
+
+def test_dns_rebinding_ttl0_accepted_risk_validate_time_only(monkeypatch):
+  '''TTL-0 DNS rebinding is an accepted risk (R-05).
+
+  validate_registry_uri checks DNS at validation time only; it
+  does not pin or cache the resolution, so a second resolution
+  can differ (TTL-0 rebinding). Production deployments must
+  therefore enforce an egress allowlist at the network layer;
+  this test pins the time-of-check-only behaviour.
+  '''
+  from forecast_ml_framework.registry.model_registry import (
+    validate_registry_uri)
+  responses = iter([
+    [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 0))],
+    [(socket.AF_INET, socket.SOCK_STREAM, 6, '',
+      ('169.254.169.254', 0))],
+  ])
+
+  def _rebind(host, port, *args, **kwargs):
+    return next(responses)
+
+  monkeypatch.setattr(socket, 'getaddrinfo', _rebind)
+  uri = 'http://rebind.example.com:5000'
+  assert validate_registry_uri(uri) == uri
   with pytest.raises(ValueError):
     validate_registry_uri(uri)

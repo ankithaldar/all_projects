@@ -39,6 +39,23 @@ def _pct(part, whole):
 def compute_lift_table(y_true, y_pred, proba, n=10, threshold=None):
   '''Compute per-decile lift table sorted by decile descending.
 
+  Units (percent vs fraction, read carefully): every
+  ``*_percentage`` column and the ``precision`` / ``recall``
+  / ``ks`` / ``decile_disconnect_rate`` columns of THIS
+  table are percent (0-100), unlike the sibling ``metrics``
+  module where precision/recall/KS are fractions (0-1); the
+  ``ks`` column here is cumulative target % minus cumulative
+  non-target %, so its maximum is on a 0-100 scale (divide by
+  100 to compare with ``metrics`` KS). ``lift`` is a unitless
+  ratio: ``lift = (target_count / decile_count) / prevalence``
+  where prevalence is the overall target rate -- the tile's
+  positive rate divided by the overall positive rate, valid
+  for unequal tile sizes as well as equal deciles.
+  ``true_positive_at_or_above_threshold`` counts actual
+  positives (``target == 1``) in the subset, while
+  ``tp_above_threshold`` counts predicted true positives
+  (``pred == 1 & target == 1``).
+
   Args:
     y_true: Binary target (0/1).
     y_pred: Binary prediction (0/1).
@@ -143,9 +160,11 @@ def compute_lift_table(y_true, y_pred, proba, n=10, threshold=None):
   grouped['ks'] = (
     grouped['cum_target_percentage']
     - grouped['cum_non_target_percentage']).round(4)
-  target_mean = grouped['target_count'].mean()
-  grouped['lift'] = grouped['target_count'].apply(
-    lambda v: v / target_mean if target_mean else 0.0)
+  prevalence = (total_target / len(frame)) if len(frame) else 0.0
+  grouped['lift'] = grouped.apply(
+    lambda r: ((r['target_count'] / r['decile_count']) / prevalence
+               if prevalence and r['decile_count'] else 0.0),
+    axis=1)
   grouped['decile_disconnect_rate'] = grouped.apply(
     lambda r: _pct(r['target_count'], r['decile_count']), axis=1)
   grouped['precision'] = grouped.apply(

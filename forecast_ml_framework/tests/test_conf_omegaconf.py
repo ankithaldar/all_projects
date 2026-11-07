@@ -38,7 +38,7 @@ def test_interpolations_resolve():
   assert cfg.variables.target_col == 'target'
   assert cfg.parameters.global_params.target_col == 'target'
   assert cfg.parameters.sampling_params.stratify_col == 'target'
-  assert cfg.parameters.sampling_reg_params.stratify_col == 'target'
+  assert 'stratify_col' not in cfg.parameters.sampling_reg_params
   assert cfg.parameters.train_test_split_params.stratify_col == 'target'
   assert cfg.variables.bucket_segment_col == 'region'
 

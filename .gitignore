@@ -222,3 +222,17 @@ forecast_ml_framework/catboost_info/
 
 # opencode plans/decisions - not committed
 forecast_ml_framework/.opencode/
+
+# Sample/generated data - not tracked
+forecast_ml_framework/data/
+.opencode/
+
+# Terraform (MLops-12): state, provider caches and real variable
+# files must never be committed (state/outputs can embed account
+# and project IDs). NOTE: .terraform.lock.hcl is deliberately NOT
+# ignored -- provider lock files MUST be committed (MLops-11).
+# Example variable files (*.example.tfvars) stay tracked.
+**/terraform.tfstate*
+**/.terraform/
+**/*.tfvars
+!**/*.example.tfvars

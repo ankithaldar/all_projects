@@ -3,13 +3,23 @@
 import sys
 import types
 
+import pytest
+
 
 def test_hooks_noop_without_mlflow(monkeypatch):
+  '''No-mlflow calls are no-ops keeping counters unchanged.
+
+  Fails if any hook raises on missing mlflow or records a
+  warning/run_id while mlflow is unavailable.
+  '''
   from forecast_ml_framework.hooks import ForecastHooks
   monkeypatch.setitem(sys.modules, 'mlflow', None)
   h = ForecastHooks()
   h.before_pipeline_run(None, {}, None)  # must not raise
   h.on_error(None, {}, None)  # must not raise
+  assert h.warning_count == 0
+  assert h.hook_warning_count == 0
+  assert h.run_id is None
 
 
 def test_hooks_lifecycle_with_fake_mlflow(monkeypatch):
@@ -101,6 +111,11 @@ def test_hooks_end_run_guarded_when_no_active_run(monkeypatch):
 
 
 def test_hooks_node_params_distinct_per_node(monkeypatch):
+  '''Distinct nodes log distinct real scalar params.
+
+  Fails if node params use a timestamp key, ignore real
+  scalar inputs, or log identical dicts for different nodes.
+  '''
   calls = []
   _fake_mlflow(monkeypatch, calls)
   from forecast_ml_framework.hooks import ForecastHooks
@@ -112,12 +127,22 @@ def test_hooks_node_params_distinct_per_node(monkeypatch):
   h = ForecastHooks()
   h.before_pipeline_run({'pipeline_name': 'modeling'}, None, None)
   h.before_node_run(_Node('split_data_node'), None, {}, False, 'run-123')
-  h.before_node_run(_Node('split_data_node'), None, {}, False, 'run-123')
+  h.before_node_run(
+      _Node('split_data_node'), None, {'test_size': 0.2}, False, 'run-123')
+  h.before_node_run(
+      _Node('train_node'), None, {'lr': 0.1}, False, 'run-123')
   param_dicts = [c[1] for c in calls if c[0] == 'params']
-  assert len(param_dicts) == 2
-  keys = [next(iter(d)) for d in param_dicts]
-  assert keys[0] != keys[1]
-  assert keys[0].startswith('split_data_node')
+  # First dict is the repro dict from before_pipeline_run;
+  # empty inputs above must not add a node param dict.
+  node_dicts = param_dicts[1:]
+  assert len(node_dicts) == 2
+  assert node_dicts[0] == {'test_size': '0.2'}
+  assert node_dicts[1] == {'lr': '0.1'}
+  assert set(node_dicts[0]) != set(node_dicts[1])
+  for d in node_dicts:
+    for key in d:
+      assert not key.startswith('split_data_node')
+      assert not key.startswith('train_node')
 
 
 def test_hooks_sanitizes_pipeline_name_and_tag(monkeypatch):
@@ -175,3 +200,164 @@ def test_hooks_failed_on_error(monkeypatch):
   h.before_pipeline_run(None, {'pipeline_name': 'modeling'}, None)
   h.on_error(None, {}, None)
   assert 'FAILED' in calls
+
+
+@pytest.mark.parametrize('value,expected', [
+  (None, 'kedro'),
+  ('', 'kedro'),
+  ('   ', 'kedro'),
+  (42, '42'),
+  ('\x00a\x1f', 'a'),
+  ('a;b', 'a_b'),
+  ('a/b', 'a_b'),
+])
+def test_sanitize_name_cases(value, expected):
+  '''Sanitize maps empty/disallowed input to safe names.
+
+  Fails if sanitize_name returns empty output, keeps
+  separators, or stringifies numbers incorrectly.
+  '''
+  from forecast_ml_framework.hooks import sanitize_name
+  assert sanitize_name(value) == expected
+
+
+def test_sanitize_name_length_boundaries():
+  '''Sanitize caps at 100 chars (99/100/101 boundary).
+
+  Fails if the length cap is off by one in either direction.
+  '''
+  from forecast_ml_framework.hooks import sanitize_name
+  assert len(sanitize_name('x' * 99)) == 99
+  assert len(sanitize_name('x' * 100)) == 100
+  assert len(sanitize_name('x' * 101)) == 100
+
+
+def test_sanitize_name_cap_then_strip():
+  '''Cap-then-strip drops trailing space and overflow.
+
+  Fails if a trailing space survives or overflow chars
+  beyond 100 appear in the result.
+  '''
+  from forecast_ml_framework.hooks import sanitize_name
+  assert sanitize_name('x' * 99 + ' ') == 'x' * 99
+  result = sanitize_name('x' * 100 + 'y')
+  assert result == 'x' * 100
+  assert 'y' not in result
+
+
+def test_sanitize_name_default_override_and_alias():
+  '''Default override wins; sanitize aliases sanitize_name.
+
+  Fails if the default override is ignored or the alias
+  points at a different function.
+  '''
+  from forecast_ml_framework.hooks import (
+    sanitize,
+    sanitize_name,
+  )
+  assert sanitize_name(None, default='zzz') == 'zzz'
+  assert sanitize is sanitize_name
+
+
+def test_run_params_from_kwargs_keys():
+  '''run_params/params/context kwargs yield the dict.
+
+  Fails if any documented kwargs key stops resolving.
+  '''
+  from forecast_ml_framework.hooks import _run_params_from
+  assert _run_params_from((), {'run_params': {'a': 1}}) == {'a': 1}
+  assert _run_params_from((), {'params': {'a': 1}}) == {'a': 1}
+  assert _run_params_from((), {'context': {'a': 1}}) == {'a': 1}
+
+
+def test_run_params_from_non_dict_and_fallback():
+  '''Non-dict kwargs ignored; empty falls back to {}.
+
+  Fails if non-dict kwargs raise or the fallback is not {}.
+  '''
+  from forecast_ml_framework.hooks import _run_params_from
+  assert _run_params_from((), {'run_params': 'not-a-dict'}) == {}
+  assert _run_params_from((), {}) == {}
+  assert _run_params_from(({'x': 1},), {}) == {'x': 1}
+
+
+def test_hooks_no_mlflow_early_returns(monkeypatch):
+  '''All hook methods early-return without mlflow.
+
+  Fails if any method raises, warns, or records a run_id
+  while mlflow is unavailable.
+  '''
+  from forecast_ml_framework.hooks import ForecastHooks
+  monkeypatch.setitem(sys.modules, 'mlflow', None)
+  h = ForecastHooks()
+  h.before_pipeline_run({'pipeline_name': 'x'}, None, None)
+  h.after_pipeline_run({}, {}, None, None)
+  h.before_node_run(None, None, {}, False, None)
+  h.after_node_run(None, None, {}, {}, False, None)
+  h.on_pipeline_error(RuntimeError('x'), {}, None, None)
+  h.on_error(RuntimeError('x'), {}, None, None)
+  assert h.warning_count == 0
+  assert h.hook_warning_count == 0
+  assert h.run_id is None
+
+
+@pytest.mark.serial
+def test_hooks_real_mlflow_smoke(tmp_path, monkeypatch):
+  '''Real-mlflow sqlite hooks smoke (no server needed).
+
+  Fails if ForecastHooks stops writing pipeline and node
+  activity to real MLflow, or if warning_count or run_id
+  behaviour drifts from the real SDK.
+  '''
+  pytest.importorskip('mlflow')
+  import uuid
+  import mlflow
+  from mlflow.tracking import MlflowClient
+  from forecast_ml_framework.hooks import ForecastHooks
+
+  class _Node:
+    def __init__(self, name):
+      self.name = name
+
+  monkeypatch.chdir(tmp_path)
+  db = 'sqlite:///' + str(tmp_path / 'mlflow.db')
+  experiment_name = f'test-hooks-{uuid.uuid4().hex[:12]}'
+  hooks = ForecastHooks()
+  run_params = {
+    'pipeline_name': 'hooks-smoke',
+    'mlflow_params': {
+      'tracking_uri': db,
+      'experiment_name': experiment_name,
+    },
+  }
+  try:
+    hooks.before_pipeline_run(run_params, None, None)
+    captured_run_id = hooks.run_id
+    assert captured_run_id is not None
+    assert hooks.warning_count == 0
+    node = _Node('hooks-smoke-node')
+    hooks.before_node_run(node, None, {'lr': 0.1}, False,
+                          captured_run_id)
+    hooks.after_node_run(node, None, {'lr': 0.1}, {}, False,
+                         captured_run_id)
+    hooks.after_pipeline_run({}, {}, None, None)
+    assert hooks.warning_count == 0
+    assert hooks.hook_warning_count == 0
+    client = MlflowClient(tracking_uri=db)
+    experiment = client.get_experiment_by_name(experiment_name)
+    assert experiment is not None
+    runs = client.search_runs(experiment_ids=[experiment.experiment_id])
+    assert len(runs) == 1
+    assert runs[0].info.run_id == captured_run_id
+    run = client.get_run(captured_run_id)
+    assert run.info.status == 'FINISHED'
+    assert 'seed' in run.data.params
+    assert 'git_sha' in run.data.params
+    assert 'data_version' in run.data.params
+    assert run.data.params.get('lr') == '0.1'
+    assert run.data.tags.get('node') == 'hooks-smoke-node'
+  finally:
+    try:
+      mlflow.set_tracking_uri(None)
+    except Exception:  # pylint: disable=broad-exception-caught
+      pass

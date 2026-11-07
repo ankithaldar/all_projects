@@ -27,10 +27,14 @@ sampling_params:
   stratify_col: ${..global_params.target_col}
 
 # --- Sampling (regression) ----------------------------------------------------
+# No stratify_col here (R7, mirrors modeling.yml modeling_reg_params):
+# the regression target is continuous, so stratifying on it only
+# forces the stratified-split fallback warning on every run. The
+# random method is used as-is; stratify_col stays on the
+# classification sampling_params above, where the target is discrete.
 sampling_reg_params:
   method: 'random'
   test_size: 0.2
-  stratify_col: ${..global_params.target_col}
 
 # --- Spark -> pandas conversion ----------------------------------------------
 # Code contract (core.spark_factory.check_pandas_limits /

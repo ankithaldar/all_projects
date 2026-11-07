@@ -537,6 +537,139 @@ def test_restricted_loads_lightgbm_booster_path_errors_generic():
     cause = cause.__cause__ or cause.__context__
 
 
+def test_restricted_loads_xgboost_booster_valid_file_rejected(tmp_path):
+  import pickle
+  import numpy as np
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from xgboost import Booster, XGBRegressor
+  x = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]])
+  y = np.array([1.0, 2.0, 3.0, 4.0])
+  model = XGBRegressor(n_estimators=2, max_depth=2).fit(x, y)
+  model_path = tmp_path / 'valid.model'
+  model.get_booster().save_model(str(model_path))
+  assert model_path.is_file()
+
+  class Evil:
+    def __reduce__(self):
+      return (Booster, (None, None, str(model_path)))
+
+  with _pytest.raises(ValueError):
+    restricted_loads(pickle.dumps(Evil()))
+
+
+def test_restricted_loads_lightgbm_booster_valid_file_rejected(tmp_path):
+  import pickle
+  import numpy as np
+  import pytest as _pytest
+  _pytest.importorskip('lightgbm')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from lightgbm import Booster, LGBMRegressor
+  x = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]])
+  y = np.array([1.0, 2.0, 3.0, 4.0])
+  model = LGBMRegressor(n_estimators=2, verbose=-1).fit(x, y)
+  model_path = tmp_path / 'valid.txt'
+  model.booster_.save_model(str(model_path))
+  assert model_path.is_file()
+
+  class Evil:
+    def __reduce__(self):
+      return (Booster, (None, None, str(model_path)))
+
+  with _pytest.raises(ValueError):
+    restricted_loads(pickle.dumps(Evil()))
+
+
+def test_restricted_loads_xgboost_booster_kwargs_model_file_rejected():
+  import copyreg
+  import pickle
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from xgboost import Booster
+
+  class Evil:
+    def __reduce__(self):
+      return (
+          copyreg.__newobj_ex__,
+          (Booster, (), {'model_file': '/etc/passwd'}))
+
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(pickle.dumps(Evil()))
+  assert '/etc/passwd' not in str(excinfo.value)
+
+
+def test_restricted_loads_lightgbm_booster_kwargs_model_file_rejected():
+  import copyreg
+  import pickle
+  import pytest as _pytest
+  _pytest.importorskip('lightgbm')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from lightgbm import Booster
+
+  class Evil:
+    def __reduce__(self):
+      return (
+          copyreg.__newobj_ex__,
+          (Booster, (), {'model_file': '/etc/passwd'}))
+
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(pickle.dumps(Evil()))
+  assert '/etc/passwd' not in str(excinfo.value)
+
+
+def test_restricted_loads_booster_fifo_rejected_promptly(tmp_path):
+  import os
+  import pickle
+  import threading
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from xgboost import Booster
+  fifo_path = tmp_path / 'fifo'
+  os.mkfifo(str(fifo_path))
+
+  class Evil:
+    def __reduce__(self):
+      return (Booster, (None, None, str(fifo_path)))
+
+  raw = pickle.dumps(Evil())
+  outcome = {}
+
+  def run():
+    try:
+      outcome['value'] = restricted_loads(raw)
+    except BaseException as exc:  # pylint: disable=broad-exception-caught
+      outcome['error'] = exc
+
+  thread = threading.Thread(target=run, daemon=True)
+  thread.start()
+  thread.join(timeout=5)
+  assert not thread.is_alive(), 'restricted_loads blocked on FIFO'
+  assert isinstance(outcome.get('error'), ValueError)
+
+
+def test_restricted_loads_oversized_pickle_rejected(monkeypatch):
+  import pickle
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  raw = pickle.dumps({'a': [1, 2, 3]})
+  assert len(raw) > 10
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', '10')
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    restricted_loads(raw)
+
+
+def test_local_store_oversized_pickle_rejected(monkeypatch, tmp_path):
+  import pickle
+  from forecast_ml_framework.core.artifact_store import LocalArtifactStore
+  store = LocalArtifactStore(str(tmp_path))
+  (tmp_path / 'big.pkl').write_bytes(pickle.dumps({'a': [1, 2, 3]}))
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', '10')
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    store.load('big.pkl')
+
+
 def test_decode_payload_pickle_text_and_raw():
   import pickle
   from forecast_ml_framework.core.artifact_store import _decode_payload
@@ -568,6 +701,7 @@ def test_local_store_bytes_and_empty_path(tmp_path):
 
 
 def _fake_google(monkeypatch):
+  import io
   import sys
   import types
 
@@ -579,8 +713,11 @@ def _fake_google(monkeypatch):
     def upload_from_string(self, data):
       self._bucket.objects[self.name] = data
 
+    def open(self, mode='rb'):
+      return io.BytesIO(self._bucket.objects[self.name])
+
     def download_as_bytes(self):
-      return self._bucket.objects[self.name]
+      raise AssertionError('must stream via open(), not download whole')
 
     def exists(self):
       return self.name in self._bucket.objects
@@ -940,17 +1077,22 @@ def test_spark_builder_config_variants():
   assert cfg['spark.dynamicAllocation.enabled'] == 'false'
   assert cfg['spark.executor.memory'] == '2g'
   assert 'master' not in cfg and 'enabled' not in cfg
-  assert spark_builder_config({'spark_params': {'a': 1}})['a'] == 1
-  cfg_b = spark_builder_config({'spark_parameters': {'b': 2}})
-  assert cfg_b['b'] == 2
+  with pytest.raises(ValueError) as excinfo:
+    spark_builder_config({'spark_params': {'a': 1}})
+  assert "'a'" in str(excinfo.value)
+  with pytest.raises(ValueError) as excinfo:
+    spark_builder_config({'spark_parameters': {'b': 2}})
+  assert "'b'" in str(excinfo.value)
   cfg13 = spark_builder_config({'spark': {'spark_params': {
     'spark.sql.shuffle.partitions': 13}}})
   assert cfg13['spark.sql.shuffle.partitions'] == 13
   cfg14 = spark_builder_config({'spark': {'spark_parameters': {
     'shuffle_partitions': 14}}})
   assert cfg14['spark.sql.shuffle.partitions'] == 14
-  assert spark_builder_config({'spark': {'dynamic_allocation': True,
-    'spark_params': {'extra': '1'}}})['extra'] == '1'
+  with pytest.raises(ValueError) as excinfo:
+    spark_builder_config({'spark': {'dynamic_allocation': True,
+      'spark_params': {'extra': '1'}}})
+  assert "'extra'" in str(excinfo.value)
   default = spark_builder_config(None)
   assert default['spark.sql.shuffle.partitions'] == 200
   assert default['spark.dynamicAllocation.enabled'] == 'true'
@@ -1095,3 +1237,265 @@ def test_get_spark_builder_failure_returns_none(monkeypatch):
   _install_fake_builder(monkeypatch, Builder())
   assert SparkSessionFactory.get_spark(
     {'spark': {'enabled': True}}) is None
+
+
+def test_sql_denylist_blocks_privileged_functions():
+  '''Read-only validator blocks privileged pg_* functions (A8).'''
+  from forecast_ml_framework.core.datasets import _validate_read_only_query
+  for bad in ('SELECT pg_read_file(1)',
+              'SELECT pg_ls_dir(1)',
+              'SELECT lo_export(1, 1)',
+              'SELECT dblink(1)',
+              'SELECT pg_advisory_lock(1)'):
+    with pytest.raises(ValueError, match='Forbidden'):
+      _validate_read_only_query(bad)
+
+
+def test_core_params_canonical_helpers():
+  '''core.params owns canonical _int/_float/_get/_parse_datetime (F8).'''
+  from datetime import datetime, timezone
+
+  from forecast_ml_framework.core import params as core_params
+  assert core_params.parse_int('3', 0) == 3
+  assert core_params.parse_int('bad', 9) == 9
+  assert core_params.parse_float('1.5', 0.0) == 1.5
+  assert core_params.parse_float(None, 2.5) == 2.5
+  assert core_params.get_first({'a': None, 'b': 2}, 'a', 'b') == 2
+  assert core_params.get_first({'a': 1}, 'a', 'b') == 1
+  assert core_params.get_first({}, 'a') is None
+  parsed = core_params.parse_datetime('2026-01-01T00:00:00Z')
+  assert parsed == datetime(2026, 1, 1, tzinfo=timezone.utc)
+  with pytest.raises(ValueError):
+    core_params.parse_datetime('not-a-date')
+
+
+def test_core_init_lazy_no_kedro_import():
+  '''Importing core does not eagerly import kedro (V11).'''
+  import subprocess
+  import sys
+  code = (
+    'import sys; '
+    'import forecast_ml_framework.core as core; '
+    'assert "kedro" not in sys.modules, "kedro eagerly imported"; '
+    'assert "kedro.io" not in sys.modules; '
+    'from forecast_ml_framework.core.config_loader import ConfigLoader; '
+    'c = ConfigLoader(variables={"a": 1}, parameters={"b": 2}); '
+    'assert c.get("a") == 1 and c.get("b") == 2; '
+    'assert core.ConfigLoader is ConfigLoader; '
+    'print("lazy-ok")')
+  import os
+  from pathlib import Path
+  root = Path(__file__).resolve().parents[1]
+  env = dict(os.environ)
+  env['PYTHONPATH'] = str(root / 'src') + os.pathsep + env.get(
+    'PYTHONPATH', '')
+  result = subprocess.run(
+    [sys.executable, '-c', code], capture_output=True, text=True,
+    cwd=str(root), env=env)
+  assert result.returncode == 0, result.stderr
+  assert 'lazy-ok' in result.stdout
+
+
+# --- X2: chunked capped reads (C2-F2/R-03) ---
+
+_CHUNK_BYTES = 1024 * 1024
+
+
+class _TrackingStream:
+  '''File-like stream counting bytes returned by read().'''
+
+  def __init__(self, data):
+    import io
+    self._buf = io.BytesIO(data)
+    self.bytes_read = 0
+
+  def read(self, size=-1):
+    chunk = self._buf.read(size)
+    self.bytes_read += len(chunk)
+    return chunk
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, *args):
+    return False
+
+
+def _patch_tracking_open(monkeypatch):
+  '''Patch builtins.open to count bytes read; return counter dict.'''
+  import builtins
+  real_open = builtins.open
+  counter = {'bytes': 0}
+
+  class _TrackingFile:
+    '''File wrapper counting bytes returned by read().'''
+
+    def __init__(self, handle):
+      self._handle = handle
+
+    def read(self, size=-1):
+      data = self._handle.read(size)
+      counter['bytes'] += len(data)
+      return data
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return False
+
+  def _tracking_open(file, mode='r', *args, **kwargs):
+    return _TrackingFile(real_open(file, mode, *args, **kwargs))
+
+  monkeypatch.setattr(builtins, 'open', _tracking_open)
+  return counter
+
+
+@pytest.mark.parametrize('cap,size', [
+  (10, 3 * _CHUNK_BYTES),
+  (2 * _CHUNK_BYTES, 5 * _CHUNK_BYTES),
+  (0, 1),
+])
+def test_capped_read_rejects_over_cap_bounded(cap, size):
+  '''Fails if the capped reader materialises the whole payload
+  before rejecting it instead of stopping near cap+chunk.'''
+  from forecast_ml_framework.core.artifact_store import _read_capped
+  stream = _TrackingStream(b'x' * size)
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    _read_capped(stream, cap)
+  assert stream.bytes_read <= cap + _CHUNK_BYTES
+
+
+def test_capped_read_returns_bytes_under_cap():
+  '''Capped reader returns the full payload when it fits.'''
+  from forecast_ml_framework.core.artifact_store import _read_capped
+  assert _read_capped(_TrackingStream(b'hello'), 1024) == b'hello'
+  assert _read_capped(_TrackingStream(b''), 1024) == b''
+
+
+def test_local_store_sparse_over_cap_rejected_without_full_read(
+    monkeypatch, tmp_path):
+  '''Fails if LocalArtifactStore.load reads a sparse oversized
+  file fully into memory before rejecting it.'''
+  from forecast_ml_framework.core.artifact_store import LocalArtifactStore
+  cap = _CHUNK_BYTES
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', str(cap))
+  target = tmp_path / 'big.bin'
+  with open(target, 'wb') as handle:
+    handle.truncate(cap * 8)
+  counter = _patch_tracking_open(monkeypatch)
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    LocalArtifactStore(str(tmp_path)).load('big.bin')
+  assert counter['bytes'] <= cap + _CHUNK_BYTES
+
+
+def test_restricted_pickle_dataset_sparse_over_cap_rejected(
+    monkeypatch, tmp_path):
+  '''Fails if RestrictedPickleDataset._load reads an oversized
+  pickle file fully into memory before rejecting it.'''
+  from forecast_ml_framework.core.datasets import RestrictedPickleDataset
+  cap = _CHUNK_BYTES
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', str(cap))
+  target = tmp_path / 'big.pkl'
+  with open(target, 'wb') as handle:
+    handle.truncate(cap * 8)
+  counter = _patch_tracking_open(monkeypatch)
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    RestrictedPickleDataset(str(target))._load()
+  assert counter['bytes'] <= cap + _CHUNK_BYTES
+
+
+def test_s3_store_over_cap_rejected_without_full_read(monkeypatch):
+  '''Fails if S3ArtifactStore.load reads the whole Body stream
+  before rejecting it as oversized.'''
+  import sys
+  import types
+  from forecast_ml_framework.core.artifact_store import S3ArtifactStore
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', '10')
+  stream = _TrackingStream(b'x' * (3 * _CHUNK_BYTES))
+
+  class FakeS3:
+    def get_object(self, Bucket, Key):
+      return {'Body': stream}
+
+  boto_mod = types.ModuleType('boto3')
+  boto_mod.client = lambda svc: FakeS3()
+  monkeypatch.setitem(sys.modules, 'boto3', boto_mod)
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    S3ArtifactStore('bkt').load('k.bin')
+  assert stream.bytes_read <= 10 + _CHUNK_BYTES
+
+
+def test_gcs_store_over_cap_rejected_without_full_download(monkeypatch):
+  '''Fails if GCSArtifactStore.load downloads the whole blob
+  before rejecting it as oversized instead of streaming capped.'''
+  import sys
+  import types
+  from forecast_ml_framework.core.artifact_store import GCSArtifactStore
+  monkeypatch.setenv('MAX_ARTIFACT_BYTES', '10')
+  stream = _TrackingStream(b'x' * (3 * _CHUNK_BYTES))
+
+  class FakeBlob:
+    def open(self, mode='rb'):
+      return stream
+
+    def download_as_bytes(self):
+      raise AssertionError('must stream via open(), not download whole')
+
+  class FakeBucket:
+    def blob(self, key):
+      return FakeBlob()
+
+  class FakeClient:
+    def bucket(self, name):
+      return FakeBucket()
+
+  storage_mod = types.ModuleType('google.cloud.storage')
+  storage_mod.Client = FakeClient
+  cloud_mod = types.ModuleType('google.cloud')
+  cloud_mod.storage = storage_mod
+  google_mod = types.ModuleType('google')
+  google_mod.cloud = cloud_mod
+  monkeypatch.setitem(sys.modules, 'google', google_mod)
+  monkeypatch.setitem(sys.modules, 'google.cloud', cloud_mod)
+  monkeypatch.setitem(sys.modules, 'google.cloud.storage', storage_mod)
+  with pytest.raises(ValueError, match='MAX_ARTIFACT_BYTES'):
+    GCSArtifactStore('bkt').load('k.bin')
+  assert stream.bytes_read <= 10 + _CHUNK_BYTES
+
+
+def test_gcs_store_no_open_raises_promptly_without_download(monkeypatch):
+  '''Fails if GCS load materialises the whole blob via
+  download_as_bytes when the blob has no streaming open().'''
+  import sys
+  import types
+  from forecast_ml_framework.core.artifact_store import GCSArtifactStore
+  calls = {'download': 0}
+
+  class FakeBlob:
+    '''Blob without open(): download must never be called.'''
+
+    def download_as_bytes(self):
+      calls['download'] += 1
+      return b'x' * (3 * _CHUNK_BYTES)
+
+  class FakeBucket:
+    def blob(self, key):
+      return FakeBlob()
+
+  class FakeClient:
+    def bucket(self, name):
+      return FakeBucket()
+
+  storage_mod = types.ModuleType('google.cloud.storage')
+  storage_mod.Client = FakeClient
+  cloud_mod = types.ModuleType('google.cloud')
+  cloud_mod.storage = storage_mod
+  google_mod = types.ModuleType('google')
+  google_mod.cloud = cloud_mod
+  monkeypatch.setitem(sys.modules, 'google', google_mod)
+  monkeypatch.setitem(sys.modules, 'google.cloud', cloud_mod)
+  monkeypatch.setitem(sys.modules, 'google.cloud.storage', storage_mod)
+  with pytest.raises(RuntimeError, match='GCS blob has no streaming open'):
+    GCSArtifactStore('bkt').load('k.bin')
+  assert calls['download'] == 0

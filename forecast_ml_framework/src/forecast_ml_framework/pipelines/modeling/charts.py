@@ -5,10 +5,14 @@
 
 Existing evaluation charts: ROC, PR, confusion heatmap,
 calibration, threshold, lift/gain, KS, probability
-distribution, cost curve, per-class F1; regression:
+distribution, per-class F1; regression:
 predicted-vs-actual, residuals vs fitted/actual,
 residual hist+QQ, scale-location, error vs actual,
 error by bucket, segment curves, feature vs residual.
+(The placeholder cost-curve stub was deleted per F5:
+a 2-point line is not a cost curve, and no caller or
+test referenced the ``cost_curve`` key, so it was
+removed instead of faked.)
 
 Phase-3 additions:
 I. Data understanding (make_data_charts): target
@@ -38,18 +42,50 @@ applicable here and are intentionally omitted.
 
 Every public chart function returns a Figure or
 None on insufficient data, never raises, uses only
-matplotlib, is NaN-safe, and closes its figure in
+matplotlib (imported lazily on first chart call, V8 --
+importing this module never requires the plotting
+stack), is NaN-safe, and closes its figure in
 a finally block so no figure slot leaks.
 '''
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import logging
+
 import numpy as np
 
 from forecast_ml_framework.pipelines.modeling.ntile import (
   normalize_task_kind,
 )
+
+LOG = logging.getLogger(__name__)
+
+
+class _LazyPlt:
+  '''Lazily import matplotlib.pyplot on first use (V8).
+
+  The real ``matplotlib.pyplot`` module is imported
+  the first time any attribute is accessed (i.e.
+  inside the first chart call), with the Agg backend
+  selected before pyplot loads. Module import alone
+  therefore succeeds without the plotting stack.
+  '''
+
+  def __init__(self):
+    self._mod = None
+
+  def _load(self):
+    '''Import and cache the real pyplot module.'''
+    if self._mod is None:
+      import matplotlib
+      matplotlib.use('Agg')
+      import matplotlib.pyplot as mod
+      self._mod = mod
+    return self._mod
+
+  def __getattr__(self, name):
+    return getattr(self._load(), name)
+
+
+plt = _LazyPlt()
 
 
 def _pd_abs_err(y_true, y_pred):
@@ -92,7 +128,8 @@ def _safe(figs, name, fn, *args):
     fig = fn(*args)
     if fig is not None:
       figs[name] = fig
-  except Exception:  # noqa: BLE001 - charts skip on bad data
+  except Exception as exc:  # noqa: BLE001 - charts skip on bad data
+    LOG.debug('_safe: chart %s skipped (%s)', name, exc)
     for num in set(plt.get_fignums()) - before:
       plt.close(num)
 
@@ -197,14 +234,6 @@ def _per_class_bars(y_true, y_pred):
   fig, ax = _new_fig('Per-class F1')
   ax.bar(range(len(vals)), vals)
   ax.set_xlabel('class')
-  return fig
-
-
-def _cost_curve(_y_true, proba):  # pylint: disable=unused-argument
-  '''Plot a cost-curve stub.'''
-  fig, ax = _new_fig('Cost curve (stub)')
-  ax.plot([0, 1], [proba.mean(), 1 - proba.mean()])
-  ax.set_xlabel('fraction of population')
   return fig
 
 
@@ -332,7 +361,8 @@ def _safe_fig(fn):
     try:
       fig = fn(*args, **kwargs)
       return fig
-    except Exception:  # noqa: BLE001 - charts skip bad data
+    except Exception as exc:  # noqa: BLE001 - charts skip bad data
+      LOG.debug('_safe_fig: chart skipped (%s)', exc)
       for num in set(plt.get_fignums()) - before:
         plt.close(num)
       return None
@@ -843,7 +873,9 @@ def prediction_interval_coverage(y_true, y_pred, coverage=0.95):
   try:
     from scipy.stats import norm
     z = float(norm.ppf(0.5 + coverage / 2))
-  except Exception:  # noqa: BLE001 - fallback z value
+  except (ImportError, ValueError, TypeError, AttributeError) as exc:
+    LOG.debug(
+      'prediction_interval_coverage: fallback z (%s)', exc)
     z = 1.96
   resid = yt - yp
   half = z * float(np.std(resid) or 1.0)
@@ -1317,7 +1349,8 @@ def decision_boundary(x, y_true, model=None):
     try:
       grid = np.column_stack([gx.ravel(), gy.ravel()])
       scores = _predict_scores(model, grid)
-    except Exception:  # noqa: BLE001 - retry with full features
+    except Exception as exc:  # noqa: BLE001 - retry with full features
+      LOG.debug('decision_boundary: full-feature retry (%s)', exc)
       full = np.tile(np.median(data, axis=0), (grid.shape[0], 1))
       full[:, :2] = np.column_stack([gx.ravel(), gy.ravel()])
       scores = _predict_scores(model, full)
@@ -1721,7 +1754,6 @@ def make_charts(y_true, y_pred, y_proba, x_test, params):
       _safe(figs, 'lift_gain', _lift, y_true, proba)
       _safe(figs, 'ks_plot', _ks_plot, y_true, proba)
       _safe(figs, 'prob_distribution', _prob_dist, y_true, proba)
-      _safe(figs, 'cost_curve', _cost_curve, y_true, proba)
       _safe(figs, 'det_curve', det_curve, y_true, proba)
       _safe(figs, 'topk_accuracy_plot', topk_accuracy_plot,
             y_true, proba)

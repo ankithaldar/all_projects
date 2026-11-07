@@ -1,105 +1,109 @@
 # catalog.yml — gcp env overlay.
-# GCP env overlay: filepaths are gs://forecast-ml-artifacts/... and
+# GCP env overlay: filepaths are gs://${params:artifacts_bucket}/... and
 # BigQuery credentials come from GOOGLE_APPLICATION_CREDENTIALS.
+# Bucket: ${params:artifacts_bucket} is the flat artifacts_bucket param
+# in conf/base/parameters/platform.yml (default 'forecast-ml-artifacts',
+# matching infra/gcp var.artifacts_bucket). Override that one param —
+# not these filepaths — to use a different bucket.
 # Every key below overrides ONLY `filepath` vs base (same dataset
 # names, same kedro_datasets.* types). Valid filepath: a GCS URI
 # (gs://bucket/...) or local path; example:
-# 'gs://forecast-ml-artifacts/data/raw/x.csv'.
+# 'gs://${params:artifacts_bucket}/data/raw/x.csv'.
 # *_params entries (Spark BQ, metrics) inherit from base catalog.
 # WARNING: bucket is shared across runs — use env-specific buckets
 # for production data.
 # raw_data: CSV raw input. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/raw/raw_data.csv').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/raw/raw_data.csv').
 raw_data:
   type: 'kedro_datasets.pandas.CSVDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/raw/raw_data.csv'
+  filepath: 'gs://${params:artifacts_bucket}/data/raw/raw_data.csv'
 # raw_data_parquet: Parquet raw input. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/raw/raw_data.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/raw/raw_data.parquet').
 raw_data_parquet:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/raw/raw_data.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/data/raw/raw_data.parquet'
 # raw_data_regression: Regression raw input. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/raw/raw_data_regression.csv').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/raw/raw_data_regression.csv').
 raw_data_regression:
   type: 'kedro_datasets.pandas.CSVDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/raw/raw_data_regression.csv'
+  filepath: 'gs://${params:artifacts_bucket}/data/raw/raw_data_regression.csv'
 # processed_data: Processed frame. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/processed/processed_data.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/processed/processed_data.parquet').
 processed_data:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/processed/processed_data.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/data/processed/processed_data.parquet'
 # train_data: Train split. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/processed/train_data.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/processed/train_data.parquet').
 train_data:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/processed/train_data.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/data/processed/train_data.parquet'
 # test_data: Test split. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/data/processed/test_data.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/data/processed/test_data.parquet').
 test_data:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/data/processed/test_data.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/data/processed/test_data.parquet'
 # model: Fitted model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/model.pkl').
 model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/model.pkl'
 # calibration_model: Calibrated model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/calibration_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/calibration_model.pkl').
 calibration_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/calibration_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/calibration_model.pkl'
 # h2o_automl_model: H2O AutoML model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/h2o_automl_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/h2o_automl_model.pkl').
 h2o_automl_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/h2o_automl_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/h2o_automl_model.pkl'
 # xgboost_model: XGBoost model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/xgboost_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/xgboost_model.pkl').
 xgboost_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/xgboost_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/xgboost_model.pkl'
 # lightgbm_model: LightGBM model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/lightgbm_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/lightgbm_model.pkl').
 lightgbm_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/lightgbm_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/lightgbm_model.pkl'
 # catboost_model: CatBoost model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/catboost_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/catboost_model.pkl').
 catboost_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/catboost_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/catboost_model.pkl'
 # sklearn_model: sklearn model. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/models/sklearn_model.pkl').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/models/sklearn_model.pkl').
 sklearn_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/models/sklearn_model.pkl'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/models/sklearn_model.pkl'
 # metrics: Metrics JSON. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/metrics/metrics.json').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/metrics/metrics.json').
 metrics:
   type: 'kedro_datasets.json.JSONDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/metrics/metrics.json'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/metrics/metrics.json'
 # metrics_csv: Metrics CSV. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/metrics/metrics.csv').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/metrics/metrics.csv').
 metrics_csv:
   type: 'kedro_datasets.pandas.CSVDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/metrics/metrics.csv'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/metrics/metrics.csv'
 # predictions: Predictions parquet. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/predictions/predictions.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/predictions/predictions.parquet').
 predictions:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/predictions/predictions.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/predictions/predictions.parquet'
 # predictions_csv: Predictions CSV. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/predictions/predictions.csv').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/predictions/predictions.csv').
 predictions_csv:
   type: 'kedro_datasets.pandas.CSVDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/predictions/predictions.csv'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/predictions/predictions.csv'
 # shap_values: SHAP values parquet. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/shap/shap_values.parquet').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/shap/shap_values.parquet').
 shap_values:
   type: 'kedro_datasets.pandas.ParquetDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/shap/shap_values.parquet'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/shap/shap_values.parquet'
 # shap_summary: SHAP summary JSON. Overrides only filepath vs base
-# (valid: a filepath URI for this env; example: 'gs://forecast-ml-artifacts/artifacts/shap/shap_summary.json').
+# (valid: a filepath URI for this env; example: 'gs://${params:artifacts_bucket}/artifacts/shap/shap_summary.json').
 shap_summary:
   type: 'kedro_datasets.json.JSONDataset'
-  filepath: 'gs://forecast-ml-artifacts/artifacts/shap/shap_summary.json'
+  filepath: 'gs://${params:artifacts_bucket}/artifacts/shap/shap_summary.json'

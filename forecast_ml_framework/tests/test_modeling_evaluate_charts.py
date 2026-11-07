@@ -168,6 +168,13 @@ def test_classification_single_class_no_crash():
 def test_regression_full_metric_set():
   '''Regression exposes every comprehensive metric.'''
   x, y_true, y_pred, _, params = _reg()
+  # ML-21: deviances return NaN outside their support, so the
+  # finite-poisson assertion below needs strictly positive
+  # target/prediction values (the raw _reg data is centred
+  # normal with negatives). Shift both into positive support.
+  shift = -min(float(np.min(y_true)), float(np.min(y_pred))) + 1.0
+  y_true = y_true + shift
+  y_pred = y_pred + shift
   params = dict(params, metrics='all')
   out = evaluate_model(y_true, y_pred, None, x, params)['global']
   keys = ['mae', 'medae', 'rmse', 'rmsle', 'mse', 'msle',

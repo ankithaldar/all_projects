@@ -41,6 +41,10 @@ _SKLEARN_LOSS_NAMES = (
 def huber_loss(y_true, y_pred, delta=1.0):
   '''Huber loss between ``y_true`` and ``y_pred`` (mean).
 
+  This is the single home for the Huber formula (reviewer
+  F4): ``metrics._huber`` delegates here, preserving its
+  own default ``delta=1.35``.
+
   Args:
     y_true: True values.
     y_pred: Predicted values.

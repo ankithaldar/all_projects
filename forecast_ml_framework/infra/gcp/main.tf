@@ -11,7 +11,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 5.0"
+      version = "~> 5.0"
     }
   }
 }
@@ -19,6 +19,40 @@ terraform {
 provider "google" {
   project = var.project_id
   region  = var.region
+}
+
+# --- Dedicated workload service account (MLops-13, Antisec F-07) -------------
+# Dataproc nodes and the retraining scheduler OIDC identity both run as
+# this dedicated least-privilege service account -- never the project
+# default compute service account (historically broad scopes). The
+# account carries no project-wide role; its only grants are the
+# bucket-scoped object bindings below. Do not add broader bindings
+# without a separate IAM review.
+
+resource "google_service_account" "workloads" {
+  project      = var.project_id
+  account_id   = "forecast-ml-workloads"
+  display_name = "forecast-ml-framework workloads (Dataproc + Scheduler OIDC)"
+  description  = "Dedicated least-privilege identity for the Dataproc cluster and the retraining scheduler OIDC token. Replaces the default compute SA (MLops-13/F-07)."
+}
+
+# Least-privilege bucket access (Antisec R-08): the workload SA
+# reads pipeline artifacts but never writes them directly. Dataproc /
+# Spark staging and temp writes go to the separate temp bucket below
+# (staging_bucket = temp), which keeps objectAdmin. If a future job
+# must write artifacts directly, grant it a separate, narrow write
+# binding in a reviewed change — do not widen this binding back to
+# objectAdmin.
+resource "google_storage_bucket_iam_member" "workloads_artifacts" {
+  bucket = google_storage_bucket.artifacts.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.workloads.email}"
+}
+
+resource "google_storage_bucket_iam_member" "workloads_temp" {
+  bucket = google_storage_bucket.temp.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.workloads.email}"
 }
 
 # --- Artifacts bucket ---------------------------------------------------------
@@ -30,10 +64,41 @@ resource "google_storage_bucket" "artifacts" {
   project                     = var.project_id
   location                    = var.bucket_location
   uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
+  # Deny-public (F-12): PAP enforced + UBLA + no allUsers bindings
+  # anywhere in this stack. Never add a public IAM binding here.
+  public_access_prevention = "enforced"
 
   versioning {
     enabled = true
+  }
+
+  # CMEK (F-12): customer-managed key when var.kms_key_name is set;
+  # Google-managed encryption otherwise (dev default -- production
+  # must set kms_key_name, see variables.tf).
+  dynamic "encryption" {
+    for_each = var.kms_key_name != "" ? [1] : []
+    content {
+      default_kms_key_name = var.kms_key_name
+    }
+  }
+
+  # Lifecycle (MLops R4): versioning is on, so without this rule
+  # noncurrent versions of artifacts accumulate and are billed
+  # forever -- the same gap cycle-1 flagged for AWS. Expire
+  # noncurrent versions after 90 days, matching the AWS artifacts
+  # bucket noncurrent_version_expiration (90d). Live (current)
+  # objects are never expired by this rule: with_state = "ARCHIVED"
+  # (GCS name for noncurrent versions) scopes it to old versions
+  # only (unlike the temp bucket's ANY, which purges current +
+  # noncurrent after 7 days).
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age        = 90
+      with_state = "ARCHIVED"
+    }
   }
 
   labels = var.labels
@@ -54,12 +119,25 @@ resource "google_storage_bucket" "temp" {
     enabled = true
   }
 
+  # CMEK (F-12): same optional customer-managed key as artifacts.
+  dynamic "encryption" {
+    for_each = var.kms_key_name != "" ? [1] : []
+    content {
+      default_kms_key_name = var.kms_key_name
+    }
+  }
+
+  # with_state = "ANY" is load-bearing (MLops-14): without it the
+  # rule only matches LIVE objects, so with versioning on the
+  # noncurrent versions would accumulate forever and the 7-day
+  # expiry would not bound cost. ANY purges current + noncurrent.
   lifecycle_rule {
     action {
       type = "Delete"
     }
     condition {
-      age = 7
+      age        = 7
+      with_state = "ANY"
     }
   }
 
@@ -92,9 +170,22 @@ resource "google_dataproc_cluster" "dev" {
 
   cluster_config {
     gce_cluster_config {
-      zone           = var.dataproc_zone
-      metadata       = var.labels
+      zone = var.dataproc_zone
+      # Dedicated least-privilege SA (MLops-13/F-07) -- never the
+      # default compute SA. Explicit network/subnetwork (required
+      # when enabled, validated in variables.tf) -- never the
+      # implicit default VPC.
+      service_account  = google_service_account.workloads.email
+      network          = var.dataproc_network
+      subnetwork       = var.dataproc_subnetwork
       internal_ip_only = true
+      # Scoped metadata (MLops-13): deliberately NOT var.labels --
+      # resource labels are not VM metadata, and publishing every
+      # label as VM metadata leaks internal tagging to any process
+      # on the node. One fixed purpose key only.
+      metadata = {
+        "cluster-purpose" = "forecast-ml-dataproc"
+      }
     }
 
     staging_bucket = google_storage_bucket.temp.name
@@ -119,7 +210,7 @@ resource "google_dataproc_cluster" "dev" {
     dynamic "autoscaling_config" {
       for_each = var.autoscaling_enabled && var.enable_dataproc ? [1] : []
       content {
-        policy = google_dataproc_autoscaling_policy.scaling[0].name
+        policy_uri = google_dataproc_autoscaling_policy.scaling[0].id
       }
     }
   }
@@ -129,8 +220,8 @@ resource "google_dataproc_cluster" "dev" {
 
 # --- Dataproc autoscaling policy (100M-row cloud scaling) ---------------------
 # Scale bounds: workers scale between var.autoscaling_min_workers
-# and var.autoscaling_max_workers (min_instances/max_instances)
-# under CPU oversubscription. Off by default
+# and var.autoscaling_max_workers (min_instances/max_instances in
+# worker_config). Off by default
 # (var.autoscaling_enabled = false, count = 0): no policy, no
 # autoscaling billing. COST NOTE: when enabled, workers are billed
 # while the cluster runs -- idle/destroy the cluster after a run.
@@ -142,25 +233,38 @@ resource "google_dataproc_cluster" "dev" {
 # var.retraining_schedule_cron (default weekly "0 6 * * 1", matching
 # retraining_params.schedule_days = 7). The job body is a stub: set
 # var.retraining_job_uri to the real retraining endpoint (Cloud Run /
-# Cloud Build trigger) before enabling. Least privilege: the job uses
-# the project default compute service account; scope it down in a
-# separate IAM change before production use.
+# Cloud Build trigger) before enabling. Least privilege: the job
+# authenticates with OIDC as the dedicated workload service account
+# (google_service_account.workloads), never the default compute SA;
+# the target must verify the OIDC token (see http_target below).
 
 resource "google_cloud_scheduler_job" "retraining" {
-  count      = var.enable_retraining_scheduler ? 1 : 0
-  name       = "forecast-ml-retraining"
-  project    = var.project_id
-  region     = var.region
-  schedule   = var.retraining_schedule_cron
-  time_zone  = "UTC"
+  count       = var.enable_retraining_scheduler ? 1 : 0
+  name        = "forecast-ml-retraining"
+  project     = var.project_id
+  region      = var.region
+  schedule    = var.retraining_schedule_cron
+  time_zone   = "UTC"
   description = "Phase 3 retraining scheduler (stub body; set retraining_job_uri)."
 
   http_target {
     uri         = var.retraining_job_uri == "" ? "https://example.invalid/retraining-stub" : var.retraining_job_uri
     http_method = "POST"
+    # OIDC auth (F-07): the scheduler POSTs with a short-lived OIDC
+    # token for the dedicated workload SA, audience = the target
+    # URI. The retraining target MUST verify this token (issuer
+    # https://accounts.google.com, audience = its own URI); an
+    # unauthenticated POST is never accepted. (The example.invalid
+    # fallback is unreachable when the job is enabled -- the
+    # validation on retraining_job_uri requires a real URI.)
+    oidc_token {
+      service_account_email = google_service_account.workloads.email
+      audience              = var.retraining_job_uri == "" ? "https://example.invalid/retraining-stub" : var.retraining_job_uri
+    }
   }
 
-  labels = var.labels
+  # NOTE: google_cloud_scheduler_job has no labels argument in the
+  # google provider ~> 5.0 schema -- intentionally omitted.
 }
 
 # --- Alerts Pub/Sub topic (Phase 3) -------------------------------------------
@@ -189,25 +293,29 @@ resource "google_pubsub_topic" "alerts" {
 # }
 
 resource "google_dataproc_autoscaling_policy" "scaling" {
-  count    = var.autoscaling_enabled && var.enable_dataproc ? 1 : 0
-  name     = var.autoscaling_policy_name
-  project  = var.project_id
-  location = var.region
+  count     = var.autoscaling_enabled && var.enable_dataproc ? 1 : 0
+  policy_id = var.autoscaling_policy_name
+  project   = var.project_id
+  location  = var.region
 
-  policy {
-    worker_config {
-      num_instances {
-        min = var.autoscaling_min_workers
-        max = var.autoscaling_max_workers
-      }
-    }
+  # google provider ~> 5.0 schema: flat worker_config with
+  # min_instances/max_instances (no policy wrapper, no
+  # basic_scaling_config; the old cpu_oversubscription knob is not
+  # exposed by this schema version).
+  worker_config {
+    min_instances = var.autoscaling_min_workers
+    max_instances = var.autoscaling_max_workers
+  }
 
-    basic_scaling_config {
-      scaling_config {
-        min_instances        = var.autoscaling_min_workers
-        max_instances        = var.autoscaling_max_workers
-        cpu_oversubscription = 2.0
-      }
+  basic_algorithm {
+    cooldown_period = "300s"
+
+    yarn_config {
+      graceful_decommission_timeout  = "120s"
+      scale_up_factor                = 2.0
+      scale_down_factor              = 0.5
+      scale_up_min_worker_fraction   = 0.0
+      scale_down_min_worker_fraction = 0.0
     }
   }
 }

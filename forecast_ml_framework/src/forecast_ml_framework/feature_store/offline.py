@@ -4,10 +4,14 @@
 '''Offline feature store backed by an ArtifactStore.'''
 # pylint: disable=import-outside-toplevel, broad-exception-caught
 
+import logging
+
 from forecast_ml_framework.feature_store.store import (
     ENTITY_COL, FeatureStore, _check_not_empty, _naive_utc,
     _naive_utc_frame, _normalize_frame, _resolve_time,
     _snapshot_timestamp, _version_key)
+
+LOG = logging.getLogger(__name__)
 
 
 class OfflineFeatureStore(FeatureStore):
@@ -22,15 +26,19 @@ class OfflineFeatureStore(FeatureStore):
     prefix: Artifact key prefix for feature snapshots.
     entity_col: Default entity column name.
     timestamp_col: Default timestamp column name.
+    strict_pit: When True, ``get_features`` raises without
+      a cutoff (training mode); a per-call ``strict_pit``
+      argument overrides this default.
   '''
 
   def __init__(self, artifact_store=None, base_path=None,
                prefix='features', entity_col=ENTITY_COL,
-               timestamp_col=None):
+               timestamp_col=None, strict_pit=False):
     '''Initialize with an artifact store (lazy imports only).'''
     self.prefix = prefix
     self.entity_col = entity_col
     self.timestamp_col = timestamp_col
+    self.strict_pit = bool(strict_pit)
     if artifact_store is not None and not hasattr(
             artifact_store, 'save'):
       from forecast_ml_framework.core.artifact_store import (
@@ -61,7 +69,6 @@ class OfflineFeatureStore(FeatureStore):
     Raises:
       ValueError: When the frame lacks an entity column.
     '''
-    import pandas as pd
     _check_not_empty(dataframe)
     frame = _naive_utc_frame(_normalize_frame(
         dataframe, as_of=as_of,
@@ -88,14 +95,18 @@ class OfflineFeatureStore(FeatureStore):
     '''Return all snapshot keys under the prefix, sorted.'''
     try:
       keys = list(self.artifact_store.list(self.prefix))
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+      LOG.debug('offline feature store: list(%r) failed: %s',
+                self.prefix, exc)
       keys = []
     if keys:
       return sorted(keys)
     # Fall back to listing everything (some stores ignore prefix).
     try:
       all_keys = list(self.artifact_store.list(''))
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+      LOG.warning('offline feature store: list(all) failed: %s',
+                  exc)
       all_keys = []
     return sorted(k for k in all_keys if self.prefix in k)
 
@@ -103,7 +114,10 @@ class OfflineFeatureStore(FeatureStore):
     '''Load one snapshot frame, returning None on failure.'''
     try:
       loaded = self.artifact_store.load(key)
-    except Exception:
+    except (OSError, RuntimeError, TypeError, ValueError,
+            KeyError) as exc:
+      LOG.debug('offline feature store: load(%r) failed: %s',
+                key, exc)
       return None
     import pandas as pd
     if isinstance(loaded, pd.DataFrame):
@@ -140,7 +154,9 @@ class OfflineFeatureStore(FeatureStore):
           candidates.append((_naive_utc(stamp), candidate))
       try:
         parsed = _naive_utc(as_of)
-      except Exception:  # pylint: disable=broad-exception-caught
+      except (TypeError, ValueError, OverflowError) as exc:
+        LOG.debug('offline feature store: unparseable as_of %r: %s',
+                  as_of, exc)
         parsed = None
       parsed_ok = parsed is not None
       if candidates and parsed_ok:
@@ -172,7 +188,9 @@ class OfflineFeatureStore(FeatureStore):
       if parsed_ok:
         try:
           direct = _version_key(self.prefix, parsed)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (TypeError, ValueError, OverflowError) as exc:
+          LOG.debug('offline feature store: version key failed: %s',
+                    exc)
           direct = None
         if direct is not None and self.artifact_store.exists(direct):
           return self._load_frame(direct)
@@ -221,7 +239,7 @@ class OfflineFeatureStore(FeatureStore):
     return combined
 
   def get_features(self, entity_ids, feature_names=None, as_of=None,
-                   request_time=None):
+                   request_time=None, strict_pit=None):
     '''Serve latest features per entity with ``as_of <= request``.
 
     Args:
@@ -230,6 +248,9 @@ class OfflineFeatureStore(FeatureStore):
         columns when None).
       as_of: Point-in-time cutoff.
       request_time: Point-in-time cutoff (wins over ``as_of``).
+      strict_pit: When True (or when the store was built
+        with ``strict_pit=True`` and this is None), raise
+        ``ValueError`` without a cutoff instead of warning.
 
     Without a cutoff (both ``as_of``/``request_time`` None) this
     returns the latest available snapshot and warns: training
@@ -240,12 +261,20 @@ class OfflineFeatureStore(FeatureStore):
       one row per found entity, in ``entity_ids`` order.
 
     Raises:
-      ValueError: When a requested feature is unknown.
+      ValueError: When a requested feature is unknown, or
+        when strict mode is on and no cutoff is given.
     '''
     import warnings
     import pandas as pd
     raw_when = _resolve_time(as_of=as_of, request_time=request_time)
     when = _naive_utc(raw_when) if raw_when is not None else None
+    strict = self.strict_pit if strict_pit is None else bool(
+        strict_pit)
+    if when is None and strict:
+      raise ValueError(
+          'strict_pit=True requires an as_of/request_time'
+          ' cutoff; refusing to return latest features'
+          ' without a point-in-time cutoff')
     if when is None:
       warnings.warn(
           'get_features without a cutoff returns the latest '

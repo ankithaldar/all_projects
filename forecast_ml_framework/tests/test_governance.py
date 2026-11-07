@@ -291,15 +291,20 @@ def test_audit_scrubs_url_password_containing_at():
 
 
 def test_pyproject_dependencies_cover_used_and_trim_unused():
+  import re
   import tomllib
   from pathlib import Path
   raw = Path(__file__).resolve().parents[1] / 'pyproject.toml'
   data = tomllib.loads(raw.read_text())
   deps = data['project']['dependencies']
+  dep_names = {
+    re.split(r'[<>=!~ ;\[]', dep, maxsplit=1)[0]
+    for dep in deps
+  }
   for needed in ('kedro-datasets', 'scipy', 'pyarrow'):
-    assert needed in deps
+    assert needed in dep_names
   for unused in ('polars', 'seaborn', 'dvc', 'pyyaml'):
-    assert unused not in deps
+    assert unused not in dep_names
   dev = str(data.get('dependency-groups', {}).get('dev', []))
   assert 'pyyaml' in dev
   extras = str(data['project']['optional-dependencies'])
@@ -1051,3 +1056,3106 @@ def test_config_hash_nested_sets_in_lists_and_dicts():
   assert compute_config_hash(left, {'p': {5, 4}}) == (
     compute_config_hash({'a': [['x', 'y']], 'b': {'k': [1, 2]}},
                         {'p': [4, 5]}))
+
+
+# --- telemetry-scrub-leaf: governance.scrub leaf (RED) ---
+
+def test_scrub_leaf_is_stdlib_only_and_audit_reexports_it():
+  '''scrub_details lives in governance.scrub (stdlib-only leaf)
+  and governance.audit re-exports the same object (compat).'''
+  import ast
+  import sys
+  from pathlib import Path
+
+  src = (
+      Path(__file__).resolve().parents[1]
+      / 'src' / 'forecast_ml_framework' / 'governance'
+      / 'scrub.py')
+  assert src.exists()
+  tree = ast.parse(src.read_text())
+  imported = set()
+  for node in ast.walk(tree):
+    if isinstance(node, ast.ImportFrom):
+      assert 'forecast_ml_framework' not in (node.module or '')
+      assert 'telemetry' not in (node.module or '')
+      assert 'governance' not in (node.module or '')
+      imported.add(node.module or '')
+    elif isinstance(node, ast.Import):
+      for alias in node.names:
+        assert 'forecast_ml_framework' not in alias.name
+        assert 'telemetry' not in alias.name
+        assert 'governance' not in alias.name
+        imported.add(alias.name)
+  assert imported <= set(sys.stdlib_module_names)
+
+  from forecast_ml_framework.governance import audit, scrub
+
+  assert audit.scrub_details is scrub.scrub_details
+  assert audit.REDACTED == scrub.REDACTED == '***REDACTED***'
+  assert scrub.scrub_details({'password': 'hunter2'}) == {
+      'password': '***REDACTED***'}
+  # audit_log is unchanged (still scrubs via the leaf).
+  entry = audit.audit_log('train', 'alice', {'password': 'hunter2'})
+  assert entry['details'] == {'password': '***REDACTED***'}
+
+
+def test_audit_imports_scrub_leaf():
+  '''governance.audit imports scrub_details from governance.scrub.'''
+  import ast
+  from pathlib import Path
+
+  src = (
+      Path(__file__).resolve().parents[1]
+      / 'src' / 'forecast_ml_framework' / 'governance'
+      / 'audit.py')
+  tree = ast.parse(src.read_text())
+  modules = [
+      node.module or ''
+      for node in ast.walk(tree)
+      if isinstance(node, ast.ImportFrom)
+  ]
+  assert 'forecast_ml_framework.governance.scrub' in modules
+
+
+# --- telemetry-final-fixes: homoglyph scrub (RED) ---
+
+def test_audit_scrubs_fullwidth_homoglyph_marker():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice',
+      {'note': '\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44=hunter2'})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob
+  assert '***REDACTED***' in blob
+
+
+def test_audit_scrubs_zero_width_homoglyph_marker():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('pass\u200bword hunter2', 'password\u200b=hunter2',
+               'pass\u200cword=hunter2'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_scrubs_zero_width_in_dict_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice', {'pass\u200bword': 'hunter2', 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob
+  assert entry['details']['ok'] == 'keep'
+
+
+# --- loop2-audit-fixes: nested / glued / Cyrillic (RED) ---
+
+def test_audit_scrubs_outer_marker_nested_secret_tuple_value():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'k': ('password', (b'HUNTER2',))})
+  assert 'HUNTER2' not in str(out)
+  assert '***REDACTED***' in str(out)
+  out2 = scrub_details({'k': (('HUNTER2',), 'password')})
+  assert 'HUNTER2' not in str(out2)
+
+
+def test_audit_scrubs_outer_marker_nested_secret_tuple_key():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {
+      ('password', (b'HUNTER2',)): 'v1',
+      ('ok', 'keep'): 'keep-value'})
+  assert 'HUNTER2' not in str(entry)
+  assert entry['details'][('ok', 'keep')] == 'keep-value'
+
+
+def test_audit_scrubs_glued_marker_value():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('password=secretHUNTER2', 'password=fooSecretBar',
+               'token=secretHUNTER2'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'HUNTER2' not in blob, repr(text)
+    assert 'fooSecretBar' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)
+
+
+def test_audit_scrubs_cyrillic_homoglyph_marker():
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('p\u0430ssword=hunter2', 's\u0435cret=hunter2',
+               't\u043ek\u0435n=hunter2'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)
+  entry = audit_log('train', 'alice', {
+      'p\u0430ssword': 'hunter2', 'ok': 'keep'})
+  assert 'hunter2' not in json.dumps(entry)
+  assert entry['details']['ok'] == 'keep'
+
+
+# --- loop3-scrub-fixes: glued / dict-in-marker-tuple / deepcopy (RED) ---
+
+@pytest.mark.parametrize('text,expected', [
+    ('passwordZq9SENTINEL', 'password***REDACTED***'),
+    ('tokenZq9SENTINEL', 'token***REDACTED***'),
+    ('secretZq9SENTINEL', 'secret***REDACTED***'),
+    ('apikeyZq9SENTINEL', 'apikey***REDACTED***'),
+    ('passwordZq9SENTINEL end', 'password***REDACTED*** end'),
+    ('note passwordZq9SENTINEL', 'note password***REDACTED***'),
+])
+def test_audit_scrubs_glued_no_separator_marker(text, expected):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  assert entry['details']['note'] == expected, repr(text)
+  assert 'Zq9SENTINEL' not in json.dumps(entry)
+
+
+def test_audit_glued_marker_extension_preserves_following_value():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': 'accessKeyId=hunter2'})
+  assert 'hunter2' not in json.dumps(entry)
+  assert '***REDACTED***' in json.dumps(entry)
+  # CamelCase type names carrying a marker are preserved,
+  # while a following value is still redacted.
+  entry2 = audit_log('train', 'alice', {
+      'note': 'SecretThing', 'pair': 'SecretThing=hunter2'})
+  assert entry2['details']['note'] == 'SecretThing'
+  assert 'hunter2' not in json.dumps(entry2)
+
+
+def test_audit_scrubs_dict_nested_in_marker_tuple_value():
+  from forecast_ml_framework.governance.audit import scrub_details
+  # Loop4: a dict nested in a marker tuple is secret payload,
+  # so its plain (non-marker) keys are redacted too, not
+  # merely its values; scalar values are preserved.
+  out = scrub_details({'k': ('password', {'a': 'Zq9SENTINEL'})})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert out == {'k': ('password', {'***REDACTED***': '***REDACTED***'})}
+  out2 = scrub_details({'k': ['password', {'a': 'Zq9SENTINEL'}]})
+  assert out2 == {'k': ['password', {'***REDACTED***': '***REDACTED***'}]}
+  out2b = scrub_details({'k': ['password', {'b': 2}]})
+  assert out2b == {'k': ['password', {'***REDACTED***': 2}]}
+  out3 = scrub_details({'k': ('password', [{'a': 'Zq9SENTINEL'}])})
+  assert out3 == {'k': ('password', [{'***REDACTED***': '***REDACTED***'}])}
+
+
+def test_audit_scrubs_dict_nested_in_marker_tuple_via_audit_log():
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {
+      'k': ('password', {'a': 'Zq9SENTINEL'})})
+  assert 'Zq9SENTINEL' not in json.dumps(entry)
+  assert '***REDACTED***' in json.dumps(entry)
+
+
+def test_scrub_does_not_deepcopy_arbitrary_objects():
+  from forecast_ml_framework.governance.audit import scrub_details
+  calls = []
+
+  class Evil:
+    def __deepcopy__(self, memo):
+      calls.append('deepcopy')
+      return self
+
+    def __reduce__(self):
+      calls.append('reduce')
+      return ('Evil', ())
+
+    def __str__(self):
+      calls.append('str')
+      return 'Zq9SENTINEL'
+
+    __repr__ = __str__
+
+  out = scrub_details({'k': Evil(), 'items': [Evil()]})
+  assert calls == [], calls
+  assert out == {'k': {'type': 'Evil'}, 'items': [{'type': 'Evil'}]}
+  assert 'Zq9SENTINEL' not in str(out)
+
+
+def test_scrub_file_handle_returns_type_only():
+  import tempfile
+
+  from forecast_ml_framework.governance.audit import scrub_details
+  with tempfile.NamedTemporaryFile(mode='w+', delete=False) as handle:
+    name = type(handle).__name__
+    out = scrub_details({'f': handle, 'n': 1, 'x': 1.5, 'b': True,
+                         'z': None})
+    assert out['f'] == {'type': name}
+    assert out['n'] == 1 and out['x'] == 1.5
+    assert out['b'] is True and out['z'] is None
+
+
+# --- loop4-scrub-fixes: inherited dict keys / hostile keys / sets (RED) ---
+
+def test_loop4_dict_nested_in_marker_tuple_does_not_leak_key():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'k': ('password', {'Zq': 'x'})})
+  assert 'Zq' not in str(out)
+  assert '***REDACTED***' in str(out)
+  out2 = scrub_details({'k': ('password', {('Zq', 'x'): 'y'})})
+  assert 'Zq' not in str(out2)
+
+
+def test_loop4_hostile_key_repr_raises_no_crash_no_leak():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class BadKey:
+    def __repr__(self):
+      raise RuntimeError('repr boom')
+
+    def __str__(self):
+      return 'password=Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4242
+
+  out = scrub_details({BadKey(): 'v', 'ok': 'keep'})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert '<unrepresentable>' in str(out)
+  assert out['ok'] == 'keep'
+
+
+def test_loop4_hostile_tuple_key_repr_raises_no_crash():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class BadKey:
+    def __repr__(self):
+      raise RuntimeError('repr boom')
+
+    def __str__(self):
+      return 'password=Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4243
+
+  out = scrub_details({(BadKey(), 'x'): 'v', ('ok', 'keep'): 1})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert '<unrepresentable>' in str(out)
+  assert out[('ok', 'keep')] == 1
+
+
+def test_loop4_hostile_key_repr_secret_is_scrubbed():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilKey:
+    def __repr__(self):
+      return 'password=Zq9SENTINEL'
+
+    def __str__(self):
+      return 'password=Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4244
+
+  out = scrub_details({EvilKey(): 'v'})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+def test_loop4_unknown_object_in_set_stays_hashable():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class Obj:
+    pass
+
+  out = scrub_details({'s': {Obj()}, 'f': frozenset({Obj()})})
+  assert isinstance(out['s'], set)
+  assert isinstance(out['f'], frozenset)
+  for elem in out['s'] | out['f']:
+    hash(elem)
+    assert isinstance(elem, str)
+  assert 'Obj' in str(out)
+
+
+def test_loop4_hostile_object_in_set_no_crash():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class BadObj:
+    def __repr__(self):
+      raise RuntimeError('repr boom')
+
+    def __str__(self):
+      return 'password=Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4245
+
+  out = scrub_details({'s': {BadObj()}})
+  assert isinstance(out['s'], set)
+  assert 'Zq9SENTINEL' not in str(out)
+  for elem in out['s']:
+    hash(elem)
+
+
+def test_loop4_cyrillic_homoglyph_still_blocked():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'note': 'p\u0430ssword=hunter2',
+                       'p\u0430ssword': 'hunter2'})
+  assert 'hunter2' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+# --- loop5-scrub-fixes: homoglyph / unknown keys / hostile (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'p\u00e1ssword=hunter2',
+    'p\u0251ssword=hunter2',
+    'pa\u0301ssword=hunter2',
+    'p\u0301assword=hunter2',
+    'p\u00e0ssword=hunter2',
+    'p\u00e2ssword=hunter2',
+    'passwo\u044fd=hunter2',
+    'p\u044fssword=hunter2',
+    'P\u00c1SSWORD=hunter2',
+    's\u00e9cret=hunter2',
+    'passwo\u042fd=hunter2',
+])
+def test_loop5_homoglyph_evasion_scrubbed(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+@pytest.mark.parametrize('key', [
+    'p\u00e1ssword',
+    'p\u0251ssword',
+    'pa\u0301ssword',
+    'passwo\u044fd',
+    'p\u044fssword',
+])
+def test_loop5_homoglyph_dict_key_scrubbed(key):
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({key: 'hunter2', 'ok': 'keep'})
+  assert 'hunter2' not in str(out), repr(key)
+  assert '***REDACTED***' in str(out), repr(key)
+  assert out['ok'] == 'keep'
+
+
+def test_loop5_unknown_key_bare_secret_repr_not_preserved():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilKey:
+    def __repr__(self):
+      return 'Zq9SENTINEL'
+
+    def __str__(self):
+      return 'Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4246
+
+  out = scrub_details({EvilKey(): 'v', 'ok': 'keep'})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert 'EvilKey' in str(out)
+  assert out['ok'] == 'keep'
+  for k in out:
+    hash(k)
+
+
+def test_loop5_unknown_key_bare_secret_in_tuple_and_frozenset():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilKey:
+    def __repr__(self):
+      return 'Zq9SENTINEL'
+
+    def __str__(self):
+      return 'Zq9SENTINEL'
+
+    def __hash__(self):
+      return 4247
+
+  out = scrub_details({(EvilKey(), 'x'): 'v', ('ok', 'keep'): 1})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert out[('ok', 'keep')] == 1
+  out2 = scrub_details({frozenset({EvilKey()}): 'v',
+                        frozenset({'ok'}): 'keep'})
+  assert 'Zq9SENTINEL' not in str(out2)
+  assert out2[frozenset({'ok'})] == 'keep'
+
+
+def test_loop5_hostile_tuple_container_no_crash_scrub():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilTuple(tuple):
+    def __iter__(self):
+      raise RuntimeError('iter boom')
+
+  out = scrub_details({'k': EvilTuple((1, 2)), 'ok': 'keep'})
+  assert 'iter boom' not in str(out)
+  assert out['ok'] == 'keep'
+  json.dumps(out, default=str)
+
+
+def test_loop5_hostile_dict_container_no_crash_scrub():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilDict(dict):
+    def items(self):
+      raise RuntimeError('items boom')
+
+    def __iter__(self):
+      raise RuntimeError('iter boom')
+
+  out = scrub_details({'k': EvilDict({'a': 1}), 'ok': 'keep'})
+  assert 'boom' not in str(out)
+  assert out['ok'] == 'keep'
+  out2 = scrub_details(EvilDict({'a': 1}))
+  assert 'boom' not in str(out2)
+  json.dumps(out2, default=str)
+
+
+def test_loop5_hostile_tuple_key_no_crash_scrub():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilTuple(tuple):
+    def __iter__(self):
+      raise RuntimeError('iter boom')
+
+  out = scrub_details({EvilTuple(('a',)): 'v', 'ok': 'keep'})
+  assert 'boom' not in str(out)
+  assert out['ok'] == 'keep'
+
+
+# --- loop6-scrub-fixes: Cf format-char bypass (RED) ---
+
+@pytest.mark.parametrize('cf', [
+    '\u200e', '\u200f',
+    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    '\u2066', '\u2067', '\u2068', '\u2069',
+    '\u2061', '\u2062', '\u2063', '\u2064',
+])
+def test_loop6_normalize_unicode_drops_cf(cf):
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  assert _normalize_unicode('a' + cf + 'b') == 'ab'
+
+
+@pytest.mark.parametrize('cf', [
+    '\u200e', '\u200f',
+    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    '\u2066', '\u2067', '\u2068', '\u2069',
+    '\u2061', '\u2062', '\u2063', '\u2064',
+])
+def test_loop6_cf_marker_bypass_scrubbed(cf):
+  from forecast_ml_framework.governance.audit import audit_log
+  for text in ('p' + cf + 'assword hunter2',
+               'pas' + cf + 'sword=hunter2'):
+    entry = audit_log('train', 'alice', {'note': text})
+    blob = json.dumps(entry)
+    assert 'hunter2' not in blob, repr(text)
+    assert '***REDACTED***' in blob, repr(text)
+
+
+def test_loop6_cf_marker_in_dict_key_scrubbed():
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details(
+      {'p\u200eassword': 'hunter2', 'ok': 'keep'})
+  assert 'hunter2' not in str(out)
+  assert '***REDACTED***' in str(out)
+  assert out['ok'] == 'keep'
+
+
+# --- telemetry-final-fixes loop6 gates (RED) ---
+
+@pytest.mark.parametrize('repr_text', [
+    '\u00e1Zq9SENTINEL',
+    '\uff41Zq9SENTINEL',
+    'a\u0301Zq9SENTINEL',
+    'a\u200bZq9SENTINEL',
+    '\u00e1Zq9SENTINEL extra',
+])
+def test_final_unknown_key_normalization_bare_repr_not_preserved(
+        repr_text):
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilKey:
+    def __repr__(self):
+      return repr_text
+
+    __str__ = __repr__
+
+    def __hash__(self):
+      return 4260
+
+  out = scrub_details({EvilKey(): 'v', 'ok': 'keep'})
+  assert 'Zq9SENTINEL' not in str(out), repr(repr_text)
+  assert 'aZq9SENTINEL' not in str(out), repr(repr_text)
+  assert 'EvilKey' in str(out), repr(repr_text)
+  assert out['ok'] == 'keep'
+
+
+def test_final_unknown_key_marker_repr_placeholder_value_redacted():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class EvilKey:
+    def __repr__(self):
+      return 'p\u00e1ssword=Zq9SENTINEL'
+
+    __str__ = __repr__
+
+    def __hash__(self):
+      return 4261
+
+  out = scrub_details({EvilKey(): 'v'})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert 'EvilKey' in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+@pytest.mark.parametrize('text', [
+    'secret_key=hunter2',
+    'secret.key=hunter2',
+    'secret-key hunter2',
+    'secret/key=hunter2',
+    'password_hash=hunter2',
+    'password.hash hunter2',
+    'password-hash=hunter2',
+    'password_hash hunter2',
+    'token_value=hunter2',
+    'token.value hunter2',
+    'token-value=hunter2',
+    'aws_secret_key=hunter2',
+    'aws.secret.key=hunter2',
+    'aws_secret_key hunter2',
+    'api.key=hunter2',
+    'api.key hunter2',
+    'access.key=hunter2',
+    'access.key hunter2',
+    'pass.word=hunter2',
+    'pass.word hunter2',
+    'private.key=hunter2',
+    'secret_hash hunter2',
+    'secret_value=hunter2',
+])
+def test_final_compound_and_dotted_markers_scrubbed(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Bearer is tok12345',
+    'Bearer was tok12345',
+    'Bearer very tok12345',
+    'Bearer is very tok12345',
+    'Bearer really is tok12345 end',
+    'Bearer definitely tok12345',
+    'Bearer is: tok12345',
+])
+def test_final_bearer_filler_scrubbed(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'tok12345' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+def test_final_infinite_tuple_container_capped():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class InfiniteTuple(tuple):
+    def __iter__(self):
+      count = 0
+      while True:
+        yield count
+        count += 1
+
+  out = scrub_details({'k': InfiniteTuple((1, 2))})
+  assert len(out['k']) <= 1001
+  assert out['k'][:3] == (0, 1, 2)
+
+
+def test_final_infinite_tuple_key_capped():
+  from forecast_ml_framework.governance.audit import scrub_details
+
+  class InfiniteTuple(tuple):
+    def __iter__(self):
+      count = 0
+      while True:
+        yield count
+        count += 1
+
+  out = scrub_details({InfiniteTuple((1,)): 'v', 'ok': 'keep'})
+  assert out['ok'] == 'keep'
+  for key in out:
+    hash(key)
+
+
+# --- loop7-nfkc-split-fix: NFKC separator splits marker (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'toke\u0149=Zq9SENTINEL7x',
+    'crede\u0149tial=Zq9SENTINEL7x',
+    'p' + '\u1e9a' + 'ssword=Zq9SENTINEL7x',
+    'credenti' + '\u1e9a' + 'l=Zq9SENTINEL7x',
+    '\u1e9a' + 'pi_key=Zq9SENTINEL7x',
+    'cre\u249fential=Zq9SENTINEL7x',
+    'p\u249cssword=Zq9SENTINEL7x',
+    '\u249dearer=Zq9SENTINEL7x',
+    'toke\u24a9=Zq9SENTINEL7x',
+    'cre\U0001f113ential=Zq9SENTINEL7x',
+    'credentia\u0140=Zq9SENTINEL7x',
+    'credentia\u013f=Zq9SENTINEL7x',
+    'toke\u02bcn=Zq9SENTINEL7x',
+    'pa\u02bessword=Zq9SENTINEL7x',
+    'toke\u02c2n=Zq9SENTINEL7x',
+    'toke\u02d2n=Zq9SENTINEL7x',
+])
+def test_loop7_nfkc_split_marker_scrubbed_in_note(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'toke\u0149=Zq9SENTINEL7x',
+    'crede\u0149tial=Zq9SENTINEL7x',
+    'p' + '\u1e9a' + 'ssword Zq9SENTINEL7x',
+    'cre\u249fential Zq9SENTINEL7x',
+])
+def test_loop7_nfkc_split_marker_scrubbed_via_scrub_details(text):
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({'note': text})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert '***REDACTED***' in str(out), repr(text)
+  assert scrub_details(text) != text, repr(text)
+  assert 'Zq9SENTINEL7x' not in str(scrub_details(text)), repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'toke\u0149=Zq9SENTINEL7x',
+    'crede\u0149tial=Zq9SENTINEL7x',
+    'p' + '\u1e9a' + 'ssword=Zq9SENTINEL7x',
+])
+def test_loop7_nfkc_split_marker_scrubbed_in_audit_event(text):
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(text, 'alice', {'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details'] == {'ok': 'keep'}
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('toke\u0149', 'token'),
+    ('crede\u0149tial', 'credential'),
+    ('p' + '\u1e9a' + 'ssword', 'password'),
+    ('credenti' + '\u1e9a' + 'l', 'credential'),
+    ('cre\u249fential', 'credential'),
+    ('p\u249cssword', 'password'),
+    ('toke\u02bcn', 'token'),
+    ('toke\u02c2n', 'token'),
+    ('credentia\u0140', 'credential'),
+])
+def test_loop7_normalize_unicode_joins_split_marker(raw, expected):
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  assert _normalize_unicode(raw) == expected, repr(raw)
+
+
+def test_loop7_normalize_preserves_spaced_parentheses():
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  assert _normalize_unicode('option (a) is ok') == (
+      'option (a) is ok')
+  assert _normalize_unicode('hello (world) test') == (
+      'hello (world) test')
+
+
+# --- loop8-proven-fixes: NFKC space-mark split (RED) ---
+
+_LOOP8_SPACE_CPS = [
+  0x00A8, 0x00AF, 0x00B4, 0x00B8, 0x02D8, 0x02D9, 0x02DA,
+  0x02DB, 0x02DC, 0x02DD, 0x037A, 0x0384, 0x0385, 0x1FBD,
+  0x1FBF, 0x1FC0, 0x1FC1, 0x1FCD, 0x1FCE, 0x1FCF, 0x1FDD,
+  0x1FDE, 0x1FDF, 0x1FED, 0x1FEE, 0x1FFD, 0x1FFE, 0x2017,
+  0x203E, 0x309B, 0x309C, 0xFC5E, 0xFC5F, 0xFC60, 0xFC61,
+  0xFC62, 0xFC63, 0xFE49, 0xFE4A, 0xFE4B, 0xFE4C, 0xFE70,
+  0xFE72, 0xFE74, 0xFE76, 0xFE78, 0xFE7A, 0xFE7C, 0xFE7E,
+  0xFFE3,
+]
+
+
+def test_loop8_nfkc_space_mark_joins_marker():
+  '''Space+Mn chars join markers, spaced prose kept.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  markers = [
+    ('p', 'assword', 'password'),
+    ('t', 'oken', 'token'),
+    ('c', 'redential', 'credential'),
+    ('s', 'ecret', 'secret'),
+    ('a', 'pi_key', 'api_key'),
+  ]
+  for cp in _LOOP8_SPACE_CPS:
+    ch = chr(cp)
+    for head, tail, word in markers:
+      raw = head + ch + tail
+      assert _normalize_unicode(raw) == word, (hex(cp), repr(raw))
+  assert _normalize_unicode('hello world test') == (
+      'hello world test')
+  assert _normalize_unicode('option (a) is ok') == (
+      'option (a) is ok')
+  for cp in _LOOP8_SPACE_CPS:
+    spaced = 'hello ' + chr(cp) + ' world'
+    assert 'helloworld' not in _normalize_unicode(spaced), hex(cp)
+
+
+def test_loop8_nfkc_space_mark_scrubbed():
+  '''Space+Mn split markers redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  markers = [
+    ('p', 'assword'), ('t', 'oken'), ('c', 'redential'),
+    ('s', 'ecret'), ('a', 'pi_key'),
+  ]
+  for cp in _LOOP8_SPACE_CPS:
+    ch = chr(cp)
+    for head, tail in markers:
+      text = head + ch + tail + '=Zq9SENTINEL7x'
+      out = scrub_details({'note': text})
+      assert 'Zq9SENTINEL7x' not in str(out), (hex(cp), repr(text))
+      assert '***REDACTED***' in str(out), (hex(cp), repr(text))
+      entry = audit_log('train', 'alice', {'note': text})
+      assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+      key_out = scrub_details({head + ch + tail: 'Zq9SENTINEL7x'})
+      assert 'Zq9SENTINEL7x' not in str(key_out), repr(text)
+
+
+# --- loop8-proven-fixes: cyclic scrub (RED) ---
+
+def test_loop8_scrub_cyclic_dict_placeholder():
+  '''Cyclic dict yields <cyclic>, never RecursionError.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  cyc = {}
+  cyc['self'] = cyc
+  out = scrub_details(cyc)
+  assert out == {'self': '<cyclic>'}
+  entry = audit_log('train', 'alice', cyc)
+  assert entry['details'] == {'self': '<cyclic>'}
+
+
+def test_loop8_scrub_cyclic_list_placeholder():
+  '''Cyclic list yields <cyclic> element, never crashes.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  items = [1]
+  items.append(items)
+  assert scrub_details({'k': items}) == {'k': [1, '<cyclic>']}
+  assert scrub_details(items) == [1, '<cyclic>']
+
+
+def test_loop8_scrub_tuple_list_cycle_placeholder():
+  '''Tuple<->list cycle yields <cyclic>, never crashes.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  items = []
+  tup = (items,)
+  items.append(tup)
+  out = scrub_details({'k': tup})
+  assert '<cyclic>' in str(out), repr(out)
+  assert 'Zq9SENTINEL7x' not in str(out)
+
+
+def test_loop8_scrub_deep_nesting_capped():
+  '''Deep nesting caps at <max-depth>, sentinel stays hidden.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  deep = {}
+  current = deep
+  for _ in range(50):
+    nxt = {}
+    current['next'] = nxt
+    current = nxt
+  current['password'] = 'Zq9SENTINEL7x'
+  out = scrub_details(deep)
+  assert '<max-depth>' in str(out), repr(out)[:200]
+  assert 'Zq9SENTINEL7x' not in str(out)
+  deep_list = []
+  current_list = deep_list
+  for _ in range(300):
+    nxt_list = []
+    current_list.append(nxt_list)
+    current_list = nxt_list
+  out_list = scrub_details({'k': deep_list})
+  assert '<max-depth>' in str(out_list)
+
+
+# --- loop9-proven-fixes: digraph ss/th + hostile bytes (RED) ---
+
+@pytest.mark.parametrize('raw,expected', [
+    ('pa\u00dfword', 'password'),
+    ('pa\u00df', 'pass'),
+    ('pa\u00dfwd', 'passwd'),
+    ('pa\u00dfphrase', 'passphrase'),
+    ('acce\u00df', 'access'),
+    ('au\u00fe', 'auth'),
+    ('au\u00feorization', 'authorization'),
+])
+def test_loop9_normalize_unicode_joins_digraphs(raw, expected):
+  '''Digraph ß->ss and þ->th join markers.'''
+  from forecast_ml_framework.governance.scrub import (
+    _CONFUSABLE_TABLE_ALT,
+    _normalize_unicode,
+  )
+  assert _normalize_unicode(raw) == expected, repr(raw)
+  alt_expected = (
+      expected.replace('th', 'p') if '\u00fe' in raw else expected)
+  assert _normalize_unicode(raw, _CONFUSABLE_TABLE_ALT) == (
+      alt_expected), repr(raw)
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('pa\u1e9eword', 'paSSword'),
+    ('au\u00deorization', 'auTHorization'),
+    ('PA\u00dfWORD', 'PAssWORD'),
+    ('AU\u00deORIZATION', 'AUTHORIZATION'),
+])
+def test_loop9_normalize_unicode_joins_capital_digraphs(raw, expected):
+  '''Capital digraphs ẞ->SS and Þ->TH join markers.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  assert _normalize_unicode(raw) == expected, repr(raw)
+
+
+@pytest.mark.parametrize('text', [
+    'pa\u00dfword=Zq9SENTINEL7x',
+    'pa\u1e9eword=Zq9SENTINEL7x',
+    'pa\u00df=Zq9SENTINEL7x',
+    'pa\u00dfwd=Zq9SENTINEL7x',
+    'pa\u00dfphrase=Zq9SENTINEL7x',
+    'acce\u00df_key=Zq9SENTINEL7x',
+    'pa\u00dfword Zq9SENTINEL7x',
+    'au\u00fe=Zq9SENTINEL7x',
+    'au\u00feorization=Zq9SENTINEL7x',
+    'au\u00deorization=Zq9SENTINEL7x',
+    'au\u00feorization Zq9SENTINEL7x',
+])
+def test_loop9_digraph_markers_scrubbed_in_note(text):
+  '''Digraph ss/th markers redact sentinel in free text.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({'note': text})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert '***REDACTED***' in str(out), repr(text)
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+
+
+@pytest.mark.parametrize('key', [
+    'pa\u00dfword',
+    'pa\u1e9eword',
+    'pa\u00dfwd',
+    'pa\u00dfphrase',
+    'acce\u00df_key',
+    'au\u00fe',
+    'au\u00feorization',
+    'au\u00deorization',
+])
+def test_loop9_digraph_markers_scrubbed_in_dict_key(key):
+  '''Digraph ss/th markers redact value under dict key.'''
+  from forecast_ml_framework.governance.audit import scrub_details
+  out = scrub_details({key: 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(key)
+  assert '***REDACTED***' in str(out), repr(key)
+  assert out['ok'] == 'keep'
+
+
+class _Loop9EvilBytes(bytes):
+  '''Bytes whose decode raises, carrying sentinel.'''
+
+  def __new__(cls, *args, **kwargs):
+    return super().__new__(cls, b'hello')
+
+  def decode(self, *args, **kwargs):
+    raise RuntimeError('Zq9SENTINEL7x')
+
+
+class _Loop9EvilBytearray(bytearray):
+  '''Bytearray whose decode raises, carrying sentinel.'''
+
+  def decode(self, *args, **kwargs):
+    raise RuntimeError('Zq9SENTINEL7x')
+
+
+class _Loop9EvilBytesPassword(bytes):
+  '''Bytes decoding-hostile but underlying plain password.'''
+
+  def __new__(cls, *args, **kwargs):
+    return super().__new__(cls, b'password')
+
+  def decode(self, *args, **kwargs):
+    raise RuntimeError('Zq9SENTINEL7x')
+
+
+def test_loop9_hostile_bytes_bare_no_crash_no_leak():
+  '''Bare hostile bytes become REDACTED, sentinel hidden.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  assert scrub_details(_Loop9EvilBytes()) == '***REDACTED***'
+  assert scrub_details(
+      _Loop9EvilBytearray(b'hello')) == '***REDACTED***'
+  assert 'Zq9SENTINEL7x' not in str(
+      scrub_details(_Loop9EvilBytes()))
+
+
+def test_loop9_hostile_bytes_dict_and_list_vals_no_crash():
+  '''Hostile bytes in dict/list/tuple vals are REDACTED.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({'k': _Loop9EvilBytes(), 'ok': 'keep'})
+  assert out == {'k': '***REDACTED***', 'ok': 'keep'}
+  out_list = scrub_details(
+      {'k': [_Loop9EvilBytes(), _Loop9EvilBytearray(b'x')]})
+  assert out_list == {'k': ['***REDACTED***', '***REDACTED***']}
+  out_tuple = scrub_details({'k': (_Loop9EvilBytes(),)})
+  assert out_tuple == {'k': ('***REDACTED***',)}
+  assert 'Zq9SENTINEL7x' not in str(out_list)
+
+
+def test_loop9_hostile_bytes_key_no_crash_no_leak():
+  '''Hostile bytes keys use plain bytes, never hostile decode.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({_Loop9EvilBytes(): 'keep', 'ok': 1})
+  assert 'Zq9SENTINEL7x' not in str(out)
+  assert out['ok'] == 1
+  for key in out:
+    hash(key)
+  secret_out = scrub_details(
+      {_Loop9EvilBytesPassword(): 'hunter2', 'ok': 'keep'})
+  assert 'hunter2' not in str(secret_out)
+  assert 'Zq9SENTINEL7x' not in str(secret_out)
+  assert secret_out['ok'] == 'keep'
+
+
+def test_loop9_hostile_bytes_via_audit_log_no_crash():
+  '''Hostile bytes via audit_log are REDACTED, no crash.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice',
+      {'k': _Loop9EvilBytes(), 'items': [_Loop9EvilBytes()]})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob
+  assert '***REDACTED***' in blob
+  assert entry['details']['k'] == '***REDACTED***'
+
+
+# --- loop10-reviewer-fix: non-str decode return (RED) ---
+
+
+class _Loop10DictDecodeBytes(bytes):
+  '''Bytes whose decode returns a dict, carrying sentinel.'''
+
+  def __new__(cls, *args, **kwargs):
+    return super().__new__(cls, b'hello')
+
+  def decode(self, *args, **kwargs):
+    return {'password': 'Zq9SENTINEL7x'}
+
+
+class _Loop10ListDecodeBytes(bytes):
+  '''Bytes whose decode returns a list, carrying sentinel.'''
+
+  def __new__(cls, *args, **kwargs):
+    return super().__new__(cls, b'hello')
+
+  def decode(self, *args, **kwargs):
+    return ['Zq9SENTINEL7x']
+
+
+class _Loop10DictDecodeBytearray(bytearray):
+  '''Bytearray whose decode returns a dict, carrying sentinel.'''
+
+  def decode(self, *args, **kwargs):
+    return {'password': 'Zq9SENTINEL7x'}
+
+
+def test_loop10_non_str_decode_bytes_bare_redacted():
+  '''Bare non-str decode returns become REDACTED, no leak.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  assert scrub_details(_Loop10DictDecodeBytes()) == '***REDACTED***'
+  assert scrub_details(_Loop10ListDecodeBytes()) == '***REDACTED***'
+  assert scrub_details(
+      _Loop10DictDecodeBytearray(b'hello')) == '***REDACTED***'
+  assert 'Zq9SENTINEL7x' not in str(
+      scrub_details(_Loop10DictDecodeBytes()))
+  assert 'Zq9SENTINEL7x' not in str(
+      scrub_details(_Loop10ListDecodeBytes()))
+
+
+def test_loop10_non_str_decode_bytes_dict_and_list_vals_redacted():
+  '''Non-str decode returns in dict/list vals are REDACTED.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details(
+      {'k': _Loop10DictDecodeBytes(), 'ok': 'keep'})
+  assert out == {'k': '***REDACTED***', 'ok': 'keep'}
+  out_list = scrub_details({'k': [
+      _Loop10DictDecodeBytes(), _Loop10ListDecodeBytes()]})
+  assert out_list == {'k': ['***REDACTED***', '***REDACTED***']}
+  assert 'Zq9SENTINEL7x' not in str(out_list)
+
+
+def test_loop10_non_str_decode_bytes_via_audit_log_redacted():
+  '''Non-str decode returns via audit_log are REDACTED.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+      'train', 'alice',
+      {'k': _Loop10DictDecodeBytes(),
+       'items': [_Loop10ListDecodeBytes()]})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob
+  assert '***REDACTED***' in blob
+  assert entry['details']['k'] == '***REDACTED***'
+  assert entry['details']['items'] == ['***REDACTED***']
+
+
+# --- loop10-proven-fixes P1: negative circled (RED) ---
+
+def test_loop10_p1_negative_circled_joins_marker():
+  '''Negative circled A-Z fold to Latin letters.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for offset in range(26):
+    ch = chr(0x1F150 + offset)
+    letter = chr(ord('A') + offset)
+    assert _normalize_unicode(ch) == letter, hex(0x1F150 + offset)
+  assert _normalize_unicode('\U0001F15Fassword') == 'Password'
+  assert _normalize_unicode('p\U0001F150ssword') == 'pAssword'
+
+
+def test_loop10_p1_negative_circled_scrubbed():
+  '''Negative circled markers redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  texts = [
+    '\U0001F15Fassword=Zq9SENTINEL7x',
+    'p\U0001F150ssword=Zq9SENTINEL7x',
+    '\U0001F15Fassword Zq9SENTINEL7x',
+  ]
+  for text in texts:
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  key_out = scrub_details(
+    {'\U0001F15Fassword': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop10-proven-fixes P2: negative squared (RED) ---
+
+def test_loop10_p2_negative_squared_joins_marker():
+  '''Negative squared A-Z, crossed P and abbrs fold.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for offset in range(26):
+    ch = chr(0x1F170 + offset)
+    letter = chr(ord('A') + offset)
+    assert _normalize_unicode(ch) == letter, hex(0x1F170 + offset)
+  assert _normalize_unicode('\U0001F18A') == 'P'
+  assert _normalize_unicode('\U0001F18B') == 'IC'
+  assert _normalize_unicode('\U0001F18C') == 'PA'
+  assert _normalize_unicode('\U0001F18D') == 'SA'
+  assert _normalize_unicode('\U0001F18E') == 'AB'
+  assert _normalize_unicode('\U0001F18F') == 'WC'
+
+
+def test_loop10_p2_negative_squared_scrubbed():
+  '''Negative squared markers redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  texts = [
+    '\U0001F17Fassword=Zq9SENTINEL7x',
+    'p\U0001F170ssword=Zq9SENTINEL7x',
+    '\U0001F18Cssword=Zq9SENTINEL7x',
+    '\U0001F18Aassword=Zq9SENTINEL7x',
+  ]
+  for text in texts:
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  key_out = scrub_details(
+    {'\U0001F17Fassword': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop10-proven-fixes P3: squared words/small (RED) ---
+
+_LOOP10_SQUARED_WORDS = {
+  '\U0001F191': 'CL',
+  '\U0001F192': 'COOL',
+  '\U0001F193': 'FREE',
+  '\U0001F194': 'ID',
+  '\U0001F195': 'NEW',
+  '\U0001F196': 'NG',
+  '\U0001F197': 'OK',
+  '\U0001F198': 'SOS',
+  '\U0001F199': 'UP',
+  '\U0001F19A': 'VS',
+  '\U0001F1A5': 'd',
+  '\U0001F1A6': 'HC',
+  '\U0001F1A7': 'HDR',
+  '\U0001F1A9': 'LOSSLESS',
+  '\U0001F1AA': 'SHV',
+  '\U0001F1AB': 'UHD',
+  '\U0001F1AC': 'VOD',
+}
+
+
+def test_loop10_p3_squared_words_join_marker():
+  '''Squared ASCII words and small D fold to letters.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for ch, word in _LOOP10_SQUARED_WORDS.items():
+    assert _normalize_unicode(ch) == word, repr(ch)
+  assert _normalize_unicode('t\U0001F197en') == 'tOKen'
+  assert _normalize_unicode('pw\U0001F1A5') == 'pwd'
+
+
+def test_loop10_p3_squared_words_scrubbed():
+  '''Squared OK/D fragments redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  texts = [
+    't\U0001F197en=Zq9SENTINEL7x',
+    'pw\U0001F1A5=Zq9SENTINEL7x',
+    't\U0001F197en Zq9SENTINEL7x',
+  ]
+  for text in texts:
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  key_out = scrub_details(
+    {'pw\U0001F1A5': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop10-proven-fixes P4: Roman late/early/reversed (RED) ---
+
+_LOOP10_ROMAN = {
+  '\u2180': 'CD',
+  '\u2181': 'V',
+  '\u2182': 'X',
+  '\u2183': 'C',
+  '\u2184': 'c',
+  '\u2185': 'VI',
+  '\u2186': 'L',
+  '\u2187': 'L',
+  '\u2188': 'C',
+}
+
+
+def test_loop10_p4_roman_joins_marker():
+  '''Non-NFKC Roman forms fold to their letters.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for ch, word in _LOOP10_ROMAN.items():
+    assert _normalize_unicode(ch) == word, repr(ch)
+  assert _normalize_unicode('pri\u2185ate_key') == 'priVIate_key'
+  assert _normalize_unicode('credentia\u2186') == 'credentiaL'
+  assert _normalize_unicode('se\u2184ret') == 'secret'
+
+
+def test_loop10_p4_roman_scrubbed():
+  '''Roman VI/L/C fragments redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  texts = [
+    'pri\u2185ate_key=Zq9SENTINEL7x',
+    'credentia\u2186=Zq9SENTINEL7x',
+    'se\u2184ret=Zq9SENTINEL7x',
+    'se\u2183ret=Zq9SENTINEL7x',
+  ]
+  for text in texts:
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  key_out = scrub_details(
+    {'credentia\u2186': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop10-proven-fixes P5: UTS39 confusables (RED) ---
+
+def test_loop10_p5_confusable_representatives_join_marker():
+  '''UTS39 letter confusables fold to ASCII letters.'''
+  from forecast_ml_framework.governance.scrub import (
+    _CONFUSABLE_TABLE,
+    _CONFUSABLE_TABLE_ALT,
+    _normalize_unicode,
+  )
+  cases = [
+    ('\u2c63assword', 'password'),
+    ('\u2ca3assword', 'password'),
+    ('t\u2c9fken', 'token'),
+    ('\u13aa' + 'uth', 'Auth'),
+    ('se\u1d04ret', 'secret'),
+    ('t\u1d0fken', 'token'),
+    ('t\u0585ken', 'token'),
+  ]
+  for raw, expected in cases:
+    assert _normalize_unicode(raw) == expected, repr(raw)
+    assert _normalize_unicode(raw, _CONFUSABLE_TABLE_ALT) == (
+      expected), repr(raw)
+  assert str.maketrans({'a': 'b'})
+  assert _CONFUSABLE_TABLE is not None
+  assert _CONFUSABLE_TABLE_ALT is not None
+
+
+def test_loop10_p5_confusable_scrubbed():
+  '''UTS39 confusable markers redact sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  texts = [
+    '\u2c63assword=Zq9SENTINEL7x',
+    't\u2c9fken=Zq9SENTINEL7x',
+    '\u13aa' + 'uth=Zq9SENTINEL7x',
+    'se\u1d04ret=Zq9SENTINEL7x',
+    't\u1d0fken=Zq9SENTINEL7x',
+    't\u0585ken=Zq9SENTINEL7x',
+  ]
+  for text in texts:
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  key_out = scrub_details(
+    {'\u2c63assword': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop10-proven-fixes P6: audit hostile (RED) ---
+
+class _Loop10EvilStr:
+  '''Object whose __str__ raises, carrying sentinel.'''
+
+  def __str__(self):
+    raise RuntimeError('Zq9SENTINEL7x')
+
+  __repr__ = __str__
+
+
+class _Loop10EvilStrReturn:
+  '''Object whose __str__ returns a secret pattern.'''
+
+  def __str__(self):
+    return 'password=Zq9SENTINEL7x'
+
+  __repr__ = __str__
+
+
+class _Loop10EvilDT(datetime):
+  '''Datetime whose isoformat raises, carrying sentinel.'''
+
+  def isoformat(self, sep='T', timespec='auto'):
+    raise RuntimeError('Zq9SENTINEL7x')
+
+
+def test_loop10_p6_audit_evil_str_actor_event_no_crash():
+  '''Hostile __str__ actor/event are type-safe, no leak.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', _Loop10EvilStr(), {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert isinstance(entry['actor'], str)
+  assert entry['details'] == {'ok': 'keep'}
+  entry2 = audit_log(_Loop10EvilStr(), 'alice', {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry2)
+  assert isinstance(entry2['event'], str)
+  entry3 = audit_log('train', _Loop10EvilStrReturn(), {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry3)
+  assert '***REDACTED***' in json.dumps(entry3)
+  entry4 = audit_log(_Loop10EvilStrReturn(), 'alice', {})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry4)
+  assert '***REDACTED***' in json.dumps(entry4)
+
+
+def test_loop10_p6_audit_bytes_event_actor_scrubbed():
+  '''Bytes event/actor with sentinel are scrubbed, JSON-safe.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  raw = b'password=Zq9SENTINEL7x'
+  entry = audit_log(raw, 'alice', {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert '***REDACTED***' in json.dumps(entry)
+  assert isinstance(entry['event'], str)
+  entry2 = audit_log('train', raw, {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry2)
+  assert '***REDACTED***' in json.dumps(entry2)
+  assert isinstance(entry2['actor'], str)
+  entry3 = audit_log('train', _Loop9EvilBytes(), {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry3)
+  assert isinstance(entry3['actor'], str)
+
+
+def test_loop10_p6_audit_hostile_timestamp_no_crash():
+  '''Hostile now/clock timestamps are type-safe, no leak.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+    'train', 'alice', {'ok': 'keep'}, now=_Loop10EvilDT(2024, 1, 1))
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert isinstance(entry['timestamp'], str)
+  entry2 = audit_log(
+    'train', 'alice', {'ok': 'keep'},
+    clock=lambda: _Loop10EvilDT(2024, 1, 1))
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry2)
+  assert isinstance(entry2['timestamp'], str)
+  entry3 = audit_log(
+    'train', 'alice', {'ok': 'keep'}, now=_Loop10EvilStr())
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry3)
+  assert isinstance(entry3['timestamp'], str)
+
+
+def test_loop10_p6_audit_bytes_and_str_timestamp_scrubbed():
+  '''Bytes/str now with sentinel are scrubbed, JSON-safe.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  raw = b'password=Zq9SENTINEL7x'
+  entry = audit_log('train', 'alice', {'ok': 'keep'}, now=raw)
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert '***REDACTED***' in json.dumps(entry)
+  assert isinstance(entry['timestamp'], str)
+  entry2 = audit_log(
+    'train', 'alice', {'ok': 'keep'},
+    now='password=Zq9SENTINEL7x')
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry2)
+  assert '***REDACTED***' in json.dumps(entry2)
+  entry3 = audit_log(
+    'train', 'alice', {'ok': 'keep'},
+    now=_Loop9EvilBytes())
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry3)
+  assert isinstance(entry3['timestamp'], str)
+
+
+class _Loop10EvilDTNonStr(datetime):
+  '''Datetime whose isoformat returns a dict, with sentinel.'''
+
+  def isoformat(self, sep='T', timespec='auto'):
+    return {'note': 'password=Zq9SENTINEL7x'}
+
+
+def test_loop10_p6_audit_clock_raises_falls_back():
+  '''Hostile clock callable falls back, log append works.'''
+  from forecast_ml_framework.governance.audit import audit_log
+
+  def _bad_clock():
+    raise RuntimeError('Zq9SENTINEL7x')
+
+  log = []
+  entry = audit_log(
+    'train', 'alice', {'ok': 'keep'}, clock=_bad_clock, log=log)
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert isinstance(entry['timestamp'], str)
+  assert log == [entry]
+  entry2 = audit_log(
+    'train', 'alice', {'ok': 'keep'},
+    now=_Loop10EvilDTNonStr(2024, 1, 1))
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry2)
+  assert isinstance(entry2['timestamp'], str)
+
+
+def test_loop10_p6_audit_non_str_decode_actor_redacted():
+  '''Non-str decode bytes actor becomes REDACTED, no leak.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log(
+    'train', _Loop10DictDecodeBytes(), {'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry)
+  assert entry['actor'] == '***REDACTED***'
+  assert isinstance(entry['actor'], str)
+
+
+# --- loop11 reviewer: mixed primary+alt (RED) ---
+
+def test_loop11_mixed_primary_alt_roman_scrub_text():
+  '''Primary Roman + alt Roman in one string both redact.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(
+    'password=hunter2 pri\u2185ate_key=Zq9SENTINEL')
+  assert 'hunter2' not in out
+  assert 'Zq9SENTINEL' not in out
+  assert '***REDACTED***' in out
+  out2 = _scrub_text(
+    'pri\u2185ate_key=Zq9SENTINEL password=hunter2')
+  assert 'hunter2' not in out2
+  assert 'Zq9SENTINEL' not in out2
+  assert '***REDACTED***' in out2
+
+
+def test_loop11_mixed_primary_alt_ya_scrub_text():
+  '''Primary ya + alt ya in one string both redact.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(
+    'passwo\u044fd=Zq9SENTINEL p\u044fssword=hunter2')
+  assert 'hunter2' not in out
+  assert 'Zq9SENTINEL' not in out
+  assert '***REDACTED***' in out
+  out2 = _scrub_text(
+    'p\u044fssword=hunter2 passwo\u044fd=Zq9SENTINEL')
+  assert 'hunter2' not in out2
+  assert 'Zq9SENTINEL' not in out2
+  assert '***REDACTED***' in out2
+
+
+def test_loop11_mixed_primary_alt_details_audit_telemetry():
+  '''Mixed skeletons redact via details, audit and error.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import (
+    FrameworkError,
+  )
+  text = (
+    'password=hunter2 pri\u2185ate_key=Zq9SENTINEL '
+    'passwo\u044fd=Zq9SECOND p\u044fssword=Zq9THIRD')
+  out = scrub_details({'note': text, 'ok': 'keep'})
+  blob = str(out)
+  assert 'hunter2' not in blob
+  assert 'Zq9SENTINEL' not in blob
+  assert 'Zq9SECOND' not in blob
+  assert 'Zq9THIRD' not in blob
+  assert out['ok'] == 'keep'
+  entry = audit_log('train', 'alice', {'note': text})
+  blob = json.dumps(entry)
+  assert 'hunter2' not in blob
+  assert 'Zq9SENTINEL' not in blob
+  assert 'Zq9SECOND' not in blob
+  assert 'Zq9THIRD' not in blob
+  err = FrameworkError(
+    'oops ' + text, stage='train',
+    context={'note': text})
+  assert 'hunter2' not in str(err)
+  assert 'Zq9SENTINEL' not in str(err)
+  assert 'Zq9SECOND' not in json.dumps(err.to_dict())
+  assert 'Zq9THIRD' not in json.dumps(err.to_dict())
+
+
+def test_loop11_alt_marker_part_composite_redacted():
+  '''Alt-only marker parts join to a marker, secret redacts.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details(
+    {'items': ('\u044fpi', 'Zq9SENTINEL', 'key'), 'ok': 'keep'})
+  assert 'Zq9SENTINEL' not in str(out)
+  assert out['ok'] == 'keep'
+  out2 = scrub_details(
+    {('\u044fpi', 'key'): 'Zq9SENTINEL', 'ok': 'keep'})
+  assert 'Zq9SENTINEL' not in str(out2)
+  assert out2['ok'] == 'keep'
+
+
+def test_loop11_normalized_markers_deduped():
+  '''Normalized markers carry no duplicates.'''
+  from forecast_ml_framework.governance.scrub import (
+    _NORMALIZED_MARKERS,
+  )
+  assert len(_NORMALIZED_MARKERS) == len(set(_NORMALIZED_MARKERS))
+
+
+def test_loop11_dead_confusables_removed():
+  '''NFKC-shadowed confusables are gone, alt split keeps l.'''
+  from forecast_ml_framework.governance.scrub import (
+    _CONFUSABLE_TABLE_ALT,
+    _CONFUSABLES,
+    _normalize_unicode,
+  )
+  assert '\u0149' not in _CONFUSABLES
+  assert '\u2110' not in _CONFUSABLES
+  assert '\u03f2' not in _CONFUSABLES
+  assert _normalize_unicode('\u2110', _CONFUSABLE_TABLE_ALT) == 'l'
+  assert _normalize_unicode('\u2110') == 'I'
+
+
+# --- loop11 security F1: regional indicators (RED) ---
+
+def test_loop11_regional_indicators_join_marker():
+  '''Regional indicator letters fold to A-Z.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for offset in range(26):
+    ch = chr(0x1F1E6 + offset)
+    letter = chr(ord('A') + offset)
+    assert _normalize_unicode(ch) == letter, repr(ch)
+  assert _normalize_unicode('\U0001F1F5assword') == 'Password'
+  assert _normalize_unicode('\U0001F1F9oken') == 'Token'
+  assert _normalize_unicode('hello world test') == (
+    'hello world test')
+
+
+@pytest.mark.parametrize('text', [
+  '\U0001F1F5assword=Zq9SENTINEL7x',
+  '\U0001F1F9oken=Zq9SENTINEL7x',
+  '\U0001F1E6pi_key=Zq9SENTINEL7x',
+  'password \U0001F1F5assword Zq9SENTINEL7x',
+])
+def test_loop11_regional_indicators_scrubbed(text):
+  '''Regional marker text redacts sentinel everywhere.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import (
+    FrameworkError,
+  )
+  out = scrub_details({'note': text, 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert '***REDACTED***' in str(out), repr(text)
+  assert out['ok'] == 'keep'
+  entry = audit_log('train', 'alice', {'note': text})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  err = FrameworkError(
+    'oops ' + text, stage='train',
+    context={'note': text})
+  assert 'Zq9SENTINEL7x' not in str(err), repr(text)
+  assert 'Zq9SENTINEL7x' not in json.dumps(
+    err.to_dict()), repr(text)
+  key_out = scrub_details(
+    {'\U0001F1F5assword': 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(key_out)
+  assert key_out['ok'] == 'keep'
+
+
+# --- loop11 adversarial G2: dict in tuple (RED) ---
+
+@pytest.mark.parametrize('value', [
+  ('api', {'key': 'Zq9SENTINEL7x'}),
+  ('access', {'key': 'Zq9SENTINEL7x'}),
+  ('private', {'key': 'Zq9SENTINEL7x'}),
+  ({'api': 'Zq9SENTINEL7x'}, 'key'),
+  ('api', [{'key': 'Zq9SENTINEL7x'}]),
+  ('api', {'outer': {'key': 'Zq9SENTINEL7x'}}),
+  ('api', {'key': ('nested', 'Zq9SENTINEL7x')}),
+])
+def test_loop11_g2_dict_in_tuple_split_marker(value):
+  '''Dict in tuple under split marker redacts sentinel.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import (
+    FrameworkError,
+  )
+  out = scrub_details({'note': value, 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(value)
+  assert out['ok'] == 'keep'
+  entry = audit_log('train', 'alice', {'note': value})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(value)
+  err = FrameworkError(
+    'oops', stage='train', context={'note': value})
+  assert 'Zq9SENTINEL7x' not in json.dumps(
+    err.to_dict()), repr(value)
+  assert 'Zq9SENTINEL7x' not in str(err), repr(value)
+
+
+# --- loop11 adversarial G3: alt I and thorn-p (RED) ---
+
+@pytest.mark.parametrize('text', [
+  'credentiaI=Zq9SENTINEL7x',
+  'credentia\u0399=Zq9SENTINEL7x',
+  'credentia\u0406=Zq9SENTINEL7x',
+  '\u00feassword=Zq9SENTINEL7x',
+  '\u00deassword=Zq9SENTINEL7x',
+])
+def test_loop11_g3_alt_i_and_thorn_p_scrubbed(text):
+  '''Alt I->l and thorn->p markers redact sentinel.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import (
+    FrameworkError,
+  )
+  out = scrub_details({'note': text, 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert '***REDACTED***' in str(out), repr(text)
+  assert out['ok'] == 'keep'
+  entry = audit_log('train', 'alice', {'note': text})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  err = FrameworkError(
+    'oops ' + text, stage='train',
+    context={'note': text})
+  assert 'Zq9SENTINEL7x' not in str(err), repr(text)
+  assert 'Zq9SENTINEL7x' not in json.dumps(
+    err.to_dict()), repr(text)
+
+
+def test_loop11_g3_alt_normalize_i_and_thorn():
+  '''Alt skeleton folds I and thorn to l and p.'''
+  from forecast_ml_framework.governance.scrub import (
+    _CONFUSABLE_TABLE_ALT,
+    _normalize_unicode,
+  )
+  assert _normalize_unicode(
+    'credentiaI', _CONFUSABLE_TABLE_ALT) == 'credential'
+  assert _normalize_unicode(
+    'credentia\u0399', _CONFUSABLE_TABLE_ALT) == 'credential'
+  assert _normalize_unicode(
+    'credentia\u0406', _CONFUSABLE_TABLE_ALT) == 'credential'
+  assert _normalize_unicode(
+    '\u00feassword', _CONFUSABLE_TABLE_ALT) == 'password'
+  assert _normalize_unicode('\u00feassword') == 'thassword'
+  assert _normalize_unicode('au\u00fe', ) == 'auth'
+
+
+# --- loop11 adversarial G4: Cn codepoints (RED) ---
+
+_LOOP11_CN = [
+  (0x1DF5A, 'a'), (0x1DF6A, 'A'), (0x16EB6, 'b'),
+  (0x1DF81, 'E'), (0x11DE1, 'l'), (0x11DDA, 'l'),
+  (0x16EAA, 'l'), (0x11DE0, 'O'), (0x1CEFC, 'V'),
+  (0x1DF7D, 'w'),
+]
+
+
+def test_loop11_g4_cn_codepoints_join_marker():
+  '''Cn codepoints fold to their Unicode 18 letters.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  for cp, letter in _LOOP11_CN:
+    assert _normalize_unicode(chr(cp)) == letter, hex(cp)
+
+
+def test_loop11_g4_cn_codepoints_scrubbed():
+  '''Cn letter inside a marker redacts sentinel.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  markers = [
+    'password', 'token', 'secret', 'credential', 'api_key',
+    'authorization', 'bearer', 'private_key', 'access_key',
+    'cookie', 'auth',
+  ]
+  for cp, letter in _LOOP11_CN:
+    ch = chr(cp)
+    for marker in markers:
+      if letter.lower() in marker:
+        idx = marker.index(letter.lower())
+        word = marker[:idx] + ch + marker[idx + 1:]
+        text = f'{word}=Zq9SENTINEL7x'
+        out = scrub_details({'note': text})
+        assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+        entry = audit_log('train', 'alice', {'note': text})
+        assert 'Zq9SENTINEL7x' not in json.dumps(
+            entry), repr(text)
+
+
+# --- loop12 arch: Bearer base64, >5 parts, hostile dict (RED) ---
+
+@pytest.mark.parametrize('text', [
+  'Bearer, AAA+Zq9SENTINEL7x',
+  'Bearer; AAA+Zq9SENTINEL7x',
+  'Bearer,AAA+BBB/CCC=',
+  'Bearer, AAA+BBB/CCC=',
+])
+def test_loop12_bearer_base64_remainder_scrubbed(text):
+  '''Bearer base64 token after comma/semicolon is fully read.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert 'BBB' not in out, repr(text)
+  assert 'CCC' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop12_composite_gt5_awssecretaccesskey():
+  '''Unordered >5 parts naming awssecretaccesskey are bearing.'''
+  from forecast_ml_framework.governance.scrub import (
+    _composite_marker_bearing,
+    scrub_details,
+  )
+  key = frozenset({
+    'aws', 'secret', 'access', 'key', 'hash', 'value',
+    'Zq9SENTINEL7x',
+  })
+  out = scrub_details({key: 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in str(out)
+  items = [
+    'aws', 'hash', 'access', 'value', 'word',
+    {('secret',): 'x'},
+  ]
+  assert _composite_marker_bearing(items, False) is True
+
+
+def test_loop12_hostile_dict_items_non_pair_no_crash():
+  '''Hostile dict items() with non-pairs falls back to type.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  class HostileDict(dict):
+    def items(self):
+      return [('k', 'v', 'extra'), ('a', 'b')]
+
+  assert scrub_details(HostileDict()) == {
+    'type': 'HostileDict'}
+  assert scrub_details({'outer': HostileDict()}) == {
+    'outer': {'type': 'HostileDict'}}
+  out = scrub_details({'k': [HostileDict()]})
+  assert 'Zq9SENTINEL7x' not in str(out)
+
+
+# --- loop12 adversarial F2: UTS39 non-L single confusables (RED) ---
+
+_LOOP12_F2 = [
+  (0x30, 'o'), (0x31, 'l'), (0x7C, 'l'), (0xA1, 'i'),
+  (0x5C0, 'l'), (0x661, 'l'), (0x665, 'o'), (0x667, 'v'),
+  (0x6F1, 'l'), (0x6F5, 'o'), (0x6F7, 'v'), (0x7C0, 'o'),
+  (0x964, 'l'), (0x966, 'o'), (0x9E6, 'o'), (0xA66, 'o'),
+  (0xAE6, 'o'), (0xB66, 'o'), (0xBE6, 'o'), (0xC02, 'o'),
+  (0xC66, 'o'), (0xC82, 'o'), (0xCE6, 'o'), (0xD02, 'o'),
+  (0xD66, 'o'), (0xD82, 'o'), (0xE50, 'o'), (0xED0, 'o'),
+  (0x1040, 'o'), (0x104A, 'l'), (0x17E0, 'o'), (0x1A80, 'o'),
+  (0x1A90, 'o'), (0x1BEA, 'o'), (0x212E, 'e'), (0x21BF, 'l'),
+  (0x2223, 'l'), (0x2228, 'v'), (0x222A, 'u'), (0x22A4, 't'),
+  (0x22C1, 'v'), (0x22C3, 'u'), (0x22FF, 'e'), (0x2373, 'i'),
+  (0x2374, 'p'), (0x237A, 'a'), (0x23FD, 'l'), (0x2502, 'l'),
+  (0x2503, 'l'), (0x27D9, 't'), (0x29E2, 'w'), (0x3007, 'o'),
+  (0xA830, 'l'), (0xA8CE, 'l'), (0xAA5D, 'l'), (0xFE31, 'l'),
+  (0xFF10, 'o'), (0xFF11, 'l'), (0xFF5C, 'l'), (0xFFE8, 'l'),
+  (0x1018B, 'd'), (0x10320, 'l'), (0x10CFA, 'l'),
+  (0x11047, 'l'), (0x110C0, 'l'), (0x11141, 'l'),
+  (0x111C5, 'l'), (0x11302, 'o'), (0x113D4, 'l'),
+  (0x1144B, 'l'), (0x114D0, 'o'), (0x115C5, 'l'),
+  (0x11641, 'l'), (0x118E0, 'o'), (0x118E6, 'w'),
+  (0x118E9, 'c'), (0x118EF, 'w'), (0x118F2, 'c'),
+  (0x11C41, 'l'), (0x1CCF0, 'o'), (0x1CCF1, 'l'),
+  (0x1D100, 'l'), (0x1D134, 'c'), (0x1D207, 'b'),
+  (0x1D20C, 'w'), (0x1D20D, 'v'), (0x1D216, 'r'),
+  (0x1D22A, 'l'), (0x1D373, 't'), (0x1D377, 'l'),
+  (0x1D7CE, 'o'), (0x1D7CF, 'l'), (0x1D7D8, 'o'),
+  (0x1D7D9, 'l'), (0x1D7E2, 'o'), (0x1D7E3, 'l'),
+  (0x1D7EC, 'o'), (0x1D7ED, 'l'), (0x1D7F6, 'o'),
+  (0x1D7F7, 'l'), (0x1E140, 'o'), (0x1E141, 'l'),
+  (0x1E145, 'v'), (0x1E2F0, 'o'), (0x1E8C7, 'l'),
+  (0x1ED01, 'l'), (0x1F74C, 'c'), (0x1F768, 't'),
+  (0x1FBF0, 'o'), (0x1FBF1, 'l'),
+]
+
+
+def test_loop12_f2_uts39_non_l_scrubbed():
+  '''UTS39 non-L glyphs spelling a marker redact sentinel.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  markers = [
+    'password', 'token', 'secret', 'credential', 'api_key',
+    'authorization', 'bearer', 'private_key', 'access_key',
+    'cookie', 'auth',
+  ]
+  for cp, letter in _LOOP12_F2:
+    ch = chr(cp)
+    for marker in markers:
+      if letter in marker:
+        idx = marker.index(letter)
+        word = marker[:idx] + ch + marker[idx + 1:]
+        text = f'{word}=Zq9SENTINEL7x'
+        out = scrub_details({'note': text})
+        assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+        out_key = scrub_details({word: 'Zq9SENTINEL7x'})
+        assert 'Zq9SENTINEL7x' not in str(out_key), repr(word)
+
+
+def test_loop12_f2_leet_and_legit_numbers():
+  '''Leet t0ken is a marker; legit number text is preserved.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  assert 'Zq9SENTINEL7x' not in _scrub_text(
+    't0ken=Zq9SENTINEL7x')
+  assert 'Zq9SENTINEL7x' not in _scrub_text(
+    'credentia1=Zq9SENTINEL7x')
+  assert _scrub_text(
+    'train completed successfully learning_rate 0.1') == (
+    'train completed successfully learning_rate 0.1')
+  assert _scrub_text('epoch 2026-01-02') == 'epoch 2026-01-02'
+
+
+# --- loop12 adversarial F3: digraph confusables (RED) ---
+
+_LOOP12_F3 = [
+  (0x1147, 'oo'), (0x11EE, 'oo'), (0x3180, 'oo'),
+  (0xA698, 'OO'), (0xA699, 'oo'), (0xA736, 'AU'),
+  (0xA737, 'au'), (0xA74E, 'OO'), (0xA74F, 'oo'),
+  (0xAB43, 'co'), (0x221E, 'oo'), (0x1DF5D, 'ie'),
+  (0x1DF64, 'th'),
+]
+
+
+def test_loop12_f3_digraph_scrubbed():
+  '''Digraph glyphs spelling oo/au/co/ie/th redact sentinel.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  cases = [
+    (0x221E, 'c', 'kie', 'cookie'),
+    (0xA737, '', 'thorization', 'authorization'),
+    (0xAB43, '', 'okie', 'cookie'),
+    (0x1DF5D, 'cook', '', 'cookie'),
+    (0x1DF64, 'au', 'orization', 'authorization'),
+  ]
+  for cp, pre, post, marker in cases:
+    word = pre + chr(cp) + post
+    text = f'{word}=Zq9SENTINEL7x'
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    out_key = scrub_details({word: 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key), repr(word)
+  for cp, digraph in _LOOP12_F3:
+    from forecast_ml_framework.governance.scrub import (
+      _normalize_unicode,
+    )
+    assert _normalize_unicode(chr(cp)) == digraph, hex(cp)
+
+
+# --- loop12 adversarial F4: enclosed U+3207 (RED) ---
+
+@pytest.mark.parametrize('word', [
+  'passw\u3207rd', 't\u3207ken', 'c\u3207okie',
+  'auth\u3207rization',
+])
+def test_loop12_f4_enclosed_3207_scrubbed(word):
+  '''U+3207 splits o in a marker; sentinel is redacted.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  text = f'{word}=Zq9SENTINEL7x'
+  out = scrub_details({'note': text})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  out_key = scrub_details({word: 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in str(out_key), repr(word)
+
+
+# --- loop12 adversarial F1: within-word ALT mixer (RED) ---
+
+@pytest.mark.parametrize('word', [
+  '\u044fpI_key',
+  'p\u044fIv\u044fte_key',
+  'c\u044fedentI\u044fI',
+  '\u044fu\u00feorization',
+  '\u00fe\u044fivate_key',
+  'credentIaI',
+  '\u044fpi_key',
+  'au\u00fe',
+])
+def test_loop12_f1_alt_mixer_scrubbed(word):
+  '''Mixed primary/alt readings in one word redact sentinel.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import (
+    _scrub_text,
+    scrub_details,
+  )
+  from forecast_ml_framework.telemetry.exceptions import (
+    FrameworkError,
+  )
+  text = f'{word}=Zq9SENTINEL7x'
+  assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+  out = scrub_details({'note': text, 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert out['ok'] == 'keep'
+  entry = audit_log('train', 'alice', {'note': text})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  err = FrameworkError(
+    'oops ' + text, stage='train', context={'note': text})
+  assert 'Zq9SENTINEL7x' not in str(err), repr(text)
+  assert 'Zq9SENTINEL7x' not in json.dumps(err.to_dict()), repr(
+    text)
+
+
+@pytest.mark.parametrize('word', [
+  'credentIaI',
+  '\u044fpI_key',
+  'c\u044fedentI\u044fI',
+  '\u044fu\u00feorization',
+  '\u00fe\u044fivate_key',
+])
+def test_loop12_f1_alt_mixer_dict_key(word):
+  '''Mixed-reading word as a dict key redacts its value.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({word: 'Zq9SENTINEL7x', 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(word)
+  assert '***REDACTED***' in str(out), repr(word)
+  assert out['ok'] == 'keep'
+
+
+def test_loop12_f1_alt_mixer_composite_parts():
+  '''Mixed-reading marker parts in a composite redact sentinel.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({
+    'note': ('\u044fpI', 'Zq9SENTINEL7x', 'key'),
+    'ok': 'keep',
+  })
+  assert 'Zq9SENTINEL7x' not in str(out)
+  assert out['ok'] == 'keep'
+
+
+# --- loop13: hybrid DoS / Bearer / parenthesized digit / hybrid | (RED) ---
+
+def test_loop13_hybrid_build_is_truncated_to_max_text_len(monkeypatch):
+  '''Hybrid skeleton is built from truncated text, not full text.'''
+  from forecast_ml_framework.governance import scrub
+  from forecast_ml_framework.governance.scrub import (
+    _MAX_TEXT_LEN,
+    _scrub_text,
+  )
+  seen = []
+  original = scrub._build_hybrid_text
+
+  def _spy(text):
+    seen.append(len(text))
+    return original(text)
+
+  monkeypatch.setattr(scrub, '_build_hybrid_text', _spy)
+  text = 'credentIaI=Zq9SENTINEL7x ' + ('x' * 50000)
+  out = _scrub_text(text)
+  assert seen, 'hybrid builder was not called'
+  assert max(seen) <= _MAX_TEXT_LEN, seen
+  assert 'Zq9SENTINEL7x' not in out
+  assert 'TRUNCATED' in out
+
+
+@pytest.mark.parametrize('marker', [
+  'token', 'auth', 'secret', 'Bearer', 'password', 'api_key',
+])
+def test_loop13_bearer_marker_word_does_not_leak_secret(marker):
+  '''Bearer followed by a marker word still redacts the secret.'''
+  from forecast_ml_framework.governance.scrub import (
+    _scrub_text,
+    scrub_details,
+  )
+  text = f'Bearer {marker} Zq9SENTINEL7x'
+  assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+  assert '***REDACTED***' in _scrub_text(text), repr(text)
+  out = scrub_details({'note': text, 'ok': 'keep'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert out['ok'] == 'keep'
+
+
+@pytest.mark.parametrize('marker', [
+  'tokens', 'secrets', 'passwords', 'api_keys',
+  'access_token', 'secret_key', 'token_id', 'auth_token',
+])
+def test_loop13_bearer_compound_marker_does_not_leak_secret(marker):
+  '''Bearer compound/plural marker does not leak secret.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  text = f'Bearer {marker} Zq9SENTINEL7x'
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer api key Zq9SENTINEL7x',
+  'Bearer is token Zq9SENTINEL7x',
+  'Bearer token: Zq9SENTINEL7x',
+])
+def test_loop13_bearer_marker_phrase_does_not_leak_secret(text):
+  '''Bearer marker phrases still redact the following secret.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop13_parenthesized_digits_fold_to_digits():
+  '''Parenthesized digits U+2474-U+2487 fold to their digits.'''
+  from forecast_ml_framework.governance.scrub import _normalize_unicode
+  for number in range(1, 21):
+    assert _normalize_unicode(chr(0x2473 + number)) == str(
+      number), hex(0x2473 + number)
+
+
+def test_loop13_parenthesized_digit_marker_scrubbed():
+  '''credentia + parenthesized 1 is credential in alt reading.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  text = 'credentia\u2474=Zq9SENTINEL7x'
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop13_hybrid_pipe_joins_marker():
+  '''Alt-alnum pipe tokenises with its token in hybrid text.'''
+  from forecast_ml_framework.governance.scrub import (
+    _build_hybrid_text,
+    _scrub_text,
+  )
+  assert _build_hybrid_text('credentI\u044f|') == 'credential'
+  text = 'credentI\u044f|=Zq9SENTINEL7x'
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+  assert _scrub_text('a|b') == 'a|b'
+
+
+# --- loop14: lazy governance __init__ (RED) ---
+
+def _loop14_run_isolated(code):
+  '''Run ``code`` in a fresh interpreter with PYTHONPATH=src.'''
+  import os
+  import subprocess
+  import sys
+  from pathlib import Path
+
+  root = Path(__file__).resolve().parents[1]
+  env = dict(os.environ)
+  env['PYTHONPATH'] = (
+    str(root / 'src') + os.pathsep + env.get('PYTHONPATH', ''))
+  proc = subprocess.run(
+    [sys.executable, '-c', code],
+    capture_output=True, text=True, env=env, timeout=60,
+    check=False)
+  assert proc.returncode == 0, proc.stderr
+  return proc
+
+
+def test_loop14_scrub_import_does_not_load_audit():
+  '''import governance.scrub must not load audit/lineage.'''
+  code = '\n'.join([
+    'import sys',
+    'import forecast_ml_framework.governance.scrub as s',
+    "assert 'forecast_ml_framework.governance.audit' not in sys.modules",
+    "assert 'forecast_ml_framework.governance.lineage' not in sys.modules",
+    "assert 'forecast_ml_framework.governance.retention' not in sys.modules",
+    "assert s.scrub_details({'password': 'hunter2'}) == "
+    "{'password': '***REDACTED***'}",
+  ])
+  _loop14_run_isolated(code)
+
+
+def test_loop14_governance_lazy_init_preserves_public_api():
+  '''Lazy __init__ still exposes the full public API.'''
+  import forecast_ml_framework.governance as gov
+  from forecast_ml_framework.governance import (
+    REDACTED,
+    audit_log,
+    build_lineage,
+    check_retention,
+    compute_config_hash,
+    scrub_details,
+  )
+
+  assert gov.__all__ == [
+    'REDACTED', 'audit_log', 'build_lineage', 'check_retention',
+    'compute_config_hash', 'scrub_details']
+  assert REDACTED == '***REDACTED***'
+  assert scrub_details({'password': 'hunter2'}) == {
+    'password': '***REDACTED***'}
+  assert build_lineage({})['model'] is None
+  assert compute_config_hash({}, {})
+  assert check_retention(
+    [{'age_days': 1}], params=10)['keep'] == [{'age_days': 1}]
+  entry = audit_log('train', 'alice', {'password': 'hunter2'})
+  assert entry['details'] == {'password': '***REDACTED***'}
+  assert 'audit_log' in dir(gov)
+  assert 'scrub_details' in dir(gov)
+  gov.__dict__.pop('audit', None)
+  assert gov.audit.audit_log is not None
+  with pytest.raises(AttributeError):
+    _missing = gov.no_such_thing_loop14
+
+
+def test_loop14_governance_submodule_import_still_works():
+  '''from governance import audit, scrub still resolves.'''
+  from forecast_ml_framework.governance import audit, scrub
+
+  assert audit.audit_log is not None
+  assert scrub.scrub_details is not None
+  assert audit.scrub_details is scrub.scrub_details
+
+
+# --- loop14 adversarial: Bearer quoted/bracket/plural, enclosed
+# digits, glued ASCII paren digit (RED) ---
+
+@pytest.mark.parametrize('text', [
+  'Bearer "token" Zq9SENTINEL7x',
+  "Bearer 'password' Zq9SENTINEL7x",
+])
+def test_loop14_adversarial_bearer_quoted_marker(text):
+  '''Quoted marker after Bearer does not leak secret.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer (token) Zq9SENTINEL7x',
+  'Bearer [token] Zq9SENTINEL7x',
+  'Bearer {token} Zq9SENTINEL7x',
+  'Bearer token, Zq9SENTINEL7x',
+  'Bearer token; Zq9SENTINEL7x',
+  'Bearer token) Zq9SENTINEL7x',
+  'Bearer token] Zq9SENTINEL7x',
+  'Bearer token} Zq9SENTINEL7x',
+])
+def test_loop14_adversarial_bearer_bracket_terminator(text):
+  '''Bracketed/terminated marker after Bearer: no leak.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer api keys Zq9SENTINEL7x',
+  'Bearer pass words Zq9SENTINEL7x',
+  'Bearer aws access keys Zq9SENTINEL7x',
+  'Bearer aws access key ids Zq9SENTINEL7x',
+])
+def test_loop14_adversarial_bearer_plural_marker(text):
+  '''Plural marker phrase after Bearer: no leak.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('cp_digit', [
+  (0x24F5, 1), (0x24F6, 2), (0x24F7, 3), (0x24F8, 4),
+  (0x24F9, 5), (0x24FA, 6), (0x24FB, 7), (0x24FC, 8),
+  (0x24FD, 9), (0x24FF, 0),
+  (0x2776, 1), (0x2777, 2), (0x2778, 3), (0x2779, 4),
+  (0x277A, 5), (0x277B, 6), (0x277C, 7), (0x277D, 8),
+  (0x277E, 9),
+  (0x2780, 1), (0x2781, 2), (0x2782, 3), (0x2783, 4),
+  (0x2784, 5), (0x2785, 6), (0x2786, 7), (0x2787, 8),
+  (0x2788, 9),
+  (0x278A, 1), (0x278B, 2), (0x278C, 3), (0x278D, 4),
+  (0x278E, 5), (0x278F, 6), (0x2790, 7), (0x2791, 8),
+  (0x2792, 9),
+  (0x1F10B, 0), (0x1F10C, 0),
+])
+def test_loop14_adversarial_enclosed_digits_fold(cp_digit):
+  '''All 39 enclosed digits fold to their digit.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  cp, digit = cp_digit
+  assert _normalize_unicode(chr(cp)) == str(digit), hex(cp)
+
+
+@pytest.mark.parametrize('text', [
+  'credentia\u24f5=Zq9SENTINEL7x',
+  'credentia\u2776=Zq9SENTINEL7x',
+  'credentia\u2780=Zq9SENTINEL7x',
+  'credentia\u278a=Zq9SENTINEL7x',
+  't\u24ffken=Zq9SENTINEL7x',
+  't\U0001f10bken=Zq9SENTINEL7x',
+  't\U0001f10cken=Zq9SENTINEL7x',
+])
+def test_loop14_adversarial_enclosed_digit_marker(text):
+  '''Enclosed 1/0 spelling a marker: no leak.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop14_adversarial_enclosed_digit_dictkey():
+  '''Enclosed-digit marker as dict key: value redacted.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+  out = scrub_details({'credentia\u2776': 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in str(out), repr(out)
+  assert '***REDACTED***' in str(out), repr(out)
+
+
+@pytest.mark.parametrize('text', [
+  'credentia(1)=Zq9SENTINEL7x',
+  't(0)ken=Zq9SENTINEL7x',
+  'credent(1)al=Zq9SENTINEL7x',
+])
+def test_loop14_adversarial_glued_paren_digit(text):
+  '''Glued ASCII (digit) inside marker: no leak.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop14_adversarial_glued_paren_preserves_spaced():
+  '''Spaced (a)/(1)/(world) are preserved, not folded.'''
+  from forecast_ml_framework.governance.scrub import (
+    _normalize_unicode,
+  )
+  assert _normalize_unicode('option (a) is ok') == (
+    'option (a) is ok')
+  assert _normalize_unicode('option (1) is ok') == (
+    'option (1) is ok')
+  assert _normalize_unicode('hello (world) test') == (
+    'hello (world) test')
+
+
+# --- loop15 B1: intra-marker separator any non-alnum (RED) ---
+
+@pytest.mark.parametrize('text', [
+  'api|key=Zq9SENTINEL7x',
+  'api*key=Zq9SENTINEL7x',
+  'access*key=Zq9SENTINEL7x',
+  'private*key=Zq9SENTINEL7x',
+  'pass*word=Zq9SENTINEL7x',
+  'api\u00b7key=Zq9SENTINEL7x',
+  'pass\u2212word=Zq9SENTINEL7x',
+])
+def test_loop15_b1_listed_separators_scrubbed(text):
+  '''Loop15 B1 PoC: listed intra-marker separators leak nothing.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'api|key=Zq9SENTINEL7x',
+  'api*key=Zq9SENTINEL7x',
+  'access*key=Zq9SENTINEL7x',
+  'private*key=Zq9SENTINEL7x',
+  'pass*word=Zq9SENTINEL7x',
+  'api\u00b7key=Zq9SENTINEL7x',
+  'pass\u2212word=Zq9SENTINEL7x',
+])
+def test_loop15_b1_audit_matches_dict_key(text):
+  '''Loop15 B1: audit free-text scrub matches dict-key block.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import (
+    _is_secret_key,
+  )
+  key = text.split('=')[0]
+  assert _is_secret_key(key), repr(key)
+  entry = audit_log('train', 'alice', {'note': text, 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details']['ok'] == 'keep'
+
+
+@pytest.mark.parametrize('sep', [
+  '|', '*', '~', '!', '?', '@', '#', '$', '%', '^', '&', '+',
+  '<', '>', ':', ';', ',', '(', ')', '[', ']', '{', '}', '"',
+  "'", '`', '=', '/', '\\', '.', '-', '_', ' ', '\t',
+  '\u00b7', '\u2212', '\u2014', '\u2013', '\u2022', '\u00d7',
+  '\u00f7', '\u2192', '\u2026', '\u2044',
+])
+def test_loop15_b1_any_nonalnum_separator_scrubbed(sep):
+  '''Any non-alnum intra-marker separator matches _normalize_key.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  for text in (
+    f'api{sep}key=Zq9SENTINEL7x',
+    f'pass{sep}word=Zq9SENTINEL7x',
+    f'access{sep}key=Zq9SENTINEL7x',
+    f'private{sep}key=Zq9SENTINEL7x',
+    f'aws{sep}access{sep}key{sep}id=Zq9SENTINEL7x',
+    f'secret{sep}access{sep}key=Zq9SENTINEL7x',
+  ):
+    out = _scrub_text(text)
+    assert 'Zq9SENTINEL7x' not in out, repr(text)
+    assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer api|key Zq9SENTINEL7x',
+  'Bearer api*key Zq9SENTINEL7x',
+  'Bearer access*key Zq9SENTINEL7x',
+  'Bearer private*key Zq9SENTINEL7x',
+  'Bearer pass*word Zq9SENTINEL7x',
+  'Bearer api\u00b7key Zq9SENTINEL7x',
+  'Bearer pass\u2212word Zq9SENTINEL7x',
+])
+def test_loop15_b1_bearer_lookahead_widened(text):
+  '''Bearer lookahead uses the widened intra-marker separator.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'api|*key=Zq9SENTINEL7x',
+  'api|\u00b7key Zq9SENTINEL7x',
+  'pass*\u2212word=Zq9SENTINEL7x',
+])
+def test_loop15_b1_mixed_separator_run_scrubbed(text):
+  '''Mixed non-alnum separator runs inside a marker scrub.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_loop15_b1_long_separator_run_is_fast():
+  '''A long separator run does not cause backtracking blowup.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  text = 'api' + ('|' * 5000) + 'key=Zq9SENTINEL7x'
+  start = time.perf_counter()
+  out = _scrub_text(text)
+  elapsed = time.perf_counter() - start
+  assert elapsed < 1.0, elapsed
+  assert 'Zq9SENTINEL7x' not in out
+  assert '***REDACTED***' in out
+
+
+def test_loop15_b1_non_marker_separator_text_preserved():
+  '''Non-marker text with separators is preserved.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  for text in ('a|b', 'hello*world', 'price|quantity 5',
+               'api|description is fine'):
+    assert _scrub_text(text) == text, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer aws*access*key Zq9SENTINEL7x',
+  'Bearer aws|access|key Zq9SENTINEL7x',
+  'Bearer aws\u00b7access\u00b7key Zq9SENTINEL7x',
+  'Bearer aws\u2212access\u2212key Zq9SENTINEL7x',
+  'Bearer aws*access*keys Zq9SENTINEL7x',
+  'Bearer aws*access*key*ids Zq9SENTINEL7x',
+  'Bearer api*keys Zq9SENTINEL7x',
+  'Bearer api|keys Zq9SENTINEL7x',
+  'Bearer pass*words Zq9SENTINEL7x',
+  'Bearer pass|words Zq9SENTINEL7x',
+])
+def test_loop15_b1_bearer_aws_and_plural_phrase(text):
+  '''Bearer aws/plural marker phrases with new separators scrub.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+  'password api*keys Zq9SENTINEL7x',
+  'password aws*access*key Zq9SENTINEL7x',
+  'token pass*words Zq9SENTINEL7x',
+])
+def test_loop15_b1_marker_phrase_after_marker_scrubbed(text):
+  '''Glued plural/aws marker phrase after a marker is skipped.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+# --- loop16: filler-chain symbolic glue (RED) ---
+
+@pytest.mark.parametrize('text', [
+  'password very*really Zq9SENTINEL7x',
+  'password very|really Zq9SENTINEL7x',
+  'password very~really Zq9SENTINEL7x',
+  'token very*really Zq9SENTINEL7x',
+])
+def test_loop16_filler_chain_symbolic_glue_scrubbed(text):
+  '''Filler parts glued by a symbol are filler, not the value.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text, 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details']['ok'] == 'keep'
+
+
+@pytest.mark.parametrize('text', [
+  'password is=was Zq9SENTINEL7x',
+  'password is:was Zq9SENTINEL7x',
+  'password is|was Zq9SENTINEL7x',
+])
+def test_loop16_filler_pair_separators_scrubbed(text):
+  '''Filler+sep+filler is filler, not a new key=value pair.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text, 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details']['ok'] == 'keep'
+
+
+@pytest.mark.parametrize('text', [
+  'Bearer very*really Zq9SENTINEL7x',
+  'Bearer very|really Zq9SENTINEL7x',
+])
+def test_loop16_bearer_filler_chain_symbolic_glue_scrubbed(text):
+  '''Bearer filler chain glued by a symbol does not leak.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text, 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details']['ok'] == 'keep'
+
+
+@pytest.mark.parametrize('text', [
+  'password "very*really" Zq9SENTINEL7x',
+  "password 'very*really' Zq9SENTINEL7x",
+  'password very*really "Zq9SENTINEL7x"',
+  "password very*really 'Zq9SENTINEL7x'",
+])
+def test_loop16_quoted_filler_chain_symbolic_glue_scrubbed(text):
+  '''Quoted filler chain glued by a symbol is filler, not value.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  entry = audit_log('train', 'alice', {'note': text, 'ok': 'keep'})
+  blob = json.dumps(entry)
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert '***REDACTED***' in blob, repr(text)
+  assert entry['details']['ok'] == 'keep'
+
+
+
+# --- loop17: proven fixes P1-P4 (RED) ---
+
+@pytest.mark.parametrize('type_name', [
+    'password=Zq9SENTINEL7x',
+    'passwordZq9SENTINEL7x',
+    'token=Zq9SENTINEL7x',
+])
+def test_loop17_type_name_marker_pattern_scrubbed(type_name):
+    '''P1: dynamic type name carrying marker pattern is scrubbed.'''
+    from forecast_ml_framework.governance.scrub import scrub_details
+
+    obj = type(type_name, (), {})()
+    out = scrub_details({'note': obj})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(type_name)
+    assert '***REDACTED***' in str(out), repr(type_name)
+    out_key = scrub_details({obj: 'keep'})
+    assert 'Zq9SENTINEL7x' not in str(out_key), repr(type_name)
+
+
+def test_loop17_type_name_bare_sentinel_scrubbed():
+    '''P1: bare sentinel as a dynamic type name does not leak.'''
+    from forecast_ml_framework.governance.scrub import scrub_details
+
+    obj = type('Zq9SENTINEL7x', (), {})()
+    out = scrub_details({'note': obj})
+    assert 'Zq9SENTINEL7x' not in str(out)
+    out_key = scrub_details({obj: 'keep'})
+    assert 'Zq9SENTINEL7x' not in str(out_key)
+
+
+@pytest.mark.parametrize('text', [
+    'api very key=Zq9SENTINEL7x',
+    'access very key=Zq9SENTINEL7x',
+    'private very key=Zq9SENTINEL7x',
+    'api is key=Zq9SENTINEL7x',
+    'access very key very id=Zq9SENTINEL7x',
+    'api very key Zq9SENTINEL7x',
+    'api very key: Zq9SENTINEL7x',
+])
+def test_loop17_intra_marker_filler_scrubbed(text):
+    '''P2: filler inside api/access/private compound does not leak.'''
+    from forecast_ml_framework.governance.scrub import (
+        _is_secret_key,
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert _is_secret_key('api very key') is True
+    assert _is_secret_key('access very key') is True
+    out_key = scrub_details({'api very key': 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key)
+    out_set = scrub_details(
+        {'k': {'api very key', 'Zq9SENTINEL7x'}})
+    assert 'Zq9SENTINEL7x' not in str(out_set)
+
+
+@pytest.mark.parametrize('text', [
+    'password pretty Zq9SENTINEL7x',
+    'password is quite Zq9SENTINEL7x',
+    'password is pretty much Zq9SENTINEL7x',
+    'token is so Zq9SENTINEL7x',
+    'secret was too Zq9SENTINEL7x',
+    'password somewhat Zq9SENTINEL7x',
+    'password extremely Zq9SENTINEL7x',
+    'password rather Zq9SENTINEL7x',
+    'password super Zq9SENTINEL7x',
+    'password much Zq9SENTINEL7x',
+    'Bearer pretty Zq9SENTINEL7x',
+    'Bearer is quite Zq9SENTINEL7x',
+])
+def test_loop17_filler_vocab_scrubbed(text):
+    '''P3: degree-adverb filler vocab does not leak.'''
+    from forecast_ml_framework.governance.scrub import (
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Bearer very)really Zq9SENTINEL7x',
+    'Bearer very) Zq9SENTINEL7x',
+    'Bearer is] Zq9SENTINEL7x',
+    'Bearer very}really Zq9SENTINEL7x',
+    'Bearer very] Zq9SENTINEL7x',
+    'Bearer is} Zq9SENTINEL7x',
+])
+def test_loop17_bearer_bracket_filler_scrubbed(text):
+    '''P4: Bearer filler plus closing bracket does not leak.'''
+    from forecast_ml_framework.governance.scrub import (
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+
+
+# --- loop17-arch: H1/H2/H3/F1/F2 (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'password tremendously Zq9SENTINEL7x',
+    'password literally Zq9SENTINEL7x',
+    'password honestly Zq9SENTINEL7x',
+    'password literaly Zq9SENTINEL7x',
+    'password absurdly Zq9SENTINEL7x',
+    'api tremendously key=Zq9SENTINEL7x',
+    'api literally key=Zq9SENTINEL7x',
+    'api honestly key Zq9SENTINEL7x',
+    'api absurdly key=Zq9SENTINEL7x',
+    'access tremendously key=Zq9SENTINEL7x',
+    'password is tremendously Zq9SENTINEL7x',
+])
+def test_loop17_arch_h1_unknown_filler_scrubbed(text):
+    '''H1: unseen degree adverbs do not leak secret.'''
+    from forecast_ml_framework.governance.audit import audit_log
+    from forecast_ml_framework.governance.scrub import (
+        _is_secret_key,
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    assert '***REDACTED***' in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert '***REDACTED***' in str(out), repr(text)
+    entry = audit_log('train', 'alice', {'note': text})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+    assert _is_secret_key('api tremendously key') is True
+    assert _is_secret_key('api absurdly key') is True
+    out_key = scrub_details(
+        {'api tremendously key': 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key)
+
+
+@pytest.mark.parametrize('text', [
+    'apiverykey=Zq9SENTINEL7x',
+    'accessverykey=Zq9SENTINEL7x',
+    'privateverykey=Zq9SENTINEL7x',
+    'apiverykey Zq9SENTINEL7x',
+    'apireallykey=Zq9SENTINEL7x',
+    'apiiskey=Zq9SENTINEL7x',
+])
+def test_loop17_arch_h2_glued_intra_filler_scrubbed(text):
+    '''H2: glued filler inside compound marker leaks not.'''
+    from forecast_ml_framework.governance.scrub import (
+        _is_secret_key,
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    assert '***REDACTED***' in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert _is_secret_key('apiverykey') is True
+    assert _is_secret_key('accessverykey') is True
+    out_key = scrub_details({'apiverykey': 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key)
+    assert '***REDACTED***' in str(out_key)
+
+
+@pytest.mark.parametrize('type_name', [
+    'zqsentinelvalue',
+    'zq9sentinelvalue',
+    '\u00e1Zq9SENTINEL7x',
+    '\uff41Zq9SENTINEL7x',
+    'a\u0301Zq9SENTINEL7x',
+])
+def test_loop17_arch_h3_f1_type_name_scrubbed(type_name):
+    '''H3/F1: lowercase/normalized sentinel type names leak not.'''
+    from forecast_ml_framework.governance.audit import audit_log
+    from forecast_ml_framework.governance.scrub import (
+        _scrub_type_name,
+        scrub_details,
+    )
+
+    obj = type(type_name, (), {})()
+    assert 'Zq9SENTINEL7x' not in _scrub_type_name(type_name)
+    assert 'zqsentinelvalue' not in _scrub_type_name(type_name)
+    out = scrub_details({'note': obj})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(type_name)
+    assert 'zqsentinelvalue' not in str(out), repr(type_name)
+    assert '***REDACTED***' in str(out), repr(type_name)
+    out_key = scrub_details({obj: 'keep'})
+    assert 'Zq9SENTINEL7x' not in str(out_key), repr(type_name)
+    assert 'zqsentinelvalue' not in str(out_key), repr(type_name)
+    entry = audit_log('train', 'alice', {'note': obj})
+    assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(type_name)
+    assert 'zqsentinelvalue' not in json.dumps(entry), repr(type_name)
+
+
+def test_loop17_arch_h3_camelcase_type_name_preserved():
+    '''H3: plain CamelCase and private CamelCase preserved.'''
+    from forecast_ml_framework.governance.scrub import (
+        _scrub_type_name,
+        scrub_details,
+    )
+
+    assert _scrub_type_name('SecretThing') == 'SecretThing'
+    assert _scrub_type_name('Evil') == 'Evil'
+    assert _scrub_type_name('_Loop8EvilKeyPw') == '_Loop8EvilKeyPw'
+    obj = type('SecretThing', (), {})()
+    assert scrub_details({'note': obj}) == {
+        'note': {'type': 'SecretThing'}}
+
+
+@pytest.mark.parametrize('text', [
+    'api well-known key=Zq9SENTINEL7x',
+    'api wellknown key=Zq9SENTINEL7x',
+    'access well-known key=Zq9SENTINEL7x',
+    'access wellknown key Zq9SENTINEL7x',
+    'private well-known key=Zq9SENTINEL7x',
+    'private wellknown key=Zq9SENTINEL7x',
+    'api filler key=Zq9SENTINEL7x',
+    'api one key=Zq9SENTINEL7x',
+])
+def test_loop17_arch_f2_wellknown_intra_filler_scrubbed(text):
+    '''F2: well-known/wellknown and filler audit do not leak.'''
+    from forecast_ml_framework.governance.scrub import (
+        _is_secret_key,
+        _scrub_text,
+        scrub_details,
+    )
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    out = scrub_details({'note': text})
+    assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+    assert _is_secret_key('api well-known key') is True
+    assert _is_secret_key('api wellknown key') is True
+    out_key = scrub_details(
+        {'api well-known key': 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key)
+    out_key2 = scrub_details(
+        {'api wellknown key': 'Zq9SENTINEL7x'})
+    assert 'Zq9SENTINEL7x' not in str(out_key2)
+
+
+# --- loop18: P2/P3 (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'pass phrase=Zq9SENTINEL7x',
+    'pass phrase Zq9SENTINEL7x',
+    'pass code=Zq9SENTINEL7x',
+    'pass code Zq9SENTINEL7x',
+    'pass-phrase=Zq9SENTINEL7x',
+    'pass-code Zq9SENTINEL7x',
+    'passphrase=Zq9SENTINEL7x',
+])
+def test_loop18_pass_phrase_code_scrubbed(text):
+    '''P2: pass phrase/code free text does not leak.'''
+    from forecast_ml_framework.governance.scrub import _scrub_text
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+    assert '***REDACTED***' in _scrub_text(text), repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'password highly Zq9SENTINEL7x',
+    'password incredibly Zq9SENTINEL7x',
+    'password fairly Zq9SENTINEL7x',
+    'password particularly Zq9SENTINEL7x',
+    'password especially Zq9SENTINEL7x',
+    'api highly key=Zq9SENTINEL7x',
+    'api incredibly key=Zq9SENTINEL7x',
+])
+def test_loop18_degree_adverbs_scrubbed(text):
+    '''P3: degree adverbs highly/incredibly/... do not leak.'''
+    from forecast_ml_framework.governance.scrub import _scrub_text
+
+    assert 'Zq9SENTINEL7x' not in _scrub_text(text), repr(text)
+
+
+def test_loop17_arch_public_aliases_and_docs():
+    '''Public scrub aliases exist; audit doc points to scrub.'''
+    from forecast_ml_framework.governance import audit, scrub
+
+    assert scrub.safe_str is scrub._safe_str
+    assert scrub.safe_repr is scrub._safe_repr
+    assert scrub.safe_list is scrub._safe_list
+    assert scrub.scrub_text is scrub._scrub_text
+    assert scrub.scrub_type_name is scrub._scrub_type_name
+    assert scrub.unknown_key is scrub._unknown_key
+    assert scrub.is_secret_key is scrub._is_secret_key
+    assert scrub.decode_bytes_scrubbed is (
+        scrub._decode_bytes_scrubbed)
+    assert scrub.composite_marker_bearing is (
+        scrub._composite_marker_bearing)
+    assert scrub.marker_part is scrub._marker_part
+    assert scrub.is_marker_element is scrub._is_marker_element
+    assert scrub.MAX_ITEMS == scrub._MAX_ITEMS
+    assert scrub.MAX_COMPOSITE_DEPTH == scrub._MAX_COMPOSITE_DEPTH
+    doc = (audit.__doc__ or '').lower()
+    assert 'scrub' in doc
+    assert len(doc) < 500, len(doc)
+
+
+# --- loop19: marker regex must not scan the value (RED) ---
+
+def test_loop19_marker_long_token_is_fast():
+  '''Marker plus a long alnum token is linear, not backtracking.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  for marker in ('password', 'secret', 'token', 'api key'):
+    text = marker + ' ' + ('a' * 5000)
+    start = time.perf_counter()
+    out = _scrub_text(text)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, (marker, elapsed)
+    assert 'a' * 100 not in out, marker
+    assert '***REDACTED***' in out, marker
+
+
+def test_loop19_marker_prefix_long_token_is_fast():
+  '''A marker prefix plus a long token is linear, not backtracking.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+  for text in ('api ' + ('a' * 5000), 'api' + ('a' * 5000)):
+    start = time.perf_counter()
+    out = _scrub_text(text)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 1.0, (text[:10], elapsed)
+    assert out == text, text[:10]
+
+
+# --- loop21: short glued suffix and chained glued filler (RED) ---
+
+@pytest.mark.parametrize('text', [
+    'passwordX Zq9SENTINEL7x',
+    'passwordZ Zq9SENTINEL7x',
+    'password1 Zq9SENTINEL7x',
+    'password9 Zq9SENTINEL7x',
+    'tokenX Zq9SENTINEL7x',
+    'token1 Zq9SENTINEL7x',
+    'secretX Zq9SENTINEL7x',
+    'passwordHu Zq9SENTINEL7x',
+    'passwordTo Zq9SENTINEL7x',
+    'passwordAB Zq9SENTINEL7x',
+    'passwordXY Zq9SENTINEL7x',
+    'passwordab Zq9SENTINEL7x',
+    'passworda1 Zq9SENTINEL7x',
+    'passwordX1 Zq9SENTINEL7x',
+    'passwordab1 Zq9SENTINEL7x',
+    'api keyX Zq9SENTINEL7x',
+    'apikeyX Zq9SENTINEL7x',
+    'api-keyX Zq9SENTINEL7x',
+    'accesskeyX Zq9SENTINEL7x',
+    'privatekeyX Zq9SENTINEL7x',
+    'passwordsX Zq9SENTINEL7x',
+    'passwordX: Zq9SENTINEL7x',
+    'passwordX, Zq9SENTINEL7x',
+    'passwordX "Zq9SENTINEL7x"',
+])
+def test_loop21_f1_short_glued_suffix_does_not_starve(text):
+  '''F1: a short glued suffix is a marker extension, not value.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'passwordX=Zq9SENTINEL7x',
+    'passwordId Zq9SENTINEL7x',
+    'passwordId=Zq9SENTINEL7x',
+    'passwordHunter Zq9SENTINEL7x',
+    'passworda Zq9SENTINEL7x',
+    'passwords Zq9SENTINEL7x',
+    'passwordZq9SENTINEL7x',
+])
+def test_loop21_f1_glued_controls_still_redact(text):
+  '''F1: glued ``=`` value and known extensions still redact.'''
+  from forecast_ml_framework.governance.scrub import _scrub_text
+
+  out = _scrub_text(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('key', [
+    'apiveryverykey',
+    'apireallyreallykey',
+    'apiisverykey',
+    'apiiskey',
+    'accessveryverykey',
+    'privateveryverykey',
+    'secretveryverykey',
+])
+def test_loop21_f2_chained_glued_filler_key(key):
+  '''F2: 2+ chained glued fillers between marker parts redact.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+  from forecast_ml_framework.telemetry.exceptions import FrameworkError
+
+  assert _is_secret_key(key) is True, key
+  out = scrub_details({key: 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in str(out), key
+  assert '***REDACTED***' in str(out), key
+  entry = audit_log('train', 'alice', {key: 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), key
+  err = FrameworkError('m', context={key: 'Zq9SENTINEL7x'})
+  assert 'Zq9SENTINEL7x' not in json.dumps(err.to_dict()), key
+
+
+def test_loop21_f2_long_chained_filler_key_is_fast():
+  '''F2: an 8192-char chained filler key is linear, not quadratic.'''
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+
+  key = 'api' + ('very' * 2046) + 'key'
+  assert len(key) == 8190
+  start = time.perf_counter()
+  assert _is_secret_key(key) is True
+  out = scrub_details({key: 'Zq9SENTINEL7x'})
+  elapsed = time.perf_counter() - start
+  assert elapsed < 1.0, elapsed
+  assert 'Zq9SENTINEL7x' not in str(out)
+
+
+# --- cycle1 W1: adversarial F1/F2/F3/F5 (RED) ---
+
+
+@pytest.mark.parametrize('text', [
+    'Cookie: session=HUNTER2ZQ9SENTINEL',
+    'password: user=HUNTER2ZQ9SENTINEL',
+    'token: data=HUNTER2ZQ9SENTINEL',
+    'Authorization: user=HUNTER2ZQ9SENTINEL',
+    'api_key: foo=HUNTER2ZQ9SENTINEL',
+    'password foo=HUNTER2ZQ9SENTINEL',
+])
+def test_w1_f1_pair_deferral_non_secret_key_redacts_token(text):
+  '''F1: non-secret pair key after a marker redacts the token.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text,expected', [
+    (
+        'password token=HUNTER2ZQ9SENTINEL',
+        'password token=***REDACTED***',
+    ),
+    (
+        'password api_key=HUNTER2ZQ9SENTINEL',
+        'password api_key=***REDACTED***',
+    ),
+    (
+        'token password=HUNTER2ZQ9SENTINEL',
+        'token password=***REDACTED***',
+    ),
+])
+def test_w1_f1_secret_pair_key_still_defers(text, expected):
+  '''F1: secret-bearing pair key defers to its own marker.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  assert scrub_text(text) == expected, repr(text)
+
+
+def test_w1_f1_trailing_non_secret_pair_preserved():
+  '''F1: password=QZ other=1 keeps other=1.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  assert scrub_text('password=QZ other=1') == (
+      'password=***REDACTED*** other=1')
+
+
+@pytest.mark.parametrize('key', [
+    'encryption_key',
+    'master_key',
+    'signing_key',
+    'aws_key',
+    'gcp_key',
+    'private_key',
+    'otp',
+    'pin_code',
+    'pin_number',
+    'pincode',
+])
+def test_w1_f2_new_compound_dict_keys_redacted(key):
+  '''F2: new secret compounds redact dict values.'''
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+
+  assert _is_secret_key(key) is True, key
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out), key
+  assert '***REDACTED***' in str(out), key
+
+
+@pytest.mark.parametrize('text', [
+    'encryption_key=HUNTER2ZQ9SENTINEL',
+    'master_key=HUNTER2ZQ9SENTINEL',
+    'signing_key=HUNTER2ZQ9SENTINEL',
+    'aws_key=HUNTER2ZQ9SENTINEL',
+    'gcp_key=HUNTER2ZQ9SENTINEL',
+    'encryption key HUNTER2ZQ9SENTINEL',
+    'master-key HUNTER2ZQ9SENTINEL',
+    'otp=HUNTER2ZQ9SENTINEL',
+    'otp HUNTER2ZQ9SENTINEL',
+    'pin_code=HUNTER2ZQ9SENTINEL',
+    'pin_number=HUNTER2ZQ9SENTINEL',
+    'pin code HUNTER2ZQ9SENTINEL',
+])
+def test_w1_f2_new_compound_free_text_redacted(text):
+  '''F2: new secret compounds redact free-text values.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+def test_w1_f2_bare_key_hash_not_substring_markers():
+  '''F2: bare key/hash are not substring markers.'''
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+      scrub_text,
+  )
+
+  assert _is_secret_key('key_cols_list') is False
+  assert _is_secret_key('hash_col') is False
+  assert _is_secret_key('mapping') is False
+  assert _is_secret_key('monkey') is False
+  details = {
+      'key_cols_list': ['a', 'b'],
+      'hash_col': 'keep',
+      'mapping': 'keep',
+      'monkey': 'keep',
+  }
+  assert scrub_details(details) == details
+  text = 'key_cols_list hash_col mapping monkey'
+  assert scrub_text(text) == text
+
+
+@pytest.mark.parametrize('text', [
+    'p4ssword=HUNTER2ZQ9SENTINEL',
+    'p455word=HUNTER2ZQ9SENTINEL',
+    'p@ssword=HUNTER2ZQ9SENTINEL',
+    'p@ssw0rd=HUNTER2ZQ9SENTINEL',
+    '$ecret=HUNTER2ZQ9SENTINEL',
+    '5ecret=HUNTER2ZQ9SENTINEL',
+    's3cret=HUNTER2ZQ9SENTINEL',
+    'p4ssw0rd=HUNTER2ZQ9SENTINEL',
+])
+def test_w1_f3_ascii_leet_markers_redacted(text):
+  '''F3: ASCII leet markers redact free-text values.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('key', [
+    'p4ssword',
+    'p@ssword',
+    '$ecret',
+    '5ecret',
+])
+def test_w1_f3_leet_dict_keys_redacted(key):
+  '''F3: ASCII leet markers redact dict values.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out), key
+  assert '***REDACTED***' in str(out), key
+
+
+def test_w1_f3_digit_bearing_non_markers_preserved():
+  '''F3: legit digit text and keys are not leet markers.'''
+  from forecast_ml_framework.governance.scrub import (
+      scrub_details,
+      scrub_text,
+  )
+
+  assert scrub_text('epoch 2026-01-02') == 'epoch 2026-01-02'
+  text = 'train completed successfully learning_rate 0.1'
+  assert scrub_text(text) == text
+  assert scrub_text('room 101 value 42') == 'room 101 value 42'
+  details = {
+      '2026': 'keep',
+      'a4': 'keep',
+      'h4': 'keep',
+      'key_cols_list': ['x'],
+  }
+  assert scrub_details(details) == details
+
+
+def test_w1_f5_large_plain_text_is_fast():
+  '''F5: 2MB plain text is truncated before work, fast.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  start = time.perf_counter()
+  out = scrub_text('a' * 2000000)
+  elapsed = time.perf_counter() - start
+  assert elapsed < 0.1, elapsed
+  assert len(out) <= 10100
+  assert 'TRUNCATED' in out
+
+
+def test_w1_f5_marker_dense_text_is_fast():
+  '''F5: marker-dense 11KB text is near-linear, fast.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  text = 'password x ' * 1000
+  assert len(text) == 11000
+  start = time.perf_counter()
+  out = scrub_text(text)
+  elapsed = time.perf_counter() - start
+  assert elapsed < 0.1, elapsed
+  assert '***REDACTED***' in out
+
+
+def test_w1_audit_docstring_points_to_scrub():
+  '''F11: audit docstring is a pointer to the scrub leaf.'''
+  import forecast_ml_framework.governance.audit as audit
+
+  assert audit.__doc__ is not None
+  assert 'scrub' in audit.__doc__
+  assert len(audit.__doc__) < 500, len(audit.__doc__)
+
+
+@pytest.mark.parametrize('text', [
+    'Bearer encryption_key HUNTER2ZQ9SENTINEL',
+    'Bearer master_key HUNTER2ZQ9SENTINEL',
+    'Bearer pin_code HUNTER2ZQ9SENTINEL',
+    'Bearer aws_key HUNTER2ZQ9SENTINEL',
+    'password encryption_key HUNTER2ZQ9SENTINEL',
+])
+def test_w1_f2_bearer_compound_secret_redacted(text):
+  '''F2: Bearer plus a new compound still redacts secret.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
