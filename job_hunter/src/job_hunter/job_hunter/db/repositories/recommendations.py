@@ -96,6 +96,9 @@ class RecommendationsRepository:
       Enriched row mappings.
     '''
     per_page = max(1, min(per_page, 100))
+    # Defence-in-depth (mirror route le=10000): clamp page so a direct
+    # huge-page call cannot overflow SQLite INTEGER via OFFSET.
+    page = max(1, min(page, 10000))
     sql = (
       'SELECT r.id AS recommendation_id, r.total_score, r.rank, r.status, '
       'r.gate_failures, r.score_breakdown_json, r.rationale, r.reviewed_at, '

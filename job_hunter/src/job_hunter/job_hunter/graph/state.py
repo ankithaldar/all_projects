@@ -164,6 +164,39 @@ def _normalize_inserted(
   return normalized
 
 
+def _normalize_raw_jobs(
+  state: Dict[str, Any],
+) -> List[RawJobRecord]:
+  '''Convert checkpoint-resumed dict raw_jobs items to records.
+
+  Args:
+    state: Graph state possibly carrying dict items.
+
+  Returns:
+    Normalized raw job list; ``state['raw_jobs']`` is updated in
+    place when the key is present.
+  '''
+  raw_items = state.get('raw_jobs') or []
+  normalized: List[RawJobRecord] = []
+  for item in raw_items:
+    if isinstance(item, RawJobRecord):
+      normalized.append(item)
+    elif isinstance(item, dict):
+      try:
+        normalized.append(RawJobRecord.model_validate(item))
+      except (ValidationError, TypeError, ValueError) as exc:
+        logger.warning(
+          'skipping malformed raw job item %r: %s', item, exc,
+        )
+        continue
+    else:
+      logger.warning('skipping non-dict raw job item %r', item)
+      continue
+  if 'raw_jobs' in state:
+    state['raw_jobs'] = normalized
+  return normalized
+
+
 class DiscoveryState(TypedDict, total=False):
   '''State for the nightly discovery graph.'''
 

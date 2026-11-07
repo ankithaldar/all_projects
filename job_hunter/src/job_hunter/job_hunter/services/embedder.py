@@ -13,7 +13,7 @@ import threading
 from typing import Dict, List, Optional
 
 from job_hunter.core.config import AppSettings
-from job_hunter.services.scorer import DEFAULT_EMBED_MODEL
+from job_hunter.core.constants import DEFAULT_EMBED_MODEL
 
 logger = logging.getLogger(__name__)
 

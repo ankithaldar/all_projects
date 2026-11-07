@@ -6,18 +6,19 @@
 
 from __future__ import annotations
 
-import math
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from job_hunter.adapters.base import valid_domain
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
+from job_hunter.core.constants import MAX_SQLITE_ID, clamp_priority
 from job_hunter.db.repositories.companies import CompaniesRepository
 from pydantic import BaseModel, field_validator
 
 router = APIRouter(prefix='/api/companies', tags=['companies'])
+
 
 def _clamp_priority(priority: Any) -> int:
   '''Clamp a company priority into the supported 1..5 range.
@@ -32,20 +33,7 @@ def _clamp_priority(priority: Any) -> int:
     ValueError: On bool, non-finite values (inf/nan) or non-numeric
       input.
   '''
-  # bool is an int subclass but is never a valid priority.
-  if isinstance(priority, bool):
-    raise ValueError(f'invalid priority: {priority!r}')
-  # Int-first: float() on a huge int (e.g. 10**400) raises
-  # OverflowError, so clamp ints before any float conversion.
-  if isinstance(priority, int):
-    return max(1, min(priority, 5))
-  try:
-    value = float(priority)
-  except OverflowError as exc:
-    raise ValueError(f'invalid priority: {priority!r}') from exc
-  if not math.isfinite(value):
-    raise ValueError(f'invalid priority: {priority!r}')
-  return max(1, min(int(value), 5))
+  return clamp_priority(priority)
 
 
 def _reject_bool_priority(value: Any) -> Any:
@@ -239,7 +227,7 @@ async def import_companies(
 
 @router.patch('/{company_id}')
 def patch_company(
-  company_id: int,
+  company_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   payload: CompanyPatch,
   settings: AppSettings = Depends(get_settings),
 ) -> Dict[str, Any]:
@@ -283,7 +271,7 @@ def patch_company(
 
 @router.delete('/{company_id}')
 def blacklist_company(
-  company_id: int,
+  company_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   settings: AppSettings = Depends(get_settings),
 ) -> Dict[str, str]:
   '''Blacklist a company so its jobs are skipped.

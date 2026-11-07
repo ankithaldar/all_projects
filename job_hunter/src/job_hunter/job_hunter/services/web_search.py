@@ -63,11 +63,6 @@ _TITLE_SUFFIXES = (
 _SLUG_AT_RE = re.compile(
   r'-at-(?P<slug>[a-z0-9][a-z0-9-]{1,60}?)-\d{5,}\s*$', re.IGNORECASE
 )
-_TITLE_AT_RE = re.compile(
-  r'\s+at\s+(?P<company>[^-]{2,60}?)'
-  r'\s*(?:\||\u2013|\u2014|-{1,2}\s+LinkedIn|$)', re.IGNORECASE
-)
-_URL_RE = re.compile(r'^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$', re.IGNORECASE)
 
 
 class SearchResult(dict):
@@ -322,31 +317,3 @@ def company_from_linkedin_url(url: str) -> str:
     return ''
   slug = match.group('slug')
   return re.sub(r'[-_]+', ' ', slug).strip().title()
-
-
-def company_from_result_title(title: str) -> str:
-  '''Recover a company name from a ``<Role> at <Company>`` result title.
-
-  Args:
-    title: Search result title.
-
-  Returns:
-    The company name, or an empty string when the pattern does not match.
-  '''
-  cleaned = clean_result_title(title)
-  match = _TITLE_AT_RE.search(cleaned)
-  if not match:
-    return ''
-  return match.group('company').strip(' -\u2013\u2014|,')
-
-
-def looks_like_domain(value: str) -> bool:
-  '''Report whether a string is a bare hostname.
-
-  Args:
-    value: Candidate string.
-
-  Returns:
-    True when the value matches a simple domain shape.
-  '''
-  return bool(_URL_RE.match((value or '').strip()))

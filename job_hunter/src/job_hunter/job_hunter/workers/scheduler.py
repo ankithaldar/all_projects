@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Tuple
 
@@ -16,11 +15,6 @@ from job_hunter.core.errors import ConflictError
 from job_hunter.core.logging import setup_logging
 
 logger = logging.getLogger(__name__)
-
-# Bootstrap once per process per config path (plus APP_DATA_DIR, which
-# AppSettings reads from the environment). Jobs closures capture the
-# cached settings instead of re-bootstrapping on every tick.
-_SETTINGS_CACHE: dict = {}
 
 
 def _cached_bootstrap(config_path: str | Path):
@@ -32,15 +26,9 @@ def _cached_bootstrap(config_path: str | Path):
   Returns:
     Bootstrapped settings (same object on repeated calls for one path).
   '''
-  key = (str(Path(config_path)), os.getenv('APP_DATA_DIR', ''))
-  cached = _SETTINGS_CACHE.get(key)
-  if cached is not None:
-    return cached
-  from job_hunter.core.bootstrap import bootstrap
+  from job_hunter.workers.jobs import _settings
 
-  settings = bootstrap(config_path)
-  _SETTINGS_CACHE[key] = settings
-  return settings
+  return _settings(config_path)
 
 
 def cron_to_apscheduler(expression: str) -> Tuple[int, int, int, int, str]:
@@ -253,7 +241,7 @@ def start_scheduler(config_path: str | Path) -> None:
   logger.info('worker scheduler started (config=%s)', config_path)
   try:
     scheduler.start()
-  except KeyboardInterrupt, SystemExit:
+  except (KeyboardInterrupt, SystemExit):
     logger.info('worker stopped')
 
 

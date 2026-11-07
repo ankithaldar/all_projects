@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
+from job_hunter.core.constants import MAX_SQLITE_ID
 from job_hunter.db.repositories.recommendations import RecommendationsRepository
 
 router = APIRouter(prefix='/api/recommendations', tags=['recommendations'])
+
 
 
 @router.get('')
@@ -21,7 +23,7 @@ def list_recommendations(
   min_score: float = 0.0,
   status: str = '',
   vertical: str = '',
-  page: int = Query(1, ge=1),
+  page: int = Query(1, ge=1, le=10000),
   per_page: int = Query(30, ge=1, le=100),
   include_gated: bool = False,
   settings: AppSettings = Depends(get_settings),
@@ -52,7 +54,7 @@ def list_recommendations(
 
 @router.patch('/{recommendation_id}')
 def set_status(
-  recommendation_id: int,
+  recommendation_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   status: str,
   settings: AppSettings = Depends(get_settings),
 ) -> Dict[str, Any]:

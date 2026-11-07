@@ -6,15 +6,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List
 
 import json as _json
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
+from job_hunter.core.constants import MAX_SQLITE_ID
 from job_hunter.db.repositories.jobs import JobsRepository
 
 router = APIRouter(prefix='/api/jobs', tags=['jobs'])
+
 
 
 @router.get('')
@@ -56,7 +58,7 @@ def list_jobs(
 
 @router.get('/{job_id}')
 def get_job(
-  job_id: int,
+  job_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   settings: AppSettings = Depends(get_settings),
 ) -> Dict[str, Any]:
   '''Return one posting with its raw payload.

@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from job_hunter.adapters.http_client import HttpClient
 from job_hunter.adapters.registry import build_adapter
-from job_hunter.core.config import AppSettings
+from job_hunter.core.config import AppSettings, source_enabled
 from job_hunter.core.models import CompanyTarget, RawJobRecord
 from job_hunter.db.repositories.companies import CompaniesRepository
 from job_hunter.db.repositories.jobs import JobsRepository
@@ -48,6 +48,7 @@ class FetchReport:
     inserted: Postings written as new rows.
     duplicates: Postings rejected by the dedupe engine.
     failed: Sources that raised an error.
+    empty: Sources that returned zero records without error.
     companies_linked: Postings attached to a known company.
     new_companies: Company rows created from posting company names.
   '''
@@ -57,6 +58,7 @@ class FetchReport:
   inserted: int = 0
   duplicates: int = 0
   failed: int = 0
+  empty: int = 0
   companies_linked: int = 0
   new_companies: int = 0
 
@@ -71,22 +73,39 @@ class FetchReport:
       f'{self.fetched} fetched ({", ".join(parts) or "no sources"}) | '
       f'{self.inserted} new | {self.duplicates} dupes | '
       f'{self.companies_linked} linked | {self.new_companies} new companies | '
-      f'{self.failed} source failures'
+      f'{self.failed} source failures | {self.empty} empty sources'
     )
 
 
-def resolve_sources(keys: Sequence[str]) -> List[str]:
+def resolve_sources(
+  keys: Sequence[str],
+  settings: AppSettings | Dict[str, object] | None = None,
+) -> List[str]:
   '''Normalize a requested source list, falling back to the defaults.
+
+  With no explicit keys, DEFAULT_SOURCES is filtered through
+  settings.sources enablement (same check as graph build_plan).
+  An explicit --sources list always overrides the enabled flag:
+  the caller asked for those sources by name.
 
   Args:
     keys: Requested source keys; may be empty.
+    settings: Application settings (or raw sources mapping); None
+      leaves the defaults unfiltered.
 
   Returns:
     De-duplicated source keys in request order.
   '''
   wanted = [str(key).strip().lower() for key in keys if str(key).strip()]
   if not wanted:
-    return list(DEFAULT_SOURCES)
+    sources: Dict[str, object] = {}
+    if isinstance(settings, dict):
+      sources = settings
+    elif settings is not None:
+      sources = settings.sources or {}
+    return [
+      key for key in DEFAULT_SOURCES if source_enabled(sources, key)
+    ]
   seen: set = set()
   ordered: List[str] = []
   for key in wanted:
@@ -100,8 +119,8 @@ async def fetch_source(
   http: HttpClient,
   source_key: str,
   limit: int,
-) -> List[RawJobRecord]:
-  '''Fetch one aggregator feed, returning an empty list on failure.
+) -> Tuple[List[RawJobRecord], bool]:
+  '''Fetch one aggregator feed, reporting whether it succeeded.
 
   Args:
     http: Shared polite HTTP client.
@@ -109,15 +128,17 @@ async def fetch_source(
     limit: Safety cap on returned records.
 
   Returns:
-    Raw job records for the source.
+    (records, ok): Raw job records for the source and True when the
+    fetch succeeded (even with zero records); ([], False) on failure
+    so callers can split empty successes from failures.
   '''
   target = CompanyTarget(name=source_key, source_key=source_key)
   try:
     adapter = build_adapter(source_key, http)
-    return await adapter.fetch(target, limit=limit)
+    return await adapter.fetch(target, limit=limit), True
   except Exception as exc:  # noqa: BLE001 - one bad source must not stop a run
     logger.warning('source %s failed: %s', source_key, exc)
-    return []
+    return [], False
 
 
 async def _persist_records(
@@ -187,7 +208,7 @@ async def bulk_fetch(
   Returns:
       A :class:`FetchReport` describing the pass.
   '''
-  sources = resolve_sources(source_keys)
+  sources = resolve_sources(source_keys, settings)
   report = FetchReport()
   owns_client = http is None
   client = http or HttpClient()
@@ -195,13 +216,21 @@ async def bulk_fetch(
     seen: set = set()
     collected: List[RawJobRecord] = []
     for source_key in sources:
-      records = await fetch_source(client, source_key, limit_per_source)
-      if not records:
-        report.failed += 1
-        report.per_source[source_key] = 0
-        continue
+      result = await fetch_source(client, source_key, limit_per_source)
+      # Back-compat for monkeypatched fakes returning a bare list:
+      # treat a list as a successful fetch.
+      if isinstance(result, tuple):
+        records, ok = result
+      else:
+        records, ok = list(result), True
       report.per_source[source_key] = len(records)
       report.fetched += len(records)
+      if not ok:
+        report.failed += 1
+        continue
+      if not records:
+        report.empty += 1
+        continue
       for record in records:
         key = record.url or record.external_id
         if key in seen:

@@ -105,7 +105,7 @@ class DedupeEngine:
         try:
           if int(candidate_company) != int(company_id):
             continue
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
           if str(candidate_company) != str(company_id):
             continue
       if (

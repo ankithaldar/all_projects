@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
 from job_hunter.core.db import session
 from job_hunter.db.repositories.taxonomy import TaxonomyRepository
 
@@ -95,18 +94,6 @@ class SkillsTaxonomy:
           )
     self._cache.clear()
     return count
-
-  def load_seed_file(self, path: str | Path) -> int:
-    '''Load a skills_aliases.yaml file.
-
-    Args:
-      path: Seed file path.
-
-    Returns:
-      Number of skills processed.
-    '''
-    payload = yaml.safe_load(Path(path).read_text(encoding='utf-8')) or {}
-    return self.load_seed(payload)
 
   def _resolve_uncached(self, alias: str) -> Optional[int]:
     '''Look up one alias in the database.

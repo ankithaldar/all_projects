@@ -43,6 +43,29 @@ def normalize_name(name: str) -> str:
 class CompaniesRepository:
   '''CRUD and matching helpers for the companies table.'''
 
+  # Shared FROM/WHERE base for the due queries: active companies
+  # with truthy ATS/board, joined to crawl_state on the
+  # 'company:<id>' scope. Cooled scopes are excluded by the
+  # _DUE_FROM predicate in SQL before LIMIT so a cooled oldest
+  # batch cannot starve fresh companies.
+  _DUE_BASE_FROM = (
+    'FROM companies LEFT JOIN crawl_state cs '
+    "ON cs.scope = 'company:' || companies.id "
+    "WHERE companies.status = 'active' "
+    "AND NULLIF(companies.ats_provider, '') IS NOT NULL "
+    "AND NULLIF(companies.board_ref, '') IS NOT NULL"
+  )
+  _DUE_FROM = (
+    _DUE_BASE_FROM
+    + ' AND (cs.cooldown_until IS NULL '
+    + "OR cs.cooldown_until <= datetime('now'))"
+  )
+  _COOLED_FROM = (
+    _DUE_BASE_FROM
+    + ' AND cs.cooldown_until IS NOT NULL '
+    + "AND cs.cooldown_until > datetime('now')"
+  )
+
   def __init__(self, db_path: str | Path) -> None:
     '''Initialize the repository.
 
@@ -67,8 +90,7 @@ class CompaniesRepository:
       'ats_provider = COALESCE(?, ats_provider), '
       'board_ref = COALESCE(?, board_ref), '
       "careers_url = CASE WHEN ? != '' THEN ? ELSE careers_url END, "
-      "status = CASE WHEN ? != 'active' THEN ? ELSE status END, "
-      "last_checked_at = datetime('now')"
+      "status = CASE WHEN ? != 'active' THEN ? ELSE status END"
     )
 
   def _update_params(
@@ -160,8 +182,8 @@ class CompaniesRepository:
         conn.execute(
           'INSERT INTO companies (name, normalized_name, domain, vertical, '
           'vertical_confidence, ats_provider, board_ref, careers_url, '
-          'priority, status, discovered_via, last_checked_at) '
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) "
+          'priority, status, discovered_via) '
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
           'ON CONFLICT(normalized_name) DO ' + self._update_sql(),
           (
             name,
@@ -198,8 +220,8 @@ class CompaniesRepository:
           'ats_provider = COALESCE(?, ats_provider), '
           'board_ref = COALESCE(?, board_ref), '
           "careers_url = CASE WHEN ? != '' THEN ? ELSE careers_url END, "
-          "status = CASE WHEN ? != 'active' THEN ? ELSE status END, "
-          "last_checked_at = datetime('now') WHERE id = ?",
+          "status = CASE WHEN ? != 'active' THEN ? ELSE status END "
+          "WHERE id = ?",
           (*params, int(row['id'])),
         )
         return int(row['id'])
@@ -284,6 +306,88 @@ class CompaniesRepository:
     params.append(limit)
     with fetch_all(self._db_path, sql, params) as rows:
       return [dict(row) for row in rows]
+
+  def list_due(self, limit: int = 500) -> List[Dict[str, Any]]:
+    '''List active companies oldest-first for fan-out rotation.
+
+    Ordering is by last_checked_at ASC with NULLs (never checked)
+    first, so repeated runs rotate through the whole backlog
+    instead of re-fetching the same head every time. Cooled scopes
+    and empty-string ATS/board values are excluded in SQL before
+    LIMIT (see _DUE_FROM), so fresh companies are never starved
+    behind a cooled or unverifiable oldest batch.
+
+    Args:
+      limit: Page size.
+
+    Returns:
+      Rows as mappings, oldest first.
+    '''
+    limit = max(1, min(limit, 500))
+    with fetch_all(
+      self._db_path,
+      'SELECT companies.* ' + self._DUE_FROM +
+      ' ORDER BY (companies.last_checked_at IS NOT NULL), '
+      'companies.last_checked_at ASC, companies.priority DESC, '
+      'companies.name LIMIT ?',
+      (limit,),
+    ) as rows:
+      return [dict(row) for row in rows]
+
+  def count_due(self) -> int:
+    '''Count due companies sharing the list_due filters.
+
+    Returns:
+      Number of active, ATS-bearing, non-cooled companies,
+      without the list_due LIMIT truncation.
+    '''
+    with fetch_one(
+      self._db_path,
+      'SELECT COUNT(*) AS n ' + self._DUE_FROM,
+    ) as row:
+      return int(row['n']) if row else 0
+
+  def list_cooled_due(self, limit: int = 500) -> List[Dict[str, Any]]:
+    '''List active, ATS-bearing companies inside their cooldown.
+
+    Mirrors the list_due filters except the cooldown predicate,
+    so callers can count and rotate cooled companies that
+    list_due already excluded in SQL.
+
+    Args:
+      limit: Page size.
+
+    Returns:
+      Rows as mappings, oldest first.
+    '''
+    limit = max(1, min(limit, 500))
+    with fetch_all(
+      self._db_path,
+      'SELECT companies.* ' + self._COOLED_FROM +
+      ' ORDER BY (companies.last_checked_at IS NOT NULL), '
+      'companies.last_checked_at ASC, companies.priority DESC, '
+      'companies.name LIMIT ?',
+      (limit,),
+    ) as rows:
+      return [dict(row) for row in rows]
+
+  def mark_checked(self, company_id: int) -> None:
+    '''Stamp companies.last_checked_at as a rotation stamp.
+
+    This is a rotation stamp (attempted), not last successful fetch:
+    callers stamp after any attempt (success, failure, or cooled
+    skip) so the oldest-first rotation advances even when fetching
+    does not succeed.
+
+    Args:
+      company_id: Id of the company just attempted.
+    '''
+    with session(self._db_path) as conn:
+      conn.execute(
+        "UPDATE companies SET last_checked_at = datetime('now') "
+        'WHERE id = ?',
+        (company_id,),
+      )
 
   def set_status(
     self,

@@ -279,3 +279,52 @@ adversarial-tester ONLY
 ## CYCLE-11 PREP COMPLETE (T5 DONE, Lead-verified full suite 662 passed)
 - Docs taxonomy split/resolve_many/exc.file_path/sanitize-caps/roadmap/counts 56; tests settings-bool/payload/sanitize/inbox-generic/curator-branch.
 - Cycle 11 launched.
+
+## FINAL QA + COMMIT (2026-11-07)
+- Full suite Lead-verified: 662 passed (post-commit HEAD c95fd3c).
+- Human smoke: seed-db ok, api healthz ok, evil-Host 400, per_page 422, companies list ok.
+- Commit c95fd3c (206 files) pushed to origin agentic_ai/job-hunter. Tree clean, no secrets/data staged (verified).
+- User actions: rotate 7 gateway keys; restore lost resume PDF (untracked, deleted during loop); delete 127.0.0.1 test company row in local data/app.db.
+- Cycle 12 post-commit verification launched (10 reviewers on committed tree).
+
+## CYCLE 12 RESULTS (post-commit, HEAD c95fd3c — 7 APPROVED: reviewer, security, anti-sec, adversarial, tester, DB, frontend / 3 REJECTED: anti-arch, devops, docs)
+- Anti-arch: fan-out starvation (51+ companies never fetched - rotation fix), bulk_fetch enabled bypass, raw_jobs resume flip, core->services inversion, docs overclaims.
+- Adversarial: huge page/path-ID OverflowError 500s (recommendations + jobs/companies/runs/recs path ids).
+- Devops: untracked files (commit action only).
+- Docs: 12 HIGH deep drifts (cascade, topology, gates, semantic, adapter ABC, env table, raw_json, cancel, feedback, taxonomy, competitor refresh, DDL, diagram, runbook scope, settings staleness).
+- Cycle-13 prep V1-V3 dispatched.
+
+## CYCLE-13 PREP COMPLETE (V1-V3 + recs-page microfix + docs recount, Lead-verified full suite 706 passed)
+- Fan-out rotation (list_due oldest-first + deferred stat), bulk enabled filter, raw_jobs normalize, core/constants move, huge-int ID bounds, recs page le+clamp.
+- Docs deep-drift rewrite (cascade, topology, gates, semantic, ABC, DDL, transports, refresh, dashboard pages), counts 60.
+- Cycle 13 launched.
+
+## CYCLE 13 RESULTS (5 APPROVED: security, anti-sec, tester, DB, frontend / 5 REJECTED: reviewer, anti-arch, adversarial, devops, docs)
+- Reviewer SyntaxError claim FALSE (py3.14 accepts except A,B — verified ast.parse OK; will normalize anyway).
+- Anti-arch: fan-out cooled/ATS starvation + last_checked_at upsert reset (HIGH), raw_jobs ok, inversion ok, docs overclaims remain.
+- Adversarial: negative huge path IDs 500 (MEDIUM), CSRF userinfo (LOW), linkedin unicode header (LOW).
+- Devops: HIGH constants.py untracked (commit).
+- Docs: 12 HIGH deep drifts + MEDIUM/LOWs.
+- Cycle-14 prep W1-W3 dispatched.
+
+## CYCLE-14 PREP COMPLETE (W1-W3 DONE, Lead-verified full suite 747 passed)
+- W1 parens-except normalization, dead deletions, _SETTINGS_CACHE dedup, source_enabled/clamp/_MAX_ID shared homes, list_due ATS+cooled+rotation, last_checked_at upsert removal, bulk empty/failed split, negative-ID bounds.
+- W2 docs deep-drift rewrite (cascade/topology/gates/semantic/ABC/DDL/transports/refresh/pages/feedback/taxonomy/counts 63).
+- W3 fan-out/limits tests, wheel/JS/checkpoint verify, weak-assert strengthens.
+- Cycle 14 launched.
+
+## CYCLE 14 RESULTS (7 APPROVED: reviewer, security, anti-sec, adversarial, tester, DB, frontend / 3 REJECTED: anti-arch, devops, docs)
+- Anti-arch: list_due limit-before-cooled starvation (HIGH) + source_key doc (HIGH), Mediums (bootstrap doc, mark_checked semantics, ATS empty-string).
+- Adversarial APPROVED (negative huge all 422, priority, tokenizer). Tester/DB/frontend APPROVED (DB save_profile version + runs docstring LOWs accepted).
+- Devops: HIGH constants.py untracked (commit).
+- Docs: HIGH fan-out misattributed + constants/bounds layout, MEDIUMs (semantic trunc, bounds table, bulk/empty, upsert).
+- Cycle-15 prep W1+W2 dispatched (final).
+
+## CYCLE-15 PREP — W2 DONE (Lead-verified: full suite 766 passed, 0 failed)
+- Docs fan-out/cooled/ATS rotation, constants layout, source_key removal, bounds symmetric MAX_SQLITE_ID, counts 65.
+- W1 (backend) form return pending; tree already green with its changes (766 passed).
+
+## CYCLE-15 PREP COMPLETE (W1+W2 DONE, Lead-verified full suite 766 passed)
+- W1 list_due cooled SQL join + ATS NULLIF + count_due true deferred + quick truthy + docstrings.
+- W2 docs fan-out/constants/source_key/bounds/bulk truth + counts 65.
+- Cycle 15 launched.

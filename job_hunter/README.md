@@ -25,7 +25,9 @@ python main.py verify-ats         # fill in ATS board refs for new companies
 python main.py mcp sources        # inspect an MCP server standalone
 ```
 
-`./setup.sh` runs the full flow above (requires Python >= 3.14);
+`./setup.sh` runs the full flow above (requires Python >= 3.14) and also
+runs `fetch-jobs` (bulk aggregator pull), `scout-companies`, and
+`pytest tests/unit -q`;
 `./run.sh` starts API + worker together (waits for `/healthz`, honouring
 `APP_HOST`/`APP_PORT`).
 
@@ -57,15 +59,35 @@ not load them from a file. LLM provider keys live in
 | `APP_LOG_LEVEL` | `INFO` | Log level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
 | `APP_DATA_DIR` | `./data` | Data directory (DBs, logs, inbox) |
 | `SALARY_HARD_FLOOR_LPA` | `45` | Hard salary floor in LPA |
-| `GATEWAY_DB_PATH` | `./data/gateway.db` | Gateway call/cost log DB |
-| `GATEWAY_CACHE_PATH` | `./data/cache.db` | Gateway response cache DB |
-| `GATEWAY_DASHBOARD_PORT` | `8099` | Gateway dashboard port |
+| `JH_API_TOKEN` | — | Bearer token required for API calls when set (also required for non-loopback `APP_HOST`) |
+| `JH_APP_CONFIG` | `config/app.yaml` | MCP-only config override (`mcp_servers/common.py: config_path`); API/worker `AppSettings` does not read it |
+
+Provider keys live in `src/job_hunter/llm_gateway/.env` (copied from the
+gateway `.env.example` template, which carries 9 provider keys — split out
+below). `gateway.yaml` currently references only `OPENROUTER_API_KEYS`,
+`GROQ_API_KEYS`, `CEREBRAS_API_KEYS`, and `NVIDIA_NIM_API_KEYS`; the other
+template keys are not referenced by the current gateway config.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
 | `OPENROUTER_API_KEYS` | — | OpenRouter keys (comma-separated) |
 | `GROQ_API_KEYS` | — | Groq keys |
 | `CEREBRAS_API_KEYS` | — | Cerebras keys |
 | `NVIDIA_NIM_API_KEYS` | — | NVIDIA NIM keys |
-| `GITHUB_API_KEYS` | — | GitHub keys (gateway templates also include BYTEZ/MISTRAL/OMNIROUTE/ORCAROUTER) |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Local Ollama fallback base URL |
+| `BYTEZ_API_KEYS` | — | Bytez keys (template only, not referenced by current `gateway.yaml`) |
+| `GITHUB_API_KEYS` | — | GitHub keys (template only, not referenced by current `gateway.yaml`) |
+| `MISTRAL_API_KEYS` | — | Mistral keys (template only, not referenced by current `gateway.yaml`) |
+| `OMNIROUTE_API_KEYS` | — | OmniRoute keys (template only, not referenced by current `gateway.yaml`) |
+| `ORCAROUTER_API_KEYS` | — | OrcaRouter keys (template only, not referenced by current `gateway.yaml`) |
+
+`GATEWAY_DB_PATH` / `GATEWAY_CACHE_PATH` (`./data/gateway.db` /
+`./data/cache.db`) and `GATEWAY_DASHBOARD_PORT` (`8099`) are read only by the
+standalone gateway process — when the app constructs the gateway it passes
+explicit DB/cache paths, so these env vars are standalone-only. The Ollama
+fallback URL is not read from an env var either: `OLLAMA_BASE_URL` in the
+gateway `.env.example` template is template-only (no gateway code reads it);
+the effective Ollama URL is the `ollama` provider `base_url`
+(`http://127.0.0.1:11434/v1`) in `gateway.yaml`.
 
 ## Security note
 
@@ -86,7 +108,10 @@ python main.py scout-companies --queries 20 --max 15
 `fetch-jobs` pulls whole feeds from the public aggregator APIs
 (Arbeitnow, Jobicy, Himalayas, Remotive, RemoteOK, WeWorkRemotely,
 Cutshort) and stores unseen postings, creating company rows for names not
-yet tracked.
+yet tracked. With no `--sources`, defaults are filtered through
+`config/app.yaml` `sources:` enablement; an explicit `--sources` list
+always overrides the enabled flag (the caller asked for those sources by
+name — see `services/bulk_fetch.py: resolve_sources`).
 
 Cutshort is the India-first source. The other six are global remote boards
 that only incidentally carry India roles (measured single-page India share:

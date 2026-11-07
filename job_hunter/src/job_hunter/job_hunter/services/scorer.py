@@ -8,22 +8,21 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-DEFAULT_WEIGHTS: Dict[str, float] = {
-  'skills_must': 0.30,
-  'skills_nice': 0.10,
-  'semantic': 0.25,
-  'seniority': 0.10,
-  'title_fit': 0.05,
-  'salary_fit': 0.10,
-  'recency': 0.05,
-  'company_fit': 0.05,
-}
+from job_hunter.core.constants import (
+  DEFAULT_EMBED_MODEL,
+  DEFAULT_SALARY_FLOOR_LPA,
+  DEFAULT_WEIGHTS,
+)
 
-DEFAULT_SALARY_FLOOR_LPA = 45.0
-'''Default salary hard floor in LPA (single-sourced; nodes/embedder import).'''
-
-DEFAULT_EMBED_MODEL = 'BAAI/bge-small-en-v1.5'
-'''Default embedding model id (single-sourced; nodes/embedder import).'''
+__all__ = [
+  'DEFAULT_EMBED_MODEL',
+  'DEFAULT_SALARY_FLOOR_LPA',
+  'DEFAULT_WEIGHTS',
+  'aggregate',
+  'feedback_adjust',
+  'normalize_weights',
+  'rationale',
+]
 
 _MAX_ADJUST = 0.05
 

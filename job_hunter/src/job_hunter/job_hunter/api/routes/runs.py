@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, List
+from typing import Annotated, Any, AsyncIterator, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from job_hunter.api.deps import get_settings
 from job_hunter.core.config import AppSettings
+from job_hunter.core.constants import MAX_SQLITE_ID
 from job_hunter.db.repositories.runs import RunsRepository
 
 router = APIRouter(prefix='/api/runs', tags=['runs'])
+
 
 
 @router.get('')
@@ -60,8 +62,8 @@ def trigger_discovery(
 
 @router.get('/{run_id}/events')
 def run_events(
-  run_id: int,
-  after_id: int = Query(0, ge=0),
+  run_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
+  after_id: int = Query(0, ge=0, le=MAX_SQLITE_ID),
   limit: int = Query(200, ge=1, le=500),
   settings: AppSettings = Depends(get_settings),
 ) -> List[Dict[str, Any]]:
@@ -87,7 +89,7 @@ def run_events(
 
 @router.post('/{run_id}/cancel')
 def cancel_run(
-  run_id: int,
+  run_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   settings: AppSettings = Depends(get_settings),
 ) -> Dict[str, Any]:
   '''Mark a pending or running run failed (cooperative cancel).
@@ -111,7 +113,7 @@ def cancel_run(
 
 @router.get('/{run_id}/stream')
 async def stream_run(
-  run_id: int,
+  run_id: Annotated[int, Path(ge=-MAX_SQLITE_ID, le=MAX_SQLITE_ID)],
   settings: AppSettings = Depends(get_settings),
 ) -> StreamingResponse:
   '''Server-Sent Events stream of run events until completion.

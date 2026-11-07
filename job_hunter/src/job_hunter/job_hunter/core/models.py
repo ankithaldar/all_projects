@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from job_hunter.services.scorer import DEFAULT_SALARY_FLOOR_LPA
+from job_hunter.core.constants import DEFAULT_SALARY_FLOOR_LPA
 
 
 class WorkMode:

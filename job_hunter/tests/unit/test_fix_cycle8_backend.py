@@ -305,7 +305,8 @@ def test_curator_raises_when_get_resume_none_unparseable(
   first = asyncio.run(
     curator.ingest_upload('first.pdf', b'%PDF-unparseable-cycle8'),
   )
-  assert first['resume_id'] is not None
+  assert first['resume_id'] == 1, first
+  assert first['parsed_ok'] is False, first
   from job_hunter.db.repositories.profile import ProfileRepository
   monkeypatch.setattr(
     ProfileRepository, 'get_resume', lambda self, rid: None,
@@ -326,7 +327,8 @@ def test_curator_raises_when_get_resume_none_success(
   first = asyncio.run(
     curator.ingest_upload('first.pdf', b'%PDF-same-cycle8'),
   )
-  assert first['resume_id'] is not None
+  assert first['resume_id'] == 1, first
+  assert first['parsed_ok'] is True, first
   from job_hunter.db.repositories.profile import ProfileRepository
   monkeypatch.setattr(
     ProfileRepository, 'get_resume', lambda self, rid: None,

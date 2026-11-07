@@ -6,7 +6,7 @@ and `docs/architecture.md` §19 for the scheduler contract.
 ## Start / stop
 
 ```bash
-./setup.sh          # one-time: venv, deps, gateway .env, seed-db, discover, verify-ats
+./setup.sh          # one-time: venv, deps, gateway .env, seed-db, discover, verify-ats, fetch-jobs, scout, pytest
 ./run.sh            # api + worker together (waits for /healthz, then prints the URL)
 ./run.sh api        # API only
 ./run.sh worker     # worker only
@@ -47,11 +47,19 @@ Served from `src/job_hunter/llm_gateway/templates/`: `/` (dashboard.html),
 `GET /api/settings` returns seeded read-only copies; `PUT` accepts
 only `scoring_weights`, `salary_hard_floor_lpa`,
 `discovery.max_llm_calls_per_run`, `discovery.enrich_per_run_cap`.
+Only `scoring_weights` and `salary_hard_floor_lpa` are effective; the
+two `discovery.*` dotted keys are stored-but-never-read under their
+literal dotted key (API-only) — effective discovery caps come from
+`config/app.yaml` / the top-level `discovery` settings dict. Seeding is
+insert-only: existing settings rows are never overwritten, so later
+`config/app.yaml` edits do not update stored values.
 Schedule and source enabling are yaml-only — edit `config/app.yaml`
 (`sources:` is `enabled`-only; per-source RPM is adapter-owned) and
 restart. CSRF: non-GET with cross-origin Origin/Referer is rejected
-403 with `{'detail': 'forbidden origin'}`; headerless requests not
-checked (browser always sends Origin on POST).
+403 — API-only scope (`/api/` paths, non-GET only) with allowed-host
+bypass for `127.0.0.1`/`localhost`/`testserver` — with
+`{'detail': 'forbidden origin'}`; headerless requests not checked
+(browser always sends Origin on POST).
 
 ## Logs
 
@@ -96,7 +104,9 @@ refs are verified. In order:
 3. `python main.py verify-ats` — populates `ats_provider`/`board_ref`;
    without these, company-driven fetching has nothing to call.
 4. `python main.py fetch-jobs` — bulk pull from aggregators (Arbeitnow,
-   Jobicy, Cutshort, …).
+   Jobicy, Cutshort, …). With no `--sources`, defaults are filtered
+   through `sources:` enablement; an explicit `--sources` list always
+   overrides the enabled flag.
 5. `python main.py scout-companies` — discover more companies, then
    re-run `verify-ats` so the new ones get board refs.
 
@@ -114,10 +124,11 @@ PY
 
 ## Placeholder keys → 422 errors
 
-Resume upload, JD enrichment, and any gateway call with placeholder keys
-(`your-*-key`, `sk-or-key_one`, …) fail at the provider and surface as a
-structured **422** (`{"detail": "resume curation unavailable"}`) — this is
-by design, not a bug. Fill real keys into
+Resume upload only: with placeholder keys (`your-*-key`, `sk-or-key_one`, …)
+the resume-upload path surfaces a structured **422**
+(`{"detail": "resume curation unavailable"}`). JD enrichment and other
+gateway calls do not return HTTP 422 — enrichment failures are counted
+(`enrich_failures`) and the run continues. The 422 is by design, not a bug. Fill real keys into
 `src/job_hunter/llm_gateway/.env` (template:
 `src/job_hunter/llm_gateway/.env.example`) and restart the worker.
 

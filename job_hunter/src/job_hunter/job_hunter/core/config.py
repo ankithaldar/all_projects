@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-'''Application settings loaded from config/app.yaml plus .env overrides.'''
+'''Application settings loaded from config/app.yaml plus os.getenv overrides.
+
+Environment is read only via os.getenv (no .env file loading); the gateway
+env path falls back to the root .env when the gateway-specific .env is absent
+(see gateway_env_path).
+'''
 
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from typing import Any, Dict
 
 import yaml
 from job_hunter.core.errors import ConfigError
-from job_hunter.services.scorer import DEFAULT_SALARY_FLOOR_LPA
+from job_hunter.core.constants import DEFAULT_SALARY_FLOOR_LPA
 
 
 def is_loopback_host(host: str | None = None) -> bool:
@@ -37,6 +42,23 @@ def is_loopback_host(host: str | None = None) -> bool:
     return ipaddress.ip_address(candidate).is_loopback
   except ValueError:
     return False
+
+
+def source_enabled(sources: Dict[str, Any], key: Any) -> bool:
+  '''Report whether a source is enabled in settings.sources.
+
+  Args:
+    sources: Per-source config mapping.
+    key: Source identifier (e.g. 'lever').
+
+  Returns:
+    False only when the source explicitly sets enabled: false;
+    unknown sources default to enabled.
+  '''
+  source_cfg = (sources or {}).get(key or '')
+  if isinstance(source_cfg, dict):
+    return source_cfg.get('enabled') is not False
+  return True
 
 
 class AppSettings:

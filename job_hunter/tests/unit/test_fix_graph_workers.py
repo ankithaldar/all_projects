@@ -133,10 +133,14 @@ def test_scheduler_add_job_kwargs(monkeypatch, tmp_path: Path) -> None:
   )
   monkeypatch.setattr(sched_mod, 'BlockingScheduler', FakeScheduler)
   monkeypatch.setattr(sched_mod, 'setup_logging', lambda *a, **k: None)
-  # bootstrap is imported inside start_scheduler from core.bootstrap
+  # W1 cycle14: scheduler._cached_bootstrap delegates to
+  # workers.jobs._settings, which calls the top-level imported
+  # bootstrap in jobs_mod -- patch that name (and the original
+  # bootstrap_mod name for belt-and-braces).
   import job_hunter.core.bootstrap as bootstrap_mod
 
   monkeypatch.setattr(bootstrap_mod, 'bootstrap', lambda path: fake_settings)
+  monkeypatch.setattr(jobs_mod, 'bootstrap', lambda path: fake_settings)
   # recover_orphans imported inside start_scheduler from workers.jobs
   monkeypatch.setattr(jobs_mod, 'recover_orphans', lambda path: [])
   # clear any cached settings so bootstrap fake is used
@@ -388,7 +392,15 @@ def test_similar_title_exists_filters_by_company() -> None:
 
 
 def test_nodes_no_stub_fake_and_no_inline_json() -> None:
-  '''nodes.py has no Stub fake and no inline json import.'''
+  '''nodes.py has no Stub fake, no inline json, and no json. usage.
+
+  The json module is unused in nodes.py (grep: no ``json.`` call
+  sites), so W1 removes the legacy top-level ``import json`` pin.
+  This test therefore asserts absence of json usage rather than
+  presence of the import: it passes with the import present
+  (unused) and after W1 removes it, and fails if any code starts
+  using ``json.`` or reintroduces an inline ``import json as _json``.
+  '''
   import inspect
 
   import job_hunter.graph.nodes as nodes_mod
@@ -396,8 +408,4 @@ def test_nodes_no_stub_fake_and_no_inline_json() -> None:
   src = inspect.getsource(nodes_mod)
   assert "type('Stub'" not in src and 'type("Stub"' not in src
   assert 'import json as _json' not in src
-  # top-level json import present
-  assert (
-    src.lstrip().startswith('#!')
-    or 'import json' in str(src.splitlines()[0:20])
-  )
+  assert 'json.' not in src, 'nodes.py must not use the json module'

@@ -346,6 +346,6 @@ def test_websearch_throttle_concurrent_spaces_by_interval() -> None:
     elapsed = asyncio.run(run_all())
   finally:
     asyncio.run(index.close())
-  assert elapsed >= 0.4 or elapsed >= 0.35
+  assert elapsed >= 0.4, elapsed
   # The old after-sleep pattern wakes together in ~one interval.
-  assert elapsed > 0.2
+  assert elapsed > 0.2, elapsed

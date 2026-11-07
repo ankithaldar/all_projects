@@ -8,14 +8,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
-import json  # noqa: F401 - top-level json per W5 spec
 import logging
 from typing import Any, Dict, List
 
 from langchain_core.runnables import RunnableConfig
 from job_hunter.adapters.http_client import get_shared_http_client
 from job_hunter.adapters.registry import build_adapter
-from job_hunter.core.config import AppSettings
+from job_hunter.core.config import AppSettings, source_enabled
 from job_hunter.core.logging import node_var
 from job_hunter.core.models import (
   CandidateProfile,
@@ -31,7 +30,7 @@ from job_hunter.db.repositories.companies import CompaniesRepository
 from job_hunter.db.repositories.jobs import JobsRepository
 from job_hunter.db.repositories.profile import ProfileRepository
 from job_hunter.db.repositories.settings import SettingsRepository
-from job_hunter.graph.state import _normalize_inserted
+from job_hunter.graph.state import _normalize_inserted, _normalize_raw_jobs
 from job_hunter.services.dedupe import DedupeEngine
 from job_hunter.services.normalizer import (
   canonicalize_url,
@@ -42,7 +41,7 @@ from job_hunter.services.normalizer import (
   normalize_employment,
   parse_salary_lpa,
 )
-from job_hunter.services.scorer import (
+from job_hunter.core.constants import (
   DEFAULT_EMBED_MODEL,
   DEFAULT_SALARY_FLOOR_LPA,
 )
@@ -155,23 +154,6 @@ def _normalize_candidate(value: Any) -> CandidateProfile:
   return value
 
 
-def _source_enabled(sources: Dict[str, Any], source_key: Any) -> bool:
-  '''Report whether a source is enabled in settings.sources.
-
-  Args:
-    sources: Per-source config mapping.
-    source_key: Source identifier (e.g. 'lever').
-
-  Returns:
-    False only when the source explicitly sets enabled: false;
-    unknown sources default to enabled.
-  '''
-  source_cfg = (sources or {}).get(source_key or '')
-  if isinstance(source_cfg, dict):
-    return source_cfg.get('enabled') is not False
-  return True
-
-
 def _load_target_embeddings(
   jobs_repo, model: str, job_ids: List[int],
 ) -> Dict[int, List[float]]:
@@ -236,36 +218,59 @@ def load_profile(
 async def build_plan(
   state: Dict[str, Any], config: RunnableConfig
 ) -> Dict[str, Any]:
-  '''Select fetch targets from active companies.
+  '''Select fetch targets from active companies, oldest-checked first.
+
+  Targets come from CompaniesRepository.list_due (last_checked_at
+  ASC, never-checked first) so the 50-wide fan-out in
+  route_targets rotates through the backlog across runs instead
+  of re-fetching the same head. The returned ``deferred_targets``
+  stat counts eligible targets beyond that fan-out cap.
 
   Args:
     state: Current state.
     config: Runnable config.
 
   Returns:
-    State update containing the RunPlan.
+    State update containing the RunPlan and deferred counter.
   '''
+  from job_hunter.graph.discovery_graph import MAX_FANOUT
+
   settings = _settings_from_config(config)
   companies = CompaniesRepository(settings.db_path)
   plan = state.get('plan')
   quick = bool(plan['quick_poll']) if isinstance(plan, dict) else False
+  due = companies.list_due()
   if quick:
     rows = [
       row
-      for row in companies.list_companies(status='active')
+      for row in due
       if row.get('priority', 0) >= 5
+      and row.get('ats_provider')
+      and row.get('board_ref')
     ]
   else:
     rows = [
       row
-      for row in companies.list_companies(status='active')
+      for row in due
       if row.get('ats_provider') and row.get('board_ref')
     ]
   sources = settings.sources or {}
   rows = [
     row for row in rows
-    if _source_enabled(sources, row.get('ats_provider'))
+    if source_enabled(sources, row.get('ats_provider'))
   ]
+  # list_due already excluded cooled scopes in SQL before LIMIT,
+  # so rows are fresh here; count and rotate cooled companies
+  # separately to preserve the cooled_skips stat.
+  cooled_skips = 0
+  for row in companies.list_cooled_due():
+    cooled_skips += 1
+    try:
+      companies.mark_checked(int(row['id']))
+    except Exception as exc:  # noqa: BLE001 - rotation is best-effort
+      logger.warning(
+        'mark_checked failed for cooled company %s: %s', row['id'], exc,
+      )
   targets = [
     CompanyTarget(
       company_id=int(row['id']),
@@ -276,8 +281,15 @@ async def build_plan(
     )
     for row in rows
   ]
+  eligible_count = companies.count_due()
+  deferred = max(0, eligible_count - MAX_FANOUT)
   plan = RunPlan(run_id=int(state['run_id']), targets=targets, quick_poll=quick)
-  return {'plan': plan.model_dump()}
+  return {
+    'plan': plan.model_dump(),
+    'stats': {
+      'deferred_targets': deferred, 'cooled_skips': cooled_skips,
+    },
+  }
 
 
 @safe_node
@@ -309,6 +321,14 @@ async def fetch_pair(
   raw_jobs: List[RawJobRecord] = []
   if crawl.is_cooled_down(scope):
     stats['cooled_skips'] = 1
+    company_id = target_data.get('company_id')
+    if company_id is not None:
+      try:
+        CompaniesRepository(settings.db_path).mark_checked(int(company_id))
+      except Exception as exc:  # noqa: BLE001 - rotation is best-effort
+        logger.warning(
+          'mark_checked failed for cooled company %s: %s', company_id, exc,
+        )
     return {'raw_jobs': raw_jobs, 'stats': stats, 'errors': errors}
   http = get_shared_http_client()
   try:
@@ -334,6 +354,18 @@ async def fetch_pair(
     crawl.set_success(scope, cursor=max(watermarks) if watermarks else None)
     if watermarks:
       crawl.set_success(f'{scope}:posted', cursor=max(watermarks))
+    # Stamp last_checked_at so the next build_plan rotates past
+    # this company; a missing row is a no-op (UPDATE affects 0 rows).
+    company_id = target_data.get('company_id')
+    if company_id is not None:
+      try:
+        CompaniesRepository(settings.db_path).mark_checked(
+          int(company_id),
+        )
+      except Exception as exc:  # noqa: BLE001 - rotation is best-effort
+        logger.warning(
+          'mark_checked failed for company %s: %s', company_id, exc,
+        )
   except Exception as exc:
     failures = crawl.set_failure(scope)
     msg = (
@@ -371,6 +403,7 @@ async def normalize_dedupe(
   engine = DedupeEngine(jobs_repo)
   from job_hunter.services.persist import persist_record
 
+  _normalize_raw_jobs(state)
   inserted: List[NormalizedJob] = []
   dupes = 0
   for record in state.get('raw_jobs') or []:

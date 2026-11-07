@@ -13,6 +13,7 @@ from job_hunter.core.config import AppSettings
 from job_hunter.core.db import run_migrations
 from job_hunter.core.logging import setup_logging
 from job_hunter.db.repositories.settings import SettingsRepository
+# composition root — intentional acyclic exception to core->services inversion (taxonomy imports only core.db)
 from job_hunter.services.skills_taxonomy import SkillsTaxonomy
 
 

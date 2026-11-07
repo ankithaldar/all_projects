@@ -5,11 +5,13 @@ Own regression coverage for every fix; keep the suite fast (<10s).
 
 ## Rules
 1. New tests go into the existing unit module covering that area
-   (the live list is every module in `tests/unit/` — 56 unit test modules
-   at last count (counted 2026-11-07, includes
+   (the live list is every module in `tests/unit/` — 65 unit test modules
+   (60+; counted dynamically as `tests/unit/test_*.py`, not a hardcoded
+   literal; last counted 2026-11-07, includes
    `test_fix_cycle5_docs.py`, `test_fix_cycle6_docs.py`,
    `test_fix_cycle11_docs.py` and
-   `test_js_harness.py`), plus any new contract modules added since):
+   `test_js_harness.py`), plus any new contract modules added since —
+   this mapping is non-exhaustive, the live directory wins):
    - runs/claiming → `test_graph_pipeline.py`
    - API routes → `test_api.py`
    - adapters/parsing → `test_adapter_parsing.py`
@@ -56,6 +58,23 @@ Own regression coverage for every fix; keep the suite fast (<10s).
    - cycle-6 docs → `test_fix_cycle6_docs.py`
    - cycle-6 graph/DB → `test_fix_cycle6_graph_db.py`
    - cycle-6 adapters → `test_fix_cycle6_adapters.py`
+   - cycle-7 curator → `test_fix_cycle7_curator.py`
+   - cycle-7 docs → `test_fix_cycle7_docs.py`
+   - cycle-7 quote/state → `test_fix_cycle7_quote_state.py`
+   - cycle-8 backend → `test_fix_cycle8_backend.py`
+   - cycle-8 docs → `test_fix_cycle8_docs.py`
+   - cycle-9 backend → `test_fix_cycle9_backend.py`
+   - cycle-9 docs → `test_fix_cycle9_docs.py`
+   - cycle-10 backend → `test_fix_cycle10_backend.py`
+   - cycle-10 docs → `test_fix_cycle10_docs.py`
+   - cycle-11 docs → `test_fix_cycle11_docs.py`
+   - cycle-13 backend → `test_fix_cycle13_backend.py`
+   - cycle-13 tester → `test_fix_cycle13_tester.py`
+   - cycle-13 docs → `test_fix_cycle13_docs.py`
+   - cycle-13 recs page → `test_fix_cycle13_recs_page.py`
+   - cycle-14 docs → `test_fix_cycle14_docs.py`
+   - cycle-15 backend → `test_fix_cycle15_backend.py`
+   - cycle-15 docs → `test_fix_cycle15_docs.py`
    When in doubt, list `tests/unit/` and add the test to the module
    whose subject it covers rather than creating a new file.
 2. Every test isolates storage: tmp_path db + `APP_DATA_DIR` env via

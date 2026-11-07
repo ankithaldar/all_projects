@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -15,6 +14,7 @@ import yaml
 from job_hunter.adapters.career_page import CareerPageDetector
 from job_hunter.adapters.http_client import HttpClient
 from job_hunter.core.config import AppSettings
+from job_hunter.core.constants import clamp_priority
 from job_hunter.db.repositories.companies import CompaniesRepository
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 def _clamp_seed_priority(priority: Any) -> int:
   '''Clamp a seed priority into the supported 1..5 range.
 
-  Mirrors ``_clamp_priority`` in ``api/routes/companies``: rejects
-  non-finite values (inf/nan) and non-numeric input.
+  Delegates to :func:`job_hunter.core.constants.clamp_priority` (single
+  home); kept as a thin wrapper because existing tests import this name.
 
   Args:
     priority: Raw priority value from a seed entry.
@@ -35,17 +35,8 @@ def _clamp_seed_priority(priority: Any) -> int:
   Raises:
     ValueError: On non-finite or non-numeric priority values.
   '''
-  if isinstance(priority, bool):
-    raise ValueError(f'invalid priority: {priority!r}')
-  if isinstance(priority, int):
-    return max(1, min(priority, 5))
-  try:
-    value = float(priority)
-  except OverflowError as exc:
-    raise ValueError(f'invalid priority: {priority!r}') from exc
-  if not math.isfinite(value):
-    raise ValueError(f'invalid priority: {priority!r}')
-  return max(1, min(int(value), 5))
+  return clamp_priority(priority)
+
 
 async def ingest_seeds(
   settings: AppSettings, seeds_dir: Path | None = None
