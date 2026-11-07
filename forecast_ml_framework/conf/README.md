@@ -257,7 +257,7 @@ By default only a **curated subset** of metrics is computed and shown
   `r2`, `mape`, `smape`.
 - **Full registry:** the code's `METRIC_REGISTRY`
   (`pipelines/modeling/metrics.py`) holds 154 metrics (90 classification
-  at `metrics.py:1583-1611` + 64 regression at `metrics.py:1613-1634`;
+  at `metrics.py:2049-2077` + 64 regression at `metrics.py:2079-2100`;
   incl. F-beta, KL divergence, NDCG, Huber, MASE, top-k accuracy,
   per-class rates). Only the selected ones are computed/shown.
   `pr_auc` is trapezoidal PR AUC, separate from `average_precision`.

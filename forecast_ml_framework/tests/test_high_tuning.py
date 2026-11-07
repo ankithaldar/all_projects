@@ -408,3 +408,57 @@ def test_non_1d_y_raises(bad_y):
   }
   with pytest.raises(ValueError, match='1-D'):
     tune_model(LogisticRegression(max_iter=1000), x, bad_y, params)
+
+
+def test_fold_balanced_estimator_tags_delegate_to_wrapped():
+  '''Wrapper is a classifier (regressor) iff the wrapped is.'''
+  from sklearn.base import is_classifier, is_regressor
+  from sklearn.linear_model import LogisticRegression, Ridge
+  from forecast_ml_framework.pipelines.modeling.tuning import (
+    _FoldBalancedEstimator,
+  )
+  clf_wrapper = _FoldBalancedEstimator(
+      LogisticRegression(max_iter=1000), balance=True)
+  reg_wrapper = _FoldBalancedEstimator(Ridge(), balance=True)
+  assert is_classifier(clf_wrapper) is True
+  assert is_regressor(clf_wrapper) is False
+  assert is_classifier(reg_wrapper) is False
+  assert is_regressor(reg_wrapper) is True
+  empty_wrapper = _FoldBalancedEstimator(None, balance=True)
+  assert is_classifier(empty_wrapper) is False
+  assert is_regressor(empty_wrapper) is False
+
+
+def test_balance_ordered_imbalance_uses_stratified_cv():
+  '''Ordered 80/20 y + balance=True uses stratified folds.
+
+  Regression for cycle-7 Finding 1: the wrapper lacked
+  ``__sklearn_tags__`` so GridSearchCV degraded StratifiedKFold
+  to KFold, single-class fold 3 raised FitFailedWarning and
+  best_score was nan. Stratified fold weights here are
+  53/13=4.08, 53/14=3.79 and 54/13=4.15 (refit 80/20=4.0);
+  KFold weights were 2.3/2.35/inf.
+  '''
+  import warnings
+  from sklearn.exceptions import FitFailedWarning
+  from sklearn.linear_model import LogisticRegression
+  rng = np.random.RandomState(0)
+  y = np.array([0] * 80 + [1] * 20)
+  x = pd.DataFrame({'f1': rng.randn(len(y))})
+  params = {'method': 'grid',
+            'param_grid': {'C': [0.1, 1.0]},
+            'cv': 3, 'balance': True}
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter('always')
+    _, _, report = tune_model(
+        LogisticRegression(max_iter=1000), x, y, params)
+  fit_failed = [w for w in caught
+                if issubclass(w.category, FitFailedWarning)]
+  assert fit_failed == []
+  assert report['best_score'] is not None
+  assert np.isfinite(report['best_score'])
+  weights = report.get('balance_per_fold_weights') or []
+  assert len(weights) == 2 * 3 + 1
+  search_weights = weights[:6]
+  assert all(3.5 < w < 4.5 for w in search_weights)
+  assert weights[-1] == pytest.approx(4.0)

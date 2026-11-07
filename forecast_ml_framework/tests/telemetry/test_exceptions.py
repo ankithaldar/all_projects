@@ -2026,3 +2026,27 @@ def test_loop19_telemetry_init_docstring_shipped_api():
   assert 'full API lands' not in doc
   assert 'FrameworkError' in doc
   assert 'wrap' in doc
+
+
+# --- R-C9-2: bytes truncation suffix (RED) ---
+
+def test_r_c9_2_bytes_tuple_key_over_cap_sentinel_gone_via_to_dict():
+  '''Over-cap bytes tuple key redacts sentinel sibling.'''
+  sentinel = 'HUNTER2ZQ9SENTINEL'
+  big = b'a' * 10000 + b'api very key' + b'a' * 10000
+  err = FrameworkError(
+      code='X_ERROR', user_message='m',
+      context={(big, sentinel): 'hello'})
+  assert sentinel not in str(err.to_dict())
+  assert sentinel not in str(err.context)
+
+
+def test_r_c9_2_coerce_key_bytes_truncation_suffix_and_boundary():
+  '''Over-cap bytes key carries suffix; exact-cap key unchanged.'''
+  from forecast_ml_framework.telemetry.exceptions import _coerce_key
+
+  coerced, _secret = _coerce_key(b'a' * 9000, frozenset(), 0)
+  assert coerced.endswith(b'...[TRUNCATED]')
+  assert len(coerced) == 8192 + len(b'...[TRUNCATED]')
+  exact, _secret_exact = _coerce_key(b'a' * 8192, frozenset(), 0)
+  assert exact == b'a' * 8192

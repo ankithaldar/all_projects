@@ -4159,3 +4159,221 @@ def test_w1_f2_bearer_compound_secret_redacted(text):
   assert '***REDACTED***' in out, repr(text)
 
 
+# --- cycle7 Q2: F-SCRUB-LONGKEY (RED) ---
+
+
+def test_q2_longkey_8199_marker_is_secret_key():
+  '''Q2: marker past the 8192 key cap must not hide.'''
+  from forecast_ml_framework.governance.scrub import _is_secret_key
+
+  key = 'a' * 8190 + '_password'
+  assert len(key) == 8199
+  assert _is_secret_key(key) is True
+
+
+def test_q2_longkey_8199_scrub_details_redacts():
+  '''Q2: sentinel under 8199-char marker key is redacted.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  key = 'a' * 8190 + '_password'
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+def test_q2_longkey_8199_audit_and_error_redact():
+  '''Q2: audit_log and FrameworkError sinks redact too.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.telemetry.exceptions import FrameworkError
+
+  key = 'a' * 8190 + '_password'
+  entry = audit_log('train', 'alice', {key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in json.dumps(entry)
+  err = FrameworkError('m', context={key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in json.dumps(err.to_dict())
+
+
+def test_q2_longkey_8009_control_redacts():
+  '''Q2 control: marker inside the cap still redacts.'''
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+
+  key = 'a' * 8000 + '_password'
+  assert len(key) == 8009
+  assert _is_secret_key(key) is True
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+def test_q2_longkey_bytes_marker_past_cap_redacts():
+  '''Q2: bytes key with marker past the cap redacts.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  key = b'a' * 8190 + b'_password'
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+def test_q2_longkey_marker_in_middle_redacts():
+  '''Q2: plain marker in the middle of a huge key redacts.'''
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+
+  key = 'a' * 50000 + '_password' + 'a' * 50000
+  assert _is_secret_key(key) is True
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out)
+
+
+def test_q2_giant_100k_key_is_bounded_and_fast():
+  '''Q2: 100k-char key stays bounded work under the cap.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  key = 'a' * 99991 + '_password'
+  assert len(key) == 100000
+  start = time.perf_counter()
+  out = scrub_details({key: 'HUNTER2ZQ9SENTINEL'})
+  elapsed = time.perf_counter() - start
+  assert elapsed < 1.0, elapsed
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out)
+  assert max(len(str(k)) for k in out) <= 8192
+
+
+# --- cycle8 Q5: C8-01 composite middle-exotic sibling (RED) ---
+
+_Q5_SENTINEL = 'HUNTER2ZQ9SENTINEL'
+_Q5_MID_MARKERS = (
+  'api very key',
+  'p4ssword',
+  'credentIaI',
+  'ｐａｓｓｗｏｒｄ',
+  'api_very_key',
+)
+
+
+def _q5_over_cap_mid(mid_marker):
+  '''Build an over-cap middle-exotic marker string.'''
+  return 'a' * 10000 + mid_marker + 'a' * 10000
+
+
+@pytest.mark.parametrize('mid_marker', _Q5_MID_MARKERS)
+def test_q5_tuple_middle_exotic_sentinel_gone_all_sinks(mid_marker):
+  '''Q5: tuple middle-exotic sibling sentinel gone, all sinks.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import (
+      _is_secret_key,
+      scrub_details,
+  )
+  from forecast_ml_framework.telemetry.exceptions import FrameworkError
+
+  mid = _q5_over_cap_mid(mid_marker)
+  # Detector stays non-blanket-fail-closed: middle-exotic alone
+  # is not a secret key, yet sibling finalization must redact.
+  assert _is_secret_key(mid) is False
+  key = (mid, _Q5_SENTINEL)
+  out = scrub_details({key: 'hello'})
+  assert _Q5_SENTINEL not in str(out)
+  assert '***REDACTED***' in str(out)
+  entry = audit_log('train', 'alice', {key: 'hello'})
+  assert _Q5_SENTINEL not in str(entry)
+  err = FrameworkError('m', context={key: 'hello'})
+  assert _Q5_SENTINEL not in str(err.to_dict())
+
+
+@pytest.mark.parametrize('mid_marker', _Q5_MID_MARKERS)
+def test_q5_frozenset_middle_exotic_sentinel_gone_all_sinks(mid_marker):
+  '''Q5: frozenset middle-exotic sibling sentinel gone, all sinks.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import FrameworkError
+
+  mid = _q5_over_cap_mid(mid_marker)
+  key = frozenset((mid, _Q5_SENTINEL))
+  out = scrub_details({key: 'hello'})
+  assert _Q5_SENTINEL not in str(out)
+  assert '***REDACTED***' in str(out)
+  entry = audit_log('train', 'alice', {key: 'hello'})
+  assert _Q5_SENTINEL not in str(entry)
+  err = FrameworkError('m', context={key: 'hello'})
+  assert _Q5_SENTINEL not in str(err.to_dict())
+
+
+def test_q5_nested_tuple_over_cap_sibling_redacted():
+  '''Q5: over-cap leaf nested in inner tuple redacts outer sibling.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  mid = _q5_over_cap_mid('api very key')
+  out = scrub_details({((mid,), _Q5_SENTINEL): 'hello'})
+  assert _Q5_SENTINEL not in str(out)
+  out2 = scrub_details({((mid, _Q5_SENTINEL), 'label'): 'hello'})
+  assert _Q5_SENTINEL not in str(out2)
+
+
+def test_q5_over_cap_innocent_tuple_sibling_redacted():
+  '''Q5: over-cap leaf is unverifiable, so its sibling redacts.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  out = scrub_details({(('a' * 10000, 'keepme-sibling')): 'hello'})
+  assert 'keepme-sibling' not in str(out)
+  assert '***REDACTED***' in str(out)
+
+
+def test_q5_bytes_middle_exotic_tuple_sentinel_redacted():
+  '''Q5: bytes over-cap middle-exotic tuple sibling redacts.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  mid = b'a' * 10000 + b'api very key' + b'a' * 10000
+  key = (mid, _Q5_SENTINEL)
+  out = scrub_details({key: 'hello'})
+  assert _Q5_SENTINEL not in str(out)
+  entry = audit_log('train', 'alice', {key: 'hello'})
+  assert _Q5_SENTINEL not in str(entry)
+
+
+def test_q5_container_value_over_cap_sibling_redacted():
+  '''Q5: container value over-cap sibling redacts, same class.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  mid = _q5_over_cap_mid('api very key')
+  out = scrub_details({'k': (mid, _Q5_SENTINEL)})
+  assert _Q5_SENTINEL not in str(out)
+  out2 = scrub_details({'k': [mid, _Q5_SENTINEL]})
+  assert _Q5_SENTINEL not in str(out2)
+
+
+def test_q5_fp_guards_preserved():
+  '''Q5: short FP guards and innocent composites are preserved.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  out = scrub_details({
+      'key_cols_list': 'hello',
+      'hash_col': 'world',
+      'epoch': 123,
+      'monkey': 'banana',
+      ('ok', 'keep'): 'v',
+  })
+  assert out['key_cols_list'] == 'hello'
+  assert out['hash_col'] == 'world'
+  assert out['epoch'] == 123
+  assert out['monkey'] == 'banana'
+  assert out[('ok', 'keep')] == 'v'
+
+
+def test_q5_short_and_plain_mid_controls_still_work():
+  '''Q5: short marker tuple and plain-mid tuple still redact.'''
+  from forecast_ml_framework.governance.scrub import scrub_details
+
+  out = scrub_details({(('api very key', _Q5_SENTINEL)): 'hello'})
+  assert _Q5_SENTINEL not in str(out)
+  plain_mid = 'a' * 10000 + '_password' + 'a' * 10000
+  out2 = scrub_details({((plain_mid, _Q5_SENTINEL)): 'hello'})
+  assert _Q5_SENTINEL not in str(out2)
+
+

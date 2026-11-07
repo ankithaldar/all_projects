@@ -957,6 +957,43 @@ def _hashable(value):
   return value
 
 
+def _key_as_text(key):
+  '''Return ``key`` as text, or ``None`` if unrepresentable.
+
+  Bytes decode UTF-8 with replacement, anything else
+  goes through ``str``; a hostile ``__str__`` that
+  raises yields ``None`` so callers fall through to the
+  capped checks (which handle it as before).
+  '''
+  if isinstance(key, (bytes, bytearray)):
+    return bytes(key).decode('utf-8', errors='replace')
+  try:
+    return str(key)
+  except Exception:
+    return None
+
+
+_NON_ALNUM_RE = re.compile(r'[^a-z0-9]+')
+
+
+def _key_middle_has_marker(text):
+  '''Return True when a plain marker sits mid-key.
+
+  Over-cap keys are checked on head/tail windows by
+  ``_is_secret_key``; a plain (contiguous or
+  separator-split) marker in the middle would fall
+  between the windows. This scan is C-level only
+  (lower, strip non-alphanumerics, substring) so it
+  stays linear and fast on huge keys without the
+  unicode/hybrid work the windows cap. Filler/unicode/
+  hybrid forms in the middle are covered at the value
+  layer by the truncated-key fail-closed rule in
+  ``_scrub_str_key``/``_scrub_bytes_key``.
+  '''
+  stripped = _NON_ALNUM_RE.sub('', text.lower())
+  return any(marker in stripped for marker in _NORMALIZED_MARKERS)
+
+
 def _is_secret_key(key):
   '''Return True when ``key`` looks secret-bearing.
 
@@ -965,7 +1002,19 @@ def _is_secret_key(key):
   primary and alt readings in one word (``credentIaI``,
   ``ya-pI_key``) matches neither global skeleton, but a
   hybrid reading does, via ``_hybrid_contains``.
+  Cycle7 Q2 (F-SCRUB-LONGKEY): an over-cap key is
+  checked on its head and tail windows (plus a plain
+  mid-key scan), so a marker past the 8192 cap cannot
+  hide by truncation; each window stays within the cap,
+  keeping detection bounded work on huge keys.
   '''
+  text = _key_as_text(key)
+  if text is not None and len(text) > _MAX_KEY_LEN:
+    if _is_secret_key(text[:_MAX_KEY_LEN]):
+      return True
+    if _is_secret_key(text[-_MAX_KEY_LEN:]):
+      return True
+    return _key_middle_has_marker(text)
   normalized = _normalize_key(key)
   if any(marker in normalized for marker in _NORMALIZED_MARKERS):
     return True
@@ -2093,9 +2142,16 @@ def _hybrid_key_reading(text, targets, exact=False):
   '''
   if not isinstance(text, str):
     return None
-  # Loop20 P4: cap before hybrid DP.
+  # Loop20 P4 + cycle7 Q2 (F-SCRUB-LONGKEY): cap
+  # before hybrid DP, and check the tail window too so
+  # a hybrid marker past the cap cannot hide.
   if len(text) > _MAX_KEY_LEN:
-    text = text[:_MAX_KEY_LEN]
+    reading = _hybrid_key_reading(
+        text[:_MAX_KEY_LEN], targets, exact)
+    if reading is not None:
+      return reading
+    return _hybrid_key_reading(
+        text[-_MAX_KEY_LEN:], targets, exact)
   units = []
   ambiguous = False
   for char in text:
@@ -2502,6 +2558,25 @@ def _composite_marker_bearing(items, ordered, _seen=None, _depth=0):
   return any(set(combo) <= part_set for combo in combos)
 
 
+def _composite_has_over_cap_leaf(items, _seen=None, _depth=0):
+  '''Return True when any flattened leaf exceeds the key cap.
+
+  Cycle8 Q5 (C8-01): an over-cap leaf (``len > _MAX_KEY_LEN``)
+  is unverifiable -- a filler/leet/hybrid/fullwidth/separator
+  marker in its middle gap is not detector-visible (``_is_secret_key``
+  is False by Q2 design, with no blanket fail-closed there),
+  so sibling finalization cannot trust that the leaf carries
+  no marker. Flattening mirrors ``_composite_marker_bearing``
+  so nested tuple/frozenset leaves count for the outer
+  composite too. This is a ``len`` check only: bounded and
+  linear, no normalization or hybrid work on the leaf.
+  '''
+  return any(
+      isinstance(leaf, (str, bytes, bytearray))
+      and len(leaf) > _MAX_KEY_LEN
+      for leaf in _flatten_composite(items, _seen, _depth))
+
+
 def _scrub_key_items(items, marker_bearing, seen_next, depth):
   '''Scrub each composite item, returning ``(items, secret)``.'''
   scrubbed_items = []
@@ -2557,21 +2632,31 @@ def _scrub_key(key, _inherited_marker=False, _seen=None, _depth=0):
 
 def _scrub_str_key(key):
   '''Scrub a str key (loop14 split).'''
-  # Loop20 P4: cap key length before scrub/secret check.
-  if len(key) > _MAX_KEY_LEN:
+  # Cycle7 Q2 (F-SCRUB-LONGKEY): detect on the full key
+  # before truncation, and fail closed on truncation: a
+  # key past the cap is unverifiable (a marker could sit
+  # anywhere past it), so its value is redacted like a
+  # truncated free text (``_scrub_text`` suffix).
+  over_cap = len(key) > _MAX_KEY_LEN
+  secret = _is_secret_key(key)
+  # Loop20 P4: cap key length before scrub.
+  if over_cap:
     key = key[:_MAX_KEY_LEN]
   scrubbed = _scrub_text(key)
-  return scrubbed, _is_secret_key(key) or scrubbed != key
+  return scrubbed, secret or over_cap or scrubbed != key
 
 
 def _scrub_bytes_key(key):
   '''Scrub a bytes key (loop14 split).'''
+  # Cycle7 Q2 (F-SCRUB-LONGKEY): as ``_scrub_str_key``.
+  over_cap = len(key) > _MAX_KEY_LEN
+  secret = _is_secret_key(key)
   # Loop20 P4: cap decoded bytes key length.
-  if len(key) > _MAX_KEY_LEN:
+  if over_cap:
     key = bytes(key)[:_MAX_KEY_LEN]
   decoded = bytes(key).decode('utf-8', errors='replace')
   scrubbed = _scrub_text(decoded)
-  return scrubbed, _is_secret_key(key) or scrubbed != decoded
+  return scrubbed, secret or over_cap or scrubbed != decoded
 
 
 def _finalize_tuple_key(items, scrubbed_items, marker_bearing):
@@ -2601,8 +2686,14 @@ def _scrub_tuple_key(key, _inherited_marker, _seen, _depth):
   items = _safe_list(key)
   if items is None:
     return _unknown_key(key)
+  # Cycle8 Q5 (C8-01): an over-cap leaf is unverifiable, so
+  # treat it as marker-bearing for sibling finalization only
+  # (``_is_secret_key`` itself stays non-blanket-fail-closed).
+  unverifiable = _composite_has_over_cap_leaf(
+      items, _seen=_seen, _depth=_depth)
   marker_bearing = (
       _inherited_marker
+      or unverifiable
       or _composite_marker_bearing(
           items, True, _seen=_seen, _depth=_depth))
   scrubbed_items, secret = _scrub_key_items(
@@ -2642,8 +2733,12 @@ def _scrub_set_key(key, _inherited_marker, _seen, _depth):
   items = _safe_list(key)
   if items is None:
     return _unknown_key(key)
+  # Cycle8 Q5 (C8-01): as ``_scrub_tuple_key``.
+  unverifiable = _composite_has_over_cap_leaf(
+      items, _seen=_seen, _depth=_depth)
   marker_bearing = (
       _inherited_marker
+      or unverifiable
       or _composite_marker_bearing(
           items, False, _seen=_seen, _depth=_depth))
   scrubbed_items, secret = _scrub_key_items(
@@ -2696,8 +2791,13 @@ def _scrub_container_values(
         itertools.islice(container, _MAX_ITEMS + 1))
   except Exception:
     return [{'type': _scrub_type_name(type(container).__name__)}]
+  # Cycle8 Q5 (C8-01): as ``_scrub_tuple_key`` -- an over-cap
+  # leaf is unverifiable, so its container siblings redact.
+  unverifiable = _composite_has_over_cap_leaf(
+      items, _seen=_seen, _depth=_depth)
   marker_bearing = (
       _inherited_marker
+      or unverifiable
       or _composite_marker_bearing(
           items, ordered, _seen=_seen, _depth=_depth))
   return [

@@ -256,21 +256,29 @@ def test_betacal_multiclass_raises(monkeypatch):
 # --- ML-12: per-fold balance weights in tuning ---
 
 def test_tune_model_balance_weights_differ_per_fold():
-  '''Tuning with balance=True recomputes weights per fold.'''
+  '''Tuning with balance=True recomputes weights per fold.
+
+  Post cycle-7 Finding 1 fix the folds are stratified (not
+  unshuffled KFold): ordered 80/20 y with cv=3 gives per-fold
+  train ratios 53/13, 53/14 and 54/13 (all near the full
+  80/20=4.0 ratio, KFold gave 2.3/2.35/inf). Rounding makes
+  the stratified weights differ slightly, and best_score
+  must be finite (KFold produced nan via single-class folds).
+  '''
   from sklearn.linear_model import LogisticRegression
   from forecast_ml_framework.pipelines.modeling.tuning import tune_model
   rng = np.random.RandomState(0)
-  # Positives cluster in the second half, so the two unshuffled
-  # CV folds have genuinely different class ratios (neg/pos
-  # 24.0 in the first half vs 5.25 in the second).
-  y = np.array([0] * 48 + [1] * 2 + [0] * 42 + [1] * 8)
+  y = np.array([0] * 80 + [1] * 20)
   x = pd.DataFrame({'f1': rng.randn(len(y))})
   params = {'method': 'grid',
             'param_grid': {'C': [0.1, 1.0]},
-            'cv': 2, 'balance': True}
+            'cv': 3, 'balance': True}
   _, _, report = tune_model(LogisticRegression(max_iter=1000), x, y, params)
   weights = report.get('balance_per_fold_weights') or []
   assert len(set(weights)) > 1
+  assert all(3.5 < w < 4.5 for w in weights)
+  assert report['best_score'] is not None
+  assert np.isfinite(report['best_score'])
 
 
 # --- ML-13: selected_ntile is tile-vs-overall lift ---

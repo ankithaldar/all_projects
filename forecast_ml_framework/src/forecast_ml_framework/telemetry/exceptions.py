@@ -293,7 +293,13 @@ def _coerce_key(key, seen, depth):
     # scrub's bytes branch / composite-key logic must see the
     # raw bytes so a ``b'password'`` key redacts its value.
     # Loop20 P4: cap bytes keys like str keys (8192).
-    return bytes(key)[:_MAX_STRING_LEN], False
+    # R-C9-2: truncated bytes carry the str ``...[TRUNCATED]``
+    # suffix so downstream scrub over-cap detection
+    # (``len > 8192``) still fires; exactly 8192 erased it.
+    raw = bytes(key)
+    if len(raw) > _MAX_STRING_LEN:
+      return raw[:_MAX_STRING_LEN] + b'...[TRUNCATED]', False
+    return raw, False
   if isinstance(key, (datetime, date)):
     try:
       return key.isoformat(), False

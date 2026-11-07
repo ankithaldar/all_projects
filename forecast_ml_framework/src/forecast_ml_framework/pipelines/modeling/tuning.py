@@ -121,6 +121,24 @@ class _FoldBalancedEstimator(BaseEstimator):
     '''Score with the fitted clone (search default scoring).'''
     return self.estimator_.score(x, y)
 
+  def __sklearn_tags__(self):
+    '''Delegate sklearn tags to the wrapped estimator.
+
+    Without this, ``is_classifier(wrapper)`` is False and
+    ``GridSearchCV(cv=int)`` degrades StratifiedKFold to
+    KFold for the balanced path, which can produce
+    single-class folds, FitFailedWarnings and a nan
+    best_score on ordered imbalanced data. Falls back to
+    the generic tags when there is no wrapped estimator
+    with tags (e.g. estimator is None).
+    '''
+    estimator = self.__dict__.get('estimator')
+    if estimator is not None:
+      tags = getattr(estimator, '__sklearn_tags__', None)
+      if callable(tags):
+        return tags()
+    return super().__sklearn_tags__()
+
   def __getattr__(self, name):
     '''Delegate unknown attributes to the fitted clone.'''
     fitted = self.__dict__.get('estimator_')

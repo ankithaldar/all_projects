@@ -883,13 +883,41 @@ def test_create_artifact_store_nested_and_aliases(tmp_path):
 def test_strip_sql_literals_blanks_quoted_keywords():
   from forecast_ml_framework.core.datasets import _strip_sql_literals
   out = _strip_sql_literals("SELECT 'DROP TABLE x' AS a, \"DELETE\" FROM t")
-  assert 'DROP' not in out and 'DELETE' not in out
+  # R8-01: single-quoted literals are blanked, but double-quoted
+  # identifiers stay visible so the denylist can see quoted names.
+  assert 'DROP' not in out and 'DELETE' in out
   assert 'SELECT' in out and 'FROM' in out
   escaped = _strip_sql_literals("SELECT 'it''s DROP' FROM t")
   assert 'DROP' not in escaped
   unterminated = _strip_sql_literals("SELECT 'abc")
   assert 'abc' not in unterminated
   assert _strip_sql_literals('SELECT 1') == 'SELECT 1'
+
+
+def test_validate_blocks_double_quoted_forbidden_function():
+  '''Double-quoted identifier names stay visible to denylist (R8-01).'''
+  from forecast_ml_framework.core.datasets import (
+      _strip_sql_literals, _validate_read_only_query)
+  out = _strip_sql_literals(
+      'SELECT "pg_read_binary_file"(\'/etc/passwd\')')
+  assert 'pg_read_binary_file' in out
+  for bad in ('SELECT "pg_read_binary_file"(\'/etc/passwd\')',
+              'SELECT "PG_READ_BINARY_FILE"(\'/etc/passwd\')',
+              'SELECT "writefile"(\'/tmp/x\', \'hi\')'):
+    with pytest.raises(ValueError, match='Forbidden'):
+      _validate_read_only_query(bad)
+
+
+def test_validate_allows_double_quoted_identifiers():
+  '''Legit double-quoted identifier columns still pass (R8-01).'''
+  from forecast_ml_framework.core.datasets import _validate_read_only_query
+  assert _validate_read_only_query(
+      'SELECT "user_id", "updated_at", "created_at" FROM t') is not None
+  assert _validate_read_only_query(
+      'SELECT "my_readfile" FROM t') is not None
+  # Single-quoted literals are still blanked, not scanned.
+  assert _validate_read_only_query(
+      'SELECT \'pg_read_binary_file\' FROM t') is not None
 
 
 def test_validate_read_only_query_edges():
@@ -1249,6 +1277,38 @@ def test_sql_denylist_blocks_privileged_functions():
               'SELECT pg_advisory_lock(1)'):
     with pytest.raises(ValueError, match='Forbidden'):
       _validate_read_only_query(bad)
+
+
+def test_sql_denylist_blocks_server_file_primitives():
+  '''Read-only validator blocks server-file primitives (S7-01).'''
+  from forecast_ml_framework.core.datasets import _validate_read_only_query
+  bad = (
+      'SELECT pg_read_binary_file(\'/etc/passwd\')',
+      'SELECT PG_READ_BINARY_FILE(\'/etc/passwd\')',
+      'SELECT pg_catalog.pg_read_binary_file(\'/etc/passwd\')',
+      'SELECT lo_import(\'/tmp/x\')',
+      'SELECT pg_stat_file(\'/etc/passwd\')',
+      'SELECT pg_ls_waldir()',
+      'SELECT pg_logdir_ls()',
+      'SELECT readfile(\'/etc/passwd\')',
+      'SELECT writefile(\'/tmp/x\', \'hi\')',
+      'SELECT pg_read_binary_file_extra(\'/etc/passwd\')',
+      'SELECT pg_stat_file_data(\'/etc/passwd\')',
+      'SELECT pg_ls_waldir_x()',
+      'SELECT pg_logdir_ls_backup()',
+      'SELECT lo_import_1(\'/tmp/x\')',
+      'SELECT readfile_data(\'/etc/passwd\')',
+      'SELECT writefile2(\'/tmp/x\', \'hi\')',
+  )
+  for query in bad:
+    with pytest.raises(ValueError, match='Forbidden'):
+      _validate_read_only_query(query)
+  assert _validate_read_only_query(
+      'SELECT id, val FROM t') is not None
+  assert _validate_read_only_query(
+      'SELECT updated_at, created_at FROM t') is not None
+  assert _validate_read_only_query(
+      'SELECT my_readfile FROM t') is not None
 
 
 def test_core_params_canonical_helpers():

@@ -37,42 +37,96 @@ _FORBIDDEN_SQL_KEYWORDS = (
     # read-only intent even inside a SELECT.
     'PG_READ_FILE', 'PG_LS_DIR', 'LO_EXPORT', 'DBLINK',
     'PG_ADVISORY_LOCK',
+    # S7-01: additional server-file primitives. PG_READ_BINARY_FILE
+    # is distinct from PG_READ_FILE (binary read), LO_IMPORT is
+    # the counterpart of LO_EXPORT, PG_STAT_FILE / PG_LS_WALDIR /
+    # PG_LOGDIR_LS expose server filesystem metadata, and SQLite
+    # READFILE / WRITEFILE read or write server files inside a
+    # SELECT (write primitive, so a read-only role alone does
+    # not cover SQLite file functions).
+    'PG_READ_BINARY_FILE', 'LO_IMPORT', 'PG_STAT_FILE',
+    'PG_LS_WALDIR', 'PG_LOGDIR_LS', 'READFILE', 'WRITEFILE',
+)
+# Server-file / privileged-function family is matched as a prefix
+# (leading \b only, no trailing \b) so suffixed variants such as
+# pg_read_binary_file_extra, readfile_data, or writefile2 are also
+# blocked. A trailing \b would miss those because '_' and digits
+# are word characters (\w), so the boundary never fires before a
+# suffix. Underscores inside a name (PG_READ_BINARY_FILE) are
+# \w too, so the leading \b still matches at a separator (space,
+# '.', '(', '"') while still requiring a boundary before the
+# keyword, e.g. 'my_readfile' is not blocked. Over-blocking this
+# distinctive family is safe per A8; DML/DDL keywords above keep
+# \b...\b so legitimate columns like updated_at still pass.
+_FORBIDDEN_SQL_PREFIX_KEYWORDS = (
+    'PG_READ_BINARY_FILE', 'PG_TERMINATE_BACKEND',
+    'PG_CANCEL_BACKEND', 'PG_ADVISORY_LOCK', 'PG_ROTATE_LOGFILE',
+    'PG_RELOAD_CONF', 'PG_STAT_FILE', 'PG_LOGDIR_LS',
+    'PG_LS_WALDIR', 'PG_READ_FILE', 'PG_LS_DIR', 'PG_SLEEP',
+    'LO_EXPORT', 'LO_IMPORT', 'LOAD_FILE', 'DBLINK',
+    'READFILE', 'WRITEFILE',
 )
 _FORBIDDEN_SQL_RE = re.compile(
-    r'\b(?:' + '|'.join(_FORBIDDEN_SQL_KEYWORDS) + r')\b',
+    r'\b(?:' + '|'.join(_FORBIDDEN_SQL_KEYWORDS) + r')\b'
+    r'|\b(?:' + '|'.join(_FORBIDDEN_SQL_PREFIX_KEYWORDS) + r')',
     re.IGNORECASE)
 
 
 def _strip_sql_literals(text):
-  '''Remove single/double-quoted literals so keywords inside
-  string values are not mistaken for SQL keywords.
+  '''Blank single-quoted literals; keep double-quoted identifiers.
+
+  Single-quoted spans are string literals, so their contents are
+  blanked and cannot trigger the denylist. Double-quoted spans
+  are identifiers, so their contents are kept verbatim (quotes
+  included; a quote is a non-word separator, so the denylist
+  regex still sees a word boundary around the name): blanking
+  them would hide a quoted call such as
+  ``"pg_read_binary_file"('/etc/passwd')`` from the scan
+  (R8-01). While inside a double-quoted identifier, an
+  apostrophe does not open a string literal, so it cannot
+  blank out the SQL that follows it.
 
   Args:
     text: SQL text to strip.
 
   Returns:
-    SQL text with quoted literal contents blanked out.
+    SQL text with single-quoted literal contents blanked out.
+    Double-quoted identifier text is preserved verbatim.
   '''
   out = []
-  quote = None
+  in_literal = False
+  in_identifier = False
   i = 0
   while i < len(text):
     ch = text[i]
-    if quote is not None:
-      if ch == quote:
-        if i + 1 < len(text) and text[i + 1] == quote:
+    if in_literal:
+      if ch == "'":
+        if i + 1 < len(text) and text[i + 1] == "'":
           i += 2
           out.append(' ')
           continue
-        quote = None
+        in_literal = False
         out.append(' ')
       else:
         out.append(' ')
       i += 1
       continue
-    if ch in ("'", '"'):
-      quote = ch
+    if in_identifier:
+      out.append(ch)
+      if ch == '"':
+        if i + 1 < len(text) and text[i + 1] == '"':
+          out.append(text[i + 1])
+          i += 2
+          continue
+        in_identifier = False
+      i += 1
+      continue
+    if ch == "'":
+      in_literal = True
       out.append(' ')
+    elif ch == '"':
+      in_identifier = True
+      out.append(ch)
     else:
       out.append(ch)
     i += 1

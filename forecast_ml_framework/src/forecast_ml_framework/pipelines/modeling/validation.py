@@ -12,10 +12,11 @@ so lower-better classification metrics such as ``log_loss``
 promote on improvement (regression previously flipped but
 classification did not). Regression metrics default to
 lower-better unless the metric is higher-better (the
-``adj_r2``/``r2`` family or an explicit signed family), so
-an unknown or empty regression metric cannot silently
-invert the gate; classification metrics default to
-higher-better unless listed in ``LOWER_BETTER``.
+``adj_r2``/``r2``/``r2_log`` family, ``explained_variance``,
+correlations and the D2 family -- all higher-is-better in
+monitoring), so an unknown or empty regression metric
+cannot silently invert the gate; classification metrics
+default to higher-better unless listed in ``LOWER_BETTER``.
 
 Signed metrics (kappa / MCC / r2 families) may legitimately
 have a non-positive incumbent. For those, a non-positive
@@ -31,13 +32,20 @@ import math
 
 from forecast_ml_framework.pipelines.modeling.ntile import _task_kind
 
-_HIGHER_BETTER_REG = {'adj_r2', 'adjr2', 'r2'}
+_HIGHER_BETTER_REG = {
+    'adj_r2', 'adjr2', 'r2', 'r2_log', 'r2_log1p',
+    'explained_variance', 'pearson', 'pearson_r', 'spearman',
+    'spearman_rho', 'd2_abs', 'd2_absolute_error_score',
+}
 
 #: Signed metrics whose incumbent may legitimately be <= 0.
 _SIGNED_METRICS = {
     'kappa', 'kappa_linear', 'kappa_quadratic', 'cohen_kappa',
     'cohen_kappa_linear', 'cohen_kappa_quadratic',
     'matthews_corrcoef', 'mcc', 'r2', 'adj_r2', 'adjr2',
+    'r2_log', 'r2_log1p', 'explained_variance', 'pearson',
+    'pearson_r', 'spearman', 'spearman_rho', 'd2_abs',
+    'd2_absolute_error_score',
 }
 
 #: Absolute tolerance (percentage points) for signed baselines.
@@ -53,8 +61,9 @@ def _is_lower_better(task_name, metric):
 
   Returns:
     True for lower-better metrics. Regression defaults to
-    lower-better (except the r2 family); classification
-    defaults to higher-better unless the metric is in
+    lower-better (except the higher-better family in
+    ``_HIGHER_BETTER_REG``); classification defaults to
+    higher-better unless the metric is in
     ``metrics.LOWER_BETTER``.
   '''
   name = str(metric or '').strip().lower()
@@ -77,8 +86,9 @@ def should_promote(new_score, old_score, task, metric=''):
     task: 'classification' or 'regression'.
     metric: Metric name driving the direction map for both
       tasks (``LOWER_BETTER`` metrics are lower-better;
-      regression defaults lower-better except r2 family,
-      classification defaults higher-better).
+      regression defaults lower-better except the
+      higher-better family, classification defaults
+      higher-better).
 
   Returns:
     Tuple ``(promote, deviation_pct)`` where deviation is

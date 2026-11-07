@@ -4,6 +4,8 @@
 
 import math
 
+import pytest
+
 from forecast_ml_framework.pipelines.modeling.validation import (
   should_promote,
 )
@@ -79,12 +81,39 @@ def test_reg_unknown_metric_defaults_lower_better():
 
 
 def test_reg_only_r2_family_is_higher_better():
-  '''Only adj_r2/r2 family is higher-better among regression metrics.'''
+  '''adj_r2/r2 family is higher-better among regression metrics.'''
   for name in ('r2', 'R2', 'adj_r2', 'adjr2'):
     promote, _ = should_promote(106.0, 100.0, 'regression', name)
     assert promote is True, name
   promote, _ = should_promote(106.0, 100.0, 'regression', '')
   assert promote is False
+
+
+@pytest.mark.parametrize('metric', [
+  'r2_log', 'r2_log1p', 'explained_variance', 'pearson', 'pearson_r',
+  'spearman', 'spearman_rho', 'd2_abs', 'd2_absolute_error_score',
+])
+def test_reg_higher_better_metrics_promote_on_improvement(metric):
+  '''Higher-better regression metrics promote on improvement.
+
+  Cycle-7 Finding 2: r2_log/r2_log1p (and siblings) were
+  missing from the higher-better set, inverting the gate
+  (0.8 -> 0.9 returned False). Monitoring treats all of
+  these as higher-is-better.
+  '''
+  promote, dev = should_promote(0.9, 0.8, 'regression', metric)
+  assert promote is True, metric
+  assert dev == pytest.approx(12.5)
+  promote, dev = should_promote(0.7, 0.8, 'regression', metric)
+  assert promote is False, metric
+  assert dev == pytest.approx(-12.5)
+
+
+def test_reg_r2_log_signed_baseline_promotes():
+  '''r2_log from -0.1 to 0.2 uses the signed percentage-point branch.'''
+  promote, dev = should_promote(0.2, -0.1, 'regression', 'r2_log')
+  assert promote is True
+  assert dev == pytest.approx(30.0)
 
 
 def test_old_negative_never_promotes():
