@@ -46,6 +46,16 @@ _FORBIDDEN_SQL_KEYWORDS = (
     # not cover SQLite file functions).
     'PG_READ_BINARY_FILE', 'LO_IMPORT', 'PG_STAT_FILE',
     'PG_LS_WALDIR', 'PG_LOGDIR_LS', 'READFILE', 'WRITEFILE',
+    # S15-01: remaining pg_ls_* server-directory listings
+    # (pg_monitor default grant, read-only role does not stop)
+    # and pg_advisory_xact_lock / pg_try_advisory_* DoS variants
+    # (any user). Family prefixes in the prefix list below
+    # cover suffixed/shared variants of these families.
+    'PG_LS_TMPDIR', 'PG_LS_LOGDIR', 'PG_LS_LOGICALMAPDIR',
+    'PG_LS_LOGICALSNAPDIR', 'PG_LS_REPLSLOTDIR',
+    'PG_LS_SUMMARIESDIR', 'PG_LS_ARCHIVE_STATUSDIR',
+    'PG_ADVISORY_XACT_LOCK', 'PG_TRY_ADVISORY_LOCK',
+    'PG_TRY_ADVISORY_XACT_LOCK',
 )
 # Server-file / privileged-function family is matched as a prefix
 # (leading \b only, no trailing \b) so suffixed variants such as
@@ -65,6 +75,9 @@ _FORBIDDEN_SQL_PREFIX_KEYWORDS = (
     'PG_LS_WALDIR', 'PG_READ_FILE', 'PG_LS_DIR', 'PG_SLEEP',
     'LO_EXPORT', 'LO_IMPORT', 'LOAD_FILE', 'DBLINK',
     'READFILE', 'WRITEFILE',
+    # S15-01: family prefixes (trailing '_' is a word char, so
+    # only the leading \b fires; my_pg_ls_... still passes).
+    'PG_LS_', 'PG_ADVISORY_', 'PG_TRY_ADVISORY_',
 )
 _FORBIDDEN_SQL_RE = re.compile(
     r'\b(?:' + '|'.join(_FORBIDDEN_SQL_KEYWORDS) + r')\b'

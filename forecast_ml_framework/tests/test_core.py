@@ -1467,6 +1467,30 @@ def test_sql_denylist_blocks_server_file_primitives():
       'SELECT my_readfile FROM t') is not None
 
 
+def test_sql_denylist_blocks_pg_ls_and_advisory_families():
+  '''Read-only validator blocks pg_ls_*/advisory families (S15-01).'''
+  from forecast_ml_framework.core.datasets import _validate_read_only_query
+  bad = (
+      'SELECT pg_ls_tmpdir()',
+      'SELECT pg_ls_logdir()',
+      'SELECT pg_ls_logicalmapdir()',
+      'SELECT pg_ls_logicalsnapdir()',
+      'SELECT pg_ls_replslotdir()',
+      'SELECT pg_ls_summariesdir()',
+      'SELECT pg_ls_archive_statusdir()',
+      'SELECT pg_advisory_xact_lock(1)',
+      'SELECT pg_try_advisory_lock(1)',
+      'SELECT pg_try_advisory_xact_lock(1)',
+  )
+  for query in bad:
+    with pytest.raises(ValueError, match='Forbidden'):
+      _validate_read_only_query(query)
+  assert _validate_read_only_query(
+      'SELECT updated_at FROM t') is not None
+  assert _validate_read_only_query(
+      'SELECT my_readfile FROM t') is not None
+
+
 def test_core_params_canonical_helpers():
   '''core.params owns canonical _int/_float/_get/_parse_datetime (F8).'''
   from datetime import datetime, timezone

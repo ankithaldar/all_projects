@@ -10,11 +10,11 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 or a loss function is a config edit, not a code edit.
 
 Phases 1–7 plus the Cycle-1 fix loop (W1–W14, M1–M6) are landed
-(1759 test functions on disk — static `def test_` count in `tests/`,
+(1760 test functions on disk — static `def test_` count in `tests/`,
 checked in this docs pass against `pipeline_registry.py` (12
 registered pipelines, 8 modules) and current code; parametrize
-expands the collected total to **2794 collected** (`pytest
---collect-only -q`) — full suite: **2792 passed, 2 skipped, 0 failed**,
+expands the collected total to **2795 collected** (`pytest
+--collect-only -q`) — full suite: **2793 passed, 2 skipped, 0 failed**,
 coverage **90.86%**, pylint **9.65** (Lead QA; collected/passed/skipped/
 coverage/pylint pasted verbatim from Lead QA, static count verified
 by grep `^def test_` in `tests/` in this docs pass); the static count
@@ -278,11 +278,11 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **2794 collected**
-(`pytest --collect-only -q`), full suite **2792 passed, 2 skipped,
+success: `pytest` exits 0 with all tests passing — **2795 collected**
+(`pytest --collect-only -q`), full suite **2793 passed, 2 skipped,
 0 failed**, coverage **90.86%**, pylint **9.65** (Lead QA, pasted
 verbatim; static count verified by grep in this docs pass).
-**1759 test functions** on disk (static `^def test_` count in
+**1760 test functions** on disk (static `^def test_` count in
 `tests/`; parametrize expands the static count to the collected total)
 (including `test_high_fitted`, `test_high_tuning`,
 `test_high_tuning_wiring`, `test_high_imbalance`, `test_high_calibrate`,
@@ -512,7 +512,7 @@ forecast_ml_framework/
 │   ├── telemetry/              # __init__.py + exceptions.py (FrameworkError hierarchy, wrap; public API, A2)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (1759 test functions; see Tests)
+├── tests/                      # pytest suite (1760 test functions; see Tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -2270,7 +2270,7 @@ live with it as documented.
 |---|---|---|---|---|
 | 1 | Pickle deserialization trust boundary | **Fixed** | `pickle.load` on an artifact executes `__reduce__` code | Restricted unpickler `restricted_loads()` (`core/artifact_store.py:773`) / `_RestrictedUnpickler` (`core/artifact_store.py:747`) allowlists only sklearn/numpy/pandas + safe builtin types; anything else raises `ValueError`. `FileModelLoader` (`serving/model_loader.py`) uses it. Artifacts are trusted only when produced by this framework; the unpickler is defence in depth |
 | 2 | Path traversal jail | **Fixed** | A key like `../../etc/passwd` escapes the store root | `LocalArtifactStore._full_path()` (`core/artifact_store.py:926-947`) resolves and jail-checks every path against the base; cloud keys validated by `_validate_cloud_key()` (`core/artifact_store.py:840-858`, no absolute keys, no `..`). Absolute paths and escaping keys raise `ValueError` |
-| 3 | SQL config-trust | **Fixed (documented)** | Arbitrary SQL string → arbitrary SQL execution | `SQLQueryDataSet` (`core/datasets.py:187,266`) validates intent: single statement, `SELECT`/`WITH` only (`_validate_read_only_query`, `core/datasets.py:136`), plus the extended denylist incl. server-file functions (`PG_READ_FILE`, `READFILE`, …) matched as prefix and double-quoted identifiers kept verbatim for the scan (`core/datasets.py:28-72,75-133`, A8). Documented trust boundary: connection and query come from trusted config (catalog/params), **never** untrusted user input — this is intent-checking, not a SQL sandbox. Only trusted queries may be used, with a read-only DB account |
+| 3 | SQL config-trust | **Fixed (documented)** | Arbitrary SQL string → arbitrary SQL execution | `SQLQueryDataSet` (`core/datasets.py:200,279`) validates intent: single statement, `SELECT`/`WITH` only (`_validate_read_only_query`, `core/datasets.py:149`), plus the extended denylist incl. server-file functions (`PG_READ_FILE`, `READFILE`, …) matched as prefix and double-quoted identifiers kept verbatim for the scan (`core/datasets.py:28-85,88-146`, A8). Documented trust boundary: connection and query come from trusted config (catalog/params), **never** untrusted user input — this is intent-checking, not a SQL sandbox. Only trusted queries may be used, with a read-only DB account |
 | 4 | Matplotlib figure lifecycle | **Fixed** | Unclosed figures leak / "too many open figures" in long runs | `make_charts()` (`pipelines/modeling/charts.py:1743`) closes figures on failure (`_safe`, `pipelines/modeling/charts.py:129`) and closes **every** figure in a `finally` block before returning (e.g. `pipelines/modeling/charts.py:639-641`). Callers must save images inside the call; figures are returned closed |
 | 5 | Env-dependent tests | **Fixed** | Serving tests fail without `httpx`; Spark/cloud tests fail without services | `httpx` is a dev dependency (`pyproject.toml:74-77`) so `fastapi.testclient` works; env-dependent behaviour is mocked/skipped (Spark returns `None` when disabled/missing; cloud SDKs imported lazily). Run `PYTHONPATH=src python -m pytest tests/ -q` |
 | 6 | Python 3.14 lib compatibility | **Fixed (spike)** | Third-party libs may not import on 3.14 | Full spike below: all 17 libraries OK, nothing moved to `extras-314-failures`. Caveats: MLflow prints an agent-hint banner on import — silence with `MLFLOW_DISABLE_AGENT_HINT=1`. PySpark 4.3 on pandas >= 3 emits a `FutureWarning` — expected and harmless |
@@ -2297,7 +2297,7 @@ freshly read-verified line refs (e.g.
 `core/artifact_store.py:_SAFE_GLOBALS :47`,
 `_BOOSTER_GLOBALS :346`;
 `serving/model_loader.py:391,432-436,590-592`;
-`core/datasets.py:28-72,75-133,136`;
+`core/datasets.py:28-85,88-146,149`;
 `serving/app.py:83-84,313-336,356-389,339-353,934-950,1048-1049`);
 #31–#40 are new accepted-risk entries from Lead ADRs D6/D7/D8
 (`.opencode/context/decisions.md`) and
@@ -2308,7 +2308,7 @@ Counts (2794/2792/1759) unchanged by this docs pass.
 |---|---|---|---|---|
 | 18 | H2O pickle serving rejected (no cluster) — re-verified (softened refs) | H2O globals are absent from the exact allowlist (`core/artifact_store.py:_SAFE_GLOBALS :47`, no `h2o` entries; zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only; there is no H2O cluster connect/load path | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change |
 | 19 | pyfunc opt-in, trusted registry only — re-verified | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:590-592`). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:391`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:432-436`) |
-| 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` (`core/datasets.py:187,327`) accept only a single `SELECT`/`WITH` statement with the extended denylist incl. server-file primitives (`PG_READ_FILE`, `READFILE`, …) and double-quoted identifiers scanned verbatim (`core/datasets.py:28-72,75-133,136`, A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
+| 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` (`core/datasets.py:200,340`) accept only a single `SELECT`/`WITH` statement with the extended denylist incl. server-file primitives (`PG_READ_FILE`, `READFILE`, …) and double-quoted identifiers scanned verbatim (`core/datasets.py:28-85,88-146,149`, A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
 | 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:83-84,313-336`, bucket `serving/app.py:356-389`, check `serving/app.py:774-783`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter. The bucket is single-process (see #33) | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
 | 22 | DNS rebinding — **Fixed (W4) + egress required (R-05)** | `_validate_uri_host` now re-validates via `socket.getaddrinfo` and rejects *any* non-global resolved address, fail-closed on error (`registry/model_registry.py:161,173,197-270`) | Hostnames resolving to private/metadata IPs are caught at validation time; residual TOCTOU between validation and the MLflow client's own DNS resolution remains (see #32) | Keep allowlisted registry hostname you control **and** run behind a network egress allowlist (allow only that hostname; block private/metadata) — see Registry DNS egress note above |
 | 23 | Pickle native-booster file-load — **Fixed (W2)** | `restricted_loads` (`core/artifact_store.py:773`) runs a `pickletools` pre-scan rejecting `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (`core/artifact_store.py:346,439`) + `MAX_ARTIFACT_BYTES` size cap before unpickling; legit `NEWOBJ`+`BUILD` roundtrips still load | Booster file-load / oversized-pickle vectors closed | Load only artifacts produced by this framework from a fully trusted registry/store; treat any other pickle source as untrusted |
@@ -2409,7 +2409,7 @@ flowchart LR
   P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
   P5 --> P6["Phase 6 - done (parity)<br/>ntile eval-metric grammar<br/>lift table + threshold selection + promotion gate<br/>descriptive stats + confusion rates<br/>catalog anchors + eval_metric config<br/>1075 tests"]
   P6 --> P7["Phase 7 - done (high-value)<br/>fitted registry + tuning executor + imbalance<br/>prior-rate calibration + threshold application<br/>KNN + sequence routines + MLflow hooks<br/>two-stage scoring<br/>1218 tests"]
-  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>1759 test functions (static)"]
+  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>1760 test functions (static)"]
   LOOP --> REM["Remaining<br/>Docker (A5: dev-only, accepted)<br/>DVC exec<br/>pyfunc registration"]
 ```
 
@@ -2471,10 +2471,10 @@ flowchart LR
   alias, FE list, variables pointer, web offline-viewer note (A7),
   `cost_curve` row removed (W14/F5). 1218/1075 counts kept below as
   dated history.
-- Tests: 1759 test functions on disk (static `^def test_` count in
+- Tests: 1760 test functions on disk (static `^def test_` count in
   `tests/`, verified by grep in this docs pass); parametrize expands
-  the collected total to **2794 collected** (`pytest --collect-only
-  -q`) — full suite **2792 passed, 2 skipped, 0 failed**, coverage
+  the collected total to **2795 collected** (`pytest --collect-only
+  -q`) — full suite **2793 passed, 2 skipped, 0 failed**, coverage
   **90.86%**, pylint **9.65** (Lead QA, pasted verbatim; prior W8a
   handoff of 2550 passed, 1 failed [external pinned test], 1 skipped
   superseded).
