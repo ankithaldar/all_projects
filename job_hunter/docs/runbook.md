@@ -53,6 +53,7 @@ literal dotted key (API-only) — effective discovery caps come from
 `config/app.yaml` / the top-level `discovery` settings dict. Seeding is
 insert-only: existing settings rows are never overwritten, so later
 `config/app.yaml` edits do not update stored values.
+Enrichment cap: `discovery.enrich_per_run_cap` defaults to 40 (code fallback when unset in `config/app.yaml`); `enrich_jds` increments `attempted` before budget/short skips, so capped slots include skipped attempts, counts the remainder as `enrich_capped`, and backfills `cap - len(inserted)` from `jobs_needing_enrichment`.
 Schedule and source enabling are yaml-only — edit `config/app.yaml`
 (`sources:` is `enabled`-only; per-source RPM is adapter-owned) and
 restart. CSRF: non-GET with cross-origin Origin/Referer is rejected

@@ -36,9 +36,10 @@ def test_fanout_cooled_sql_and_deferred_count() -> None:
   assert 'cooled join' in s10.lower()
   assert 'list_cooled_due' in s10
   assert 'count_due' in s10
+  assert '_filtered_due_count' in s10
   assert 'cooled_skips' in s10
   assert 'mark_checked' in s10
-  assert 'untruncated eligible count' in s10
+  assert 'untruncated filtered-eligible count' in s10
   assert 'deferred_targets' in s10
   assert 'MAX_FANOUT' in s10
   # §11 cross-cutting cooldown text agrees (fetch_pair + cooled_skips).

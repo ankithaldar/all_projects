@@ -214,6 +214,38 @@ def load_profile(
   return {'candidate': candidate}
 
 
+def _filtered_due_count(
+  settings: AppSettings, sources: dict[str, Any], quick: bool,
+) -> int:
+  '''Count due rows passing the build_plan Python filters.
+
+  Args:
+    settings: Application settings.
+    sources: Per-source config mapping.
+    quick: Whether the quick-poll priority filter applies.
+
+  Returns:
+    Untruncated count of filtered-eligible due rows.
+  '''
+  import sqlite3
+  from contextlib import closing
+
+  sql = (
+    'SELECT companies.ats_provider, companies.priority '
+    + CompaniesRepository._DUE_FROM
+  )
+  count = 0
+  with closing(sqlite3.connect(str(settings.db_path))) as conn:
+    conn.row_factory = sqlite3.Row
+    for raw in conn.execute(sql).fetchall():
+      if quick and int(raw['priority'] or 0) < 5:
+        continue
+      if not source_enabled(sources, raw['ats_provider']):
+        continue
+      count += 1
+  return count
+
+
 @safe_node
 async def build_plan(
   state: Dict[str, Any], config: RunnableConfig
@@ -224,7 +256,8 @@ async def build_plan(
   ASC, never-checked first) so the 50-wide fan-out in
   route_targets rotates through the backlog across runs instead
   of re-fetching the same head. The returned ``deferred_targets``
-  stat counts eligible targets beyond that fan-out cap.
+  stat counts filtered-eligible targets beyond that fan-out cap
+  (after priority/source filters, before truncation).
 
   Args:
     state: Current state.
@@ -281,7 +314,11 @@ async def build_plan(
     )
     for row in rows
   ]
-  eligible_count = companies.count_due()
+  # Deferred counts filtered-eligible due rows beyond the
+  # fan-out cap, before truncation. list_due caps at 500
+  # and count_due ignores the Python-side priority/source
+  # filters, so count the filtered due set directly.
+  eligible_count = _filtered_due_count(settings, sources, quick)
   deferred = max(0, eligible_count - MAX_FANOUT)
   plan = RunPlan(run_id=int(state['run_id']), targets=targets, quick_poll=quick)
   return {
@@ -557,6 +594,7 @@ async def enrich_jds(
     if attempted >= cap:
       stats['enrich_capped'] = stats.get('enrich_capped', 0) + 1
       continue
+    attempted += 1
     if not budget.allow():
       stats['enrich_skipped_budget'] = stats.get('enrich_skipped_budget', 0) + 1
       continue

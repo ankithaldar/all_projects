@@ -241,7 +241,7 @@ job_hunter/
 │   ├── verticals.yaml             ← taxonomy (§13)
 │   └── skills_aliases.yaml        ← starter skill taxonomy
 └── tests/
-    └── unit/…                     ← 66 unit test modules (60+; live list is tests/unit/;
+    └── unit/…                     ← 69 unit test modules (60+; live list is tests/unit/;
                                      counted dynamically as tests/unit/test_*.py;
                                      pytest; gateway tests via testpaths)
 ```
@@ -582,12 +582,19 @@ load_profile → build_plan → fetch_pair → normalize_dedupe → enrich_jds �
   (`cooled_skips = 1` for that target); `mark_checked` is a rotation
   stamp (attempted), not last successful fetch. Targets beyond the
   50-wide fan-out are counted as the `deferred_targets` stat from the
-  untruncated eligible count via `count_due()`
-  (`max(0, count_due() - MAX_FANOUT)`, count-based deferred —
-  `count_due` shares the `list_due` `_DUE_FROM` filters with no LIMIT,
-  so e.g. 600 fresh companies give `deferred_targets = 550` even
-  though `list_due` returns at most 500 rows; `route_targets`
-  truncates the Send list to `MAX_FANOUT = 50` afterwards).
+  untruncated filtered-eligible count via `_filtered_due_count`
+  (`max(0, eligible_count - MAX_FANOUT)`, filtered count-based
+  deferred — `_filtered_due_count` runs the shared
+  `CompaniesRepository._DUE_FROM` SQL, then applies the same Python
+  filters as `build_plan`: `priority >= 5` on quick runs only, and
+  `source_enabled` on both run kinds, so disabled-source rows (and,
+  on quick, unpinned rows) never inflate the count — unlike the
+  unfiltered `count_due()`, which ignores those Python filters. So
+  e.g. 600 due companies all eligible give `deferred_targets = 550`
+  (600 − 50) even though `list_due` returns at most 500 rows, while
+  60 due with 10 on a disabled source give eligible = 50 and
+  `deferred_targets = 0`; `route_targets` truncates the Send list to
+  `MAX_FANOUT = 50` afterwards).
   Source enablement (`source_enabled`) filters both run kinds after
   the ATS/truthy and quick-priority filters.
 - Every node is wrapped by `safe_node(fn)`: catches exceptions, appends
@@ -770,6 +777,15 @@ Mechanics:
 Two stages: **hard gates** then **weighted score**. Everything persisted for
 explainability (`score_breakdown_json` shown as a bar breakdown in the UI).
 
+Enrichment cap (`enrich_jds`, feeds scoring): `discovery.enrich_per_run_cap`
+defaults to 40 (the code fallback when unset in `config/app.yaml`).
+`attempted` increments before the budget/short-description skips, so capped
+slots include skipped attempts (`enrich_skipped_budget` /
+`enrich_skipped_short`); targets beyond the cap are counted as
+`enrich_capped`. When fewer than the cap were inserted, the backlog
+(`jobs_needing_enrichment`) fills the `cap - len(inserted)` shortfall
+(`enrich_backlog` counts the backfilled targets).
+
 Gates (`services/matcher.py: gate_failures`, fail ⇒ excluded, reason stored).
 There is no vertical gate: target/blocked verticals do not exclude a job here.
 
@@ -908,7 +924,7 @@ CREATE TABLE jobs (
   company_id INTEGER REFERENCES companies(id),
   company_raw_name TEXT,
   title TEXT NOT NULL,
-  location_text TEXT, city TEXT, region TEXT, country TEXT DEFAULT 'IN',
+  location_text TEXT, city TEXT, region TEXT, country TEXT NOT NULL DEFAULT 'IN',
   work_mode TEXT CHECK (work_mode IN ('remote','hybrid','onsite','unknown')),
   employment_type TEXT,
   salary_min_lpa REAL, salary_max_lpa REAL, salary_raw TEXT,
@@ -1097,12 +1113,12 @@ No framework, no build step. FastAPI serves `web/` at `/`; pages share
 
 | Page | Content |
 |------|---------|
-| `index.html` | Dashboard: KPI cards (New today, Saved, Active jobs, Companies), top recommendations (`per_page=8`), recent runs |
-| `profile.html` | Profile form (roles chips, cities, remote select, salary floor/exp number inputs), resume upload + parsed-preview editor, skills manager |
-| `companies.html` | Table w/ filters (vertical/status/ATS), inline actions (pin/pause/refresh/label), import dialog, add-manually form |
-| `recommendations.html` | Card list sorted by score: total + component bar chart (pure CSS), gates, rationale, links; actions save/dismiss; keyboard nav; bulk dismiss (`per_page=50`, min-score number input) |
-| `jobs.html` | Raw explorer with FTS search box, filter sidebar, duplicate/stale badges (`per_page=50`) |
-| `runs.html` | Run history table + detail drawer with live SSE event console (level-colored), stats counters, errors panel |
+| `index.html` | Dashboard: KPI cards (New today, Saved, Active jobs, Companies), top recommendations (`per_page=8`) |
+| `profile.html` | Profile form (roles plain comma-separated input, cities, remote select, salary floor/exp number inputs), resume upload + status line only (no parsed-preview editor), skills manager API-only (no page UI) |
+| `companies.html` | Table (no filters), inline actions only Pause/Resume, +prio, Blacklist, import textarea, add-manually form; no refresh/label UI (refresh endpoint planned §17) |
+| `recommendations.html` | Card list sorted by score: total + component bar chart (pure CSS), gates, rationale, links; mouse-only Save/Dismiss per-card buttons, native Tab focus only (`per_page=50`, min-score number input) |
+| `jobs.html` | Raw explorer with FTS search box, top filter row, source badge only (no duplicate/stale badges) (`per_page=50`) |
+| `runs.html` | Run history table + Run-discovery trigger + live SSE console level-coloured (no detail drawer/stats counters/errors panel) |
 | `settings.html` | Scoring weights as number inputs (`type="number"`, step 0.01, 0–1; live-sum shown auto-normalized; page PUTs only `scoring_weights` — the other 3 PUT-able keys are API-only, see §17) plus LLM spend (7 days) table; no schedule editor, no source toggles, no token-budget UI — schedule and source enabling are yaml-only (`config/app.yaml`, see §22) |
 
 SSE protocol (actual `routes/runs.py`): `event: log`
@@ -1119,7 +1135,7 @@ Worker entrypoint `python main.py worker` runs APScheduler
 | Job | Cadence (default) | Action |
 |-----|--------------------|--------|
 | discovery (job id `discovery`) | daily 06:15 | insert `runs(pending, discovery)` then execute DiscoveryGraph end-to-end |
-| quick_poll | every 120 min | T2 aggregators + pinned (priority 5) companies only — cheap incremental fetch |
+| quick_poll | every 120 min | pinned ATS companies only (`kind='refresh'`, priority >= 5) — no aggregator fetch, cheap incremental fetch |
 | company_refresh | weekly cron `30 3 * * 0` (job id `company_refresh`) | `verify_pending`: companies with a `domain` set and no `ats_provider` yet (domain-not-ATS filter, not `last_checked_at`), batch of ≤ 50 (`discovery.company_refresh_chunk`) |
 | stale_sweep | daily 04:00 | mark unseen > 45d jobs stale, expire their recommendations |
 | inbox_scan | every 30 min | parse new files in `data/inbox/**` |

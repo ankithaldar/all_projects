@@ -98,7 +98,11 @@ class RunManager:
       return {'run_id': run_id, 'status': 'skipped', 'stats': {}}
     run_token = run_id_var.set(str(claimed))
     try:
-      final_state = await run_discovery(self._settings, claimed)
+      row = self._runs.get(claimed) or {}
+      quick_poll = (row.get('kind') or 'discovery') == 'refresh'
+      final_state = await run_discovery(
+        self._settings, claimed, quick_poll=quick_poll,
+      )
       stats = dict(final_state.get('stats') or {})
       errors = list(final_state.get('errors') or [])
       for error in errors:

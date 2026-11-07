@@ -11,8 +11,11 @@ one machine: no cloud, no accounts, SQLite storage, plain HTML/JS frontend.
    An agent parses the resume into a structured profile; you confirm it.
 2. **Every night (and quick polls every 2h)** the discovery graph pulls fresh
    postings from official ATS board APIs (Greenhouse, Lever, Ashby, Workable,
-   SmartRecruiters…) for companies it tracks (fan-out rotates through the
-   backlog). Bulk aggregator pulls are a separate CLI path: `fetch-jobs`
+   SmartRecruiters…) for companies it tracks. The nightly run rotates
+   through all due companies (fan-out rotates through the backlog);
+   a quick poll is pinned-only every 2h (priority >= 5 companies only,
+   via `kind='refresh'`), not a backlog rotation and with no aggregator
+   fetch. Bulk aggregator pulls are a separate CLI path: `fetch-jobs`
    pulls whole feeds from remote-job aggregator APIs/RSS (Arbeitnow, Jobicy,
    Himalayas, Remotive, RemoteOK, WeWorkRemotely, Cutshort), and
    `scout-companies` is the CLI company-discovery path. A watched inbox also
@@ -32,7 +35,8 @@ one machine: no cloud, no accounts, SQLite storage, plain HTML/JS frontend.
    salary fit, recency, and vertical fit into one 0–100 score with a visible
    per-component breakdown — no black box.
 6. **You review** ranked recommendations in the browser: open the job, save
-   or dismiss with one keypress. (Dismiss/save feedback retuning is planned:
+   or dismiss with the per-card Save/Dismiss buttons (button-based review).
+   (Dismiss/save feedback retuning is planned:
    `feedback_adjust` exists but is never called, so it does not retune
    rankings yet.)
 7. Everything (runs, errors, tokens, cost per LLM call) is logged and visible

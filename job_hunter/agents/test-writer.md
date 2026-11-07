@@ -5,7 +5,7 @@ Own regression coverage for every fix; keep the suite fast (<10s).
 
 ## Rules
 1. New tests go into the existing unit module covering that area
-   (the live list is every module in `tests/unit/` — 66 unit test modules
+   (the live list is every module in `tests/unit/` — 69 unit test modules
    (60+; counted dynamically as `tests/unit/test_*.py`, not a hardcoded
    literal; last counted 2026-11-07, includes
    `test_fix_cycle5_docs.py`, `test_fix_cycle6_docs.py`,
@@ -76,6 +76,7 @@ Own regression coverage for every fix; keep the suite fast (<10s).
    - cycle-15 backend → `test_fix_cycle15_backend.py`
    - cycle-15 docs → `test_fix_cycle15_docs.py`
    - cycle-17 docs → `test_fix_cycle17_docs.py`
+   - cycle-20 docs → `test_fix_cycle20_docs.py`
    When in doubt, list `tests/unit/` and add the test to the module
    whose subject it covers rather than creating a new file.
 2. Every test isolates storage: tmp_path db + `APP_DATA_DIR` env via

@@ -346,3 +346,29 @@ adversarial-tester ONLY
 ## CYCLE 17 RESULTS (10 APPROVED / 0 REJECTED) — FULL LOOP CLOSED
 - Reviewer 0 issues, Security APPROVED, Anti-arch APPROVED, Anti-sec APPROVED, Adversarial 0 issues, Tester APPROVED (83%), DB APPROVED, Frontend APPROVED, DevOps APPROVED, Docs APPROVED.
 - All 17 cycles complete. Total: 17 review cycles (10 reviewers each), fix rounds 1-2, cycles 3-15 prep, microfixes, docs-final. Suite 771 passed. Committed post-loop: 9c0ea73 + c5fd89e + cycle17 docs/tests commit (this commit). 0 open code issues.
+
+## FINAL CLOSED (2026-11-07) — Cycle 17: 10/10 APPROVED, 0 ISSUES. Committed 78853ce, pushed. Tree clean, 771 tests green.
+## CYCLE 18 verification launched (10 reviewers on HEAD 78853ce, Lead-verified 771 passed, clean tree).
+
+## CYCLE 18 RESULTS (8 APPROVED: reviewer, security, anti-sec, adversarial, tester, DB, frontend, devops / 2 REJECTED: anti-arch, docs)
+- Anti-arch: quick_poll kind never reaches graph (polls run FULL discovery, 12x/day burn) + enrich cap counter dead (7.5x spend) + deferred stats overcount.
+- Docs: §18 pages false (6 MEDIUM: companies filters/actions, keyboard/bulk, recent runs, profile roles/preview/skills, jobs sidebar/badges, runs drawer) + country NOT NULL LOW.
+- Cycle-19 prep W1+W2 dispatched (final).
+
+## CYCLE-19 PREP COMPLETE (W1+W2 DONE, Lead-verified full suite 787 passed)
+- W1 quick_poll wiring (kind->quick_poll via RunManager.get), enrich cap counter, filtered deferred.
+- W2 §18 page rows rewrite, roadmap keyboard downgrade, counts 68.
+- Cycle 19 launched.
+
+## CYCLE 19 RESULTS (9 APPROVED: reviewer, security, anti-arch, anti-sec, adversarial, tester, DB, frontend + devops APPROVED / 1 REJECTED: docs)
+- All code dims approved (quick_poll wiring, enrich cap, filtered deferred, paths, retention, throttle).
+- Docs: HIGH fan-out mechanism + quick_poll scope, MEDIUM nightly/quick distinction, LOW enrich attempted semantics.
+- Cycle-20 prep: docs-final worker dispatched.
+
+## CYCLE-20 PREP COMPLETE (docs-final DONE, Lead-verified full suite 793 passed)
+- Docs fan-out filtered mechanism, quick pinned-only, nightly vs quick, enrich cap, counts 69.
+- Cycle 20 launched (final expected).
+
+## CYCLE 20 RESULTS (10 APPROVED / 0 REJECTED) — LOOP CLOSED
+- Reviewer 0, Security APPROVED, Anti-arch APPROVED, Anti-sec APPROVED, Adversarial 0, Tester APPROVED (83%), DB APPROVED, Frontend APPROVED, DevOps APPROVED, Docs APPROVED.
+- All 20 cycles complete. Total: 20 review cycles (10 reviewers each), fix rounds 1-2, cycles 3-15 prep, microfixes, docs-final, W1-W3, T3-T5, U1-U2, V1-V3, W1-W2, T1-T2, S1-S3, Q1-Q4, F1-F6, P1-P4, R1-R2, formatter, tester followups. Suite 793 passed. Committed post-loop: 9c0ea73 + c5fd89e + 78853ce + cycle19/20 docs/backend commit (this commit). 0 open issues.
