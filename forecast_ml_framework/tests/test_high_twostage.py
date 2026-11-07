@@ -1,9 +1,13 @@
-"""Two-stage scoring DAG (vz-high Task 9)."""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Two-stage scoring DAG (vz-high Task 9).'''
 
 import pandas as pd
 
 
 def test_scoring_pipeline_has_score_data_prep():
+  '''Scoring pipeline has score_data_prep node.'''
   from forecast_ml_framework.pipelines.scoring.pipeline import (
     create_pipeline,
   )
@@ -13,6 +17,7 @@ def test_scoring_pipeline_has_score_data_prep():
 
 
 def test_catalog_has_fitted_registry():
+  '''Catalog has fitted_registry entry.'''
   import yaml
 
   with open('conf/base/catalog.yml', encoding='utf-8') as fh:
@@ -25,6 +30,7 @@ def test_catalog_has_fitted_registry():
 
 
 def test_score_data_prep_empty_registry_is_identity():
+  '''Empty registry score_data_prep is identity.'''
   from forecast_ml_framework.pipelines.scoring.pipeline import (
     score_data_prep,
   )

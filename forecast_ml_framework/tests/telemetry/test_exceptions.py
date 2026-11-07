@@ -226,6 +226,7 @@ def test_tuple_datetime_and_unknown_coerced():
     '''Plain object coerced via str.'''
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'thing!'
 
   err = FrameworkError(
@@ -501,17 +502,21 @@ def test_dataframe_like_introspection_failure_fallback():
 
     @property
     def shape(self):
+      '''Shape.'''
       raise RuntimeError('shape boom')
 
     @property
     def dtypes(self):
+      '''Dtypes.'''
       raise RuntimeError('dtypes boom')
 
     @property
     def columns(self):
+      '''Columns.'''
       raise RuntimeError('columns boom')
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'bad-frame-str'
 
   err = FrameworkError(
@@ -530,6 +535,7 @@ def test_dataframe_like_bad_shape_fallback():
     dtypes = 'int64'
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'weird-frame'
 
   err = FrameworkError(
@@ -689,7 +695,9 @@ def test_unknown_object_never_str_dumped():
   '''Unknown objects become type-only dicts, never str dump.'''
 
   class SecretThing:
+    '''Test double SecretThing.'''
     def __str__(self):
+      '''Return the string representation.'''
       return 'password=hunter2 leak'
 
   err = FrameworkError(
@@ -716,7 +724,9 @@ def test_hostile_str_user_message_unrepresentable():
   '''Hostile __str__ becomes <unrepresentable>, no crash.'''
 
   class BadStr:
+    '''Test double BadStr.'''
     def __str__(self):
+      '''Return the string representation.'''
       raise RuntimeError('boom')
 
   err = FrameworkError(code='X_ERROR', user_message=BadStr())
@@ -728,7 +738,9 @@ def test_wrap_hostile_str_exc_unrepresentable():
   '''wrap() on hostile-__str__ exception uses placeholder.'''
 
   class BadExc(Exception):
+    '''Test double BadExc.'''
     def __str__(self):
+      '''Return the string representation.'''
       raise RuntimeError('boom')
 
   out = wrap(BadExc(), stage='eda')
@@ -757,10 +769,13 @@ def test_set_hostile_repr_no_crash():
   cannot hold the set element's type marker) or crashes.
   '''
   class BadRepr:
+    '''Test double BadRepr.'''
     def __repr__(self):
+      '''Return the representation.'''
       raise RuntimeError('repr boom')
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'badrepr'
 
   err = FrameworkError(
@@ -858,6 +873,7 @@ def test_cyclic_list_coerced_at_deep_stack():
   items.append(items)
 
   def _recurse(depth):
+    '''Recurse.'''
     if depth == 0:
       return FrameworkError(
           user_message='x', context={'i': items}).context['i'][1]
@@ -871,14 +887,19 @@ def test_cyclic_list_coerced_at_deep_stack():
 # --- loop4-scrub-fixes: hostile keys / sets / ctor collisions (RED) ---
 
 def test_loop4_hostile_dict_key_no_crash_no_leak():
+  '''Test loop4 hostile dict key no crash no leak.'''
   class BadKey:
+    '''Test double BadKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       raise RuntimeError('repr boom')
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'password=Zq9SENTINEL'
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5151
 
   err = FrameworkError(
@@ -889,14 +910,19 @@ def test_loop4_hostile_dict_key_no_crash_no_leak():
 
 
 def test_loop4_hostile_tuple_key_no_crash():
+  '''Test loop4 hostile tuple key no crash.'''
   class BadKey:
+    '''Test double BadKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       raise RuntimeError('repr boom')
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'password=Zq9SENTINEL'
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5152
 
   err = FrameworkError(
@@ -907,14 +933,19 @@ def test_loop4_hostile_tuple_key_no_crash():
 
 
 def test_loop4_hostile_key_repr_secret_scrubbed():
+  '''Test loop4 hostile key repr secret scrubbed.'''
   class EvilKey:
+    '''Test double EvilKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       return 'password=Zq9SENTINEL'
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'password=Zq9SENTINEL'
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5153
 
   err = FrameworkError(
@@ -923,7 +954,9 @@ def test_loop4_hostile_key_repr_secret_scrubbed():
 
 
 def test_loop4_unknown_object_in_set_context_no_crash():
+  '''Test loop4 unknown object in set context no crash.'''
   class Obj:
+    '''Test double Obj.'''
     pass
 
   err = FrameworkError(
@@ -933,6 +966,7 @@ def test_loop4_unknown_object_in_set_context_no_crash():
 
 
 def test_loop4_dict_nested_in_marker_tuple_no_key_leak():
+  '''Test loop4 dict nested in marker tuple no key leak.'''
   err = FrameworkError(
       code='X_ERROR', user_message='x',
       context={'k': ('password', {'Zq': 'x'})})
@@ -941,6 +975,7 @@ def test_loop4_dict_nested_in_marker_tuple_no_key_leak():
 
 
 def test_loop4_positional_and_collision_typeerrors():
+  '''Test loop4 positional and collision typeerrors.'''
   with pytest.raises(TypeError):
     FrameworkError('X_ERROR', 'eda', 'msg', {}, False, 'extra', 'more')
   with pytest.raises(TypeError):
@@ -959,6 +994,7 @@ def test_loop4_positional_and_collision_typeerrors():
 
 
 def test_loop4_cyrillic_homoglyph_still_blocked():
+  '''Test loop4 cyrillic homoglyph still blocked.'''
   err = FrameworkError(
       code='X_ERROR', user_message='p\u0430ssword=hunter2',
       context={'note': 'p\u0430ssword=hunter2'})
@@ -976,6 +1012,7 @@ def test_loop4_cyrillic_homoglyph_still_blocked():
     'p\u044fssword=hunter2',
 ])
 def test_loop5_homoglyph_evasion_scrubbed(text):
+  '''Test loop5 homoglyph evasion scrubbed.'''
   err = FrameworkError(
       code='X_ERROR', user_message=text, context={'note': text})
   assert 'hunter2' not in str(err), repr(text)
@@ -984,14 +1021,19 @@ def test_loop5_homoglyph_evasion_scrubbed(text):
 
 
 def test_loop5_unknown_key_bare_secret_repr_not_preserved():
+  '''Test loop5 unknown key bare secret repr not preserved.'''
   class EvilKey:
+    '''Test double EvilKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       return 'Zq9SENTINEL'
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'Zq9SENTINEL'
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5154
 
   err = FrameworkError(
@@ -1002,14 +1044,19 @@ def test_loop5_unknown_key_bare_secret_repr_not_preserved():
 
 
 def test_loop5_unknown_key_bare_secret_in_tuple_and_frozenset():
+  '''Test loop5 unknown key bare secret in tuple and frozenset.'''
   class EvilKey:
+    '''Test double EvilKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       return 'Zq9SENTINEL'
 
     def __str__(self):
+      '''Return the string representation.'''
       return 'Zq9SENTINEL'
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5155
 
   err = FrameworkError(
@@ -1025,8 +1072,11 @@ def test_loop5_unknown_key_bare_secret_in_tuple_and_frozenset():
 
 
 def test_loop5_hostile_tuple_container_no_crash_construction():
+  '''Test loop5 hostile tuple container no crash construction.'''
   class EvilTuple(tuple):
+    '''Test double EvilTuple.'''
     def __iter__(self):
+      '''Return an iterator.'''
       raise RuntimeError('iter boom')
 
   err = FrameworkError(
@@ -1038,16 +1088,21 @@ def test_loop5_hostile_tuple_container_no_crash_construction():
 
 
 def test_loop5_hostile_mapping_no_crash_construction():
+  '''Test loop5 hostile mapping no crash construction.'''
   from collections.abc import Mapping
 
   class EvilMapping(Mapping):
+    '''Test double EvilMapping.'''
     def __iter__(self):
+      '''Return an iterator.'''
       raise RuntimeError('iter boom')
 
     def __len__(self):
+      '''Return the length.'''
       return 1
 
     def __getitem__(self, key):
+      '''Return an item by key.'''
       raise RuntimeError('getitem boom')
 
   err = FrameworkError(
@@ -1057,8 +1112,11 @@ def test_loop5_hostile_mapping_no_crash_construction():
 
 
 def test_loop5_hostile_tuple_key_no_crash_construction():
+  '''Test loop5 hostile tuple key no crash construction.'''
   class EvilTuple(tuple):
+    '''Test double EvilTuple.'''
     def __iter__(self):
+      '''Return an iterator.'''
       raise RuntimeError('iter boom')
 
   err = FrameworkError(
@@ -1070,11 +1128,15 @@ def test_loop5_hostile_tuple_key_no_crash_construction():
 
 
 def test_loop5_hostile_dict_container_no_crash_construction():
+  '''Test loop5 hostile dict container no crash construction.'''
   class EvilDict(dict):
+    '''Test double EvilDict.'''
     def items(self):
+      '''Items.'''
       raise RuntimeError('items boom')
 
     def __iter__(self):
+      '''Return an iterator.'''
       raise RuntimeError('iter boom')
 
   err = FrameworkError(
@@ -1088,6 +1150,7 @@ def test_loop5_hostile_dict_container_no_crash_construction():
 # --- loop6-scrub-fixes: code leak / hostile code / retryable (RED) ---
 
 def test_loop6_code_value_error_does_not_echo_raw_code():
+  '''Test loop6 code value error does not echo raw code.'''
   with pytest.raises(ValueError) as excinfo:
     FrameworkError(code='password=hunter2', user_message='x')
   assert 'hunter2' not in str(excinfo.value)
@@ -1095,6 +1158,7 @@ def test_loop6_code_value_error_does_not_echo_raw_code():
 
 
 def test_loop6_factory_code_value_error_does_not_echo_raw():
+  '''Test loop6 factory code value error does not echo raw.'''
   from forecast_ml_framework.telemetry.exceptions import _factory
   with pytest.raises(ValueError) as excinfo:
     _factory(FrameworkError, 'password=hunter2', 'dup', False)
@@ -1103,11 +1167,15 @@ def test_loop6_factory_code_value_error_does_not_echo_raw():
 
 
 def test_loop6_hostile_code_str_no_crash_value_error():
+  '''Test loop6 hostile code str no crash value error.'''
   class BadCode:
+    '''Test double BadCode.'''
     def __str__(self):
+      '''Return the string representation.'''
       raise RuntimeError('str boom')
 
     def __repr__(self):
+      '''Return the representation.'''
       return 'BadCode()'
 
   with pytest.raises(ValueError) as excinfo:
@@ -1116,13 +1184,17 @@ def test_loop6_hostile_code_str_no_crash_value_error():
 
 
 def test_loop6_hostile_factory_code_str_no_crash():
+  '''Test loop6 hostile factory code str no crash.'''
   from forecast_ml_framework.telemetry.exceptions import _factory
 
   class BadCode:
+    '''Test double BadCode.'''
     def __str__(self):
+      '''Return the string representation.'''
       raise RuntimeError('str boom')
 
     def __repr__(self):
+      '''Return the representation.'''
       return 'BadCode()'
 
   with pytest.raises(ValueError) as excinfo:
@@ -1131,8 +1203,11 @@ def test_loop6_hostile_factory_code_str_no_crash():
 
 
 def test_loop6_hostile_retryable_bool_defaults_false():
+  '''Test loop6 hostile retryable bool defaults false.'''
   class BadBool:
+    '''Test double BadBool.'''
     def __bool__(self):
+      '''Return the truth value.'''
       raise RuntimeError('bool boom')
 
   err = FrameworkError(
@@ -1141,8 +1216,11 @@ def test_loop6_hostile_retryable_bool_defaults_false():
 
 
 def test_loop6_mutated_retryable_to_dict_safe_bool():
+  '''Test loop6 mutated retryable to dict safe bool.'''
   class BadBool:
+    '''Test double BadBool.'''
     def __bool__(self):
+      '''Return the truth value.'''
       raise RuntimeError('bool boom')
 
   err = FrameworkError(code='X_ERROR', user_message='x')
@@ -1153,8 +1231,11 @@ def test_loop6_mutated_retryable_to_dict_safe_bool():
 
 
 def test_loop6_hostile_retryable_wrap_defaults_false():
+  '''Test loop6 hostile retryable wrap defaults false.'''
   class BadBool:
+    '''Test double BadBool.'''
     def __bool__(self):
+      '''Return the truth value.'''
       raise RuntimeError('bool boom')
 
   old = ValueError('plain failure')
@@ -1163,6 +1244,7 @@ def test_loop6_hostile_retryable_wrap_defaults_false():
 
 
 def test_loop6_should_redact_marker_bytes_predicate():
+  '''Test loop6 should redact marker bytes predicate.'''
   from forecast_ml_framework.telemetry.exceptions import (
     _should_redact_marker_bytes,
   )
@@ -1174,6 +1256,7 @@ def test_loop6_should_redact_marker_bytes_predicate():
 
 
 def test_loop6_clean_scrubbed_shared_helper():
+  '''Test loop6 clean scrubbed shared helper.'''
   from forecast_ml_framework.telemetry.exceptions import (
     _clean_code,
     _clean_scrubbed,
@@ -1196,28 +1279,35 @@ def test_loop6_clean_scrubbed_shared_helper():
 # --- telemetry-final-fixes loop6 gates (RED) ---
 
 def _fake_dict_config():
+  '''Fake dict config.'''
   from collections.abc import Mapping
 
   class DictConfig(Mapping):
+    '''Test double DictConfig.'''
     def __getitem__(self, key):
+      '''Return an item by key.'''
       return '${oc.env:MY_SECRET_ENV}'
 
     def __iter__(self):
+      '''Return an iterator.'''
       return iter(['k'])
 
     def __len__(self):
+      '''Return the length.'''
       return 1
 
   return DictConfig()
 
 
 def test_final_dict_config_context_rejected():
+  '''Test final dict config context rejected.'''
   with pytest.raises((TypeError, ValueError)):
     FrameworkError(
         code='X_ERROR', user_message='x', context=_fake_dict_config())
 
 
 def test_final_dict_config_wrap_merge_rejected():
+  '''Test final dict config wrap merge rejected.'''
   original = DataValidationError('bad', stage='eda')
   with pytest.raises((TypeError, ValueError)):
     wrap(original, context=_fake_dict_config())
@@ -1226,6 +1316,7 @@ def test_final_dict_config_wrap_merge_rejected():
 
 
 def test_final_real_omegaconf_dict_config_rejected():
+  '''Test final real omegaconf dict config rejected.'''
   pytest.importorskip('omegaconf')
   from omegaconf import OmegaConf
   cfg = OmegaConf.create({'k': '${oc.env:MY_SECRET_ENV}'})
@@ -1241,13 +1332,17 @@ def test_final_real_omegaconf_dict_config_rejected():
 ])
 def test_final_unknown_key_normalization_bare_repr_not_preserved(
         repr_text):
+  '''Test final unknown key normalization bare repr not preserved.'''
   class EvilKey:
+    '''Test double EvilKey.'''
     def __repr__(self):
+      '''Return the representation.'''
       return repr_text
 
     __str__ = __repr__
 
     def __hash__(self):
+      '''Return the hash value.'''
       return 5160
 
   err = FrameworkError(
@@ -1268,6 +1363,7 @@ def test_final_unknown_key_normalization_bare_repr_not_preserved(
     'pass.word=hunter2',
 ])
 def test_final_compound_and_dotted_markers_scrubbed(text):
+  '''Test final compound and dotted markers scrubbed.'''
   err = FrameworkError(
       code='X_ERROR', user_message=text, context={'note': text})
   assert 'hunter2' not in str(err), repr(text)
@@ -1282,6 +1378,7 @@ def test_final_compound_and_dotted_markers_scrubbed(text):
     'Bearer is very tok12345 end',
 ])
 def test_final_bearer_filler_scrubbed(text):
+  '''Test final bearer filler scrubbed.'''
   err = FrameworkError(
       code='X_ERROR', user_message=text, context={'note': text})
   assert 'tok12345' not in str(err), repr(text)
@@ -1290,6 +1387,7 @@ def test_final_bearer_filler_scrubbed(text):
 
 
 def test_final_tuple_frozenset_keys_to_dict_json_safe():
+  '''Test final tuple frozenset keys to dict json safe.'''
   err = FrameworkError(
       code='X_ERROR',
       user_message='x',
@@ -1317,8 +1415,11 @@ def test_final_tuple_frozenset_keys_to_dict_json_safe():
 
 
 def test_final_infinite_tuple_container_capped():
+  '''Test final infinite tuple container capped.'''
   class InfiniteTuple(tuple):
+    '''Test double InfiniteTuple.'''
     def __iter__(self):
+      '''Return an iterator.'''
       count = 0
       while True:
         yield count
@@ -1333,8 +1434,11 @@ def test_final_infinite_tuple_container_capped():
 
 
 def test_final_infinite_list_container_capped():
+  '''Test final infinite list container capped.'''
   class InfiniteList(list):
+    '''Test double InfiniteList.'''
     def __iter__(self):
+      '''Return an iterator.'''
       count = 0
       while True:
         yield count
@@ -1348,8 +1452,11 @@ def test_final_infinite_list_container_capped():
 
 
 def test_final_infinite_dict_items_capped():
+  '''Test final infinite dict items capped.'''
   class InfiniteDict(dict):
+    '''Test double InfiniteDict.'''
     def items(self):
+      '''Items.'''
       count = 0
       while True:
         yield f'k{count}', count
@@ -1374,6 +1481,7 @@ def test_final_infinite_dict_items_capped():
     'toke\u02c2n=Zq9SENTINEL7x',
 ])
 def test_loop7_nfkc_split_marker_scrubbed_in_framework_error(text):
+  '''Test loop7 nfkc split marker scrubbed in framework error.'''
   err = FrameworkError(
       code='X_ERROR', user_message=text, context={'note': text})
   assert 'Zq9SENTINEL7x' not in str(err), repr(text)
@@ -1388,11 +1496,13 @@ class _Loop8EvilKeyPw:
   '''Key whose repr carries a password marker.'''
 
   def __repr__(self):
+    '''Return the representation.'''
     return 'password=Zq9SENTINEL7x'
 
   __str__ = __repr__
 
   def __hash__(self):
+    '''Return the hash value.'''
     return 4244
 
 
@@ -1400,12 +1510,15 @@ class _Loop8BadRepr:
   '''Key whose repr raises, carrying sentinel in error.'''
 
   def __repr__(self):
+    '''Return the representation.'''
     raise RuntimeError('Zq9SENTINEL7x')
 
   def __str__(self):
+    '''Return the string representation.'''
     return 'password=Zq9SENTINEL7x'
 
   def __hash__(self):
+    '''Return the hash value.'''
     return 4245
 
 
@@ -1500,30 +1613,39 @@ def test_loop9_digraph_markers_scrubbed_in_context_key(key):
 
 
 def _loop9_evil_datetime():
+  '''Loop9 evil datetime.'''
   from datetime import datetime
 
   class EvilDate(datetime):
+    '''Test double EvilDate.'''
     def isoformat(self, sep='T', timespec='auto'):
+      '''Isoformat.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   return EvilDate(2024, 1, 1)
 
 
 def _loop9_evil_date():
+  '''Loop9 evil date.'''
   from datetime import date
 
   class EvilDateOnly(date):
+    '''Test double EvilDateOnly.'''
     def isoformat(self, sep='T', timespec='auto'):
+      '''Isoformat.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   return EvilDateOnly(2024, 1, 1)
 
 
 def _loop9_evil_time():
+  '''Loop9 evil time.'''
   from datetime import time
 
   class EvilTime(time):
+    '''Test double EvilTime.'''
     def isoformat(self, sep='T', timespec='auto'):
+      '''Isoformat.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   return EvilTime(12, 0)
@@ -1600,11 +1722,15 @@ def test_loop9_safe_helpers_single_home_in_scrub():
   assert exc_mod._safe_list is _safe_list
 
   class BadStr:
+    '''Test double BadStr.'''
     def __str__(self):
+      '''Return the string representation.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   class BadRepr:
+    '''Test double BadRepr.'''
     def __repr__(self):
+      '''Return the representation.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   assert _safe_str(BadStr()) == '<unrepresentable>'
@@ -1613,7 +1739,9 @@ def test_loop9_safe_helpers_single_home_in_scrub():
   assert exc_mod._safe_repr(BadRepr()) == '<unrepresentable>'
 
   class BadIter:
+    '''Test double BadIter.'''
     def __iter__(self):
+      '''Return an iterator.'''
       raise RuntimeError('Zq9SENTINEL7x')
 
   assert _safe_list(BadIter()) is None
@@ -1667,7 +1795,9 @@ def test_loop12_to_dict_error_type_allowlist():
 def test_loop12_hostile_dict_items_non_pair_no_crash():
   '''Hostile dict items() with non-pairs falls back to type.'''
   class HostileDict(dict):
+    '''Test double HostileDict.'''
     def items(self):
+      '''Items.'''
       return [('k', 'v', 'extra'), ('a', 'b')]
 
   err = FrameworkError(
@@ -1698,11 +1828,11 @@ def test_loop14_telemetry_import_does_not_load_audit():
   code = '\n'.join([
     'import sys',
     'import forecast_ml_framework.telemetry.exceptions as e',
-    "assert 'forecast_ml_framework.governance.audit' not in sys.modules",
-    "assert 'forecast_ml_framework.governance.lineage' not in sys.modules",
-    "assert 'forecast_ml_framework.governance.retention' not in sys.modules",
-    "err = e.FrameworkError(code='X_ERROR', user_message='x')",
-    "assert err.to_dict()['code'] == 'X_ERROR'",
+    'assert \'forecast_ml_framework.governance.audit\' not in sys.modules',
+    'assert \'forecast_ml_framework.governance.lineage\' not in sys.modules',
+    'assert \'forecast_ml_framework.governance.retention\' not in sys.modules',
+    'err = e.FrameworkError(code=\'X_ERROR\', user_message=\'x\')',
+    'assert err.to_dict()[\'code\'] == \'X_ERROR\'',
   ])
   proc = subprocess.run(
     [sys.executable, '-c', code], capture_output=True, text=True,
@@ -1829,18 +1959,18 @@ def test_loop14_telemetry_spool_tmp_fixture(telemetry_spool_tmp):
     'Zq9SENTINEL7x',
 ])
 def test_loop17_telemetry_type_name_scrubbed(type_name):
-    '''P1 telemetry: dynamic type name does not leak via context.'''
-    obj = type(type_name, (), {})()
-    err = FrameworkError(
+  '''P1 telemetry: dynamic type name does not leak via context.'''
+  obj = type(type_name, (), {})()
+  err = FrameworkError(
         code='X_ERROR', user_message='oops',
         context={'note': obj})
-    blob = json.dumps(err.to_dict())
-    assert 'Zq9SENTINEL7x' not in blob, repr(type_name)
-    assert 'Zq9SENTINEL7x' not in str(err), repr(type_name)
-    err_key = FrameworkError(
+  blob = json.dumps(err.to_dict())
+  assert 'Zq9SENTINEL7x' not in blob, repr(type_name)
+  assert 'Zq9SENTINEL7x' not in str(err), repr(type_name)
+  err_key = FrameworkError(
         code='X_ERROR', user_message='oops',
         context={obj: 'keep'})
-    assert 'Zq9SENTINEL7x' not in json.dumps(err_key.to_dict())
+  assert 'Zq9SENTINEL7x' not in json.dumps(err_key.to_dict())
 
 
 @pytest.mark.parametrize('text', [
@@ -1862,13 +1992,13 @@ def test_loop17_telemetry_type_name_scrubbed(type_name):
     'Bearer very}really Zq9SENTINEL7x',
 ])
 def test_loop17_telemetry_filler_and_bearer_scrubbed(text):
-    '''P2-P4 telemetry: filler/bracket patterns do not leak.'''
-    err = FrameworkError(
+  '''P2-P4 telemetry: filler/bracket patterns do not leak.'''
+  err = FrameworkError(
         code='X_ERROR', user_message='oops ' + text,
         context={'note': text})
-    blob = json.dumps(err.to_dict())
-    assert 'Zq9SENTINEL7x' not in blob, repr(text)
-    assert 'Zq9SENTINEL7x' not in str(err), repr(text)
+  blob = json.dumps(err.to_dict())
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert 'Zq9SENTINEL7x' not in str(err), repr(text)
 
 
 # --- loop17-arch/sec: H1/H2/H3/F1/F2 + suppress (RED) ---
@@ -1881,21 +2011,21 @@ def test_loop17_telemetry_filler_and_bearer_scrubbed(text):
     'a\u0301Zq9SENTINEL7x',
 ])
 def test_loop17_arch_telemetry_type_name_scrubbed(type_name):
-    '''H3/F1 telemetry: sentinel type names do not leak.'''
-    obj = type(type_name, (), {})()
-    err = FrameworkError(
+  '''H3/F1 telemetry: sentinel type names do not leak.'''
+  obj = type(type_name, (), {})()
+  err = FrameworkError(
         code='X_ERROR', user_message='oops',
         context={'note': obj})
-    blob = json.dumps(err.to_dict())
-    assert 'Zq9SENTINEL7x' not in blob, repr(type_name)
-    assert 'zqsentinelvalue' not in blob, repr(type_name)
-    assert 'Zq9SENTINEL7x' not in str(err), repr(type_name)
-    assert '***REDACTED***' in blob, repr(type_name)
-    err_key = FrameworkError(
+  blob = json.dumps(err.to_dict())
+  assert 'Zq9SENTINEL7x' not in blob, repr(type_name)
+  assert 'zqsentinelvalue' not in blob, repr(type_name)
+  assert 'Zq9SENTINEL7x' not in str(err), repr(type_name)
+  assert '***REDACTED***' in blob, repr(type_name)
+  err_key = FrameworkError(
         code='X_ERROR', user_message='oops',
         context={obj: 'keep'})
-    assert 'Zq9SENTINEL7x' not in json.dumps(err_key.to_dict())
-    assert 'zqsentinelvalue' not in json.dumps(err_key.to_dict())
+  assert 'Zq9SENTINEL7x' not in json.dumps(err_key.to_dict())
+  assert 'zqsentinelvalue' not in json.dumps(err_key.to_dict())
 
 
 @pytest.mark.parametrize('text', [
@@ -1908,79 +2038,79 @@ def test_loop17_arch_telemetry_type_name_scrubbed(type_name):
     'api wellknown key=Zq9SENTINEL7x',
 ])
 def test_loop17_arch_telemetry_filler_glued_scrubbed(text):
-    '''H1/H2/F2 telemetry: filler patterns do not leak.'''
-    err = FrameworkError(
+  '''H1/H2/F2 telemetry: filler patterns do not leak.'''
+  err = FrameworkError(
         code='X_ERROR', user_message='oops ' + text,
         context={'note': text})
-    blob = json.dumps(err.to_dict())
-    assert 'Zq9SENTINEL7x' not in blob, repr(text)
-    assert 'Zq9SENTINEL7x' not in str(err), repr(text)
+  blob = json.dumps(err.to_dict())
+  assert 'Zq9SENTINEL7x' not in blob, repr(text)
+  assert 'Zq9SENTINEL7x' not in str(err), repr(text)
 
 
 # --- loop18 P1: type name in exception messages (RED) ---
 
 def test_loop18_clean_context_type_name_scrubbed():
-    '''P1: _clean_context TypeError scrubs type name.'''
-    obj = type('Zq9SENTINEL7x', (), {})()
-    with pytest.raises(TypeError) as excinfo:
-        FrameworkError(code='X_ERROR', user_message='x', context=obj)
-    assert 'Zq9SENTINEL7x' not in str(excinfo.value)
-    assert '***REDACTED***' in str(excinfo.value)
+  '''P1: _clean_context TypeError scrubs type name.'''
+  obj = type('Zq9SENTINEL7x', (), {})()
+  with pytest.raises(TypeError) as excinfo:
+    FrameworkError(code='X_ERROR', user_message='x', context=obj)
+  assert 'Zq9SENTINEL7x' not in str(excinfo.value)
+  assert '***REDACTED***' in str(excinfo.value)
 
 
 def test_loop18_validate_context_mapping_type_name_scrubbed():
-    '''P1: _validate_context_mapping TypeError scrubs name.'''
-    obj = type('Zq9SENTINEL7x', (), {})()
-    with pytest.raises(TypeError) as excinfo:
-        wrap(ValueError('x'), context=obj)
-    assert 'Zq9SENTINEL7x' not in str(excinfo.value)
-    assert '***REDACTED***' in str(excinfo.value)
-    original = DataValidationError('bad', stage='eda')
-    with pytest.raises(TypeError) as excinfo2:
-        wrap(original, context=obj)
-    assert 'Zq9SENTINEL7x' not in str(excinfo2.value)
+  '''P1: _validate_context_mapping TypeError scrubs name.'''
+  obj = type('Zq9SENTINEL7x', (), {})()
+  with pytest.raises(TypeError) as excinfo:
+    wrap(ValueError('x'), context=obj)
+  assert 'Zq9SENTINEL7x' not in str(excinfo.value)
+  assert '***REDACTED***' in str(excinfo.value)
+  original = DataValidationError('bad', stage='eda')
+  with pytest.raises(TypeError) as excinfo2:
+    wrap(original, context=obj)
+  assert 'Zq9SENTINEL7x' not in str(excinfo2.value)
 
 
 def test_loop18_validate_code_owner_name_scrubbed():
-    '''P1: _validate_code prefix error scrubs owner name.'''
-    import forecast_ml_framework.telemetry.exceptions as exc_mod
+  '''P1: _validate_code prefix error scrubs owner name.'''
+  import forecast_ml_framework.telemetry.exceptions as exc_mod
 
-    with pytest.raises(ValueError) as excinfo:
-        exc_mod._validate_code(
+  with pytest.raises(ValueError) as excinfo:
+    exc_mod._validate_code(
             'TRAIN_OOM', 'INGEST_', 'Zq9SENTINEL7x')
-    assert 'Zq9SENTINEL7x' not in str(excinfo.value)
-    assert '***REDACTED***' in str(excinfo.value)
-    dyn = type(
+  assert 'Zq9SENTINEL7x' not in str(excinfo.value)
+  assert '***REDACTED***' in str(excinfo.value)
+  dyn = type(
         'Zq9SENTINEL7x', (FrameworkError,),
         {'_code_prefix': 'INGEST_'})
-    with pytest.raises(ValueError) as excinfo2:
-        dyn(code='TRAIN_OOM', user_message='x')
-    assert 'Zq9SENTINEL7x' not in str(excinfo2.value)
+  with pytest.raises(ValueError) as excinfo2:
+    dyn(code='TRAIN_OOM', user_message='x')
+  assert 'Zq9SENTINEL7x' not in str(excinfo2.value)
 
 
 def test_loop18_factory_cls_name_scrubbed():
-    '''P1: _factory prefix error scrubs cls name.'''
-    import forecast_ml_framework.telemetry.exceptions as exc_mod
+  '''P1: _factory prefix error scrubs cls name.'''
+  import forecast_ml_framework.telemetry.exceptions as exc_mod
 
-    dyn = type(
+  dyn = type(
         'Zq9SENTINEL7x', (FrameworkError,),
         {'_code_prefix': 'INGEST_'})
-    with pytest.raises(ValueError) as excinfo:
-        exc_mod._factory(dyn, 'TRAIN_OOM', 'dup', False)
-    assert 'Zq9SENTINEL7x' not in str(excinfo.value)
-    assert '***REDACTED***' in str(excinfo.value)
+  with pytest.raises(ValueError) as excinfo:
+    exc_mod._factory(dyn, 'TRAIN_OOM', 'dup', False)
+  assert 'Zq9SENTINEL7x' not in str(excinfo.value)
+  assert '***REDACTED***' in str(excinfo.value)
 
 
 def test_loop17_arch_wrap_untyped_preserves_suppress_context():
-    '''Untyped wrap preserves __suppress_context__ flag.'''
-    old = RuntimeError('boom')
-    old.__suppress_context__ = True
-    wrapped = wrap(old, stage='eda')
-    assert wrapped.__suppress_context__ is True
-    old2 = RuntimeError('boom')
-    old2.__suppress_context__ = False
-    wrapped2 = wrap(old2, stage='eda')
-    assert wrapped2.__suppress_context__ is False
+  '''Untyped wrap preserves __suppress_context__ flag.'''
+  old = RuntimeError('boom')
+  old.__suppress_context__ = True
+  wrapped = wrap(old, stage='eda')
+  assert wrapped.__suppress_context__ is True
+  old2 = RuntimeError('boom')
+  old2.__suppress_context__ = False
+  wrapped2 = wrap(old2, stage='eda')
+  assert wrapped2.__suppress_context__ is False
 
 
 # --- loop19 reviewer fixes (RED) ---

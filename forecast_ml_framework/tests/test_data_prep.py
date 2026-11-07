@@ -344,6 +344,7 @@ class _FakeSparkCountOnly:
   '''Fake Spark frame reporting rows via count() only.'''
 
   def __init__(self, rows):
+    '''Initialize the test double.'''
     self._rows = rows
     self.columns = ['id', 'x1', 'x2', 'cat', 'seq', 'target']
     self.to_pandas_calls = 0

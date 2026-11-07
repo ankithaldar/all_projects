@@ -7,54 +7,64 @@ import pytest
 
 
 def _loader(variables=None, parameters=None):
+  '''Loader.'''
   from forecast_ml_framework.core.config_loader import ConfigLoader
   return ConfigLoader(variables or {}, parameters or {})
 
 
 def test_config_get_from_parameters():
+  '''Test config get from parameters.'''
   loader = _loader(parameters={'model': {'lr': 0.1}})
   assert loader.get('model', 'lr') == 0.1
 
 
 def test_config_get_falls_back_to_variables():
+  '''Test config get falls back to variables.'''
   loader = _loader(variables={'paths': {'raw': 'data/raw'}})
   assert loader.get('paths', 'raw') == 'data/raw'
 
 
 def test_config_get_returns_default():
+  '''Test config get returns default.'''
   loader = _loader()
   assert loader.get('missing', 'key', 'fallback') == 'fallback'
   assert loader.get('missing', 'key') is None
 
 
 def test_task_type_explicit_override():
+  '''Test task type explicit override.'''
   loader = _loader(parameters={'task_type': 'classification'})
   assert loader.task_type() == 'classification'
 
 
 def test_task_type_autodetect_classification_from_target():
+  '''Test task type autodetect classification from target.'''
   loader = _loader(
       parameters={'target_col': 'label', 'target_type': 'classification'})
   assert loader.task_type() == 'classification'
 
 
 def test_task_type_autodetect_regression_from_target():
+  '''Test task type autodetect regression from target.'''
   loader = _loader(
       parameters={'target_col': 'price', 'target_type': 'regression'})
   assert loader.task_type() == 'regression'
 
 
 def test_task_type_defaults_to_classification():
+  '''Test task type defaults to classification.'''
   loader = _loader(parameters={'target_col': 'price'})
   assert loader.task_type() == 'classification'
 
 
 def test_task_type_explicit_regression_wins():
+  '''Test task type explicit regression wins.'''
   loader = _loader(parameters={'task_type': 'regression'})
   assert loader.task_type() == 'regression'
 
 
 def test_merged_features_union_minus_exclude():
+  '''Test merged features union minus exclude.'''
   loader = _loader(
       parameters={'business_features': ['b1', 'a'],
                   'exclude_features': ['x']})
@@ -64,6 +74,7 @@ def test_merged_features_union_minus_exclude():
 
 
 def test_merged_features_override_wins():
+  '''Test merged features override wins.'''
   loader = _loader(
       parameters={'feature_override': ['only1', 'only2'],
                   'business_features': ['b1'],
@@ -72,11 +83,13 @@ def test_merged_features_override_wins():
 
 
 def test_merged_features_dedup_preserves_order():
+  '''Test merged features dedup preserves order.'''
   loader = _loader(parameters={'business_features': ['a', 'a', 'b']})
   assert loader.merged_feature_list(['a', 'b', 'a']) == ['a', 'b']
 
 
 def test_local_artifact_store_roundtrip(tmp_path):
+  '''Test local artifact store roundtrip.'''
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
   store = LocalArtifactStore(str(tmp_path))
   assert not store.exists('a.txt')
@@ -89,6 +102,7 @@ def test_local_artifact_store_roundtrip(tmp_path):
 
 
 def test_local_artifact_store_dict_roundtrip(tmp_path):
+  '''Test local artifact store dict roundtrip.'''
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
   store = LocalArtifactStore(str(tmp_path))
   store.save('m.pkl', {'coef': [1, 2]})
@@ -96,6 +110,7 @@ def test_local_artifact_store_dict_roundtrip(tmp_path):
 
 
 def test_factory_selects_local(tmp_path):
+  '''Test factory selects local.'''
   from forecast_ml_framework.core.artifact_store import (
       LocalArtifactStore, create_artifact_store)
   store = create_artifact_store(
@@ -104,6 +119,7 @@ def test_factory_selects_local(tmp_path):
 
 
 def test_factory_selects_gcs_without_cloud_lib():
+  '''Test factory selects gcs without cloud lib.'''
   from forecast_ml_framework.core.artifact_store import (
       GCSArtifactStore, create_artifact_store)
   store = create_artifact_store({'type': 'gcs', 'bucket': 'bkt'})
@@ -112,6 +128,7 @@ def test_factory_selects_gcs_without_cloud_lib():
 
 
 def test_factory_selects_s3_without_cloud_lib():
+  '''Test factory selects s3 without cloud lib.'''
   from forecast_ml_framework.core.artifact_store import (
       S3ArtifactStore, create_artifact_store)
   store = create_artifact_store({'type': 's3', 'bucket': 'bkt2'})
@@ -120,13 +137,15 @@ def test_factory_selects_s3_without_cloud_lib():
 
 
 def test_factory_unknown_type_raises():
+  '''Test factory unknown type raises.'''
   from forecast_ml_framework.core.artifact_store import (
       create_artifact_store)
   with pytest.raises(ValueError):
-      create_artifact_store({'type': 'azure'})
+    create_artifact_store({'type': 'azure'})
 
 
 def test_spark_factory_disabled_returns_none():
+  '''Test spark factory disabled returns none.'''
   from forecast_ml_framework.core.spark_factory import SparkSessionFactory
   assert SparkSessionFactory.get_spark({'spark': {'enabled': False}}) is None
   assert SparkSessionFactory.get_spark({'enabled': False}) is None
@@ -143,6 +162,7 @@ def _hide_pyspark(monkeypatch):
 
 
 def test_spark_factory_unavailable_returns_none_gracefully(monkeypatch):
+  '''Test spark factory unavailable returns none gracefully.'''
   from forecast_ml_framework.core.spark_factory import SparkSessionFactory
   _hide_pyspark(monkeypatch)
   result = SparkSessionFactory.get_spark({'spark': {'enabled': True}})
@@ -150,12 +170,14 @@ def test_spark_factory_unavailable_returns_none_gracefully(monkeypatch):
 
 
 def test_to_pandas_passthrough_for_pandas_like():
+  '''Test to pandas passthrough for pandas like.'''
   from forecast_ml_framework.core.spark_factory import to_pandas
   sentinel = object()
   assert to_pandas(sentinel, {}) is sentinel
 
 
 def test_sql_query_dataset_loads_from_sqlite(tmp_path):
+  '''Test sql query dataset loads from sqlite.'''
   from forecast_ml_framework.core.datasets import SQLQueryDataSet
   db = tmp_path / 'data.db'
   import sqlite3
@@ -172,15 +194,17 @@ def test_sql_query_dataset_loads_from_sqlite(tmp_path):
 
 
 def test_spark_sql_dataset_stub_raises_without_spark(monkeypatch):
+  '''Test spark sql dataset stub raises without spark.'''
   from forecast_ml_framework.core.datasets import SparkSQLDataSet
   _hide_pyspark(monkeypatch)
   ds = SparkSQLDataSet(query='SELECT 1')
   # Kedro wraps load errors in DatasetError; accept any failure.
   with pytest.raises(Exception):
-      ds.load()
+    ds.load()
 
 
 def test_local_store_rejects_traversal(tmp_path):
+  '''Test local store rejects traversal.'''
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
   store = LocalArtifactStore(str(tmp_path))
   for bad in ('../escape.txt', 'a/../../escape.txt', '/etc/hostname',
@@ -196,12 +220,15 @@ def test_local_store_rejects_traversal(tmp_path):
 
 
 def test_local_store_pickle_evil_rejected(tmp_path):
+  '''Test local store pickle evil rejected.'''
   import os
   import pickle
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (os.system, ('echo pwned',))
 
   store = LocalArtifactStore(str(tmp_path))
@@ -211,6 +238,7 @@ def test_local_store_pickle_evil_rejected(tmp_path):
 
 
 def test_cloud_store_rejects_bad_keys():
+  '''Test cloud store rejects bad keys.'''
   from forecast_ml_framework.core.artifact_store import (
       GCSArtifactStore, S3ArtifactStore)
   for store in (GCSArtifactStore('b'), S3ArtifactStore('b')):
@@ -224,17 +252,20 @@ def test_cloud_store_rejects_bad_keys():
 
 
 def test_merged_override_str_is_single_feature():
+  '''Test merged override str is single feature.'''
   loader = _loader(parameters={'feature_override': 'only_feature'})
   assert loader.merged_feature_list(['a']) == ['only_feature']
 
 
 def test_merged_override_non_list_rejected():
+  '''Test merged override non list rejected.'''
   loader = _loader(parameters={'feature_override': {'a': 1}})
   with pytest.raises(ValueError):
     loader.merged_feature_list(['a'])
 
 
 def test_merged_override_cap():
+  '''Test merged override cap.'''
   loader = _loader(
       parameters={'feature_override': ['f%d' % i for i in range(10001)]})
   with pytest.raises(ValueError):
@@ -243,11 +274,13 @@ def test_merged_override_cap():
 
 def test_merged_override_nonexistent_passthrough_documented():
   # Existence validation is caller job; override passes through.
+  '''Test merged override nonexistent passthrough documented.'''
   loader = _loader(parameters={'feature_override': ['ghost_col']})
   assert loader.merged_feature_list(['a']) == ['ghost_col']
 
 
 def test_sql_dataset_rejects_write_and_multi_statement(tmp_path):
+  '''Test sql dataset rejects write and multi statement.'''
   from forecast_ml_framework.core.datasets import SQLQueryDataSet
   db = tmp_path / 'd.db'
   import sqlite3
@@ -263,6 +296,7 @@ def test_sql_dataset_rejects_write_and_multi_statement(tmp_path):
 
 
 def test_restricted_loads_chain_read_pickle_blocked(tmp_path):
+  '''Test restricted loads chain read pickle blocked.'''
   import os
   import pickle
   import pandas as pd
@@ -270,13 +304,17 @@ def test_restricted_loads_chain_read_pickle_blocked(tmp_path):
   marker = tmp_path / 'pwned'
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (os.system, (f'touch {marker}',))
 
   inner = pickle.dumps(Evil())
 
   class Outer:
+    '''Test double Outer.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (pd.read_pickle, (inner,))
 
   with pytest.raises(ValueError):
@@ -285,6 +323,7 @@ def test_restricted_loads_chain_read_pickle_blocked(tmp_path):
 
 
 def test_restricted_loads_read_csv_blocked(tmp_path):
+  '''Test restricted loads read csv blocked.'''
   import pickle
   import pandas as pd
   from forecast_ml_framework.core.artifact_store import restricted_loads
@@ -292,7 +331,9 @@ def test_restricted_loads_read_csv_blocked(tmp_path):
   secret.write_text('secret_col\n42\n', encoding='utf-8')
 
   class Outer:
+    '''Test double Outer.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (pd.read_csv, (str(secret),))
 
   with pytest.raises(ValueError):
@@ -300,6 +341,7 @@ def test_restricted_loads_read_csv_blocked(tmp_path):
 
 
 def test_restricted_loads_legit_roundtrips():
+  '''Test restricted loads legit roundtrips.'''
   import pickle
   import numpy as np
   import pandas as pd
@@ -316,6 +358,7 @@ def test_restricted_loads_legit_roundtrips():
 
 
 def test_restricted_loads_xgboost_roundtrip():
+  '''Test restricted loads xgboost roundtrip.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -330,6 +373,7 @@ def test_restricted_loads_xgboost_roundtrip():
 
 
 def test_restricted_loads_lightgbm_roundtrip():
+  '''Test restricted loads lightgbm roundtrip.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -344,6 +388,7 @@ def test_restricted_loads_lightgbm_roundtrip():
 
 
 def test_restricted_loads_catboost_roundtrip():
+  '''Test restricted loads catboost roundtrip.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -358,6 +403,7 @@ def test_restricted_loads_catboost_roundtrip():
 
 
 def test_restricted_loads_zoo_classifiers_roundtrip():
+  '''Test restricted loads zoo classifiers roundtrip.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -382,6 +428,7 @@ def test_restricted_loads_zoo_classifiers_roundtrip():
 
 
 def test_sql_validator_blocks_cte_delete_and_into_outfile(tmp_path):
+  '''Test sql validator blocks cte delete and into outfile.'''
   from forecast_ml_framework.core.datasets import (
       SQLQueryDataSet, _validate_read_only_query)
   db = tmp_path / 'd2.db'
@@ -421,6 +468,7 @@ def _has_value_error(exc):
 
 
 def test_spark_sql_dataset_validates_before_session(monkeypatch):
+  '''Test spark sql dataset validates before session.'''
   from forecast_ml_framework.core.datasets import SparkSQLDataSet
   _hide_pyspark(monkeypatch)
   calls = []
@@ -429,6 +477,7 @@ def test_spark_sql_dataset_validates_before_session(monkeypatch):
     '''Session stub: any sql() call proves validation was skipped.'''
 
     def sql(self, query):
+      '''Sql.'''
       calls.append(query)
       raise AssertionError('spark.sql must not be reached')
 
@@ -450,6 +499,7 @@ def test_spark_sql_dataset_validates_before_session(monkeypatch):
 
 
 def test_restricted_loads_rejects_non_bytes():
+  '''Test restricted loads rejects non bytes.'''
   from forecast_ml_framework.core.artifact_store import restricted_loads
   for bad in ('text', None, 123, ['x']):
     with pytest.raises(ValueError, match='requires bytes'):
@@ -457,6 +507,7 @@ def test_restricted_loads_rejects_non_bytes():
 
 
 def test_restricted_loads_rejects_malformed_and_truncated():
+  '''Test restricted loads rejects malformed and truncated.'''
   import pickle
   from forecast_ml_framework.core.artifact_store import restricted_loads
   for bad in (b'', b'not a pickle', b'\x80\x04\x95', b'\xff\xfe\x00'):
@@ -470,11 +521,14 @@ def test_restricted_loads_rejects_malformed_and_truncated():
 
 
 def test_restricted_loads_rejects_chained_os_system():
+  '''Test restricted loads rejects chained os system.'''
   import os
   import pickle
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (os.system, ('echo pwned',))
 
   from forecast_ml_framework.core.artifact_store import restricted_loads
@@ -483,19 +537,21 @@ def test_restricted_loads_rejects_chained_os_system():
 
 
 def test_restricted_loads_rejects_tzfile_global():
+  '''Test restricted loads rejects tzfile global.'''
   from forecast_ml_framework.core.artifact_store import (
     _SAFE_GLOBALS, restricted_loads)
   assert ('dateutil.tz.tz', 'tzfile') not in _SAFE_GLOBALS
   assert ('dateutil.tz._tzfile', 'tzfile') not in _SAFE_GLOBALS
   # Handcrafted protocol-0 pickle naming the allowlisted alias:
   # c<module>\n<name>\n then REDUCE on the probed path.
-  raw = (b"cdateutil.tz.tz\ntzfile\n"
-         b"(S'/tmp/definitely_missing_tz_xyz'\ntR.")
+  raw = (b'cdateutil.tz.tz\ntzfile\n'
+         b'(S\'/tmp/definitely_missing_tz_xyz\'\ntR.')
   with pytest.raises(ValueError, match='Forbidden pickle global'):
     restricted_loads(raw)
 
 
 def test_restricted_loads_booster_path_errors_are_generic():
+  '''Test restricted loads booster path errors are generic.'''
   import pickle
   import pytest as _pytest
   _pytest.importorskip('xgboost')
@@ -504,7 +560,9 @@ def test_restricted_loads_booster_path_errors_are_generic():
   probe = '/tmp/definitely_missing_secret_path_12345.model'
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (Booster, (None, None, probe))
 
   with _pytest.raises(ValueError) as excinfo:
@@ -515,6 +573,7 @@ def test_restricted_loads_booster_path_errors_are_generic():
 
 
 def test_restricted_loads_lightgbm_booster_path_errors_generic():
+  '''Test restricted loads lightgbm booster path errors generic.'''
   import pickle
   import pytest as _pytest
   _pytest.importorskip('lightgbm')
@@ -523,7 +582,9 @@ def test_restricted_loads_lightgbm_booster_path_errors_generic():
   probe = '/tmp/definitely_missing_secret_path_12345.txt'
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (Booster, (None, None, probe))
 
   with _pytest.raises(ValueError) as excinfo:
@@ -538,6 +599,7 @@ def test_restricted_loads_lightgbm_booster_path_errors_generic():
 
 
 def test_restricted_loads_xgboost_booster_valid_file_rejected(tmp_path):
+  '''Test restricted loads xgboost booster valid file rejected.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -552,7 +614,9 @@ def test_restricted_loads_xgboost_booster_valid_file_rejected(tmp_path):
   assert model_path.is_file()
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (Booster, (None, None, str(model_path)))
 
   with _pytest.raises(ValueError):
@@ -560,6 +624,7 @@ def test_restricted_loads_xgboost_booster_valid_file_rejected(tmp_path):
 
 
 def test_restricted_loads_lightgbm_booster_valid_file_rejected(tmp_path):
+  '''Test restricted loads lightgbm booster valid file rejected.'''
   import pickle
   import numpy as np
   import pytest as _pytest
@@ -574,7 +639,9 @@ def test_restricted_loads_lightgbm_booster_valid_file_rejected(tmp_path):
   assert model_path.is_file()
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (Booster, (None, None, str(model_path)))
 
   with _pytest.raises(ValueError):
@@ -582,6 +649,7 @@ def test_restricted_loads_lightgbm_booster_valid_file_rejected(tmp_path):
 
 
 def test_restricted_loads_xgboost_booster_kwargs_model_file_rejected():
+  '''Test restricted loads xgboost booster kwargs model file rejected.'''
   import copyreg
   import pickle
   import pytest as _pytest
@@ -590,7 +658,9 @@ def test_restricted_loads_xgboost_booster_kwargs_model_file_rejected():
   from xgboost import Booster
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (
           copyreg.__newobj_ex__,
           (Booster, (), {'model_file': '/etc/passwd'}))
@@ -601,6 +671,7 @@ def test_restricted_loads_xgboost_booster_kwargs_model_file_rejected():
 
 
 def test_restricted_loads_lightgbm_booster_kwargs_model_file_rejected():
+  '''Test restricted loads lightgbm booster kwargs model file rejected.'''
   import copyreg
   import pickle
   import pytest as _pytest
@@ -609,7 +680,9 @@ def test_restricted_loads_lightgbm_booster_kwargs_model_file_rejected():
   from lightgbm import Booster
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (
           copyreg.__newobj_ex__,
           (Booster, (), {'model_file': '/etc/passwd'}))
@@ -620,6 +693,7 @@ def test_restricted_loads_lightgbm_booster_kwargs_model_file_rejected():
 
 
 def test_restricted_loads_booster_fifo_rejected_promptly(tmp_path):
+  '''Test restricted loads booster fifo rejected promptly.'''
   import os
   import pickle
   import threading
@@ -631,13 +705,16 @@ def test_restricted_loads_booster_fifo_rejected_promptly(tmp_path):
   os.mkfifo(str(fifo_path))
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (Booster, (None, None, str(fifo_path)))
 
   raw = pickle.dumps(Evil())
   outcome = {}
 
   def run():
+    '''Run.'''
     try:
       outcome['value'] = restricted_loads(raw)
     except BaseException as exc:  # pylint: disable=broad-exception-caught
@@ -651,6 +728,7 @@ def test_restricted_loads_booster_fifo_rejected_promptly(tmp_path):
 
 
 def test_restricted_loads_oversized_pickle_rejected(monkeypatch):
+  '''Test restricted loads oversized pickle rejected.'''
   import pickle
   from forecast_ml_framework.core.artifact_store import restricted_loads
   raw = pickle.dumps({'a': [1, 2, 3]})
@@ -661,6 +739,7 @@ def test_restricted_loads_oversized_pickle_rejected(monkeypatch):
 
 
 def test_local_store_oversized_pickle_rejected(monkeypatch, tmp_path):
+  '''Test local store oversized pickle rejected.'''
   import pickle
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
   store = LocalArtifactStore(str(tmp_path))
@@ -671,6 +750,7 @@ def test_local_store_oversized_pickle_rejected(monkeypatch, tmp_path):
 
 
 def test_decode_payload_pickle_text_and_raw():
+  '''Test decode payload pickle text and raw.'''
   import pickle
   from forecast_ml_framework.core.artifact_store import _decode_payload
   assert _decode_payload(pickle.dumps([1, 2])) == [1, 2]
@@ -680,6 +760,7 @@ def test_decode_payload_pickle_text_and_raw():
 
 
 def test_validate_cloud_key_rejects_absolute_and_escape():
+  '''Test validate cloud key rejects absolute and escape.'''
   from forecast_ml_framework.core.artifact_store import _validate_cloud_key
   for bad in ('/abs/key', '\\abs\\key', '../escape', 'a/../b',
               'a\\..\\b', '..', 'x/../../y'):
@@ -691,6 +772,7 @@ def test_validate_cloud_key_rejects_absolute_and_escape():
 
 
 def test_local_store_bytes_and_empty_path(tmp_path):
+  '''Test local store bytes and empty path.'''
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
   store = LocalArtifactStore(str(tmp_path))
   assert store._full_path('') == str(tmp_path.resolve())
@@ -701,46 +783,60 @@ def test_local_store_bytes_and_empty_path(tmp_path):
 
 
 def _fake_google(monkeypatch):
+  '''Fake google.'''
   import io
   import sys
   import types
 
   class FakeBlob:
+    '''Test double FakeBlob.'''
     def __init__(self, bucket, name):
+      '''Initialize the instance.'''
       self._bucket = bucket
       self.name = name
 
     def upload_from_string(self, data):
+      '''Upload from string.'''
       self._bucket.objects[self.name] = data
 
     def open(self, mode='rb'):
+      '''Open.'''
       return io.BytesIO(self._bucket.objects[self.name])
 
     def download_as_bytes(self):
+      '''Download as bytes.'''
       raise AssertionError('must stream via open(), not download whole')
 
     def exists(self):
+      '''Exists.'''
       return self.name in self._bucket.objects
 
   class FakeBucket:
+    '''Test double FakeBucket.'''
     def __init__(self, name):
+      '''Initialize the instance.'''
       self.name = name
       self.objects = {}
 
     def blob(self, key):
+      '''Blob.'''
       return FakeBlob(self, key)
 
     def list_blobs(self, prefix=''):
+      '''List blobs.'''
       return [FakeBlob(self, k) for k in sorted(self.objects)
               if k.startswith(prefix)]
 
   shared_bucket = FakeBucket('bkt')
 
   class FakeClient:
+    '''Test double FakeClient.'''
     def __init__(self):
+      '''Initialize the instance.'''
       self._bucket = shared_bucket
 
     def bucket(self, name):
+      '''Bucket.'''
       assert name == 'bkt'
       return self._bucket
 
@@ -757,6 +853,7 @@ def _fake_google(monkeypatch):
 
 
 def test_gcs_store_branches_via_fake_sdk(monkeypatch):
+  '''Test gcs store branches via fake sdk.'''
   import pickle
   _fake_google(monkeypatch)
   from forecast_ml_framework.core.artifact_store import GCSArtifactStore
@@ -782,6 +879,7 @@ def test_gcs_store_branches_via_fake_sdk(monkeypatch):
 
 
 def test_gcs_client_missing_sdk_raises_import_error(monkeypatch):
+  '''Test gcs client missing sdk raises import error.'''
   import sys
   monkeypatch.setitem(sys.modules, 'google', None)
   from forecast_ml_framework.core.artifact_store import GCSArtifactStore
@@ -790,36 +888,46 @@ def test_gcs_client_missing_sdk_raises_import_error(monkeypatch):
 
 
 def _fake_boto3(monkeypatch):
+  '''Fake boto3.'''
   import io
   import sys
   import types
 
   class FakePaginator:
+    '''Test double FakePaginator.'''
     def __init__(self, client):
+      '''Initialize the instance.'''
       self._client = client
 
     def paginate(self, Bucket, Prefix=''):
+      '''Paginate.'''
       keys = sorted(k for k in self._client.objects
                     if k.startswith(Prefix))
       yield {'Contents': [{'Key': k} for k in keys]} if keys else {}
 
   class FakeS3:
+    '''Test double FakeS3.'''
     def __init__(self):
+      '''Initialize the instance.'''
       self.objects = {}
 
     def put_object(self, Bucket, Key, Body):
+      '''Put object.'''
       assert Bucket == 'bkt'
       self.objects[Key] = Body
 
     def get_object(self, Bucket, Key):
+      '''Get object.'''
       return {'Body': io.BytesIO(self.objects[Key])}
 
     def head_object(self, Bucket, Key):
+      '''Head object.'''
       if Key not in self.objects:
         raise KeyError(Key)
       return {}
 
     def get_paginator(self, name):
+      '''Get paginator.'''
       assert name == 'list_objects_v2'
       return FakePaginator(self)
 
@@ -831,6 +939,7 @@ def _fake_boto3(monkeypatch):
 
 
 def test_s3_store_branches_via_fake_sdk(monkeypatch):
+  '''Test s3 store branches via fake sdk.'''
   import pickle
   client = _fake_boto3(monkeypatch)
   from forecast_ml_framework.core.artifact_store import S3ArtifactStore
@@ -853,6 +962,7 @@ def test_s3_store_branches_via_fake_sdk(monkeypatch):
 
 
 def test_s3_client_missing_sdk_raises_import_error(monkeypatch):
+  '''Test s3 client missing sdk raises import error.'''
   import sys
   monkeypatch.setitem(sys.modules, 'boto3', None)
   from forecast_ml_framework.core.artifact_store import S3ArtifactStore
@@ -861,6 +971,7 @@ def test_s3_client_missing_sdk_raises_import_error(monkeypatch):
 
 
 def test_create_artifact_store_nested_and_aliases(tmp_path):
+  '''Test create artifact store nested and aliases.'''
   from forecast_ml_framework.core.artifact_store import (
     GCSArtifactStore, LocalArtifactStore, S3ArtifactStore,
     create_artifact_store)
@@ -881,15 +992,16 @@ def test_create_artifact_store_nested_and_aliases(tmp_path):
 
 
 def test_strip_sql_literals_blanks_quoted_keywords():
+  '''Test strip sql literals blanks quoted keywords.'''
   from forecast_ml_framework.core.datasets import _strip_sql_literals
-  out = _strip_sql_literals("SELECT 'DROP TABLE x' AS a, \"DELETE\" FROM t")
+  out = _strip_sql_literals('SELECT \'DROP TABLE x\' AS a, "DELETE" FROM t')
   # R8-01: single-quoted literals are blanked, but double-quoted
   # identifiers stay visible so the denylist can see quoted names.
   assert 'DROP' not in out and 'DELETE' in out
   assert 'SELECT' in out and 'FROM' in out
-  escaped = _strip_sql_literals("SELECT 'it''s DROP' FROM t")
+  escaped = _strip_sql_literals('SELECT \'it\'\'s DROP\' FROM t')
   assert 'DROP' not in escaped
-  unterminated = _strip_sql_literals("SELECT 'abc")
+  unterminated = _strip_sql_literals('SELECT \'abc')
   assert 'abc' not in unterminated
   assert _strip_sql_literals('SELECT 1') == 'SELECT 1'
 
@@ -921,17 +1033,19 @@ def test_validate_allows_double_quoted_identifiers():
 
 
 def test_validate_read_only_query_edges():
+  '''Test validate read only query edges.'''
   from forecast_ml_framework.core.datasets import _validate_read_only_query
   assert _validate_read_only_query('SELECT 1;') == 'SELECT 1;'
   assert _validate_read_only_query('SELECT 1 ; ') == 'SELECT 1 ; '
   assert _validate_read_only_query(
-      "SELECT ';' FROM t WHERE x = 'a;b'") is not None
+      'SELECT \';\' FROM t WHERE x = \'a;b\'') is not None
   for bad in (None, '', '   ', 123, b'SELECT 1'):
     with pytest.raises(ValueError):
       _validate_read_only_query(bad)
 
 
 def test_sql_dataset_dict_and_kwargs_alias_merging():
+  '''Test sql dataset dict and kwargs alias merging.'''
   from forecast_ml_framework.core.datasets import SQLQueryDataSet
   ds = SQLQueryDataSet(
       {'connection': 'dict-conn', 'query': 'SELECT 1'},
@@ -955,9 +1069,12 @@ def test_sql_dataset_dict_and_kwargs_alias_merging():
 
 
 def test_sql_dataset_engine_branches(tmp_path):
+  '''Test sql dataset engine branches.'''
   from forecast_ml_framework.core.datasets import SQLQueryDataSet
   class _Engine:
+    '''Test double _Engine.'''
     def connect(self):
+      '''Connect.'''
       return None
 
   sentinel = _Engine()
@@ -984,6 +1101,7 @@ def test_sql_dataset_engine_branches(tmp_path):
 
 
 def test_sql_dataset_engine_missing_sqlalchemy(monkeypatch):
+  '''Test sql dataset engine missing sqlalchemy.'''
   import sys
   monkeypatch.setitem(sys.modules, 'sqlalchemy', None)
   from forecast_ml_framework.core.datasets import SQLQueryDataSet
@@ -993,6 +1111,7 @@ def test_sql_dataset_engine_missing_sqlalchemy(monkeypatch):
 
 
 def test_spark_dataset_aliases_and_fake_session():
+  '''Test spark dataset aliases and fake session.'''
   from forecast_ml_framework.core.datasets import SparkSQLDataSet
   ds = SparkSQLDataSet({'jdbc_config': {'url': 'jdbc:x'}},
                        sql='SELECT 1')
@@ -1004,7 +1123,9 @@ def test_spark_dataset_aliases_and_fake_session():
   assert ds2.spark == 'sess' and ds2.config == {'a': 1}
 
   class FakeSpark:
+    '''Test double FakeSpark.'''
     def sql(self, query):
+      '''Sql.'''
       return ('ran', query)
 
   ds3 = SparkSQLDataSet(spark=FakeSpark(), query='SELECT 1')
@@ -1016,6 +1137,7 @@ def test_spark_dataset_aliases_and_fake_session():
 
 
 def test_spark_dataset_no_query_and_no_session(monkeypatch):
+  '''Test spark dataset no query and no session.'''
   from forecast_ml_framework.core.datasets import SparkSQLDataSet
   with pytest.raises(ValueError, match='requires a query'):
     SparkSQLDataSet(spark=object())._load()
@@ -1029,6 +1151,7 @@ def test_spark_dataset_no_query_and_no_session(monkeypatch):
 
 
 def test_restricted_pickle_dataset_roundtrip_and_aliases(tmp_path):
+  '''Test restricted pickle dataset roundtrip and aliases.'''
   import pickle
   from forecast_ml_framework.core.datasets import RestrictedPickleDataset
   path = tmp_path / 'sub' / 'model.pkl'
@@ -1060,10 +1183,13 @@ def test_restricted_pickle_dataset_roundtrip_and_aliases(tmp_path):
 
 
 def os_system_payload():
+  '''Os system payload.'''
   import os
 
   class Evil:
+    '''Test double Evil.'''
     def __reduce__(self):
+      '''Return the reduction tuple.'''
       return (os.system, ('echo pwned',))
 
   return Evil()
@@ -1073,6 +1199,7 @@ def os_system_payload():
 
 
 def test_spark_section_and_enabled_variants():
+  '''Test spark section and enabled variants.'''
   from forecast_ml_framework.core.spark_factory import (
     _spark_enabled, _spark_section)
   assert _spark_section(None) == {}
@@ -1094,6 +1221,7 @@ def test_spark_section_and_enabled_variants():
 
 
 def test_spark_builder_config_variants():
+  '''Test spark builder config variants.'''
   from forecast_ml_framework.core.spark_factory import (
     spark_builder_config)
   cfg = spark_builder_config({'spark': {
@@ -1107,10 +1235,10 @@ def test_spark_builder_config_variants():
   assert 'master' not in cfg and 'enabled' not in cfg
   with pytest.raises(ValueError) as excinfo:
     spark_builder_config({'spark_params': {'a': 1}})
-  assert "'a'" in str(excinfo.value)
+  assert '\'a\'' in str(excinfo.value)
   with pytest.raises(ValueError) as excinfo:
     spark_builder_config({'spark_parameters': {'b': 2}})
-  assert "'b'" in str(excinfo.value)
+  assert '\'b\'' in str(excinfo.value)
   cfg13 = spark_builder_config({'spark': {'spark_params': {
     'spark.sql.shuffle.partitions': 13}}})
   assert cfg13['spark.sql.shuffle.partitions'] == 13
@@ -1120,7 +1248,7 @@ def test_spark_builder_config_variants():
   with pytest.raises(ValueError) as excinfo:
     spark_builder_config({'spark': {'dynamic_allocation': True,
       'spark_params': {'extra': '1'}}})
-  assert "'extra'" in str(excinfo.value)
+  assert '\'extra\'' in str(excinfo.value)
   default = spark_builder_config(None)
   assert default['spark.sql.shuffle.partitions'] == 200
   assert default['spark.dynamicAllocation.enabled'] == 'true'
@@ -1128,6 +1256,7 @@ def test_spark_builder_config_variants():
 
 
 def test_pandas_limit_from_config_variants(monkeypatch):
+  '''Test pandas limit from config variants.'''
   from forecast_ml_framework.core.spark_factory import (
     _pandas_limit_from_config)
   assert _pandas_limit_from_config(None) == 5000000
@@ -1149,6 +1278,7 @@ def test_pandas_limit_from_config_variants(monkeypatch):
 
 
 def test_frame_counts_and_pandas_limits(monkeypatch):
+  '''Test frame counts and pandas limits.'''
   import sys
   import types
   import pandas as pd
@@ -1160,24 +1290,33 @@ def test_frame_counts_and_pandas_limits(monkeypatch):
   assert _frame_col_count(frame) == 2
 
   class Countable:
+    '''Test double Countable.'''
     def count(self):
+      '''Count.'''
       return 3
   assert _frame_row_count(Countable()) == 3
 
   class BadCount:
+    '''Test double BadCount.'''
     def count(self):
+      '''Count.'''
       raise RuntimeError('no')
     def __len__(self):
+      '''Return the length.'''
       return 4
   assert _frame_row_count(BadCount()) is None
 
   class LenOnly:
+    '''Test double LenOnly.'''
     def __len__(self):
+      '''Return the length.'''
       return 4
   assert _frame_row_count(LenOnly()) == 4
 
   class BadCountNoLen:
+    '''Test double BadCountNoLen.'''
     def count(self):
+      '''Count.'''
       raise RuntimeError('no')
   assert _frame_row_count(BadCountNoLen()) is None
   assert _frame_row_count(object()) is None
@@ -1189,6 +1328,7 @@ def test_frame_counts_and_pandas_limits(monkeypatch):
   import pandas as pd  # noqa: E402
 
   class BadCols:
+    '''Test double BadCols.'''
     columns = object()
   assert _frame_col_count(BadCols()) is None
   assert _frame_col_count(object()) is None
@@ -1198,7 +1338,9 @@ def test_frame_counts_and_pandas_limits(monkeypatch):
     check_pandas_limits(frame, {'max_rows_for_pandas': 1})
 
   class CountNoCols:
+    '''Test double CountNoCols.'''
     def count(self):
+      '''Count.'''
       return 10
   with pytest.raises(ValueError, match='max_rows_for_pandas'):
     check_pandas_limits(CountNoCols(), {'max_rows_for_pandas': 1})
@@ -1207,18 +1349,22 @@ def test_frame_counts_and_pandas_limits(monkeypatch):
   assert SparkSessionFactory.to_pandas(sentinel) is sentinel
 
   class WithPandas:
+    '''Test double WithPandas.'''
     def toPandas(self):
+      '''ToPandas.'''
       return 'converted'
   assert SparkSessionFactory.to_pandas(WithPandas()) == 'converted'
 
 
 def _install_fake_builder(monkeypatch, builder):
+  '''Install fake builder.'''
   import sys
   import types
   pyspark = types.ModuleType('pyspark')
   sql = types.ModuleType('pyspark.sql')
 
   class SparkSession:
+    '''Test double SparkSession.'''
     pass
   SparkSession.builder = builder
   sql.SparkSession = SparkSession
@@ -1228,22 +1374,29 @@ def _install_fake_builder(monkeypatch, builder):
 
 
 def test_get_spark_with_fake_builder(monkeypatch):
+  '''Test get spark with fake builder.'''
   from forecast_ml_framework.core.spark_factory import (
     SparkSessionFactory)
 
   class Builder:
+    '''Test double Builder.'''
     def __init__(self):
+      '''Initialize the instance.'''
       self.calls = []
     def master(self, value):
+      '''Master.'''
       self.calls.append(('master', value))
       return self
     def appName(self, value):
+      '''AppName.'''
       self.calls.append(('appName', value))
       return self
     def config(self, key, value):
+      '''Config.'''
       self.calls.append(('config', key, value))
       return self
     def getOrCreate(self):
+      '''GetOrCreate.'''
       return 'session'
   builder = Builder()
   _install_fake_builder(monkeypatch, builder)
@@ -1256,11 +1409,14 @@ def test_get_spark_with_fake_builder(monkeypatch):
 
 
 def test_get_spark_builder_failure_returns_none(monkeypatch):
+  '''Test get spark builder failure returns none.'''
   from forecast_ml_framework.core.spark_factory import (
     SparkSessionFactory)
 
   class Builder:
+    '''Test double Builder.'''
     def master(self, value):
+      '''Master.'''
       raise RuntimeError('boom')
   _install_fake_builder(monkeypatch, Builder())
   assert SparkSessionFactory.get_spark(
@@ -1365,19 +1521,23 @@ class _TrackingStream:
   '''File-like stream counting bytes returned by read().'''
 
   def __init__(self, data):
+    '''Initialize the instance.'''
     import io
     self._buf = io.BytesIO(data)
     self.bytes_read = 0
 
   def read(self, size=-1):
+    '''Read.'''
     chunk = self._buf.read(size)
     self.bytes_read += len(chunk)
     return chunk
 
   def __enter__(self):
+    '''Enter the context.'''
     return self
 
   def __exit__(self, *args):
+    '''Exit the context.'''
     return False
 
 
@@ -1391,20 +1551,25 @@ def _patch_tracking_open(monkeypatch):
     '''File wrapper counting bytes returned by read().'''
 
     def __init__(self, handle):
+      '''Initialize the instance.'''
       self._handle = handle
 
     def read(self, size=-1):
+      '''Read.'''
       data = self._handle.read(size)
       counter['bytes'] += len(data)
       return data
 
     def __enter__(self):
+      '''Enter the context.'''
       return self
 
     def __exit__(self, *args):
+      '''Exit the context.'''
       return False
 
   def _tracking_open(file, mode='r', *args, **kwargs):
+    '''Tracking open.'''
     return _TrackingFile(real_open(file, mode, *args, **kwargs))
 
   monkeypatch.setattr(builtins, 'open', _tracking_open)
@@ -1475,7 +1640,9 @@ def test_s3_store_over_cap_rejected_without_full_read(monkeypatch):
   stream = _TrackingStream(b'x' * (3 * _CHUNK_BYTES))
 
   class FakeS3:
+    '''Test double FakeS3.'''
     def get_object(self, Bucket, Key):
+      '''Get object.'''
       return {'Body': stream}
 
   boto_mod = types.ModuleType('boto3')
@@ -1496,18 +1663,25 @@ def test_gcs_store_over_cap_rejected_without_full_download(monkeypatch):
   stream = _TrackingStream(b'x' * (3 * _CHUNK_BYTES))
 
   class FakeBlob:
+    '''Test double FakeBlob.'''
     def open(self, mode='rb'):
+      '''Open.'''
       return stream
 
     def download_as_bytes(self):
+      '''Download as bytes.'''
       raise AssertionError('must stream via open(), not download whole')
 
   class FakeBucket:
+    '''Test double FakeBucket.'''
     def blob(self, key):
+      '''Blob.'''
       return FakeBlob()
 
   class FakeClient:
+    '''Test double FakeClient.'''
     def bucket(self, name):
+      '''Bucket.'''
       return FakeBucket()
 
   storage_mod = types.ModuleType('google.cloud.storage')
@@ -1536,15 +1710,20 @@ def test_gcs_store_no_open_raises_promptly_without_download(monkeypatch):
     '''Blob without open(): download must never be called.'''
 
     def download_as_bytes(self):
+      '''Download as bytes.'''
       calls['download'] += 1
       return b'x' * (3 * _CHUNK_BYTES)
 
   class FakeBucket:
+    '''Test double FakeBucket.'''
     def blob(self, key):
+      '''Blob.'''
       return FakeBlob()
 
   class FakeClient:
+    '''Test double FakeClient.'''
     def bucket(self, name):
+      '''Bucket.'''
       return FakeBucket()
 
   storage_mod = types.ModuleType('google.cloud.storage')

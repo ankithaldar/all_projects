@@ -485,6 +485,7 @@ def test_psi_clipped_then_renormalized_value():
   eps = 1e-4
 
   def _expected(ref_props, cur_props):
+    '''Expected.'''
     ref_c = np.clip(np.asarray(ref_props, dtype=float), eps, None)
     cur_c = np.clip(np.asarray(cur_props, dtype=float), eps, None)
     ref_n = ref_c / ref_c.sum()

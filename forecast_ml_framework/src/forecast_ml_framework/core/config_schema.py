@@ -769,7 +769,7 @@ def _oc_replacement(match):
         + match.group(0))
     default = rest.split(',', 1)[1].strip()
     if len(default) >= 2 and default[0] == default[-1] and (
-        default[0] in ('"', "'")):
+        default[0] in ('"', '\'')):
       default = default[1:-1]
     return default
   raise ValueError(
@@ -792,6 +792,14 @@ def _sanitize_oc_interpolations(cfg):
   plain = OmegaConf.to_container(cfg, resolve=False)
 
   def walk(node):
+    '''Recursively sanitize a plain container node.
+
+    Args:
+      node: Dict, list, string, or scalar from ``plain``.
+
+    Returns:
+      Sanitized node with ``oc.*`` interpolations handled.
+    '''
     if isinstance(node, dict):
       return {key: walk(value) for key, value in node.items()}
     if isinstance(node, list):
@@ -860,7 +868,7 @@ def _parse_ref_segments(text):
   index = 0
   length = len(text)
   while index < length:
-    if text[index] in ('"', "'"):
+    if text[index] in ('"', '\''):
       quote = text[index]
       end = text.find(quote, index + 1)
       if end == -1:
@@ -874,7 +882,7 @@ def _parse_ref_segments(text):
       inside = text[index + 1:end].strip()
       if re.fullmatch(r'-?[0-9]+', inside):
         parts.append(inside)
-      elif len(inside) >= 2 and inside[0] in ('"', "'") and (
+      elif len(inside) >= 2 and inside[0] in ('"', '\'') and (
           inside[-1] == inside[0]):
         parts.append(inside[1:-1])
       elif re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_\-]*', inside):
@@ -949,7 +957,7 @@ def _referenced_string(inner, current_path, flat):
     if quote is not None:
       if char == quote:
         quote = None
-    elif char in ('"', "'"):
+    elif char in ('"', '\''):
       quote = char
     elif char == '[':
       depth += 1
@@ -1126,7 +1134,26 @@ def _blocked_oc_resolvers():
         saved = {}
 
       def _make_blocker(name):
+        '''Create a blocker raising for an ``oc.*`` resolver.
+
+        Args:
+          name: Resolver name to report when blocked.
+
+        Returns:
+          Callable raising ``ValueError`` for any invocation.
+        '''
+
         def _blocked(*args, **kwargs):
+          '''Raise ``ValueError`` for any blocked resolver call.
+
+          Args:
+            *args: Positional arguments, ignored.
+            **kwargs: Keyword arguments, ignored.
+
+          Raises:
+            ValueError: Always, because ``oc.*`` resolvers
+              are blocked.
+          '''
           raise ValueError('oc.* resolvers are blocked: ' + name)
         return _blocked
 

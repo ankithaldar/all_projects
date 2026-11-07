@@ -70,6 +70,14 @@ class _LazyPlt:
   '''
 
   def __init__(self):
+    '''Initialize the lazy pyplot holder.
+
+    No import happens here; the real pyplot module
+    is loaded on first attribute access.
+
+    Returns:
+      None.
+    '''
     self._mod = None
 
   def _load(self):
@@ -82,6 +90,14 @@ class _LazyPlt:
     return self._mod
 
   def __getattr__(self, name):
+    '''Forward attribute access to the real pyplot module.
+
+    Args:
+      name: Attribute name requested on pyplot.
+
+    Returns:
+      The attribute from the lazily loaded pyplot module.
+    '''
     return getattr(self._load(), name)
 
 

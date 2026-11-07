@@ -912,6 +912,16 @@ def _spark_global_reassign(scored, params):
     return scored
 
   def _edges_for(col, n):
+    '''Return percentile edges for col via approxQuantile.
+
+    Args:
+      col: Score column name.
+      n: Number of tiles (edges are n + 1 percentiles).
+
+    Returns:
+      Sorted unique edge array, or [-inf, inf] when
+      approxQuantile yields no usable edges.
+    '''
     percentages = [i / n for i in range(n + 1)]
     try:
       raw = approx(col, percentages)
@@ -933,6 +943,15 @@ def _spark_global_reassign(scored, params):
   threshold = _model_threshold(params)
 
   def _assign_edges(part):
+    '''Assign score/calibration tile labels to one partition.
+
+    Args:
+      part: One Spark partition (or pandas DataFrame).
+
+    Returns:
+      The partition with score/calibration tile columns
+      added and the helper calibration score dropped.
+    '''
     pandas_conversion_params = _pandas_conversion_params(params)
     part = (part if isinstance(part, pd.DataFrame)
             else spark_factory.to_pandas(part, pandas_conversion_params))

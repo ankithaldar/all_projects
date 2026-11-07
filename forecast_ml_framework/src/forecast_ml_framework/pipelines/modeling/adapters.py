@@ -173,7 +173,7 @@ def resolve_handle(handle):
     raise ValueError(
       f'Cannot resolve handle {handle!r}: expected a dotted '
       'importable string such as '
-      "'sklearn.linear_model.LogisticRegression' for "
+      '\'sklearn.linear_model.LogisticRegression\' for '
       'model_handle / calibration_handle / tuning_handle, or a '
       'short adapter name (sklearn, xgboost, lightgbm, catboost, '
       'h2o_automl).')
@@ -265,10 +265,10 @@ def get_loss(adapter_name, loss):
     raise ValueError(
       f'Unknown loss_function {loss!r} for adapter '
       f'{adapter_name!r}: expected a plain string such as '
-      "'logloss' / 'squared_error', or a dotted callable "
-      "string such as 'forecast_ml_framework.losses.'"
-      "huber_loss' / 'sklearn.metrics.'"
-      "'mean_absolute_error'.")
+      '\'logloss\' / \'squared_error\', or a dotted callable '
+      'string such as \'forecast_ml_framework.losses.\''
+      'huber_loss\' / \'sklearn.metrics.\''
+      '\'mean_absolute_error\'.')
   if '.' in loss:
     try:
       return _resolve_loss_callable(loss)
@@ -288,9 +288,9 @@ def get_loss(adapter_name, loss):
       f'Unknown loss_function {loss!r} for adapter '
       f'{adapter_name!r}. Valid losses for {canonical}: '
       f'{sorted(registry)}. Or pass a dotted callable '
-      "string such as 'forecast_ml_framework.losses.'"
-      "huber_loss' / 'sklearn.metrics.'"
-      "'mean_absolute_error'.")
+      'string such as \'forecast_ml_framework.losses.\''
+      'huber_loss\' / \'sklearn.metrics.\''
+      '\'mean_absolute_error\'.')
   return registry[key]
 
 

@@ -376,6 +376,7 @@ class _HostileModel:
   '''Model whose predict always raises.'''
 
   def predict(self, X):
+    '''Return a prediction.'''
     raise RuntimeError('hostile model')
 
 

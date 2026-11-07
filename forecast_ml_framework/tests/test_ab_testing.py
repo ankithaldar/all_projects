@@ -8,6 +8,7 @@ class FakeModel:
   '''Fake model returning a fixed prediction.'''
 
   def __init__(self, value):
+    '''Initialize the test double.'''
     self.value = value
 
   def predict(self, features):
@@ -17,6 +18,7 @@ class FakeModel:
 
 
 def _make_router(mode='ab', split=0.1):
+  '''Make router.'''
   from forecast_ml_framework.serving.ab_testing import ABRouter
 
   champion = FakeModel(10.0)
@@ -27,6 +29,7 @@ def _make_router(mode='ab', split=0.1):
 
 
 def test_route_is_deterministic_for_same_request_id():
+  '''Route is deterministic for same request id.'''
   router = _make_router(mode='ab')
   first = router.route('req-1', [[1.0]])
   second = router.route('req-1', [[1.0]])
@@ -36,6 +39,7 @@ def test_route_is_deterministic_for_same_request_id():
 
 
 def test_traffic_split_approx_ten_percent_challenger():
+  '''Traffic split approx ten percent challenger.'''
   router = _make_router(mode='ab', split=0.1)
   challenger = sum(
     1
@@ -47,6 +51,7 @@ def test_traffic_split_approx_ten_percent_challenger():
 
 
 def test_ab_mode_returns_selected_variant_prediction():
+  '''Ab mode returns selected variant prediction.'''
   router = _make_router(mode='ab', split=0.5)
   seen = {}
   for i in range(200):
@@ -57,6 +62,7 @@ def test_ab_mode_returns_selected_variant_prediction():
 
 
 def test_shadow_mode_returns_champion_and_logs_both():
+  '''Shadow mode returns champion and logs both.'''
   router = _make_router(mode='shadow')
   result = router.route('req-shadow', [[1.0]])
   assert result['prediction'] == 10.0
@@ -70,6 +76,7 @@ def test_shadow_mode_returns_champion_and_logs_both():
 
 
 def test_compare_variants_aggregates_correctly():
+  '''Compare variants aggregates correctly.'''
   from forecast_ml_framework.serving.ab_testing import compare_variants
 
   logs = [
@@ -90,6 +97,7 @@ def test_compare_variants_aggregates_correctly():
 
 
 def test_compare_variants_from_shadow_logs_counts_both():
+  '''Compare variants from shadow logs counts both.'''
   from forecast_ml_framework.serving.ab_testing import compare_variants
 
   router = _make_router(mode='shadow')
@@ -103,6 +111,7 @@ def test_compare_variants_from_shadow_logs_counts_both():
 
 
 def test_compare_variants_empty_logs():
+  '''Compare variants empty logs.'''
   from forecast_ml_framework.serving.ab_testing import compare_variants
 
   result = compare_variants([])
@@ -111,6 +120,7 @@ def test_compare_variants_empty_logs():
 
 
 def test_invalid_mode_rejected():
+  '''Invalid mode rejected.'''
   import pytest
   from forecast_ml_framework.serving.ab_testing import ABRouter
 
@@ -119,6 +129,7 @@ def test_invalid_mode_rejected():
 
 
 def test_invalid_traffic_split_rejected():
+  '''Invalid traffic split rejected.'''
   import pytest
   from forecast_ml_framework.serving.ab_testing import ABRouter
 
@@ -127,6 +138,7 @@ def test_invalid_traffic_split_rejected():
 
 
 def test_salt_changes_bucket():
+  '''Salt changes bucket.'''
   from forecast_ml_framework.serving.ab_testing import ABRouter, _bucket
 
   left = ABRouter(
@@ -145,6 +157,7 @@ def test_salt_changes_bucket():
 
 
 def test_compare_variants_skips_none_and_malformed():
+  '''Compare variants skips none and malformed.'''
   from forecast_ml_framework.serving.ab_testing import compare_variants
 
   logs = [
@@ -168,10 +181,13 @@ def test_compare_variants_skips_none_and_malformed():
 
 
 def test_shadow_challenger_exception_returns_champion():
+  '''Shadow challenger exception returns champion.'''
   from forecast_ml_framework.serving.ab_testing import ABRouter
 
   class BadModel:
+    '''Bad Model test double.'''
     def predict(self, features):
+      '''Return a prediction.'''
       raise RuntimeError('challenger boom')
 
   router = ABRouter(
@@ -242,7 +258,9 @@ def test_shadow_challenger_secret_exception_not_logged(caplog):
   secret = 'supersecretpassword55555'
 
   class BadModel:
+    '''Bad Model test double.'''
     def predict(self, features):
+      '''Return a prediction.'''
       raise RuntimeError(f'password={secret}')
 
   router = ABRouter(

@@ -176,9 +176,11 @@ class _RecordingClassifier:
   '''Fake classifier recording construction.'''
 
   def __init__(self, **kwargs):
+    '''Store constructor kwargs for inspection.'''
     self.kwargs = kwargs
 
   def fit(self, x, y):
+    '''Return self without fitting.'''
     return self
 
 
@@ -186,13 +188,16 @@ class _RecordingRegressor:
   '''Fake regressor recording construction.'''
 
   def __init__(self, **kwargs):
+    '''Store constructor kwargs for inspection.'''
     self.kwargs = kwargs
 
   def fit(self, x, y):
+    '''Return self without fitting.'''
     return self
 
 
 def _fake_module(name, **attrs):
+  '''Build a fake module with the given attributes.'''
   module = types.ModuleType(name)
   for key, value in attrs.items():
     setattr(module, key, value)

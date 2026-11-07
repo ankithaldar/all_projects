@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 10 rollout: both grammars, lift + gate.'''
 
 import numpy as np
@@ -13,6 +14,7 @@ from forecast_ml_framework.pipelines.modeling.pipeline import (
 
 
 def _cls_data(n=1000):
+  '''Return synthetic classification data.'''
   rng = np.random.default_rng(0)
   proba_pos = rng.random(n)
   y_true = (proba_pos > 0.5).astype(int)
@@ -23,6 +25,7 @@ def _cls_data(n=1000):
 
 
 def _rollout(eval_metric):
+  '''Run evaluate, lift table, and promotion for a metric.'''
   y_true, y_pred, y_proba, x = _cls_data()
   params = {
     'task_type': 'classification',

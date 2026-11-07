@@ -133,7 +133,7 @@ def register_loss(dotted_name, func):
           or not dotted_name[len(prefix):].isidentifier()):
     raise ValueError(
       f'Cannot register loss {dotted_name!r}: name must be '
-      f"'{prefix}<identifier>'.")
+      f'\'{prefix}<identifier>\'.')
   if not callable(func):
     raise ValueError(
       f'Cannot register loss {dotted_name!r}: not callable.')

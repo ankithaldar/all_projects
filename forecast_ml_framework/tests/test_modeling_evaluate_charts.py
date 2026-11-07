@@ -649,6 +649,7 @@ def test_phase3_make_charts_dispatcher_new_groups():
 
 
 def test_compute_metrics_length_mismatch_raises():
+  '''compute_metrics raises on length-mismatched inputs.'''
   import pytest
   from forecast_ml_framework.pipelines.modeling.metrics import (
     compute_metrics,
@@ -664,6 +665,7 @@ def test_compute_metrics_length_mismatch_raises():
 
 
 def test_evaluate_model_length_mismatch_raises():
+  '''evaluate_model raises on length-mismatched inputs.'''
   import pandas as pd
   import pytest
   x = pd.DataFrame({'f1': [1.0, 2.0]})

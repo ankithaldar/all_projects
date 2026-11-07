@@ -600,6 +600,7 @@ def make_interpretability_charts(explain_outputs, params=None):
     return names, clean_imp, matrix
 
   def _shap_charts():
+    '''Assemble SHAP charts from names and matrix.'''
     names, clean_imp, matrix = _names_and_matrix()
     if matrix is not None and len(matrix) >= 2:
       _add_chart(figs, 'shap_beeswarm', charts.shap_beeswarm,
@@ -617,6 +618,7 @@ def make_interpretability_charts(explain_outputs, params=None):
   _chart_section('shap', _shap_charts)
 
   def _perm_chart():
+    '''Assemble the permutation importance chart.'''
     _add_chart(figs, 'permutation_importance_bar',
                charts.permutation_importance_bar,
                _list_or_empty(outputs.get('permutation')))
@@ -624,6 +626,7 @@ def make_interpretability_charts(explain_outputs, params=None):
   _chart_section('permutation_importance_bar', _perm_chart)
 
   def _pdp_chart():
+    '''Assemble the first PDP 1D chart, when present.'''
     pdp = _dict_or_empty(outputs.get('pdp'))
     if pdp:
       first = next(iter(pdp.values()))
@@ -632,6 +635,7 @@ def make_interpretability_charts(explain_outputs, params=None):
   _chart_section('pdp_1d', _pdp_chart)
 
   def _lime_chart():
+    '''Assemble the LIME bar chart, when present.'''
     lime = _dict_or_empty(outputs.get('lime'))
     if lime:
       _add_chart(figs, 'lime_bar', charts.lime_bar,

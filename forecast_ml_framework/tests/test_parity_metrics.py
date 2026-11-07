@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity tests for regression descriptive stats, confusion table, adj_r2.'''
 
 import pytest

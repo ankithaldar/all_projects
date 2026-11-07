@@ -68,6 +68,7 @@ def test_cli_train_prints_planned_command(capsys, monkeypatch):
 
 
 def test_main_entrypoint_parser_and_version(capsys):
+  '''Main entrypoint parser and version.'''
   import pytest
   from forecast_ml_framework.__main__ import main as entry_main
   from forecast_ml_framework.cli import _build_parser
@@ -82,6 +83,7 @@ def test_main_entrypoint_parser_and_version(capsys):
 
 def test_main_entrypoint_fallback_help_when_cli_missing(
     capsys, monkeypatch):
+  '''Main entrypoint fallback help when cli missing.'''
   import sys
   monkeypatch.setitem(
       sys.modules, 'forecast_ml_framework.cli', None)
@@ -92,6 +94,7 @@ def test_main_entrypoint_fallback_help_when_cli_missing(
 
 
 def test_main_entrypoint_fallback_to_kedro(monkeypatch):
+  '''Main entrypoint fallback to kedro.'''
   import sys
   import types
   monkeypatch.setitem(
@@ -110,6 +113,7 @@ def test_main_entrypoint_fallback_to_kedro(monkeypatch):
 
 
 def test_settings_import_smoke():
+  '''Settings import smoke.'''
   from pathlib import Path
   from forecast_ml_framework import settings
   from forecast_ml_framework.hooks import ForecastHooks
@@ -137,11 +141,13 @@ def test_serve_artifact_maps_to_env(monkeypatch, tmp_path, capsys):
   captured = {}
 
   def fake_run(planned, check=False, cwd=None, env=None):
+    '''Fake a run.'''
     captured['planned'] = planned
     captured['env'] = env
     captured['cwd'] = cwd
 
     class _R:
+      '''R test double.'''
       returncode = 0
     return _R()
 
@@ -165,6 +171,7 @@ def test_serve_artifact_maps_to_env(monkeypatch, tmp_path, capsys):
 
 def test_run_kedro_missing_project_returns_2_no_traceback(
     capsys, tmp_path, monkeypatch):
+  '''Run kedro missing project returns 2 no traceback.'''
   from forecast_ml_framework.cli import _run_kedro
   monkeypatch.chdir(tmp_path)
   rc = _run_kedro('train', 'local')
@@ -175,6 +182,7 @@ def test_run_kedro_missing_project_returns_2_no_traceback(
 
 
 def test_main_rejects_nonexistent_artifact(tmp_path, capsys):
+  '''Main rejects nonexistent artifact.'''
   from forecast_ml_framework.cli import main
   rc = main(['serve', '--env', 'local', '--artifact',
              str(tmp_path / 'nope.pkl')])
@@ -184,6 +192,7 @@ def test_main_rejects_nonexistent_artifact(tmp_path, capsys):
 
 
 def test_list_pipelines_lists_registered(capsys):
+  '''List pipelines lists registered.'''
   from forecast_ml_framework.cli import main
   assert main(['list-pipelines', '--env', 'local']) == 0
   out = capsys.readouterr().out
@@ -192,12 +201,14 @@ def test_list_pipelines_lists_registered(capsys):
 
 
 def test_validate_config_ok(capsys):
+  '''Validate config ok.'''
   from forecast_ml_framework.cli import main
   assert main(['validate-config', '--env', 'base']) == 0
   assert 'config ok' in capsys.readouterr().out
 
 
 def test_dry_run_prints_plan_without_executing(capsys):
+  '''Dry run prints plan without executing.'''
   from forecast_ml_framework.cli import main
   assert main(['dry-run', 'eda', '--env', 'local']) == 0
   out = capsys.readouterr().out
@@ -205,6 +216,7 @@ def test_dry_run_prints_plan_without_executing(capsys):
 
 
 def test_dry_run_unknown_pipeline_exit_2(capsys):
+  '''Dry run unknown pipeline exit 2.'''
   from forecast_ml_framework.cli import main
   assert main(['dry-run', 'nope', '--env', 'local']) == 2
   assert 'forecast-ml: error:' in capsys.readouterr().err
@@ -223,6 +235,7 @@ def test_cli_env_whitelist_and_traversal_rc2(capsys):
 
 
 def test_validate_config_nonexistent_env_rc2(capsys):
+  '''Validate config nonexistent env rc2.'''
   from forecast_ml_framework.cli import main
   assert main(['validate-config', '--env', 'doesnotexist']) == 2
   assert 'forecast-ml: error:' in capsys.readouterr().err
@@ -233,13 +246,13 @@ def test_find_project_root_strict(tmp_path, monkeypatch):
   from forecast_ml_framework.cli import _find_project_root
   # Candidate with [tool.kedro] but wrong package_name: reject.
   (tmp_path / 'pyproject.toml').write_text(
-    "[tool.kedro]\npackage_name = 'other_pkg'\n")
+    '[tool.kedro]\npackage_name = \'other_pkg\'\n')
   (tmp_path / 'conf').mkdir()
   monkeypatch.chdir(tmp_path)
   assert _find_project_root() is None
   # Correct package_name but no conf and not CONF_SOURCE parent.
   (tmp_path / 'pyproject.toml').write_text(
-    "[tool.kedro]\npackage_name = 'forecast_ml_framework'\n")
+    '[tool.kedro]\npackage_name = \'forecast_ml_framework\'\n')
   import shutil as _sh
   _sh.rmtree(tmp_path / 'conf')
   assert _find_project_root() is None
@@ -273,11 +286,13 @@ def test_serve_relative_artifact_resolved_absolute_from_subdir(
   captured = {}
 
   def fake_run(planned, check=False, cwd=None, env=None):
+    '''Fake a run.'''
     captured['planned'] = planned
     captured['env'] = env
     captured['cwd'] = cwd
 
     class _R:
+      '''R test double.'''
       returncode = 0
     return _R()
 
@@ -321,9 +336,11 @@ def test_serve_non_loopback_without_key_refused_no_spawn(
   calls = []
 
   def _fake_run(*args, **kwargs):
+    '''Fake run.'''
     calls.append((args, kwargs))
 
     class _R:
+      '''R test double.'''
       returncode = 0
     return _R()
 

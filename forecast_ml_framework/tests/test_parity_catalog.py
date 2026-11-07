@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 9: catalog anchors + eval_metric config.'''
 
 from pathlib import Path
@@ -15,6 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _catalog():
+  '''Load and return the parsed catalog.yml.'''
   with open(_ROOT / 'conf/base/catalog.yml') as handle:
     return yaml.safe_load(handle)
 
@@ -120,6 +122,6 @@ def test_modeling_yml_commented_eval_metric_examples():
   assert 'LIFT_DECILE_10' in text
   assert 'LIFT_CENTILE_100' in text
   assert 'RMSE_CENTILE_100' in text
-  assert "eval_metric: 'aucpr'" in text
+  assert 'eval_metric: \'aucpr\'' in text
   lines = [line for line in text.splitlines() if 'LIFT_DECILE_10' in line]
   assert any(line.strip().startswith('#') for line in lines)

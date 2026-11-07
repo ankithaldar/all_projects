@@ -46,6 +46,7 @@ class _SparkLike:
   '''Spark-like frame exposing toPandas only.'''
 
   def __init__(self, frame):
+    '''Initialize the test double.'''
     self._frame = frame
 
   def toPandas(self):
@@ -57,6 +58,7 @@ class _RecordingDataset:
   '''Fake catalog destination recording save calls.'''
 
   def __init__(self):
+    '''Initialize the test double.'''
     self.saved = []
 
   def save(self, data):
@@ -234,6 +236,7 @@ def test_write_predictions_empty_warns_not_crashes(caplog):
 
 
 def test_score_data_prep_empty_registry_with_fitted_steps_raises():
+  '''Score data prep empty registry with fitted steps raises.'''
   from forecast_ml_framework.pipelines.scoring.pipeline import (
     score_data_prep,
   )
@@ -245,6 +248,7 @@ def test_score_data_prep_empty_registry_with_fitted_steps_raises():
 
 
 def test_score_data_prep_empty_registry_no_fitted_steps_identity():
+  '''Score data prep empty registry no fitted steps identity.'''
   from forecast_ml_framework.pipelines.scoring.pipeline import (
     score_data_prep,
   )
@@ -254,6 +258,7 @@ def test_score_data_prep_empty_registry_no_fitted_steps_identity():
 
 
 def test_score_data_prep_applies_non_empty_registry():
+  '''Score data prep applies non empty registry.'''
   from forecast_ml_framework.pipelines.scoring.pipeline import (
     score_data_prep,
   )
@@ -330,6 +335,7 @@ class _RecordingModel:
   '''Model recording chunk sizes it was called with.'''
 
   def __init__(self):
+    '''Initialize the test double.'''
     self.sizes = []
 
   def predict(self, x):
@@ -446,6 +452,7 @@ class _FakeSparkCountOnly:
   '''Fake Spark frame reporting >5M rows via count() only.'''
 
   def __init__(self, rows):
+    '''Initialize the test double.'''
     self._rows = rows
     self.columns = ['id', 'f1', 'f2']
     self.to_pandas_calls = 0
@@ -465,6 +472,7 @@ class _FakeRegistryLoader:
 
   def __init__(self, registry_uri=None, model_name=None,
                alias='production', *args, **kwargs):
+    '''Initialize the test double.'''
     self.registry_uri = registry_uri
     self.model_name = model_name
     self.alias = alias
@@ -537,6 +545,7 @@ class _Rdd:
   '''Fake RDD exposing mapPartitions.'''
 
   def __init__(self, frame):
+    '''Initialize the test double.'''
     self._frame = frame
 
   def mapPartitions(self, func):
@@ -548,6 +557,7 @@ class _SparkPartitionable:
   '''Fake Spark frame with mapPartitions.'''
 
   def __init__(self, frame):
+    '''Initialize the test double.'''
     self._frame = frame
     self.columns = list(frame.columns)
 
@@ -566,7 +576,9 @@ def test_partitionable_variants():
     _is_spark_partitionable)
 
   class ViaRdd:
+    '''Via Rdd test double.'''
     def __init__(self, frame):
+      '''Initialize the test double.'''
       self.rdd = _Rdd(frame)
   assert _is_spark_partitionable(_SparkPartitionable(_frame())) is True
   assert _is_spark_partitionable(ViaRdd(_frame())) is True
@@ -595,7 +607,9 @@ def test_row_count_variants():
   assert _row_count(_SparkPartitionable(_frame())) == 3
 
   class LenOnly:
+    '''Len Only test double.'''
     def __len__(self):
+      '''Return the length.'''
       return 2
   assert _row_count(LenOnly()) == 2
 
@@ -634,14 +648,18 @@ def test_registry_loader_signature_fallbacks(monkeypatch):
     _registry_loader)
 
   class TwoArg:
+    '''Two Arg test double.'''
     def __init__(self, model_name, alias='production'):
+      '''Initialize the test double.'''
       self.args = (model_name, alias)
   monkeypatch.setattr(loader_mod, 'RegistryModelLoader', TwoArg)
   assert _registry_loader({'model_name': 'm'}).args == (
     'm', 'production')
 
   class ThreePositional:
+    '''Three Positional test double.'''
     def __init__(self, uri, name, alias, /):
+      '''Initialize the test double.'''
       self.args = (uri, name, alias)
   monkeypatch.setattr(
     loader_mod, 'RegistryModelLoader', ThreePositional)
@@ -654,21 +672,28 @@ def test_resolve_loader_path_load_and_errors(monkeypatch):
   import forecast_ml_framework.serving.model_loader as loader_mod
 
   class FakeFileLoader:
+    '''Fake File Loader test double.'''
     def __init__(self, path):
+      '''Initialize the test double.'''
       self.path = path
     def __call__(self):
+      '''Call the test double.'''
       return _FakeModel()
   monkeypatch.setattr(loader_mod, 'FileModelLoader', FakeFileLoader)
   assert isinstance(_resolve_loader({'model_path': '/tmp/m'}, None),
                     _FakeModel)
 
   class Loadable:
+    '''Loadable test double.'''
     def load(self):
+      '''Load a value.'''
       return _FakeModel()
   assert isinstance(_resolve_loader({}, Loadable()), _FakeModel)
 
   class BadLoadable:
+    '''Bad Loadable test double.'''
     def load(self):
+      '''Load a value.'''
       return object()
   with pytest.raises(TypeError):
     _resolve_loader({}, BadLoadable())
@@ -712,11 +737,14 @@ def test_load_and_predict_spark_partitionable():
 def test_predict_spark_via_rdd_and_empty(caplog):
   '''Spark predict works via rdd and warns on empty.'''
   class ViaRdd:
+    '''Via Rdd test double.'''
     def __init__(self, frame):
+      '''Initialize the test double.'''
       self._frame = frame
       self.columns = list(frame.columns)
       self.rdd = _Rdd(frame)
     def count(self):
+      '''Return the count.'''
       return len(self._frame)
   params = _params(spark_scoring=True)
   out = predict(ViaRdd(_frame()), params,
@@ -744,21 +772,29 @@ def test_predict_spark_empty_and_non_df_results():
   '''Spark predict handles empty partitions and non-DF results.'''
 
   class EmptyPartition:
+    '''Empty Partition test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.columns = ['id', 'f1', 'f2']
     def count(self):
+      '''Return the count.'''
       return 3
     def mapPartitions(self, func):
+      '''Map partitions.'''
       empty = pd.DataFrame({'id': pd.Series([], dtype=int),
                             'f1': pd.Series([], dtype=float)})
       return func(empty)
 
   class NonDfResult:
+    '''Non Df Result test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.columns = ['id', 'f1', 'f2']
     def count(self):
+      '''Return the count.'''
       return 3
     def mapPartitions(self, func):
+      '''Map partitions.'''
       return 'spark-result'
   params = _params(spark_scoring={'enabled': True})
   assert len(predict(EmptyPartition(), params,

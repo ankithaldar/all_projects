@@ -27,6 +27,7 @@ from forecast_ml_framework.core.config_schema import (  # noqa: E402
 
 
 def _root():
+  '''Root.'''
   return Path(__file__).resolve().parents[1]
 
 
@@ -38,6 +39,7 @@ def _params_raw():
 
 
 def _params():
+  '''Params.'''
   return yaml.safe_load(_params_raw())
 
 
@@ -50,17 +52,20 @@ def _params_omegaconf():
 
 
 def _catalog(env='base'):
+  '''Catalog.'''
   with (_root() / 'conf' / env / 'catalog.yml').open() as handle:
     return yaml.safe_load(handle)
 
 
 def _catalog_raw(env='base'):
+  '''Catalog raw.'''
   return (_root() / 'conf' / env / 'catalog.yml').read_text()
 
 
 # --- parameters: new sections ------------------------------------------------
 
 def test_monitoring_params_keys():
+  '''Monitoring params keys.'''
   params = _params()
   assert 'monitoring_params' in params
   m = params['monitoring_params']
@@ -73,6 +78,7 @@ def test_monitoring_params_keys():
 
 
 def test_retraining_params_keys():
+  '''Retraining params keys.'''
   params = _params()
   assert 'retraining_params' in params
   r = params['retraining_params']
@@ -84,6 +90,7 @@ def test_retraining_params_keys():
 
 
 def test_feature_store_params_keys():
+  '''Feature store params keys.'''
   params = _params()
   assert 'feature_store_params' in params
   f = params['feature_store_params']
@@ -95,6 +102,7 @@ def test_feature_store_params_keys():
 
 
 def test_ab_params_keys():
+  '''Ab params keys.'''
   params = _params()
   assert 'ab_params' in params
   ab = params['ab_params']
@@ -106,6 +114,7 @@ def test_ab_params_keys():
 
 
 def test_cost_params_keys():
+  '''Cost params keys.'''
   params = _params()
   assert 'cost_params' in params
   c = params['cost_params']
@@ -116,6 +125,7 @@ def test_cost_params_keys():
 
 
 def test_governance_params_keys():
+  '''Governance params keys.'''
   params = _params()
   assert 'governance_params' in params
   g = params['governance_params']
@@ -128,6 +138,7 @@ def test_governance_params_keys():
 # --- OmegaConf + pydantic compatibility --------------------------------------
 
 def test_new_sections_resolve_via_omegaconf():
+  '''New sections resolve via omegaconf.'''
   base = _root() / 'conf' / 'base'
   cfg = OmegaConf.merge(
       {'variables': OmegaConf.load(base / 'variables.yml'),
@@ -143,6 +154,7 @@ def test_new_sections_resolve_via_omegaconf():
 
 
 def test_new_sections_pass_pydantic():
+  '''New sections pass pydantic.'''
   cfg = validate_parameters(_params())
   dumped = cfg.model_dump()
   for section in ('monitoring_params', 'retraining_params',
@@ -153,6 +165,7 @@ def test_new_sections_pass_pydantic():
 
 
 def test_load_config_both_envs():
+  '''Load config both envs.'''
   for env in ('base', 'local'):
     cfg = load_config(env)
     for section in ('monitoring_params', 'retraining_params',
@@ -175,6 +188,7 @@ _NEW_LEAF_KEYS = (
 
 
 def test_every_new_key_is_commented():
+  '''Every new key is commented.'''
   raw = _params_raw()
   new_raw = raw[raw.index('monitoring_params:'):]
   lines = new_raw.splitlines()
@@ -207,6 +221,7 @@ _SECRET_PATTERNS = (
 
 
 def test_no_secrets_in_new_config():
+  '''No secrets in new config.'''
   texts = [_params_raw(), _catalog_raw('base'), _catalog_raw('gcp'),
            _catalog_raw('aws'), _catalog_raw('local'),
            (_root() / 'conf' / 'README.md').read_text(),
@@ -222,6 +237,7 @@ def test_no_secrets_in_new_config():
 # --- catalog entries ---
 
 def test_phase3_catalog_entries():
+  '''Phase3 catalog entries.'''
   catalog = _catalog()
   for name in ('monitoring_report', 'alerts', 'cost_log', 'lineage',
                'audit_log'):
@@ -232,6 +248,7 @@ def test_phase3_catalog_entries():
 
 
 def test_new_catalog_types_importable():
+  '''New catalog types importable.'''
   import importlib
   import importlib.util
   catalog = _catalog()
@@ -250,6 +267,7 @@ def test_new_catalog_types_importable():
 
 
 def test_catalog_env_overlays_parse():
+  '''Catalog env overlays parse.'''
   for env in ('local', 'gcp', 'aws'):
     assert _catalog(env) is not None
 
@@ -257,6 +275,7 @@ def test_catalog_env_overlays_parse():
 # --- README ---
 
 def test_readme_documents_new_sections():
+  '''Readme documents new sections.'''
   readme = (_root() / 'conf' / 'README.md').read_text()
   for section in ('monitoring_params', 'retraining_params',
                   'feature_store_params', 'ab_params', 'cost_params',
@@ -271,6 +290,7 @@ def test_readme_documents_new_sections():
 # --- infra GCP ---
 
 def test_gcp_scheduler_count_gated_disabled_by_default():
+  '''Gcp scheduler count gated disabled by default.'''
   vars_tf = (_root() / 'infra' / 'gcp' / 'variables.tf').read_text()
   main_tf = (_root() / 'infra' / 'gcp' / 'main.tf').read_text()
   m = re.search(
@@ -286,6 +306,7 @@ def test_gcp_scheduler_count_gated_disabled_by_default():
 
 
 def test_gcp_pubsub_topic_for_alerts():
+  '''Gcp pubsub topic for alerts.'''
   main_tf = (_root() / 'infra' / 'gcp' / 'main.tf').read_text()
   assert 'google_pubsub_topic' in main_tf
   assert 'alerts' in main_tf
@@ -296,6 +317,7 @@ def test_gcp_pubsub_topic_for_alerts():
 
 
 def test_gcp_infra_readme_phase3():
+  '''Gcp infra readme phase3.'''
   readme = (_root() / 'infra' / 'gcp' / 'README.md').read_text()
   assert 'google_cloud_scheduler_job' in readme
   assert 'google_pubsub_topic' in readme
@@ -306,12 +328,14 @@ def test_gcp_infra_readme_phase3():
 # --- infra AWS ---
 
 def test_aws_eventbridge_rule_stub_commented():
+  '''Aws eventbridge rule stub commented.'''
   main_tf = (_root() / 'infra' / 'aws' / 'main.tf').read_text()
   assert 'aws_cloudwatch_event_rule' in main_tf
   assert '# resource "aws_cloudwatch_event_rule"' in main_tf
 
 
 def test_aws_infra_readme_phase3():
+  '''Aws infra readme phase3.'''
   readme = (_root() / 'infra' / 'aws' / 'README.md').read_text()
   assert 'aws_cloudwatch_event_rule' in readme or \
     'eventbridge' in readme.lower()
@@ -347,11 +371,12 @@ def test_evaluation_metrics_to_calculate_commented():
       idx > 0 and lines[idx - 1].lstrip().startswith('#')) or any(
       '#' in line and 'metrics_to_calculate' in line for line in lines)
   # Commented 'all' and custom-list examples must be present.
-  assert "'all'" in raw or '"all"' in raw
+  assert '\'all\'' in raw or '"all"' in raw
   assert 'METRIC_REGISTRY' in raw
 
 
 def test_infra_readmes_documents_phase3():
+  '''Infra readmes documents phase3.'''
   for path in ('infra/README.md', 'infra/gcp/README.md', 'infra/aws/README.md'):
     text = (_root() / path).read_text()
     lowered = text.lower()

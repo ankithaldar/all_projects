@@ -100,8 +100,8 @@ def _strip_sql_literals(text):
   while i < len(text):
     ch = text[i]
     if in_literal:
-      if ch == "'":
-        if i + 1 < len(text) and text[i + 1] == "'":
+      if ch == '\'':
+        if i + 1 < len(text) and text[i + 1] == '\'':
           i += 2
           out.append(' ')
           continue
@@ -121,7 +121,7 @@ def _strip_sql_literals(text):
         in_identifier = False
       i += 1
       continue
-    if ch == "'":
+    if ch == '\'':
       in_literal = True
       out.append(' ')
     elif ch == '"':

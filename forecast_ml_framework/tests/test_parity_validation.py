@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 7: should_promote promotion gate.'''
 
 import math

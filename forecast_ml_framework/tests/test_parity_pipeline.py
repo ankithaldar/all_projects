@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 8: pipeline lift_table + promotion wiring.'''
 
 import math
@@ -15,6 +16,7 @@ from forecast_ml_framework.pipelines.modeling.pipeline import (
 
 
 def _cls_data(n=1000):
+  '''Return synthetic classification labels and probabilities.'''
   rng = np.random.default_rng(0)
   proba_pos = rng.random(n)
   y_true = (proba_pos > 0.5).astype(int)

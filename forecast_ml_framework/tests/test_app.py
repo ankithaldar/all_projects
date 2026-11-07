@@ -34,6 +34,7 @@ def _install_fake_mlflow(monkeypatch):
   exceptions = types.ModuleType('mlflow.exceptions')
 
   class MlflowException(Exception):
+    '''Mlflow Exception test double.'''
     pass
 
   MlflowException.__module__ = 'mlflow.exceptions'
@@ -43,10 +44,12 @@ def _install_fake_mlflow(monkeypatch):
     'set_tracking_uri'].append(uri)
 
   def _sklearn_load(uri):
+    '''Load with sklearn.'''
     calls['sklearn'].append(uri)
     return DummyModel()
 
   def _pyfunc_load(uri):
+    '''Load with pyfunc.'''
     calls['pyfunc'].append(uri)
     return DummyModel()
 
@@ -76,6 +79,7 @@ def _install_fake_mlflow_client(monkeypatch):
   pyfunc = types.ModuleType('mlflow.pyfunc')
 
   class MlflowException(Exception):
+    '''Mlflow Exception test double.'''
     pass
 
   MlflowException.__module__ = 'mlflow.exceptions'
@@ -86,21 +90,26 @@ def _install_fake_mlflow_client(monkeypatch):
       'set_tracking_uri'].append(uri)
 
   class _Version:
+    '''Version test double.'''
     version = '3'
     run_id = 'run-1'
     source = 'fake-source'
 
   class _FakeClient:
+    '''Fake Client test double.'''
     def __init__(self, tracking_uri=None, registry_uri=None):
+      '''Initialize the test double.'''
       calls['client'].append(
           {'tracking_uri': tracking_uri,
            'registry_uri': registry_uri})
 
     def get_model_version_by_alias(self, name, alias):
+      '''Return model version by alias.'''
       calls['version'].append((name, alias))
       return _Version()
 
     def download_artifacts(self, run_id, path, dst_path=None):
+      '''Download artifacts.'''
       calls['download'].append((run_id, path, dst_path))
       model = LinearRegression().fit([[1.0, 2.0]], [3.0])
       base = Path(dst_path) if dst_path else Path(
@@ -113,6 +122,7 @@ def _install_fake_mlflow_client(monkeypatch):
   tracking.MlflowClient = _FakeClient
 
   def _sklearn_load(uri):
+    '''Load with sklearn.'''
     calls['sklearn'].append(uri)
     raise AssertionError('sklearn.load_model must not be used')
 
@@ -172,6 +182,7 @@ def test_predict_empty_rejected():
 
 
 def test_predict_missing_feature_422():
+  '''Predict missing feature 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -183,6 +194,7 @@ def test_predict_missing_feature_422():
 
 
 def test_predict_nested_dict_422():
+  '''Predict nested dict 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -191,6 +203,7 @@ def test_predict_nested_dict_422():
 
 
 def test_predict_wrong_type_422():
+  '''Predict wrong type 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -199,6 +212,7 @@ def test_predict_wrong_type_422():
 
 
 def test_predict_nonfinite_422():
+  '''Predict nonfinite 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -210,6 +224,7 @@ def test_predict_nonfinite_422():
 
 
 def test_predict_too_many_records_413():
+  '''Predict too many records 413.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -219,6 +234,7 @@ def test_predict_too_many_records_413():
 
 
 def test_predict_too_many_feature_keys_413():
+  '''Predict too many feature keys 413.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -283,6 +299,7 @@ def test_registry_loader_failure_500_no_leak():
   from forecast_ml_framework.serving.app import create_app
 
   def bad_loader():
+    '''Return a bad loader.'''
     raise RuntimeError('/secret/dir/model.pkl not found')
 
   client = TestClient(create_app(bad_loader))
@@ -293,6 +310,7 @@ def test_registry_loader_failure_500_no_leak():
 
 
 def test_predict_huge_int_422():
+  '''Predict huge int 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -304,13 +322,16 @@ def test_predict_huge_int_422():
 
 
 def test_predict_unknown_feature_key_422():
+  '''Predict unknown feature key 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class StrictModel:
+    '''Strict Model test double.'''
     feature_names_in_ = ['a', 'b']
 
     def predict(self, rows):
+      '''Return a prediction.'''
       return [sum(row) for row in rows]
 
   client = TestClient(create_app(lambda: StrictModel()))
@@ -323,11 +344,14 @@ def test_predict_unknown_feature_key_422():
 
 
 def test_predict_nonfinite_output_500():
+  '''Predict nonfinite output 500.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class InfModel:
+    '''Inf Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return [float('inf') for _ in rows]
 
   client = TestClient(create_app(lambda: InfModel()))
@@ -337,11 +361,14 @@ def test_predict_nonfinite_output_500():
 
 
 def test_predict_nan_output_500():
+  '''Predict nan output 500.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class NanModel:
+    '''Nan Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return [float('nan') for _ in rows]
 
   client = TestClient(create_app(lambda: NanModel()))
@@ -351,6 +378,7 @@ def test_predict_nan_output_500():
 
 
 def test_predict_body_too_large_413():
+  '''Predict body too large 413.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -376,13 +404,16 @@ def test_predict_second_record_unknown_feature_422():
 
 
 def test_predict_second_record_unknown_vs_model_features_422():
+  '''Predict second record unknown vs model features 422.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class StrictModel:
+    '''Strict Model test double.'''
     feature_names_in_ = ['a', 'b']
 
     def predict(self, rows):
+      '''Return a prediction.'''
       return [sum(row) for row in rows]
 
   client = TestClient(create_app(lambda: StrictModel()))
@@ -401,6 +432,7 @@ def test_predict_chunked_body_over_cap_413_no_content_length():
   client = TestClient(create_app(dummy_loader))
 
   def chunks():
+    '''Chunks.'''
     yield b'{"features": {"a": 1.0}, "pad": "'
     yield b'x' * (6 * 1024 * 1024)
     yield b'x' * (6 * 1024 * 1024)
@@ -434,6 +466,7 @@ def test_api_key_auth_401_without_and_200_with(monkeypatch):
 
 
 def test_api_key_not_set_means_no_auth(monkeypatch):
+  '''Api key not set means no auth.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   monkeypatch.delenv('FORECAST_API_KEY', raising=False)
@@ -443,6 +476,7 @@ def test_api_key_not_set_means_no_auth(monkeypatch):
 
 
 def test_security_headers_present():
+  '''Security headers present.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
   client = TestClient(create_app(dummy_loader))
@@ -453,7 +487,7 @@ def test_security_headers_present():
     assert resp.headers.get('x-frame-options') == 'DENY'
     assert 'no-referrer' in resp.headers.get('referrer-policy', '')
     assert resp.headers.get('cache-control') == 'no-store'
-    assert "default-src 'none'" in resp.headers.get(
+    assert 'default-src \'none\'' in resp.headers.get(
         'content-security-policy', '')
   # Also on error responses.
   r = client.post('/predict', json={})
@@ -515,7 +549,9 @@ def test_predict_typed_loader_errors(monkeypatch):
   secret = '/secret/dir/model.pkl'
 
   def make(exc):
+    '''Make a value.'''
     def loader():
+      '''Return a loader.'''
       raise exc
     return loader
 
@@ -572,7 +608,9 @@ def test_predict_typed_loader_detail_strings():
   )
 
   def make(exc):
+    '''Make a value.'''
     def loader():
+      '''Return a loader.'''
       raise exc
     return loader
 
@@ -591,6 +629,7 @@ def test_predict_typed_loader_detail_strings():
   assert '/secret' not in r.text
 
   def bad_loader():
+    '''Return a bad loader.'''
     raise RuntimeError('/secret/dir/model.pkl boom')
 
   client = TestClient(create_app(bad_loader))
@@ -606,7 +645,9 @@ def test_predict_model_value_error_generic_500_no_leak():
   from forecast_ml_framework.serving.app import create_app
 
   class ValueErrorModel:
+    '''Value Error Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       raise ValueError('/secret/internal detail')
 
   client = TestClient(create_app(lambda: ValueErrorModel()))
@@ -634,6 +675,7 @@ def test_health_caches_probe_on_app_instance():
   calls = {'n': 0}
 
   def counting_loader():
+    '''Return a counting loader.'''
     calls['n'] += 1
     return DummyModel()
 
@@ -655,6 +697,7 @@ def test_health_caches_probe_on_app_instance():
 # --- loop6 dict predictions (RED) ---
 
 def test_check_predictions_finite_dict_values():
+  '''Check predictions finite dict values.'''
   import pytest
   from forecast_ml_framework.serving.app import _check_predictions_finite
   with pytest.raises(ValueError, match='finite'):
@@ -667,11 +710,14 @@ def test_check_predictions_finite_dict_values():
 
 
 def test_predict_dict_nonfinite_output_500():
+  '''Predict dict nonfinite output 500.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class DictInfModel:
+    '''Dict Inf Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return {'pred': [float('inf')]}
 
   client = TestClient(create_app(lambda: DictInfModel()))
@@ -683,6 +729,7 @@ def test_predict_dict_nonfinite_output_500():
 # --- loop7 serving finite (RED) ---
 
 def test_check_predictions_finite_numpy_decimal_complex():
+  '''Check predictions finite numpy decimal complex.'''
   import numpy as np
   from decimal import Decimal
   from forecast_ml_framework.serving.app import _check_predictions_finite
@@ -715,6 +762,7 @@ def test_check_predictions_finite_numpy_decimal_complex():
 # --- loop8 None/pd.NA/non-string leaf (RED) ---
 
 def test_check_predictions_finite_none_and_pd_na():
+  '''Check predictions finite none and pd na.'''
   import numpy as np
   import pandas as pd
   from forecast_ml_framework.serving.app import _check_predictions_finite
@@ -740,11 +788,14 @@ def test_check_predictions_finite_none_and_pd_na():
 
 
 def test_predict_none_output_500():
+  '''Predict none output 500.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class NoneModel:
+    '''None Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return [None for _ in rows]
 
   client = TestClient(create_app(lambda: NoneModel()))
@@ -754,11 +805,14 @@ def test_predict_none_output_500():
 
 
 def test_predict_string_label_output_200():
+  '''Predict string label output 200.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class LabelModel:
+    '''Label Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return ['cat' for _ in rows]
 
   client = TestClient(create_app(lambda: LabelModel()))
@@ -770,6 +824,7 @@ def test_predict_string_label_output_200():
 # --- loop9 masked/generator (RED) ---
 
 def test_check_predictions_finite_masked_constant_raises():
+  '''Check predictions finite masked constant raises.'''
   import numpy as np
   from forecast_ml_framework.serving.app import _check_predictions_finite
   with pytest.raises(ValueError, match='finite'):
@@ -781,6 +836,7 @@ def test_check_predictions_finite_masked_constant_raises():
 
 
 def test_check_predictions_finite_masked_array_raises_when_masked():
+  '''Check predictions finite masked array raises when masked.'''
   import numpy as np
   from forecast_ml_framework.serving.app import _check_predictions_finite
   masked = np.ma.array([1.0, 2.0], mask=[False, True])
@@ -796,21 +852,27 @@ def test_check_predictions_finite_masked_array_raises_when_masked():
 
 
 def test_predict_generator_predictions_return_list():
+  '''Predict generator predictions return list.'''
   from forecast_ml_framework.serving.app import _predict
 
   class GenModel:
+    '''Gen Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return (float(v) for v in [1.0, 2.0][:len(rows)])
 
   assert _predict(GenModel(), [{'a': 1.0}, {'a': 2.0}]) == [1.0, 2.0]
 
 
 def test_predict_generator_http_200_not_empty():
+  '''Predict generator http 200 not empty.'''
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class GenModel:
+    '''Gen Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return (sum(row) for row in rows)
 
   client = TestClient(create_app(lambda: GenModel()))
@@ -820,12 +882,15 @@ def test_predict_generator_http_200_not_empty():
 
 
 def test_predict_masked_output_500():
+  '''Predict masked output 500.'''
   import numpy as np
   from fastapi.testclient import TestClient
   from forecast_ml_framework.serving.app import create_app
 
   class MaskedModel:
+    '''Masked Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       return np.ma.masked
 
   client = TestClient(create_app(lambda: MaskedModel()))
@@ -914,6 +979,7 @@ def test_secret_exception_never_in_caplog(monkeypatch, caplog):
   secret = 'supersecretpassword12345'
 
   def bad_loader():
+    '''Return a bad loader.'''
     raise RuntimeError(f'password={secret} /secret/dir/model.pkl')
 
   monkeypatch.delenv('FORECAST_API_KEY', raising=False)
@@ -936,7 +1002,9 @@ def test_secret_predict_exception_never_in_caplog(monkeypatch, caplog):
   secret = 'supersecretpassword99999'
 
   class SecretModel:
+    '''Secret Model test double.'''
     def predict(self, rows):
+      '''Return a prediction.'''
       raise ValueError(f'token={secret} internal-detail')
 
   monkeypatch.delenv('FORECAST_API_KEY', raising=False)
@@ -1024,6 +1092,7 @@ def test_health_cache_refresh_after_ttl(monkeypatch):
   calls = {'n': 0}
 
   def counting_loader():
+    '''Return a counting loader.'''
     calls['n'] += 1
     return DummyModel()
 
@@ -1047,6 +1116,7 @@ def test_health_cache_refresh_on_predict_success(monkeypatch):
   state = {'fail': True}
 
   def flaky_loader():
+    '''Flaky loader.'''
     if state['fail']:
       raise RuntimeError('not yet')
     return DummyModel()
@@ -1257,6 +1327,7 @@ def test_middleware_schema_422_logged_despite_concurrent_growth(
 
   async def downstream(scope, receive, send):
     # Concurrent success grows the list during downstream.
+    '''Downstream.'''
     audit.append({
       'event': 'predict', 'actor': 'serving',
       'details': {'outcome': 'success',
@@ -1274,12 +1345,14 @@ def test_middleware_schema_422_logged_despite_concurrent_growth(
            'method': 'POST', 'headers': [], 'scheme': 'http'}
 
   async def receive():
+    '''Receive.'''
     return {'type': 'http.request', 'body': b'{}',
             'more_body': False}
 
   sent = []
 
   async def send(message):
+    '''Send.'''
     sent.append(message)
 
   with caplog.at_level(logging.INFO):
@@ -1355,6 +1428,7 @@ def test_audit_failure_middleware_does_not_double_log(
   monkeypatch.delenv('FORECAST_ENV', raising=False)
 
   def failing_audit_log(*args, **kwargs):
+    '''Failing audit log.'''
     raise RuntimeError('audit sink down')
 
   monkeypatch.setattr(

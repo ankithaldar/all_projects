@@ -67,6 +67,7 @@ def test_scoring_ohe_align_behavior_preserved():
   assert 'cat_a' in out.columns and 'cat_b' in out.columns
   assert set(out['num'].tolist()) == {1.0, 2.0, 3.0}
   class _Model:
+    '''Model test double.'''
     feature_names_in_ = np.array(['cat_b', 'num', 'missing'])
   aligned = _align_to_fitted(out, _Model())
   assert list(aligned.columns) == ['cat_b', 'num', 'missing']
@@ -102,9 +103,12 @@ def test_spark_frame_row_count_hostile_still_none():
   '''F9: spark_factory counts tolerate hostile count()/len().'''
   from forecast_ml_framework.core import spark_factory
   class _Bad:
+    '''Bad test double.'''
     def count(self):
+      '''Return the count.'''
       raise RuntimeError('hostile')
     def __len__(self):
+      '''Return the length.'''
       raise RuntimeError('hostile')
   assert spark_factory._frame_row_count(_Bad()) is None
   assert spark_factory._frame_col_count(_Bad()) is None
@@ -177,9 +181,10 @@ def test_registry_warns_on_omitted_pipeline(monkeypatch):
   real_import = builtins.__import__
 
   def fake_import(name, *args, **kwargs):
+    '''Fake the import.'''
     if name == 'forecast_ml_framework.pipelines.modeling':
       raise ModuleNotFoundError(
-          "No module named 'forecast_ml_framework.pipelines.modeling'",
+          'No module named \'forecast_ml_framework.pipelines.modeling\'',
           name=name)
     return real_import(name, *args, **kwargs)
 
@@ -198,9 +203,10 @@ def test_registry_tolerates_missing_kedro(monkeypatch):
   real_import = builtins.__import__
 
   def fake_import(name, *args, **kwargs):
+    '''Fake the import.'''
     if name == 'forecast_ml_framework.pipelines.modeling':
       raise ModuleNotFoundError(
-          "No module named 'kedro'", name='kedro')
+          'No module named \'kedro\'', name='kedro')
     return real_import(name, *args, **kwargs)
 
   monkeypatch.setattr(builtins, '__import__', fake_import)
@@ -313,10 +319,13 @@ def test_high_score_ind_ge_consistent_at_threshold():
   class _FakeClassifier:
     '''Fake classifier spanning 0..1 including 0.5.'''
     def __init__(self, scores):
+      '''Initialize the test double.'''
       self._scores = np.asarray(scores, dtype=float)
     def predict(self, x):
+      '''Return a prediction.'''
       return (self._scores[:len(x)] >= 0.5).astype(int)
     def predict_proba(self, x):
+      '''Predict proba.'''
       scores = self._scores[:len(x)]
       return np.column_stack([1 - scores, scores])
   scores = np.linspace(0, 1, 101)

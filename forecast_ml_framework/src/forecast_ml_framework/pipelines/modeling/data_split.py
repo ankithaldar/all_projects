@@ -84,6 +84,16 @@ def _resolve_id_cols(params, sampling):
   found = []
 
   def _collect(raw):
+    '''Append raw id column name(s) to ``found``.
+
+    Args:
+      raw: Identifier column name, iterable of names,
+        or None (a no-op). Strings count as a single
+        column, never as an iterable of characters.
+
+    Returns:
+      None. ``found`` is updated in place.
+    '''
     if raw is None:
       return
     if isinstance(raw, str):

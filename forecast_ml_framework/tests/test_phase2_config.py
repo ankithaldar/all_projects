@@ -390,7 +390,7 @@ def test_ci_workflow_yaml_and_hardening():
   assert 'fmt' in str(tf_job)
   assert 'hashicorp/setup-terraform' in raw
   # demo asserts scoring pipeline
-  assert "'scoring'" in raw or '"scoring"' in raw
+  assert '\'scoring\'' in raw or '"scoring"' in raw
   assert 'scoring' in raw
 
 
@@ -411,8 +411,8 @@ def test_infra_gcp_hardening():
   m = re.search(r'variable\s+"enable_dataproc"\s*\{[^}]*default\s*=\s*(\w+)',
                 vars_tf, re.S)
   assert m and m.group(1) == 'false', vars_tf[vars_tf.find('enable_dataproc')-50:vars_tf.find('enable_dataproc')+200]
-  assert main_tf.count("public_access_prevention") >= 2
-  assert main_tf.count("'enforced'") >= 2 or main_tf.count('"enforced"') >= 2
+  assert main_tf.count('public_access_prevention') >= 2
+  assert main_tf.count('\'enforced\'') >= 2 or main_tf.count('"enforced"') >= 2
   assert 'internal_ip_only' in main_tf
 
 

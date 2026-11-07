@@ -7,6 +7,7 @@ import pytest
 
 
 def _df():
+  '''Df.'''
   import pandas as pd
   return pd.DataFrame({
       'entity_id': ['e1', 'e1', 'e2'],
@@ -17,6 +18,7 @@ def _df():
 
 
 def _offline(tmp_path):
+  '''Offline.'''
   from forecast_ml_framework.core.artifact_store import (
       LocalArtifactStore)
   from forecast_ml_framework.feature_store.offline import (
@@ -25,12 +27,14 @@ def _offline(tmp_path):
 
 
 def test_feature_store_abc_not_instantiable():
+  '''Feature store abc not instantiable.'''
   from forecast_ml_framework.feature_store.store import FeatureStore
   with pytest.raises(TypeError):
     FeatureStore()
 
 
 def test_offline_materialize_serve_roundtrip(tmp_path):
+  '''Offline materialize serve roundtrip.'''
   offline = _offline(tmp_path)
   key = offline.materialize(_df(), as_of='2024-01-03')
   assert key
@@ -46,6 +50,7 @@ def test_offline_materialize_serve_roundtrip(tmp_path):
 
 
 def test_offline_versioned_by_as_of(tmp_path):
+  '''Offline versioned by as of.'''
   offline = _offline(tmp_path)
   k1 = offline.materialize(_df(), as_of='2024-01-01')
   k2 = offline.materialize(_df(), as_of='2024-01-03')
@@ -57,6 +62,7 @@ def test_offline_versioned_by_as_of(tmp_path):
 
 
 def test_offline_point_in_time_excludes_future(tmp_path):
+  '''Offline point in time excludes future.'''
   offline = _offline(tmp_path)
   offline.materialize(_df(), as_of='2024-01-03')
   out = offline.get_features(
@@ -69,6 +75,7 @@ def test_offline_point_in_time_excludes_future(tmp_path):
 
 
 def test_offline_materialize_requires_entity_col(tmp_path):
+  '''Offline materialize requires entity col.'''
   import pandas as pd
   offline = _offline(tmp_path)
   with pytest.raises(ValueError):
@@ -77,6 +84,7 @@ def test_offline_materialize_requires_entity_col(tmp_path):
 
 
 def test_online_roundtrip_and_point_in_time():
+  '''Online roundtrip and point in time.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   online = OnlineFeatureStore()
@@ -91,6 +99,7 @@ def test_online_roundtrip_and_point_in_time():
 
 
 def test_online_set_features_point_in_time():
+  '''Online set features point in time.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   online = OnlineFeatureStore()
@@ -101,6 +110,7 @@ def test_online_set_features_point_in_time():
 
 
 def test_online_lazy_redis_optional_and_fake_client():
+  '''Online lazy redis optional and fake client.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   # No redis installed / no url: plain in-memory works.
@@ -110,13 +120,17 @@ def test_online_lazy_redis_optional_and_fake_client():
       'e1': {'f1': 1.0}}
 
   class FakeRedis:
+    '''Fake Redis test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.data = {}
 
     def set(self, key, value):
+      '''Set a value.'''
       self.data[key] = value
 
     def get(self, key):
+      '''Get a value.'''
       return self.data.get(key)
 
   fake = FakeRedis()
@@ -128,6 +142,7 @@ def test_online_lazy_redis_optional_and_fake_client():
 
 
 def test_consistency_zero_for_identical(tmp_path):
+  '''Consistency zero for identical.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   from forecast_ml_framework.feature_store.store import (
@@ -144,6 +159,7 @@ def test_consistency_zero_for_identical(tmp_path):
 
 
 def test_consistency_reports_diff_for_diverged(tmp_path):
+  '''Consistency reports diff for diverged.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   from forecast_ml_framework.feature_store.store import (
@@ -158,6 +174,7 @@ def test_consistency_reports_diff_for_diverged(tmp_path):
 
 
 def test_package_exports():
+  '''Package exports.'''
   import forecast_ml_framework.feature_store as fs
   assert fs.FeatureStore is not None
   assert fs.OfflineFeatureStore is not None
@@ -166,6 +183,7 @@ def test_package_exports():
 
 
 def test_offline_same_day_pit_preserves_morning_snapshot(tmp_path):
+  '''Offline same day pit preserves morning snapshot.'''
   import pandas as pd
   offline = _offline(tmp_path)
   morning = pd.DataFrame({
@@ -198,22 +216,27 @@ def test_offline_same_day_pit_preserves_morning_snapshot(tmp_path):
 
 
 def test_online_redis_unsorted_payload_still_point_in_time():
+  '''Online redis unsorted payload still point in time.'''
   import json
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
 
   class FakeRedis:
+    '''Fake Redis test double.'''
     def __init__(self):
       # Reversed: future record first.
+      '''Initialize the test double.'''
       self.data = {'feature:e1': json.dumps([
           {'as_of': '2024-01-03', 'features': {'f1': 3.0}},
           {'as_of': '2024-01-01', 'features': {'f1': 1.0}},
       ])}
 
     def set(self, key, value):
+      '''Set a value.'''
       self.data[key] = value
 
     def get(self, key):
+      '''Get a value.'''
       return self.data.get(key)
 
   online = OnlineFeatureStore(redis_client=FakeRedis())
@@ -222,6 +245,7 @@ def test_online_redis_unsorted_payload_still_point_in_time():
 
 
 def test_get_features_without_cutoff_warns_and_returns_latest(tmp_path):
+  '''Get features without cutoff warns and returns latest.'''
   import warnings
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
@@ -243,6 +267,7 @@ def test_get_features_without_cutoff_warns_and_returns_latest(tmp_path):
 
 
 def test_offline_materialize_empty_raises(tmp_path):
+  '''Offline materialize empty raises.'''
   import pandas as pd
   offline = _offline(tmp_path)
   with pytest.raises(ValueError, match='(?i)empty'):
@@ -252,6 +277,7 @@ def test_offline_materialize_empty_raises(tmp_path):
 
 
 def test_offline_get_features_unknown_on_empty_raises(tmp_path):
+  '''Offline get features unknown on empty raises.'''
   offline = _offline(tmp_path)
   with pytest.raises(ValueError):
     offline.get_features(
@@ -262,6 +288,7 @@ def test_offline_get_features_unknown_on_empty_raises(tmp_path):
 
 
 def test_store_helpers_entity_timestamp_and_version():
+  '''Store helpers entity timestamp and version.'''
   import pandas as pd
   from forecast_ml_framework.feature_store.store import (
     _find_entity_col, _find_timestamp_col, _normalize_frame, _version_key)
@@ -286,6 +313,7 @@ def test_store_helpers_entity_timestamp_and_version():
 
 
 def test_normalize_frame_missing_entity_and_timestamp():
+  '''Normalize frame missing entity and timestamp.'''
   import pandas as pd
   from forecast_ml_framework.feature_store.store import _normalize_frame
   with pytest.raises(ValueError, match='entity_id'):
@@ -299,6 +327,7 @@ def test_normalize_frame_missing_entity_and_timestamp():
 
 
 def test_snapshot_timestamp_parsing():
+  '''Snapshot timestamp parsing.'''
   from forecast_ml_framework.feature_store.store import (
     _snapshot_timestamp, _strip_tz)
   assert _snapshot_timestamp('features/2024-01-03T09-00-00.pkl') is not None
@@ -311,20 +340,27 @@ def test_snapshot_timestamp_parsing():
 
 
 def test_consistency_dict_and_frame_paths_and_skips():
+  '''Consistency dict and frame paths and skips.'''
   from forecast_ml_framework.feature_store.store import check_consistency
 
   class DictStore:
+    '''Dict Store test double.'''
     def __init__(self, data):
+      '''Initialize the test double.'''
       self._data = data
 
     def get_features(self, entity_ids, feature_names, as_of=None):
+      '''Return features.'''
       return {e: self._data[e] for e in entity_ids if e in self._data}
 
   class FrameStore:
+    '''Frame Store test double.'''
     def __init__(self, frame):
+      '''Initialize the test double.'''
       self._frame = frame
 
     def get_features(self, entity_ids, feature_names, as_of=None):
+      '''Return features.'''
       return self._frame
 
   import pandas as pd
@@ -349,6 +385,7 @@ def test_consistency_dict_and_frame_paths_and_skips():
 
 
 def test_offline_init_from_path_and_none(tmp_path):
+  '''Offline init from path and none.'''
   from forecast_ml_framework.feature_store.offline import (
       OfflineFeatureStore)
   from forecast_ml_framework.core.artifact_store import LocalArtifactStore
@@ -360,24 +397,31 @@ def test_offline_init_from_path_and_none(tmp_path):
 
 
 def test_offline_all_keys_fallback_and_bad_frames(tmp_path):
+  '''Offline all keys fallback and bad frames.'''
   offline = _offline(tmp_path)
   key = offline.materialize(_df(), as_of='2024-01-03')
   assert offline._all_keys() == [key]
   # Store whose list(prefix) raises falls back to list('').
   class FlakyStore:
+    '''Flaky Store test double.'''
     def __init__(self, inner):
+      '''Initialize the test double.'''
       self._inner = inner
 
     def save(self, path, data):
+      '''Save.'''
       return self._inner.save(path, data)
 
     def load(self, path):
+      '''Load a value.'''
       return self._inner.load(path)
 
     def exists(self, path):
+      '''Exists.'''
       return self._inner.exists(path)
 
     def list(self, prefix=''):
+      '''List.'''
       if prefix:
         raise RuntimeError('prefix unsupported')
       return self._inner.list(prefix)
@@ -393,6 +437,7 @@ def test_offline_all_keys_fallback_and_bad_frames(tmp_path):
 
 
 def test_offline_load_future_only_raises(tmp_path):
+  '''Offline load future only raises.'''
   offline = _offline(tmp_path)
   offline.materialize(_df(), as_of='2024-01-03')
   with pytest.raises(FileNotFoundError, match='No offline feature snapshot'):
@@ -408,6 +453,7 @@ def test_offline_load_future_only_raises(tmp_path):
 
 
 def test_offline_get_features_empty_and_filtered(tmp_path):
+  '''Offline get features empty and filtered.'''
   import pandas as pd
   offline = _offline(tmp_path)
   empty_out = offline.get_features(['e1'], as_of='2024-01-01')
@@ -428,6 +474,7 @@ def test_offline_get_features_empty_and_filtered(tmp_path):
 
 
 def test_online_redis_lazy_fallbacks(monkeypatch):
+  '''Online redis lazy fallbacks.'''
   import sys
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
@@ -442,13 +489,16 @@ def test_online_redis_lazy_fallbacks(monkeypatch):
 
 
 def test_online_redis_from_url_exception_falls_back(monkeypatch):
+  '''Online redis from url exception falls back.'''
   import sys
   import types
   redis_mod = types.ModuleType('redis')
 
   class BrokenRedis:
+    '''Broken Redis test double.'''
     @classmethod
     def from_url(cls, url):
+      '''From url.'''
       raise RuntimeError('unreachable')
 
   redis_mod.Redis = BrokenRedis
@@ -460,14 +510,18 @@ def test_online_redis_from_url_exception_falls_back(monkeypatch):
 
 
 def test_online_redis_bad_payloads_swallowed():
+  '''Online redis bad payloads swallowed.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
 
   class BadRedis:
+    '''Bad Redis test double.'''
     def set(self, key, value):
+      '''Set a value.'''
       raise RuntimeError('set failed')
 
     def get(self, key):
+      '''Get a value.'''
       return b'not-json{{{'
 
   store = OnlineFeatureStore(redis_client=BadRedis())
@@ -477,10 +531,13 @@ def test_online_redis_bad_payloads_swallowed():
       'e1': {'f1': 2.0}}
 
   class GetRaisesRedis:
+    '''Get Raises Redis test double.'''
     def set(self, key, value):
+      '''Set a value.'''
       pass
 
     def get(self, key):
+      '''Get a value.'''
       raise RuntimeError('get failed')
 
   store2 = OnlineFeatureStore(redis_client=GetRaisesRedis())
@@ -488,6 +545,7 @@ def test_online_redis_bad_payloads_swallowed():
 
 
 def test_online_materialize_with_feature_filter_and_df_view():
+  '''Online materialize with feature filter and df view.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   online = OnlineFeatureStore()
@@ -507,6 +565,7 @@ def test_online_materialize_with_feature_filter_and_df_view():
 
 
 def test_feature_store_parquet_roundtrip(tmp_path):
+  '''Feature store parquet roundtrip.'''
   import pandas as pd
   parquet_path = tmp_path / 'features.parquet'
   frame = _df()
@@ -529,15 +588,20 @@ def test_feature_store_parquet_roundtrip(tmp_path):
 
 
 def test_consistency_online_frame_and_offline_dict_paths():
+  '''Consistency online frame and offline dict paths.'''
   from forecast_ml_framework.feature_store.store import check_consistency
   import pandas as pd
 
   class DictStore:
+    '''Dict Store test double.'''
     def get_features(self, entity_ids, feature_names, as_of=None):
+      '''Return features.'''
       return {'e1': {'f1': 1.0}, 'e2': {'f1': 5.0}}
 
   class FrameStore:
+    '''Frame Store test double.'''
     def get_features(self, entity_ids, feature_names, as_of=None):
+      '''Return features.'''
       return pd.DataFrame({'entity_id': ['e1', 'e2'], 'f1': [1.0, 7.0]})
 
   out = check_consistency(
@@ -547,6 +611,7 @@ def test_consistency_online_frame_and_offline_dict_paths():
 
 
 def test_offline_tz_aware_pit(tmp_path):
+  '''Offline tz aware pit.'''
   import pandas as pd
   offline = _offline(tmp_path)
   frame = pd.DataFrame({
@@ -568,6 +633,7 @@ def test_offline_tz_aware_pit(tmp_path):
 
 
 def test_online_tz_aware_pit():
+  '''Online tz aware pit.'''
   import pandas as pd
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
@@ -584,6 +650,7 @@ def test_online_tz_aware_pit():
 
 
 def test_online_materialize_empty_raises():
+  '''Online materialize empty raises.'''
   import pandas as pd
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
@@ -595,6 +662,7 @@ def test_online_materialize_empty_raises():
 
 
 def test_online_get_features_unknown_on_empty_raises():
+  '''Online get features unknown on empty raises.'''
   from forecast_ml_framework.feature_store.online import (
       OnlineFeatureStore)
   online = OnlineFeatureStore()
@@ -605,6 +673,7 @@ def test_online_get_features_unknown_on_empty_raises():
 
 
 def test_offline_load_bad_date_is_file_not_found(tmp_path):
+  '''Offline load bad date is file not found.'''
   offline = _offline(tmp_path)
   offline.materialize(_df(), as_of='2024-01-03')
   with pytest.raises(FileNotFoundError):
@@ -614,6 +683,7 @@ def test_offline_load_bad_date_is_file_not_found(tmp_path):
 
 
 def test_offline_load_unparseable_key_via_text_match(tmp_path):
+  '''Offline load unparseable key via text match.'''
   offline = _offline(tmp_path)
   offline.artifact_store.save('features/custom.pkl', _df())
   frame = offline.load(as_of='custom')
@@ -629,6 +699,7 @@ def test_feature_helpers_canonical_in_store():
 
 
 def test_offline_combined_frame_pit_filter_and_row_cap(tmp_path):
+  '''Offline combined frame pit filter and row cap.'''
   offline = _offline(tmp_path)
   offline.materialize(_df(), as_of='2024-01-01')
   offline.materialize(_df(), as_of='2024-01-03')
@@ -652,11 +723,15 @@ def test_as_dict_shared_helper_handles_frame_and_dict():
   from forecast_ml_framework.feature_store.store import _as_dict
 
   class _FrameStore:
+    '''Frame Store test double.'''
     def get_features(self, ids, names, as_of=None):
+      '''Return features.'''
       return pd.DataFrame({'entity_id': ['e1'], 'f1': [1.5]})
 
   class _DictStore:
+    '''Dict Store test double.'''
     def get_features(self, ids, names, as_of=None):
+      '''Return features.'''
       return {'e1': {'f1': 1.5}}
 
   assert _as_dict(_FrameStore(), ['e1'], ['f1'], None) == {
@@ -726,13 +801,17 @@ def test_online_merge_redis_and_memory_latest_wins():
     OnlineFeatureStore)
 
   class FakeRedis:
+    '''Fake Redis test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.data = {}
 
     def set(self, key, value):
+      '''Set a value.'''
       self.data[key] = value
 
     def get(self, key):
+      '''Get a value.'''
       return self.data.get(key)
 
   fake = FakeRedis()
@@ -761,10 +840,13 @@ def test_online_redis_write_failure_is_logged(caplog):
     OnlineFeatureStore)
 
   class FailingRedis:
+    '''Failing Redis test double.'''
     def set(self, key, value):
+      '''Set a value.'''
       raise RuntimeError('redis down')
 
     def get(self, key):
+      '''Get a value.'''
       return None
 
   store = OnlineFeatureStore(redis_client=FailingRedis())
@@ -784,13 +866,17 @@ def test_online_numpy_values_roundtrip_through_redis():
     OnlineFeatureStore)
 
   class FakeRedis:
+    '''Fake Redis test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.data = {}
 
     def set(self, key, value):
+      '''Set a value.'''
       self.data[key] = value
 
     def get(self, key):
+      '''Get a value.'''
       return self.data.get(key)
 
   fake = FakeRedis()
@@ -814,7 +900,9 @@ def test_as_dict_frame_mapping_failure_is_logged(caplog):
   from forecast_ml_framework.feature_store.store import _as_dict
 
   class _FrameStore:
+    '''Frame Store test double.'''
     def get_features(self, ids, names, as_of=None):
+      '''Return features.'''
       return pd.DataFrame({'entity_id': ['e1'], 'f1': [1.5]})
 
   with caplog.at_level(logging.WARNING):

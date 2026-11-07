@@ -1,4 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for fitted preprocessing fit/apply and registry validation.'''
+
 def test_fit_apply_replays_train_bounds_on_shifted_data():
+  '''Fit/apply replays train bounds on shifted scoring data.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -17,6 +23,7 @@ def test_fit_apply_replays_train_bounds_on_shifted_data():
 
 
 def test_imputer_replays_train_median_not_score_median():
+  '''Imputer replays train median on scoring data, not score median.'''
   import pandas as pd, numpy as np
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -31,6 +38,7 @@ def test_imputer_replays_train_median_not_score_median():
 
 
 def test_registry_json_roundtrip():
+  '''Registry JSON roundtrip preserves apply behaviour.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -48,6 +56,7 @@ def test_registry_json_roundtrip():
 
 
 def test_fit_cap_skewed_bounds_raise():
+  '''Fit cap raises on skewed custom bounds.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -62,6 +71,7 @@ def test_fit_cap_skewed_bounds_raise():
 
 
 def test_fit_cap_quantile_out_of_range_raise():
+  '''Fit cap raises on out-of-range quantile bounds.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -76,6 +86,7 @@ def test_fit_cap_quantile_out_of_range_raise():
 
 
 def test_fit_cap_all_nan_raise():
+  '''Fit cap raises on all-NaN column.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -90,6 +101,7 @@ def test_fit_cap_all_nan_raise():
 
 
 def test_fit_cap_bad_pair_type_raise():
+  '''Fit cap raises on bad pair type.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -104,6 +116,7 @@ def test_fit_cap_bad_pair_type_raise():
 
 
 def test_fit_discretize_num_buckets_unbounded_raise():
+  '''Fit discretize raises on unbounded numBuckets.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -118,6 +131,7 @@ def test_fit_discretize_num_buckets_unbounded_raise():
 
 
 def test_fit_duplicate_step_names_raise():
+  '''Fit raises on duplicate step names.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -131,6 +145,7 @@ def test_fit_duplicate_step_names_raise():
 
 
 def test_fit_non_fitted_step_raises():
+  '''Fit raises on non-fitted step.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -144,6 +159,7 @@ def test_fit_non_fitted_step_raises():
 
 
 def test_registry_has_version_and_schema():
+  '''Registry carries version and schema.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -157,6 +173,7 @@ def test_registry_has_version_and_schema():
 
 
 def test_apply_ohe_filters_unseen_categories():
+  '''Apply OHE filters unseen categories.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     apply_preprocess,
@@ -176,6 +193,7 @@ def test_apply_ohe_filters_unseen_categories():
 
 
 def test_apply_ohe_respects_max_cols_cap():
+  '''Apply OHE respects max_cols cap.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -190,6 +208,7 @@ def test_apply_ohe_respects_max_cols_cap():
 
 
 def test_fit_ohe_exceeds_max_cols_raise():
+  '''Fit OHE raises when exceeding max_cols.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -205,6 +224,7 @@ def test_fit_ohe_exceeds_max_cols_raise():
 
 
 def test_data_prep_pipeline_fit_node_outputs_registry():
+  '''Data-prep pipeline fit node outputs registry.'''
   from forecast_ml_framework.pipelines.data_prep.pipeline import (
     create_pipeline,
   )
@@ -219,6 +239,7 @@ def test_data_prep_pipeline_fit_node_outputs_registry():
 
 
 def test_nodes_fit_preprocess_returns_registry_and_frame():
+  '''Nodes fit_preprocess returns registry and frame.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.nodes import (
     fit_preprocess,
@@ -233,6 +254,7 @@ def test_nodes_fit_preprocess_returns_registry_and_frame():
 
 
 def test_qcut_small_data_does_not_crash():
+  '''Qcut on small data does not crash.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -250,6 +272,7 @@ def test_qcut_small_data_does_not_crash():
 # --- high-fix: fitted finite-state / inf / all-NaN / version (RED) ---
 
 def test_apply_normalize_nonfinite_mu_raises():
+  '''Apply normalize raises on nonfinite mu.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -264,6 +287,7 @@ def test_apply_normalize_nonfinite_mu_raises():
 
 
 def test_apply_normalize_nonfinite_sd_and_lohi_raises():
+  '''Apply normalize raises on nonfinite sd/lo/hi.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -280,6 +304,7 @@ def test_apply_normalize_nonfinite_sd_and_lohi_raises():
 
 
 def test_apply_discretize_unsorted_or_nan_edges_raises():
+  '''Apply discretize raises on unsorted or NaN edges.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -294,6 +319,7 @@ def test_apply_discretize_unsorted_or_nan_edges_raises():
 
 
 def test_apply_impute_nonfinite_fill_raises():
+  '''Apply impute raises on nonfinite fill.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -307,6 +333,7 @@ def test_apply_impute_nonfinite_fill_raises():
 
 
 def test_apply_target_encode_nonfinite_global_raises():
+  '''Apply target encode raises on nonfinite global.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -320,6 +347,7 @@ def test_apply_target_encode_nonfinite_global_raises():
 
 
 def test_apply_registry_version_mismatch_raises():
+  '''Apply raises on registry version mismatch.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -332,6 +360,7 @@ def test_apply_registry_version_mismatch_raises():
 
 
 def test_fit_normalize_all_nan_and_inf_raises():
+  '''Fit normalize raises on all-NaN and inf data.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -349,6 +378,7 @@ def test_fit_normalize_all_nan_and_inf_raises():
 
 
 def test_fit_discretize_all_nan_and_inf_raises():
+  '''Fit discretize raises on all-NaN and inf data.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -367,6 +397,7 @@ def test_fit_discretize_all_nan_and_inf_raises():
 
 
 def test_fit_impute_all_nan_and_inf_raises():
+  '''Fit impute raises on all-NaN and inf data.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -387,6 +418,7 @@ def test_fit_impute_all_nan_and_inf_raises():
 
 
 def test_fit_target_encode_nonfinite_global_raises():
+  '''Fit target encode raises on nonfinite global.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -406,6 +438,7 @@ def test_fit_target_encode_nonfinite_global_raises():
 
 
 def test_fit_cap_inf_raises():
+  '''Fit cap raises on inf data.'''
   import numpy as np
   import pandas as pd
   import pytest
@@ -420,6 +453,7 @@ def test_fit_cap_inf_raises():
 
 
 def test_registry_to_json_rejects_nonfinite():
+  '''Registry to JSON rejects nonfinite values.'''
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     registry_to_json,
@@ -431,6 +465,7 @@ def test_registry_to_json_rejects_nonfinite():
 
 
 def test_fit_ohe_dummy_name_collision_pair():
+  '''Fit OHE raises on dummy name collision pair.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -446,6 +481,7 @@ def test_fit_ohe_dummy_name_collision_pair():
 
 
 def test_fit_ohe_dummy_collides_with_existing_column():
+  '''Fit OHE raises when dummy collides with existing column.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -461,6 +497,7 @@ def test_fit_ohe_dummy_collides_with_existing_column():
 
 
 def test_apply_ohe_dummy_name_collision_pair():
+  '''Apply OHE raises on dummy name collision pair.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -475,6 +512,7 @@ def test_apply_ohe_dummy_name_collision_pair():
 
 
 def test_apply_ohe_dummy_collides_with_existing_column():
+  '''Apply OHE raises when dummy collides with existing column.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -488,6 +526,7 @@ def test_apply_ohe_dummy_collides_with_existing_column():
 
 
 def test_apply_registry_schema_mismatch_raises():
+  '''Apply raises on registry schema mismatch.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (
@@ -527,6 +566,7 @@ def test_jsonable_delegates_to_native():
 # --- loop5 typed categories (RED) ---
 
 def test_fit_apply_tuple_category_ohe_correct_ones():
+  '''Tuple categories OHE gives correct ones on fit/apply.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -546,6 +586,7 @@ def test_fit_apply_tuple_category_ohe_correct_ones():
 
 
 def test_fit_apply_tuple_category_label_encoding_not_minus_one():
+  '''Tuple categories label encoding is not minus one.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -561,6 +602,7 @@ def test_fit_apply_tuple_category_label_encoding_not_minus_one():
 
 
 def test_fit_apply_timestamp_category_ohe_correct_ones():
+  '''Timestamp categories OHE gives correct ones on fit/apply.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -579,6 +621,7 @@ def test_fit_apply_timestamp_category_ohe_correct_ones():
 
 
 def test_fit_apply_tuple_category_target_encoding_not_global():
+  '''Tuple categories target encoding is not global.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -595,6 +638,7 @@ def test_fit_apply_tuple_category_target_encoding_not_global():
 
 
 def test_fit_apply_tuple_category_bin_labels_preserved():
+  '''Tuple categories bin labels preserved on apply.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
@@ -626,6 +670,7 @@ def test_require_dict_shared_from_core_params():
 # --- loop6 typed categories (RED) ---
 
 def test_typed_encode_roundtrip_date_decimal_uuid_bytes_period_timedelta():
+  '''Typed encode roundtrips date/decimal/uuid/bytes/period/timedelta.'''
   import datetime
   import uuid
   from decimal import Decimal
@@ -653,6 +698,7 @@ def test_typed_encode_roundtrip_date_decimal_uuid_bytes_period_timedelta():
 
 
 def test_fit_apply_typed_categories_json_roundtrip_label_encoding():
+  '''Typed categories survive JSON roundtrip label encoding.'''
   import datetime
   import uuid
   from decimal import Decimal
@@ -682,6 +728,7 @@ def test_fit_apply_typed_categories_json_roundtrip_label_encoding():
 
 
 def test_legacy_plain_list_registry_tuple_data_raises_refit():
+  '''Legacy plain-list registry with tuple data raises refit.'''
   import pandas as pd
   import pytest
   from forecast_ml_framework.pipelines.data_prep.fitted import (

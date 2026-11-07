@@ -34,6 +34,7 @@ class _RecordingModel:
   '''Model recording chunk sizes.'''
 
   def __init__(self):
+    '''Initialize the test double.'''
     self.sizes = []
 
   def predict(self, x):
@@ -53,6 +54,7 @@ class _FakeSparkDF:
   '''
 
   def __init__(self, frame, partition_size=2):
+    '''Initialize the test double.'''
     self._frame = frame.copy()
     self.columns = list(frame.columns)
     self._partition_size = partition_size
@@ -302,6 +304,7 @@ class _FakeSparkCountOnly:
   '''Fake Spark frame reporting >5M rows via count() only.'''
 
   def __init__(self, rows):
+    '''Initialize the test double.'''
     self._rows = rows
     self.columns = ['id', 'f1']
     self.to_pandas_calls = 0

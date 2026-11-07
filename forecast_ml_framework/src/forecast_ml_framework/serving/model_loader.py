@@ -288,6 +288,15 @@ class FileModelLoader:
   def __init__(self, artifact_path: str,
                max_artifact_bytes=None,
                expected_sha256=None) -> None:
+    '''Initialise the file loader.
+
+    Args:
+      artifact_path: Path to a pickle model file.
+      max_artifact_bytes: Artifact size cap, overriding
+        the env vars and the default.
+      expected_sha256: Expected SHA-256 hex digest of the
+        artifact bytes, overriding ``MODEL_SHA256``.
+    '''
     self.artifact_path = artifact_path
     self._max_artifact_bytes = max_artifact_bytes
     self._expected_sha256 = expected_sha256
@@ -384,6 +393,25 @@ class RegistryModelLoader:
       max_artifact_bytes=None,
       expected_sha256=None,
   ) -> None:
+    '''Initialise the registry loader.
+
+    Args:
+      registry_uri: MLflow registry URI, or None for the
+        ambient configuration.
+      model_name: Registered model name.
+      alias: Registry alias, default ``production``.
+      allow_pyfunc: Explicit opt-in to the pyfunc
+        fallback. Default False. When True a startup
+        warning is logged: pyfunc executes arbitrary code
+        from the registry model.
+      tracking_uri: MLflow tracking URI, kept separate
+        from ``registry_uri``. When None, ``registry_uri``
+        is used for both (sqlite registries coincide).
+      max_artifact_bytes: Artifact size cap, overriding
+        the env vars and the default.
+      expected_sha256: Expected SHA-256 hex digest of the
+        artifact bytes, overriding ``MODEL_SHA256``.
+    '''
     validate_model_name(model_name)
     validate_alias(alias)
     if registry_uri:

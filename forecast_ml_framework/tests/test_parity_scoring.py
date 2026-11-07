@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 6: scoring ntile/calib/high_score columns.'''
 
 import numpy as np
@@ -15,12 +16,15 @@ class _FakeClassifier:
   '''Fake classifier whose max-proba spans (0, 1).'''
 
   def __init__(self, scores):
+    '''Store the canned class scores.'''
     self._scores = np.asarray(scores, dtype=float)
 
   def predict(self, x):
+    '''Threshold canned scores at 0.5 for labels.'''
     return (self._scores[:len(x)] >= 0.5).astype(int)
 
   def predict_proba(self, x):
+    '''Return two-column probabilities from canned scores.'''
     scores = self._scores[:len(x)]
     return np.column_stack([1 - scores, scores])
 
@@ -29,13 +33,16 @@ class _FakeRegressor:
   '''Fake regressor without predict_proba.'''
 
   def __init__(self, values):
+    '''Store the canned regression values.'''
     self._values = np.asarray(values, dtype=float)
 
   def predict(self, x):
+    '''Return canned values sliced to the input length.'''
     return self._values[:len(x)]
 
 
 def _frame(n=100):
+  '''Return a synthetic scoring frame with id and f1.'''
   rng = np.random.default_rng(2)
   return pd.DataFrame({'id': np.arange(n), 'f1': rng.random(n)})
 
@@ -106,9 +113,11 @@ class _FeatureClassifier:
   '''Classifier reading positive proba from the f1 feature.'''
 
   def predict(self, x):
+    '''Label rows by the f1 feature threshold.'''
     return (np.asarray(x['f1'], dtype=float) >= 0.5).astype(int)
 
   def predict_proba(self, x):
+    '''Return feature-derived two-column probabilities.'''
     pos = np.asarray(x['f1'], dtype=float)
     return np.column_stack([1 - pos, pos])
 
@@ -117,9 +126,11 @@ class _OneDimProbaClassifier:
   '''Classifier returning 1-D proba (positive-class scores).'''
 
   def predict(self, x):
+    '''Return all-zero labels.'''
     return np.zeros(len(x), dtype=int)
 
   def predict_proba(self, x):
+    '''Return 1-D positive-class scores.'''
     return np.linspace(0.05, 0.95, len(x))
 
 
@@ -127,14 +138,17 @@ class _MultiPartitionSpark:
   '''Fake Spark frame slicing partitions, concatenating results.'''
 
   def __init__(self, frame, partition_size=10):
+    '''Store the frame and partition size.'''
     self._frame = frame.copy()
     self.columns = list(frame.columns)
     self._partition_size = partition_size
 
   def count(self):
+    '''Return the row count of the fake frame.'''
     return len(self._frame)
 
   def mapPartitions(self, func):
+    '''Apply func per partition and concatenate results.'''
     parts = []
     for start in range(0, len(self._frame), self._partition_size):
       part = self._frame.iloc[start:start + self._partition_size]
@@ -199,6 +213,7 @@ def test_spark_global_ntile_across_partitions():
 
 
 def _ntile_global(values):
+  '''Return global decile labels for the values.'''
   return np.asarray(pd.qcut(np.asarray(values, dtype=float), q=10,
                             labels=False, duplicates='drop') + 1)
 
@@ -288,10 +303,12 @@ class _RecordingRegressor:
   '''Regressor recording column order it was called with.'''
 
   def __init__(self, feature_names):
+    '''Store fitted feature order and call log.'''
     self.feature_names_in_ = list(feature_names)
     self.seen_columns = []
 
   def predict(self, x):
+    '''Record columns and return zeros.'''
     self.seen_columns.append(list(x.columns))
     return np.zeros(len(x), dtype=float)
 
@@ -312,9 +329,11 @@ def test_scoring_fills_missing_feature_names_in_with_zero():
   captured = {}
 
   class _MissingRegressor:
+    '''Regressor whose fitted features include a missing one.'''
     feature_names_in_ = ('f2', 'f_missing', 'f1')
 
     def predict(self, x):
+      '''Capture columns and missing values, return zeros.'''
       captured['columns'] = list(x.columns)
       captured['missing'] = list(x['f_missing'])
       return np.zeros(len(x), dtype=float)
@@ -332,9 +351,11 @@ def test_scoring_ohe_aligns_to_feature_names_in_order():
   captured = {}
 
   class _OheRegressor:
+    '''Regressor for one-hot expansion order checks.'''
     feature_names_in_ = ('cat_b', 'f1', 'cat_a')
 
     def predict(self, x):
+      '''Capture expanded columns and return zeros.'''
       captured['columns'] = list(x.columns)
       return np.zeros(len(x), dtype=float)
 
@@ -351,9 +372,11 @@ class _BadPredictionRegressor:
   '''Regressor returning a fixed non-finite / bad prediction.'''
 
   def __init__(self, value):
+    '''Store the canned bad prediction value.'''
     self._value = value
 
   def predict(self, x):
+    '''Return the canned bad prediction for every row.'''
     n = len(x)
     value = self._value
     if isinstance(value, dict):
@@ -394,10 +417,13 @@ def test_nonfinite_proba_raises():
   import pytest
 
   class _BadProbaClassifier:
+    '''Classifier returning non-finite probabilities.'''
     def predict(self, x):
+      '''Return all-zero labels.'''
       return np.zeros(len(x), dtype=int)
 
     def predict_proba(self, x):
+      '''Return infinite positive-class probabilities.'''
       return np.column_stack(
           [np.full(len(x), float('inf')), np.full(len(x), 0.0)])
 
@@ -409,10 +435,13 @@ def test_nonfinite_proba_raises():
 def test_string_predictions_pass():
   '''String class-label predictions are finite-checked as labels.'''
   class _StringClassifier:
+    '''Classifier returning string class labels.'''
     def predict(self, x):
+      '''Return alternating string labels.'''
       return ['yes', 'no'] * (len(x) // 2) + (['yes'] if len(x) % 2 else [])
 
     def predict_proba(self, x):
+      '''Return linspace probabilities for the rows.'''
       pos = np.linspace(0.05, 0.95, len(x))
       return np.column_stack([1 - pos, pos])
 
@@ -424,6 +453,7 @@ def test_string_predictions_pass():
 # --- loop9 scoring masked (RED) ---
 
 def test_scoring_masked_predictions_raise():
+  '''Masked predictions raise a finite-check ValueError.'''
   import pytest
   from forecast_ml_framework.pipelines.scoring.nodes import (
     _check_predictions_finite,
@@ -436,14 +466,19 @@ def test_scoring_masked_predictions_raise():
 
 
 def test_scoring_masked_array_clean_passes_and_masked_model_raises():
+  '''Clean masked arrays pass, masked model output raises.'''
   import pytest
 
   class _MaskedRegressor:
+    '''Regressor returning a clean masked array.'''
     def predict(self, x):
+      '''Return a masked array of ones.'''
       return np.ma.array([1.0] * len(x))
 
   class _MaskedBadRegressor:
+    '''Regressor returning a fully masked scalar.'''
     def predict(self, x):
+      '''Return np.ma.masked for every call.'''
       return np.ma.masked
 
   out = _score_pandas_chunk(_frame(3), _MaskedRegressor(),
@@ -460,7 +495,9 @@ def test_scoring_generator_predict_regression():
   '''Generator predict output is materialized once, not consumed.'''
 
   class _GenRegressor:
+    '''Regressor returning a generator of predictions.'''
     def predict(self, x):
+      '''Return a generator of canned values.'''
       return (float(v) for v in [1.0, 2.0, 3.0][:len(x)])
 
   out = _score_pandas_chunk(_frame(3), _GenRegressor(),
@@ -472,10 +509,13 @@ def test_scoring_generator_proba_and_predict_classification():
   '''Generator proba+predict outputs are materialized once.'''
 
   class _GenClassifier:
+    '''Classifier returning generators for predict and proba.'''
     def predict(self, x):
+      '''Return a generator of canned labels.'''
       return (int(v) for v in [0, 1, 0][:len(x)])
 
     def predict_proba(self, x):
+      '''Return a generator of probability rows.'''
       rows = [[0.9, 0.1], [0.2, 0.8], [0.7, 0.3]][:len(x)]
       return (row for row in rows)
 

@@ -1,4 +1,7 @@
-"""MLflow run-lifecycle hooks (vz-high Task 11)."""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''MLflow run-lifecycle hooks (vz-high Task 11).'''
 
 import sys
 import types
@@ -23,6 +26,7 @@ def test_hooks_noop_without_mlflow(monkeypatch):
 
 
 def test_hooks_lifecycle_with_fake_mlflow(monkeypatch):
+  '''Hooks lifecycle runs with fake mlflow.'''
   calls = []
   fake = types.ModuleType('mlflow')
   fake.start_run = lambda run_name=None: calls.append(('start', run_name))
@@ -41,6 +45,7 @@ def test_hooks_lifecycle_with_fake_mlflow(monkeypatch):
 
 
 def test_hooks_kedro17_signatures(monkeypatch):
+  '''Hooks accept kedro 17 signatures.'''
   calls = []
   fake = types.ModuleType('mlflow')
   fake.start_run = lambda run_name=None: calls.append(('start', run_name))
@@ -62,20 +67,25 @@ def test_hooks_kedro17_signatures(monkeypatch):
 
 
 def _fake_mlflow(monkeypatch, calls):
+  '''Install fake mlflow module recording calls.'''
   fake = types.ModuleType('mlflow')
   state = {'active': None}
 
   class _Info:
+    '''Fake mlflow run info.'''
     run_id = 'run-123'
 
   class _Run:
+    '''Fake mlflow active run.'''
     info = _Info()
 
   def _start(run_name=None):
+    '''Record run start and set active run.'''
     calls.append(('start', run_name))
     state['active'] = _Run()
 
   def _end(status=None):
+    '''Record run end and clear active run.'''
     calls.append(('end', status))
     state['active'] = None
 
@@ -90,6 +100,7 @@ def _fake_mlflow(monkeypatch, calls):
 
 
 def test_hooks_captures_run_id_from_active_run(monkeypatch):
+  '''Hooks capture run_id from active run.'''
   calls = []
   _fake_mlflow(monkeypatch, calls)
   from forecast_ml_framework.hooks import ForecastHooks
@@ -100,6 +111,7 @@ def test_hooks_captures_run_id_from_active_run(monkeypatch):
 
 
 def test_hooks_end_run_guarded_when_no_active_run(monkeypatch):
+  '''End run guarded when no active run.'''
   calls = []
   _fake_mlflow(monkeypatch, calls)
   from forecast_ml_framework.hooks import ForecastHooks
@@ -121,7 +133,9 @@ def test_hooks_node_params_distinct_per_node(monkeypatch):
   from forecast_ml_framework.hooks import ForecastHooks
 
   class _Node:
+    '''Fake node with a name attribute.'''
     def __init__(self, name):
+      '''Store node name.'''
       self.name = name
 
   h = ForecastHooks()
@@ -146,11 +160,13 @@ def test_hooks_node_params_distinct_per_node(monkeypatch):
 
 
 def test_hooks_sanitizes_pipeline_name_and_tag(monkeypatch):
+  '''Hooks sanitize pipeline name and tag.'''
   calls = []
   _fake_mlflow(monkeypatch, calls)
   from forecast_ml_framework.hooks import ForecastHooks
 
   class _Node:
+    '''Fake node with a malicious name.'''
     name = 'evil\x00;DROP TABLE\x1f' + 'x' * 200
 
   h = ForecastHooks()
@@ -169,10 +185,12 @@ def test_hooks_sanitizes_pipeline_name_and_tag(monkeypatch):
 
 
 def test_hooks_warning_count_and_metric_on_failure(monkeypatch):
+  '''Warning count and metric recorded on failure.'''
   calls = []
   fake = _fake_mlflow(monkeypatch, calls)
 
   def _boom(run_name=None):
+    '''Fake start_run raising mlflow-down error.'''
     raise RuntimeError('mlflow down')
 
   fake.start_run = _boom
@@ -185,6 +203,7 @@ def test_hooks_warning_count_and_metric_on_failure(monkeypatch):
 
 
 def test_hooks_failed_on_error(monkeypatch):
+  '''Hooks mark run FAILED on error.'''
   import sys as _sys
   import types as _types
 
@@ -316,7 +335,9 @@ def test_hooks_real_mlflow_smoke(tmp_path, monkeypatch):
   from forecast_ml_framework.hooks import ForecastHooks
 
   class _Node:
+    '''Fake node for real-mlflow smoke test.'''
     def __init__(self, name):
+      '''Store node name.'''
       self.name = name
 
   monkeypatch.chdir(tmp_path)

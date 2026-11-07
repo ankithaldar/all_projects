@@ -20,8 +20,8 @@ class OfflineFeatureStore(FeatureStore):
   Args:
     artifact_store: ArtifactStore-like object with
       ``save``/``load``/``exists``/``list``. A filesystem path
-      (str/Path) is wrapped in ``LocalArtifactStore``; None
-      defaults to ``LocalArtifactStore('./artifacts')``.
+      (str/Path) is wrapped via ``create_artifact_store`` (local);
+      None defaults to a local store at ``./artifacts``.
     base_path: Root when ``artifact_store`` is a path or None.
     prefix: Artifact key prefix for feature snapshots.
     entity_col: Default entity column name.
@@ -42,12 +42,14 @@ class OfflineFeatureStore(FeatureStore):
     if artifact_store is not None and not hasattr(
             artifact_store, 'save'):
       from forecast_ml_framework.core.artifact_store import (
-          LocalArtifactStore)
-      artifact_store = LocalArtifactStore(str(artifact_store))
+          create_artifact_store)
+      artifact_store = create_artifact_store(
+          {'type': 'local', 'base_path': str(artifact_store)})
     if artifact_store is None:
       from forecast_ml_framework.core.artifact_store import (
-          LocalArtifactStore)
-      artifact_store = LocalArtifactStore(base_path or './artifacts')
+          create_artifact_store)
+      artifact_store = create_artifact_store(
+          {'type': 'local', 'base_path': base_path or './artifacts'})
     self.artifact_store = artifact_store
     self.store = artifact_store
 

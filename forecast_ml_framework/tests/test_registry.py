@@ -31,12 +31,15 @@ def _fake_mlflow(monkeypatch):
     '''Context manager mimicking an mlflow run.'''
 
     def __init__(self):
+      '''Initialize the test double.'''
       self.info = SimpleNamespace(run_id=state['run_id'])
 
     def __enter__(self):
+      '''Enter the context.'''
       return self
 
     def __exit__(self, *exc):
+      '''Exit the context.'''
       return False
 
   fake.start_run = lambda **kw: FakeRun()
@@ -51,6 +54,7 @@ def _fake_mlflow(monkeypatch):
 
   def _log_model(sk_model=None, name=None, registered_model_name=None,
                  tags=None, **kw):
+    '''Log model.'''
     calls['log_model'].append({
       'sk_model': sk_model, 'name': name,
       'registered_model_name': registered_model_name, 'tags': tags})
@@ -63,6 +67,7 @@ def _fake_mlflow(monkeypatch):
   sklearn.load_model = lambda uri: ('loaded', uri)
 
   def _register_model(model_uri, name, **kw):
+    '''Register model.'''
     calls['register_model'].append((model_uri, name))
     return SimpleNamespace(version=state['version'],
                            run_id=state['run_id'])
@@ -74,6 +79,7 @@ def _fake_mlflow(monkeypatch):
     '''Minimal MlflowClient fake recording alias operations.'''
 
     def __init__(self, tracking_uri=None, registry_uri=None):
+      '''Initialize the test double.'''
       self.tracking_uri = tracking_uri
       self.registry_uri = registry_uri
       self.aliases = {}
@@ -83,9 +89,11 @@ def _fake_mlflow(monkeypatch):
       FakeClient.last = self
 
     def set_registered_model_alias(self, name, alias, version):
+      '''Set registered model alias.'''
       self.aliases[(name, alias)] = str(version)
 
     def get_model_version_by_alias(self, name, alias):
+      '''Return model version by alias.'''
       version = self.aliases.get((name, alias))
       if version is None:
         raise KeyError('no alias %s for %s' % (alias, name))
@@ -94,17 +102,21 @@ def _fake_mlflow(monkeypatch):
                              run_id='run-123')
 
     def search_model_versions(self, filter_string=None, **kw):
+      '''Search model versions.'''
       if filter_string and 'run_id' in filter_string:
         return list(self.versions)
       return list(self.versions)
 
     def search_registered_models(self, filter_string=None, **kw):
+      '''Search registered models.'''
       return [SimpleNamespace(name='my-model')]
 
     def get_experiment_by_name(self, name):
+      '''Get experiment by name.'''
       return SimpleNamespace(experiment_id='exp-1', name=name)
 
     def search_runs(self, experiment_ids, **kw):
+      '''Search runs.'''
       return [
         SimpleNamespace(
           info=SimpleNamespace(run_id='run-b', status='FINISHED'),
@@ -153,6 +165,7 @@ def test_missing_mlflow_raises_clear_error(monkeypatch):
   'production', 'staging', 'challenger', 'canary', 'v2', 'a1',
 ])
 def test_validate_alias_accepts_good(alias):
+  '''Validate alias accepts good.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_alias)
   assert validate_alias(alias) == alias
@@ -165,6 +178,7 @@ def test_validate_alias_accepts_good(alias):
   'production\nstaging', 'staging\n',
 ])
 def test_validate_alias_rejects_bad(alias):
+  '''Validate alias rejects bad.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_alias)
   with pytest.raises(ValueError):
@@ -172,6 +186,7 @@ def test_validate_alias_rejects_bad(alias):
 
 
 def test_known_aliases_includes_champion():
+  '''Known aliases includes champion.'''
   from forecast_ml_framework.registry.model_registry import (
     KNOWN_ALIASES)
   assert 'champion' in KNOWN_ALIASES
@@ -184,6 +199,7 @@ def test_known_aliases_includes_champion():
   'model:1', '', '   ', None, 123, 'a\n', '-bad', '_bad',
 ])
 def test_validate_model_name_rejects_bad(name):
+  '''Validate model name rejects bad.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_model_name)
   with pytest.raises(ValueError):
@@ -194,6 +210,7 @@ def test_validate_model_name_rejects_bad(name):
   'my-model', 'my_model', 'model1', 'a', 'v2-final',
 ])
 def test_validate_model_name_accepts_good(name):
+  '''Validate model name accepts good.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_model_name)
   assert validate_model_name(name) == name
@@ -205,6 +222,7 @@ def test_validate_model_name_accepts_good(name):
   'http://127.0.0.1:5000', 'mlruns', './mlruns', '',
 ])
 def test_validate_registry_uri_accepts_good(uri):
+  '''Validate registry uri accepts good.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_registry_uri)
   assert validate_registry_uri(uri) == uri
@@ -223,6 +241,7 @@ def test_validate_registry_uri_accepts_good(uri):
   'http://localhost:5000 ', 123,
 ])
 def test_validate_registry_uri_rejects_bad(uri):
+  '''Validate registry uri rejects bad.'''
   from forecast_ml_framework.registry.model_registry import (
     validate_registry_uri)
   with pytest.raises(ValueError):
@@ -346,6 +365,7 @@ def test_validate_registry_uri_explicit_localhost_allowed(uri):
 
 
 def test_model_registry_rejects_bad_tracking_uri():
+  '''Model registry rejects bad tracking uri.'''
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
   with pytest.raises(ValueError):
@@ -356,21 +376,26 @@ def test_model_registry_rejects_bad_tracking_uri():
 
 def test_find_version_only_swallows_mlflow_exception(
     monkeypatch, caplog):
+  '''Find version only swallows mlflow exception.'''
   _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
   registry = ModelRegistry({'tracking_uri': 'sqlite:////tmp/r.db'})
 
   class MlflowException(Exception):
+    '''Mlflow Exception test double.'''
     pass
 
   MlflowException.__module__ = 'mlflow.exceptions'
 
   class RaisingClient:
+    '''Raising Client test double.'''
     def __init__(self, exc):
+      '''Initialize the test double.'''
       self._exc = exc
 
     def search_model_versions(self, filter_string=None, **kw):
+      '''Search model versions.'''
       raise self._exc
 
   # MlflowException (by type/module name) is swallowed + logged.
@@ -423,6 +448,7 @@ def test_register_alias_load_roundtrip_mock(monkeypatch):
 
 
 def test_register_rejects_bad_alias(monkeypatch):
+  '''Register rejects bad alias.'''
   _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -434,6 +460,7 @@ def test_register_rejects_bad_alias(monkeypatch):
 
 
 def test_promote_alias_by_run_id_mock(monkeypatch):
+  '''Promote alias by run id mock.'''
   fake, _sk, _cls, _calls = _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -449,6 +476,7 @@ def test_promote_alias_by_run_id_mock(monkeypatch):
 
 
 def test_list_models_mock(monkeypatch):
+  '''List models mock.'''
   _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -459,6 +487,7 @@ def test_list_models_mock(monkeypatch):
 
 
 def test_compare_runs_sorted_by_metric_mock(monkeypatch):
+  '''Compare runs sorted by metric mock.'''
   _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -472,6 +501,7 @@ def test_compare_runs_sorted_by_metric_mock(monkeypatch):
 
 
 def test_compare_runs_higher_better(monkeypatch):
+  '''Compare runs higher better.'''
   _fake_mlflow(monkeypatch)
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
@@ -482,6 +512,7 @@ def test_compare_runs_higher_better(monkeypatch):
 
 
 def test_config_from_nested_mlflow_params():
+  '''Config from nested mlflow params.'''
   from forecast_ml_framework.registry.model_registry import (
     ModelRegistry)
   registry = ModelRegistry({
@@ -601,6 +632,7 @@ def _public_dns_stub(monkeypatch):
   private/error cases.
   '''
   def _stub(host, port, *args, **kwargs):
+    '''Stub.'''
     return [
       (socket.AF_INET, socket.SOCK_STREAM, 6, '',
        ('8.8.8.8', 0)),
@@ -623,6 +655,7 @@ def _setup_incumbent(registry, name, alias, version, run_id):
   registry._client.aliases[(name, alias)] = version
 
   def _by_alias(model_name, model_alias):
+    '''By alias.'''
     return SimpleNamespace(
       name=model_name, alias=model_alias,
       version=version, run_id=run_id)
@@ -789,6 +822,7 @@ def test_register_model_gate_calls_compare_runs(monkeypatch):
   original = registry.compare_runs
 
   def _spy(*args, **kwargs):
+    '''Spy.'''
     calls.append((args, kwargs))
     return original(*args, **kwargs)
 
@@ -837,6 +871,7 @@ def test_validate_uri_dns_private_rejected(monkeypatch):
     validate_registry_uri)
 
   def _private(host, port, *args, **kwargs):
+    '''Private.'''
     return [
       (socket.AF_INET, socket.SOCK_STREAM, 6, '',
        ('10.0.0.8', 0)),
@@ -853,6 +888,7 @@ def test_validate_uri_dns_public_allowed(monkeypatch):
     validate_registry_uri)
 
   def _public(host, port, *args, **kwargs):
+    '''Public.'''
     return [
       (socket.AF_INET, socket.SOCK_STREAM, 6, '',
        ('8.8.8.8', 0)),
@@ -869,6 +905,7 @@ def test_validate_uri_dns_any_private_rejected(monkeypatch):
     validate_registry_uri)
 
   def _mixed(host, port, *args, **kwargs):
+    '''Mixed.'''
     return [
       (socket.AF_INET, socket.SOCK_STREAM, 6, '',
        ('8.8.8.8', 0)),
@@ -887,6 +924,7 @@ def test_validate_uri_dns_failure_fails_closed(monkeypatch):
     validate_registry_uri)
 
   def _fail(host, port, *args, **kwargs):
+    '''Fail.'''
     raise socket.gaierror('no such host')
 
   monkeypatch.setattr(socket, 'getaddrinfo', _fail)
@@ -927,6 +965,7 @@ def _mlflow_exc_class(error_code='INTERNAL_ERROR'):
     '''Fake MlflowException carrying an error_code.'''
 
     def __init__(self, message):
+      '''Initialize the test double.'''
       super().__init__(message)
       self.error_code = error_code
 
@@ -943,7 +982,9 @@ def test_find_version_log_type_only(monkeypatch, caplog):
   exc_cls = _mlflow_exc_class()
 
   class RaisingClient:
+    '''Raising Client test double.'''
     def search_model_versions(self, filter_string=None, **kw):
+      '''Search model versions.'''
       raise exc_cls(
         'boom http://user:SUPERSECRET@host/path?token=QUERYSECRET')
 
@@ -966,6 +1007,7 @@ def test_register_fallback_log_type_only(monkeypatch, caplog):
     model_uri='models:/my-model/1', version=None, run_id='run-123')
 
   def _boom(*args, **kwargs):
+    '''Raise an error.'''
     raise exc_cls(
       'boom http://user:SUPERSECRET@host/path?token=QUERYSECRET')
 
@@ -1027,6 +1069,7 @@ def test_gate_internal_error_fails_closed(monkeypatch):
   exc_cls = _mlflow_exc_class('INTERNAL_ERROR')
 
   def _boom(model_name, model_alias):
+    '''Raise an error.'''
     raise exc_cls('internal failure')
 
   registry._client.get_model_version_by_alias = _boom
@@ -1051,6 +1094,7 @@ def test_gate_not_found_still_promotes_first_version(monkeypatch):
   exc_cls = _mlflow_exc_class('RESOURCE_DOES_NOT_EXIST')
 
   def _missing(model_name, model_alias):
+    '''Return a missing value.'''
     raise exc_cls('alias not found')
 
   registry._client.get_model_version_by_alias = _missing
@@ -1079,6 +1123,7 @@ def test_dns_rebinding_ttl0_accepted_risk_validate_time_only(monkeypatch):
   ])
 
   def _rebind(host, port, *args, **kwargs):
+    '''Rebind.'''
     return next(responses)
 
   monkeypatch.setattr(socket, 'getaddrinfo', _rebind)

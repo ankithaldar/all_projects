@@ -36,9 +36,10 @@ def test_missing_pipeline_module_returns_none_via_registry(monkeypatch):
   real_import = builtins.__import__
 
   def fake_import(name, *args, **kwargs):
+    '''Fake the import.'''
     if name == 'forecast_ml_framework.pipelines.modeling':
       raise ModuleNotFoundError(
-        "No module named 'forecast_ml_framework.pipelines.modeling'",
+        'No module named \'forecast_ml_framework.pipelines.modeling\'',
         name=name)
     return real_import(name, *args, **kwargs)
 
@@ -55,9 +56,10 @@ def test_internal_import_error_surfaces(monkeypatch):
   real_import = builtins.__import__
 
   def fake_import(name, *args, **kwargs):
+    '''Fake the import.'''
     if name == 'forecast_ml_framework.pipelines.modeling':
       raise ModuleNotFoundError(
-        "No module named 'some_internal_dep'", name='some_internal_dep')
+        'No module named \'some_internal_dep\'', name='some_internal_dep')
     return real_import(name, *args, **kwargs)
 
   monkeypatch.setattr(builtins, '__import__', fake_import)
@@ -76,6 +78,7 @@ def test_internal_import_error_other_subclass_surfaces(monkeypatch):
   real_import = builtins.__import__
 
   def fake_import(name, *args, **kwargs):
+    '''Fake the import.'''
     if name == 'forecast_ml_framework.pipelines.modeling':
       raise ImportError('boom inside pipeline')
     return real_import(name, *args, **kwargs)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Parity Task 2: evaluate_model by_centile + selected_ntile.'''
 
 import warnings
@@ -12,6 +13,7 @@ from forecast_ml_framework.pipelines.modeling.evaluate import evaluate_model
 
 
 def _cls_data(n=1000):
+  '''Return synthetic classification data.'''
   rng = np.random.default_rng(0)
   proba_pos = rng.random(n)
   y_true = (proba_pos > 0.5).astype(int)
@@ -22,6 +24,7 @@ def _cls_data(n=1000):
 
 
 def _reg_data(n=1000):
+  '''Return synthetic regression data.'''
   rng = np.random.default_rng(1)
   y_true = rng.normal(size=n)
   y_pred = y_true + rng.normal(scale=0.1, size=n)
@@ -187,7 +190,9 @@ def test_pipeline_predict_proba_task_alias():
 
   class _Model:
 
+    '''Stub model returning fixed probabilities.'''
     def predict_proba(self, x):
+      '''Return a single fixed probability row.'''
       return [[0.5, 0.5]]
 
   assert _predict_proba(_Model(), None, 'cls') == [[0.5, 0.5]]

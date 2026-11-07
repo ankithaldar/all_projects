@@ -71,9 +71,11 @@ def test_repro_metadata_unknown_defaults(monkeypatch):
   monkeypatch.delenv('GIT_SHA', raising=False)
 
   def _boom(*args, **kwargs):
+    '''Raise an error.'''
     raise OSError('no git')
 
   def _no_config(env_dir='base'):
+    '''No config.'''
     raise RuntimeError('no config')
 
   monkeypatch.setattr(_sp, 'run', _boom)
@@ -140,6 +142,7 @@ def test_tracking_ambient_fallback_warns(monkeypatch, caplog):
   monkeypatch.setenv('GIT_SHA', 'abc123')
 
   def _boom(env_dir='base'):
+    '''Raise an error.'''
     raise RuntimeError('no config')
 
   monkeypatch.setattr(
@@ -158,6 +161,7 @@ def test_node_params_log_real_scalars_no_timestamp(monkeypatch):
   '''Node hook logs real scalar inputs, without timestamp keys.'''
 
   class _Node:
+    '''Node test double.'''
     name = 'train_node'
 
   calls = []
@@ -187,6 +191,7 @@ def test_node_param_keys_stable_low_cardinality(monkeypatch):
   '''Repeated node runs reuse the same param keys.'''
 
   class _Node:
+    '''Node test double.'''
     name = 'train_node'
 
   calls = []
@@ -210,6 +215,7 @@ def test_hooks_warn_without_exc_info_on_failure(monkeypatch, caplog):
   fake = _fake_mlflow(monkeypatch, calls)
 
   def _boom(run_name=None):
+    '''Raise an error.'''
     raise RuntimeError('mlflow down SECRET-MARKER-xyz')
 
   fake.start_run = _boom
@@ -235,6 +241,7 @@ def test_hooks_secret_exception_never_in_caplog(monkeypatch, caplog):
   secret = 'SECRET-MARKER-hooks-12345'
 
   def _boom(run_name=None):
+    '''Raise an error.'''
     raise RuntimeError(f'token={secret} /secret/dir/x')
 
   fake.start_run = _boom

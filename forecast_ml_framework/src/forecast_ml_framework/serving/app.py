@@ -334,6 +334,12 @@ class _TokenBucket:
   '''
 
   def __init__(self, per_minute):
+    '''Initialise bucket from a per-minute rate.
+
+    Args:
+      per_minute: Sustained requests per minute. The
+        burst capacity equals the per-minute rate.
+    '''
     self._per_minute = float(per_minute)
     self._capacity = float(per_minute)
     self._tokens = float(per_minute)
@@ -583,7 +589,7 @@ SECURITY_HEADERS = {
     'x-frame-options': 'DENY',
     'referrer-policy': 'no-referrer',
     'cache-control': 'no-store',
-    'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+    'content-security-policy': 'default-src \'none\'; frame-ancestors \'none\'',
     'x-permitted-cross-domain-policies': 'none',
 }
 
@@ -667,12 +673,31 @@ class _CapAuthHeadersMiddleware:
 
   def __init__(self, app, rate_limit_per_minute=None,
                audit_log=None):
+    '''Initialise app, rate limit, and audit sink.
+
+    Args:
+      app: Downstream ASGI application.
+      rate_limit_per_minute: /predict rate limit,
+        overriding FORECAST_RATE_LIMIT_PER_MINUTE.
+      audit_log: Bounded list receiving per-predict
+        audit entries (shared with ``app.state``).
+    '''
     self.app = app
     self._bucket = _TokenBucket(
         _rate_limit_per_minute(rate_limit_per_minute))
     self._audit_log = audit_log
 
   async def __call__(self, scope, receive, send):
+    '''Handle one ASGI request through auth and limits.
+
+    Args:
+      scope: ASGI connection scope.
+      receive: ASGI receive callable.
+      send: ASGI send callable.
+
+    Returns:
+      None.
+    '''
     if scope.get('type') != 'http':
       await self.app(scope, receive, send)
       return
@@ -729,6 +754,12 @@ class _CapAuthHeadersMiddleware:
     replayed = False
 
     async def _replay_receive():
+      '''Replay the buffered body to the downstream app.
+
+      Returns:
+        The single replayed ``http.request`` message,
+        then ``http.disconnect`` on later calls.
+      '''
       nonlocal replayed
       if not replayed:
         replayed = True
@@ -739,6 +770,14 @@ class _CapAuthHeadersMiddleware:
       return {'type': 'http.disconnect'}
 
     async def _send_with_headers(message):
+      '''Send a message with security headers attached.
+
+      Args:
+        message: ASGI response message.
+
+      Returns:
+        None.
+      '''
       if message.get('type') == 'http.response.start':
         status = message.get('status')
         if status == 422 and scope.get('path') == '/predict':

@@ -137,5 +137,5 @@ def test_overlay_custom_dataset_overrides_keep_base_type():
         continue
       if name in base and isinstance(base[name], dict):
         assert entry.get('type') == base[name].get('type'), (
-            f'{env}:{name} type drift: {entry.get("type")} vs '
-            f'base {base[name].get("type")}')
+            f'{env}:{name} type drift: {entry.get('type')} vs '
+            f'base {base[name].get('type')}')

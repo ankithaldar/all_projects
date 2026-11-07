@@ -116,11 +116,11 @@ def test_load_config_merges_parameters_folder(tmp_path):
   base.mkdir(parents=True)
   local.mkdir(parents=True)
   (conf / 'base' / 'variables.yml').write_text(
-    "target_col: target\nreceipt_date: '2024-01-01'\n")
+    'target_col: target\nreceipt_date: \'2024-01-01\'\n')
   (base / '01_global.yml').write_text(
     'global_params:\n  target_col: target\n'
     '  shared: from_01\n'
-    "run_date: '2024-01-01'\n")
+    'run_date: \'2024-01-01\'\n')
   (base / '02_model.yml').write_text(
     'global_params:\n  shared: from_02\n'
     'modeling_params:\n  task_type: regression\n')
@@ -257,7 +257,7 @@ def _write_conf(tmp_path, parameters_text):
 def test_load_config_blocks_oc_env_secret(tmp_path):
   '''load_config raises ValueError for ${oc.env:SECRET} (no default).'''
   conf = _write_conf(
-    tmp_path, "x: '${oc.env:SECRET}'\n")
+    tmp_path, 'x: \'${oc.env:SECRET}\'\n')
   with pytest.raises(ValueError, match='oc\\.'):
     load_config(conf / 'base')
 
@@ -265,7 +265,7 @@ def test_load_config_blocks_oc_env_secret(tmp_path):
 def test_load_config_blocks_oc_create(tmp_path):
   '''load_config raises ValueError for ${oc.create:...}.'''
   conf = _write_conf(
-    tmp_path, "x: '${oc.create:dict}'\n")
+    tmp_path, 'x: \'${oc.create:dict}\'\n')
   with pytest.raises(ValueError, match='oc\\.'):
     load_config(conf / 'base')
 
@@ -275,8 +275,8 @@ def test_load_config_does_not_read_env_for_oc_env_default(
   '''oc.env with a default resolves to the default, never the env.'''
   monkeypatch.setenv('MY_TRACKING', 'leaked-secret-value')
   conf = _write_conf(
-    tmp_path, "registry_params:\n"
-    "  tracking_uri: '${oc.env:MY_TRACKING,mlruns}'\n")
+    tmp_path, 'registry_params:\n'
+    '  tracking_uri: \'${oc.env:MY_TRACKING,mlruns}\'\n')
   cfg = load_config(conf / 'base')
   assert cfg['parameters']['registry_params']['tracking_uri'] == 'mlruns'
   assert 'leaked-secret-value' not in str(cfg)
@@ -302,10 +302,12 @@ def test_config_loader_reraises_pydantic_validation_error():
     '''Fake pydantic-like model whose validation always fails.'''
 
     def model_dump(self):
+      '''Model dump.'''
       return {'target_col': 123}
 
     @classmethod
     def model_validate(cls, dumped):
+      '''Model validate.'''
       raise ValueError('invalid target_col')
 
   with pytest.raises(ValueError, match='invalid target_col'):
@@ -333,7 +335,7 @@ def test_load_config_rejects_spaced_oc(tmp_path, monkeypatch, expr):
   oc interpolations and resolves them from the environment.
   '''
   monkeypatch.setenv('SECRET', 'leaked-secret-value')
-  conf = _write_conf(tmp_path, "x: '%s'\n" % expr)
+  conf = _write_conf(tmp_path, 'x: \'%s\'\n' % expr)
   with pytest.raises(ValueError, match='oc\\.'):
     load_config(conf / 'base')
   values = load_config.__doc__ or ''
@@ -359,7 +361,7 @@ def test_kedro_loader_rejects_spaced_oc(tmp_path, monkeypatch):
   base = conf / 'base'
   base.mkdir(parents=True)
   (base / 'parameters.yml').write_text(
-    "x: '${ oc.env:SECRET}'\n")
+    'x: \'${ oc.env:SECRET}\'\n')
   (base / 'catalog.yml').write_text('{}\n')
   try:
     loader = loader_cls(str(conf), env='base', base_env='base')
@@ -402,9 +404,9 @@ def test_load_config_blocks_cross_key_oc_env(tmp_path, monkeypatch):
   monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
   conf = _write_conf(
     tmp_path,
-    "a: '$'\n"
-    "b: '{oc.env:SECRET_ENV}'\n"
-    "x: '${parameters.a}${parameters.b}'\n")
+    'a: \'$\'\n'
+    'b: \'{oc.env:SECRET_ENV}\'\n'
+    'x: \'${parameters.a}${parameters.b}\'\n')
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
   assert 'leaked-secret-value' not in str(excinfo.value)
@@ -416,9 +418,9 @@ def test_load_config_blocks_cross_key_oc_env_list(
   monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
   conf = _write_conf(
     tmp_path,
-    "a: '$'\n"
-    "b: '{oc.env:SECRET_ENV}'\n"
-    "items: ['${parameters.a}${parameters.b}']\n")
+    'a: \'$\'\n'
+    'b: \'{oc.env:SECRET_ENV}\'\n'
+    'items: [\'${parameters.a}${parameters.b}\']\n')
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
   assert 'leaked-secret-value' not in str(excinfo.value)
@@ -430,10 +432,10 @@ def test_load_config_blocks_cross_key_oc_env_nested(
   monkeypatch.setenv('SECRET_ENV', 'leaked-secret-value')
   conf = _write_conf(
     tmp_path,
-    "a: '$'\n"
-    "b: '{oc.env:SECRET_ENV}'\n"
-    "nested:\n"
-    "  x: '${parameters.a}${parameters.b}'\n")
+    'a: \'$\'\n'
+    'b: \'{oc.env:SECRET_ENV}\'\n'
+    'nested:\n'
+    '  x: \'${parameters.a}${parameters.b}\'\n')
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
   assert 'leaked-secret-value' not in str(excinfo.value)
@@ -447,11 +449,11 @@ def test_load_config_blocks_cross_key_oc_env_variables(
   base = conf / 'base'
   base.mkdir(parents=True)
   (base / 'variables.yml').write_text(
-    "target_col: target\n"
-    "a: '$'\n"
-    "b: '{oc.env:SECRET_ENV}'\n")
+    'target_col: target\n'
+    'a: \'$\'\n'
+    'b: \'{oc.env:SECRET_ENV}\'\n')
   (base / 'parameters.yml').write_text(
-    "x: '${variables.a}${variables.b}'\n")
+    'x: \'${variables.a}${variables.b}\'\n')
   (base / 'catalog.yml').write_text('{}\n')
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
@@ -491,9 +493,9 @@ def test_kedro_loader_blocks_cross_key_oc_env(
   base = conf / 'base'
   base.mkdir(parents=True)
   (base / 'parameters.yml').write_text(
-    "a: '$'\n"
-    "b: '{oc.env:SECRET_ENV}'\n"
-    "x: '${a}${b}'\n")
+    'a: \'$\'\n'
+    'b: \'{oc.env:SECRET_ENV}\'\n'
+    'x: \'${a}${b}\'\n')
   (base / 'catalog.yml').write_text('{}\n')
   try:
     loader = loader_cls(str(conf), env='base', base_env='base')
@@ -513,8 +515,8 @@ def test_load_config_legit_oc_env_default_still_substitutes(
   monkeypatch.setenv('MY_TRACKING', 'leaked-secret-value')
   conf = _write_conf(
     tmp_path,
-    "registry_params:\n"
-    "  tracking_uri: '${oc.env:MY_TRACKING,mlruns}'\n")
+    'registry_params:\n'
+    '  tracking_uri: \'${oc.env:MY_TRACKING,mlruns}\'\n')
   cfg = load_config(conf / 'base')
   assert cfg['parameters']['registry_params']['tracking_uri'] == 'mlruns'
   assert 'leaked-secret-value' not in str(cfg)
@@ -533,7 +535,7 @@ def test_load_config_blocks_recombined_oc_env(
   '''Recombined oc.env after substitution never leaks env.'''
   monkeypatch.setenv('SECRET', 'leaked-secret-value')
   monkeypatch.setenv('FOO', 'foo-value')
-  conf = _write_conf(tmp_path, "x: '%s'\n" % expr)
+  conf = _write_conf(tmp_path, 'x: \'%s\'\n' % expr)
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
   assert 'leaked-secret-value' not in str(excinfo.value)
@@ -573,8 +575,8 @@ def test_load_config_blocks_cross_key_oc_bracket(tmp_path, monkeypatch):
   monkeypatch.setenv('SECRET', 'leaked-secret-value')
   conf = _write_conf(
     tmp_path,
-    "lst: ['$','{oc.env:SECRET}']\n"
-    "x: '${parameters.lst[0]}${parameters.lst[1]}'\n")
+    'lst: [\'$\',\'{oc.env:SECRET}\']\n'
+    'x: \'${parameters.lst[0]}${parameters.lst[1]}\'\n')
   with pytest.raises(ValueError, match='oc\\.') as excinfo:
     load_config(conf / 'base')
   assert 'leaked-secret-value' not in str(excinfo.value)
@@ -678,6 +680,7 @@ def test_blocked_oc_resolvers_threaded_no_leak_no_crash(monkeypatch):
   barrier = threading.Barrier(4)
 
   def _worker():
+    '''Worker.'''
     try:
       barrier.wait(timeout=10)
       for _ in range(25):
@@ -720,12 +723,14 @@ def test_blocked_oc_resolvers_interleaved_no_leak(monkeypatch):
   results = {}
 
   def _thread_a():
+    '''Thread a.'''
     with _blocked_oc_resolvers():
       entered_a.set()
       exit_a.wait(timeout=10)
     results['a_done'] = True
 
   def _thread_b():
+    '''Thread b.'''
     with _blocked_oc_resolvers():
       entered_b.set()
       exit_b.wait(timeout=10)

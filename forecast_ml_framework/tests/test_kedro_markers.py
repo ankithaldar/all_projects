@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 def _load_pyproject():
+  '''Load pyproject.toml as a dict.'''
   path = Path(__file__).resolve().parents[1] / 'pyproject.toml'
   with path.open('rb') as fh:
     return tomllib.load(fh)

@@ -29,6 +29,7 @@ def _install_fake_mlflow(monkeypatch, sklearn_exc=None,
   exceptions = types.ModuleType('mlflow.exceptions')
 
   class MlflowException(Exception):
+    '''Mlflow Exception test double.'''
     pass
 
   MlflowException.__module__ = 'mlflow.exceptions'
@@ -38,12 +39,14 @@ def _install_fake_mlflow(monkeypatch, sklearn_exc=None,
     'set_tracking_uri'].append(uri)
 
   def _sklearn_load(uri):
+    '''Load with sklearn.'''
     calls['sklearn'].append(uri)
     if sklearn_exc is not None:
       raise sklearn_exc
     return sklearn_result if sklearn_result is not None else Dummy()
 
   def _pyfunc_load(uri):
+    '''Load with pyfunc.'''
     calls['pyfunc'].append(uri)
     if pyfunc_exc is not None:
       raise pyfunc_exc
@@ -138,6 +141,7 @@ def test_registry_loader_rejects_bad_alias(alias):
   'model@production', 'a\nb', None, 123,
 ])
 def test_registry_loader_rejects_bad_model_name(name):
+  '''Registry loader rejects bad model name.'''
   from forecast_ml_framework.serving.model_loader import (
     RegistryModelLoader,
   )
@@ -152,6 +156,7 @@ def test_registry_loader_rejects_bad_model_name(name):
   'http://100.100.100.200/', 'ftp://example.com/',
 ])
 def test_registry_loader_rejects_bad_uri(uri):
+  '''Registry loader rejects bad uri.'''
   from forecast_ml_framework.serving.model_loader import (
     RegistryModelLoader,
   )
@@ -294,13 +299,16 @@ def test_registry_loader_failure_generic_no_leak(monkeypatch):
 
 
 def test_file_loader_evil_pickle_rejected(tmp_path):
+  '''File loader evil pickle rejected.'''
   import os
   import pickle
   import pytest
   from forecast_ml_framework.serving.model_loader import FileModelLoader
 
   class Evil:
+    '''Evil test double.'''
     def __reduce__(self):
+      '''Return the reduce tuple.'''
       return (os.system, ('echo pwned',))
 
   path = tmp_path / 'evil.pkl'
@@ -313,6 +321,7 @@ def test_file_loader_evil_pickle_rejected(tmp_path):
 
 
 def test_file_loader_missing_no_path_disclosure(tmp_path):
+  '''File loader missing no path disclosure.'''
   import pytest
   from forecast_ml_framework.serving.model_loader import (
     FileModelLoader,
@@ -326,6 +335,7 @@ def test_file_loader_missing_no_path_disclosure(tmp_path):
 
 
 def test_file_loader_malformed_corrupt(tmp_path):
+  '''File loader malformed corrupt.'''
   import pytest
   from forecast_ml_framework.serving.model_loader import (
     FileModelLoader,
@@ -339,6 +349,7 @@ def test_file_loader_malformed_corrupt(tmp_path):
 
 
 def test_file_loader_chain_read_pickle_blocked(tmp_path):
+  '''File loader chain read pickle blocked.'''
   import os
   import pickle
   import pandas as pd
@@ -347,13 +358,17 @@ def test_file_loader_chain_read_pickle_blocked(tmp_path):
   marker = tmp_path / 'pwned'
 
   class Evil:
+    '''Evil test double.'''
     def __reduce__(self):
+      '''Return the reduce tuple.'''
       return (os.system, (f'touch {marker}',))
 
   inner = pickle.dumps(Evil())
 
   class Outer:
+    '''Outer test double.'''
     def __reduce__(self):
+      '''Return the reduce tuple.'''
       return (pd.read_pickle, (inner,))
 
   path = tmp_path / 'chain.pkl'
@@ -367,6 +382,7 @@ def test_file_loader_chain_read_pickle_blocked(tmp_path):
 
 
 def test_file_loader_read_csv_blocked(tmp_path):
+  '''File loader read csv blocked.'''
   import pickle
   import pandas as pd
   import pytest
@@ -375,7 +391,9 @@ def test_file_loader_read_csv_blocked(tmp_path):
   secret.write_text('secret_col\n42\n', encoding='utf-8')
 
   class Outer:
+    '''Outer test double.'''
     def __reduce__(self):
+      '''Return the reduce tuple.'''
       return (pd.read_csv, (str(secret),))
 
   path = tmp_path / 'csv.pkl'
@@ -410,13 +428,16 @@ def _install_fake_mlflow_client(monkeypatch, artifact_bytes=None,
   pyfunc = types.ModuleType('mlflow.pyfunc')
 
   class MlflowException(Exception):
+    '''Mlflow Exception test double.'''
     pass
 
   MlflowException.__module__ = 'mlflow.exceptions'
   exceptions.MlflowException = MlflowException
 
   class _Version:
+    '''Version test double.'''
     def __init__(self):
+      '''Initialize the test double.'''
       self.version = version
       self.run_id = run_id
       self.source = 'fake-source'
@@ -428,23 +449,28 @@ def _install_fake_mlflow_client(monkeypatch, artifact_bytes=None,
       'set_tracking_uri'].append(uri)
 
   def _set_registry_uri(uri):
+    '''Set registry uri.'''
     calls['set_registry_uri'].append(uri)
 
   fake.set_registry_uri = _set_registry_uri
 
   class _FakeClient:
+    '''Fake Client test double.'''
     def __init__(self, tracking_uri=None, registry_uri=None):
+      '''Initialize the test double.'''
       calls['client'].append(
           {'tracking_uri': tracking_uri,
            'registry_uri': registry_uri})
 
     def get_model_version_by_alias(self, name, alias):
+      '''Return model version by alias.'''
       calls['version'].append((name, alias))
       if version_exc is not None:
         raise version_exc
       return _Version()
 
     def download_artifacts(self, run_id_arg, path, dst_path=None):
+      '''Download artifacts.'''
       calls['download'].append((run_id_arg, path, dst_path))
       data = artifact_bytes if artifact_bytes is not None \
           else _linear_pickle_bytes()
@@ -458,10 +484,12 @@ def _install_fake_mlflow_client(monkeypatch, artifact_bytes=None,
   tracking.MlflowClient = _FakeClient
 
   def _sklearn_load(uri):
+    '''Load with sklearn.'''
     calls['sklearn'].append(uri)
     raise AssertionError('sklearn.load_model must not be used')
 
   def _pyfunc_load(uri):
+    '''Load with pyfunc.'''
     calls['pyfunc'].append(uri)
     return Dummy()
 
@@ -499,7 +527,9 @@ def test_registry_loader_malicious_pickle_rejected(monkeypatch, tmp_path):
   marker = tmp_path / 'pwned'
 
   class Evil:
+    '''Evil test double.'''
     def __reduce__(self):
+      '''Return the reduce tuple.'''
       return (os.system, (f'touch {marker}',))
 
   _install_fake_mlflow_client(
@@ -612,6 +642,7 @@ def test_is_alias_not_found_bare_alias_word_is_not_not_found():
   )
 
   class _Exc(Exception):
+    '''Exc test double.'''
     error_code = 'INTERNAL_ERROR'
 
   assert _is_alias_not_found(
@@ -623,6 +654,7 @@ def test_is_alias_not_found_bare_alias_word_is_not_not_found():
 
 
   class _Coded(Exception):
+    '''Coded test double.'''
     error_code = 'RESOURCE_DOES_NOT_EXIST'
 
   assert _is_alias_not_found(_Coded('something vague')) is True

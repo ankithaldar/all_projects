@@ -1,4 +1,10 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+'''Tests for data-prep routine transformers and registry order.'''
+
 def test_knn_imputation_fills_missing_values():
+  '''KNN imputation fills missing values.'''
   import pandas as pd, numpy as np
   from forecast_ml_framework.pipelines.data_prep.nodes import preprocess
   df = pd.DataFrame({
@@ -14,6 +20,7 @@ def test_knn_imputation_fills_missing_values():
 
 
 def test_sequence_change_ratio():
+  '''Sequence change ratio computed over window.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.nodes import preprocess
   df = pd.DataFrame({
@@ -28,6 +35,7 @@ def test_sequence_change_ratio():
 
 
 def test_sequence_cov_zero_and_constant():
+  '''Sequence cov is zero for constant sequences.'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.nodes import preprocess
   df = pd.DataFrame({
@@ -42,6 +50,7 @@ def test_sequence_cov_zero_and_constant():
 
 
 def test_existing_registry_unchanged_order():
+  '''Existing registry order unchanged.'''
   from forecast_ml_framework.pipelines.data_prep.nodes import _REGISTRY
   assert list(_REGISTRY)[:16] == [
     'Imputations', 'CapOutliers', 'QuantileDiscretizer',

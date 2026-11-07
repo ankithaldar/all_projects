@@ -334,11 +334,14 @@ def test_fit_zoo_helper_fits_estimator_and_records_imbalance():
   )
 
   class _Dummy:
+    '''Dummy estimator recording fit state.'''
     def __init__(self, **kwargs):
+      '''Store kwargs and mark unfitted.'''
       self.kwargs = kwargs
       self.fitted = False
 
     def fit(self, x, y):
+      '''Mark fitted and return self.'''
       self.fitted = True
       return self
 
@@ -358,7 +361,9 @@ def test_fit_zoo_helper_rejects_tuning_config():
   )
 
   class _Dummy:
+    '''Dummy estimator for tuning rejection.'''
     def __init__(self, **kwargs):
+      '''Accept and ignore kwargs.'''
       pass
 
   adapter = XGBoostAdapter(

@@ -774,8 +774,8 @@ class FrameworkError(Exception):
     smuggle a secret into ``str(error)``.
     '''
     return (
-        f'[{_clean_code(getattr(self, "code", None))}] '
-        f'{_clean_user_message(getattr(self, "user_message", None))}')
+        f'[{_clean_code(getattr(self, 'code', None))}] '
+        f'{_clean_user_message(getattr(self, 'user_message', None))}')
 
   def to_dict(self):
     '''Return a JSON-safe envelope of this error.
@@ -883,6 +883,22 @@ def _factory(cls, code, default_message, retryable):
       factory_cls, user_message=None, *, stage='', context=None,
       retryable=retryable,
   ):
+    '''Build an instance via ``factory_cls``.
+
+    Resolves the message once: ``user_message`` when
+    supplied, else the factory default (a ``None``
+    check, not truthiness).
+
+    Args:
+      factory_cls: Class to build.
+      user_message: Supplied message, or ``None``.
+      stage: Stage label passed to ``_build``.
+      context: Context mapping passed to ``_build``.
+      retryable: Retry flag passed to ``_build``.
+
+    Returns:
+      A new ``factory_cls`` instance.
+    '''
     # Loop20 P5: ``is None`` not truthiness -- a hostile
     # ``__bool__`` must not crash and a supplied empty
     # string is passed through ctor cleaning, not

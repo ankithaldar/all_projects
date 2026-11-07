@@ -7,12 +7,14 @@ from pathlib import Path
 
 
 def test_conf_source_is_absolute_and_exists():
+  '''Conf source is absolute and exists.'''
   from forecast_ml_framework.settings import CONF_SOURCE
   assert Path(CONF_SOURCE).is_absolute()
   assert (Path(CONF_SOURCE) / 'base' / 'catalog.yml').exists()
 
 
 def test_conf_source_independent_of_cwd(tmp_path, monkeypatch):
+  '''Conf source independent of cwd.'''
   monkeypatch.chdir(tmp_path)
   import importlib
   import forecast_ml_framework.settings as settings
@@ -87,9 +89,9 @@ def test_merge_and_resolve_cross_file_oc_rejected(
   conf = tmp_path / 'conf'
   base = conf / 'base' / 'parameters'
   base.mkdir(parents=True)
-  (base / 'a.yml').write_text("frag_a: '$'\n")
+  (base / 'a.yml').write_text('frag_a: \'$\'\n')
   (base / 'b.yml').write_text(
-    "frag_b: '{oc.env:SECRET}'\njoined: '${frag_a}${frag_b}'\n")
+    'frag_b: \'{oc.env:SECRET}\'\njoined: \'${frag_a}${frag_b}\'\n')
   (conf / 'base' / 'catalog.yml').write_text('{}\n')
   try:
     loader = loader_cls(str(conf), env='base', base_env='base')

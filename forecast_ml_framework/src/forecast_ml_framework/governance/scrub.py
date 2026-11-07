@@ -275,7 +275,7 @@ _MAX_TEXT_LEN = 10000
 _MAX_KEY_LEN = 8192
 _MAX_ITEMS = 1000
 _TRUNCATED_NOTE = '[TRUNCATED]'
-_QUOTE_PAIRS = {'"': '"', "'": "'", '`': '`', '“': '”', '‘': '’'}
+_QUOTE_PAIRS = {'"': '"', '\'': '\'', '`': '`', '“': '”', '‘': '’'}
 _TERMINATORS = frozenset({',', ';', '}', ']', ')'})
 _AWS_ACCESS_KEY_RE = re.compile(r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b')
 _SK_KEY_RE = re.compile(r'\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b')
@@ -1115,7 +1115,7 @@ def _unknown_key(key):
       scrubbed != normalized or REDACTED in scrubbed
       or _is_secret_key(safe) or scrubbed_name != type_name
       or _is_secret_key(type_name))
-  return f"<{scrubbed_name}>", secret
+  return f'<{scrubbed_name}>', secret
 
 
 def _scan_quoted(text, start):
@@ -1130,10 +1130,10 @@ def _scan_quoted(text, start):
   index = start + 1
   while index < len(text):
     char = text[index]
-    if char == '\\' and opening in ('"', "'", '`'):
+    if char == '\\' and opening in ('"', '\'', '`'):
       index += 2
       continue
-    if (char == opening and opening in ('"', "'", '`')
+    if (char == opening and opening in ('"', '\'', '`')
         and index + 1 < len(text) and text[index + 1] == opening):
       index += 2
       continue
@@ -2198,6 +2198,15 @@ def _build_hybrid_text(text):
   token = []
 
   def flush_token():
+    '''Flush the pending token into ``hybrid``.
+
+    Resolves an ambiguous token to a marker-part or
+    marker-containing reading when one exists, else
+    keeps the primary form.
+
+    Returns:
+      None.
+    '''
     if not token:
       return
     primary_token = ''.join(seg for seg, _ in token)

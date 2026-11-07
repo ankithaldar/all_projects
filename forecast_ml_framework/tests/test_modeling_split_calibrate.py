@@ -120,6 +120,7 @@ def test_calibrate_regression_passthrough():
 
 
 def test_split_rejects_bad_test_size():
+  '''split_data rejects out-of-range test_size values.'''
   import pytest
   for bad in (0, 1, 1.5, -0.2):
     with pytest.raises(ValueError):
@@ -128,6 +129,7 @@ def test_split_rejects_bad_test_size():
 
 
 def test_split_rejects_empty_frame():
+  '''split_data rejects an empty frame.'''
   import pytest
   with pytest.raises(ValueError):
     split_data(
@@ -135,6 +137,7 @@ def test_split_rejects_empty_frame():
 
 
 def test_split_rejects_missing_target():
+  '''split_data rejects a missing target column.'''
   import pytest
   with pytest.raises(ValueError):
     split_data(
@@ -197,13 +200,17 @@ def test_beta_cal_wrapper_delegates_to_base_and_calibrator():
   )
 
   class FakeBase:
+    '''Base stub returning fixed class probabilities.'''
     classes_ = np.array(['neg', 'pos'])
 
     def predict_proba(self, x):
+      '''Return fixed two-class probabilities.'''
       return np.array([[0.9, 0.1], [0.2, 0.8]])
 
   class FakeCalibrator:
+    '''Calibrator stub scaling probabilities.'''
     def predict_proba(self, proba):
+      '''Scale the given probabilities by half.'''
       return proba * 0.5
 
   wrapped = _BetaCalWrapper(FakeBase(), FakeCalibrator())
@@ -238,6 +245,7 @@ def test_split_task_alias_stratifies(monkeypatch):
   real = sklearn.model_selection.train_test_split
 
   def spy(*args, **kwargs):
+    '''Record kwargs then delegate to the real split.'''
     captured.update(kwargs)
     return real(*args, **kwargs)
   monkeypatch.setattr(

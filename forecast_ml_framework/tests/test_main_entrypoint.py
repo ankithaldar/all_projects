@@ -23,6 +23,7 @@ def test_version_from_metadata_with_fallback(monkeypatch):
     assert 'forecast-ml' in main_mod._VERSION
 
     def _missing(name):
+      '''Return a missing value.'''
       raise importlib.metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr(importlib.metadata, 'version', _missing)
