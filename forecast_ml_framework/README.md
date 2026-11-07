@@ -10,12 +10,12 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 or a loss function is a config edit, not a code edit.
 
 Phases 1–7 plus the Cycle-1 fix loop (W1–W14, M1–M6) are landed
-(1749 test functions on disk — static `def test_` count in `tests/`,
+(1759 test functions on disk — static `def test_` count in `tests/`,
 checked in this docs pass against `pipeline_registry.py` (12
 registered pipelines, 8 modules) and current code; parametrize
-expands the collected total to **2757 collected** (`pytest
---collect-only -q`) — full suite: **2755 passed, 2 skipped, 0 failed**,
-coverage **90.85%**, pylint **9.65** (Lead QA; collected/passed/skipped/
+expands the collected total to **2794 collected** (`pytest
+--collect-only -q`) — full suite: **2792 passed, 2 skipped, 0 failed**,
+coverage **90.86%**, pylint **9.65** (Lead QA; collected/passed/skipped/
 coverage/pylint pasted verbatim from Lead QA, static count verified
 by grep `^def test_` in `tests/` in this docs pass); the static count
 is the on-disk `def test_` total, the collected total is the
@@ -172,7 +172,7 @@ params, a smoke local profile, and a strict config schema — see the
   `restricted_loads` runs a `pickletools` pre-scan rejecting
   `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (file-load
   vectors) plus a `MAX_ARTIFACT_BYTES` size cap (512 MiB default,
-  `core/artifact_store.py:340-380,475,679-680`) before unpickling
+  `core/artifact_store.py:346-351,365-384,583,773-800`) before unpickling
   (W2). `core/__init__.py` and `pipelines/modeling/__init__.py` are
   PEP 562 lazy inits (V11/I12).
 - **Pydantic + OmegaConf config validation.** `core/config_schema.py`
@@ -278,11 +278,11 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **2757 collected**
-(`pytest --collect-only -q`), full suite **2755 passed, 2 skipped,
-0 failed**, coverage **90.85%**, pylint **9.65** (Lead QA, pasted
+success: `pytest` exits 0 with all tests passing — **2794 collected**
+(`pytest --collect-only -q`), full suite **2792 passed, 2 skipped,
+0 failed**, coverage **90.86%**, pylint **9.65** (Lead QA, pasted
 verbatim; static count verified by grep in this docs pass).
-**1749 test functions** on disk (static `^def test_` count in
+**1759 test functions** on disk (static `^def test_` count in
 `tests/`; parametrize expands the static count to the collected total)
 (including `test_high_fitted`, `test_high_tuning`,
 `test_high_tuning_wiring`, `test_high_imbalance`, `test_high_calibrate`,
@@ -512,7 +512,7 @@ forecast_ml_framework/
 │   ├── telemetry/              # __init__.py + exceptions.py (FrameworkError hierarchy, wrap; public API, A2)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (1749 test functions; see Tests)
+├── tests/                      # pytest suite (1759 test functions; see Tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -1128,8 +1128,8 @@ The regression twin uses `task_type: 'regression'`,
 `modeling_reg_params`, `XGBRegressor`/`LGBMRegressor`/`CatBoostRegressor`
 /`RandomForestRegressor` handles, `selection_metric: 'rmse'`,
 `calibration: {method: 'none'}`, top-level `loss_function:
-'squared_error'` (`conf/base/parameters/modeling.yml:198`; `'RMSE'`
-is only the catboost per-model value at `:229`), and
+'squared_error'` (`conf/base/parameters/modeling.yml:203`; `'RMSE'`
+is only the catboost per-model value at `:234`), and
 `sort_by: 'RMSE'` for H2O.
 
 ##### Loss functions per model
@@ -1630,7 +1630,7 @@ and `pipelines/modeling/validation.py`, wired into
 
 Set top-level `eval_metric` in `modeling_params` /
 `modeling_reg_params` (commented examples in
-`conf/base/parameters/modeling.yml:86-91,174-178`; distinct from the
+`conf/base/parameters/modeling.yml:86-91,180-184`; distinct from the
 per-model `model_params.xgboost.eval_metric`). Parsed by
 `ntile.parse_eval_metric(metric_name, task)`
 (`ntile.py:89-164`) into `(metric, kind, n)`:
@@ -2268,48 +2268,75 @@ live with it as documented.
 
 | # | Issue | Status | Symptom / cause | Fix / workaround now |
 |---|---|---|---|---|
-| 1 | Pickle deserialization trust boundary | **Fixed** | `pickle.load` on an artifact executes `__reduce__` code | Restricted unpickler `restricted_loads()` / `_RestrictedUnpickler` (`core/artifact_store.py`) allowlists only sklearn/numpy/pandas + safe builtin types; anything else raises `ValueError`. `FileModelLoader` (`serving/model_loader.py`) uses it. Artifacts are trusted only when produced by this framework; the unpickler is defence in depth |
-| 2 | Path traversal jail | **Fixed** | A key like `../../etc/passwd` escapes the store root | `LocalArtifactStore._full_path()` resolves and jail-checks every path against the base; cloud keys validated by `_validate_cloud_key()` (no absolute keys, no `..`). Absolute paths and escaping keys raise `ValueError` |
-| 3 | SQL config-trust | **Fixed (documented)** | Arbitrary SQL string → arbitrary SQL execution | `SQLQueryDataSet` (`core/datasets.py`) validates intent: single statement, `SELECT`/`WITH` only (`_validate_read_only_query`). Documented trust boundary: connection and query come from trusted config (catalog/params), **never** untrusted user input — this is intent-checking, not a SQL sandbox. Only trusted queries may be used |
-| 4 | Matplotlib figure lifecycle | **Fixed** | Unclosed figures leak / "too many open figures" in long runs | `make_charts()` (`pipelines/modeling/charts.py`) closes figures on failure (`_safe`) and closes **every** figure in a `finally` block before returning. Callers must save images inside the call; figures are returned closed |
-| 5 | Env-dependent tests | **Fixed** | Serving tests fail without `httpx`; Spark/cloud tests fail without services | `httpx` is a dev dependency (`[dependency-groups] dev` in `pyproject.toml`) so `fastapi.testclient` works; env-dependent behaviour is mocked/skipped (Spark returns `None` when disabled/missing; cloud SDKs imported lazily). Run `PYTHONPATH=src python -m pytest tests/ -q` |
+| 1 | Pickle deserialization trust boundary | **Fixed** | `pickle.load` on an artifact executes `__reduce__` code | Restricted unpickler `restricted_loads()` (`core/artifact_store.py:693`) / `_RestrictedUnpickler` (`core/artifact_store.py:667`) allowlists only sklearn/numpy/pandas + safe builtin types; anything else raises `ValueError`. `FileModelLoader` (`serving/model_loader.py`) uses it. Artifacts are trusted only when produced by this framework; the unpickler is defence in depth |
+| 2 | Path traversal jail | **Fixed** | A key like `../../etc/passwd` escapes the store root | `LocalArtifactStore._full_path()` (`core/artifact_store.py:846-866`) resolves and jail-checks every path against the base; cloud keys validated by `_validate_cloud_key()` (`core/artifact_store.py:760-777`, no absolute keys, no `..`). Absolute paths and escaping keys raise `ValueError` |
+| 3 | SQL config-trust | **Fixed (documented)** | Arbitrary SQL string → arbitrary SQL execution | `SQLQueryDataSet` (`core/datasets.py:187,266`) validates intent: single statement, `SELECT`/`WITH` only (`_validate_read_only_query`, `core/datasets.py:136`), plus the extended denylist incl. server-file functions (`PG_READ_FILE`, `READFILE`, …) matched as prefix and double-quoted identifiers kept verbatim for the scan (`core/datasets.py:28-72,75-133`, A8). Documented trust boundary: connection and query come from trusted config (catalog/params), **never** untrusted user input — this is intent-checking, not a SQL sandbox. Only trusted queries may be used, with a read-only DB account |
+| 4 | Matplotlib figure lifecycle | **Fixed** | Unclosed figures leak / "too many open figures" in long runs | `make_charts()` (`pipelines/modeling/charts.py:1743`) closes figures on failure (`_safe`, `pipelines/modeling/charts.py:129`) and closes **every** figure in a `finally` block before returning (e.g. `pipelines/modeling/charts.py:639-641`). Callers must save images inside the call; figures are returned closed |
+| 5 | Env-dependent tests | **Fixed** | Serving tests fail without `httpx`; Spark/cloud tests fail without services | `httpx` is a dev dependency (`pyproject.toml:74-77`) so `fastapi.testclient` works; env-dependent behaviour is mocked/skipped (Spark returns `None` when disabled/missing; cloud SDKs imported lazily). Run `PYTHONPATH=src python -m pytest tests/ -q` |
 | 6 | Python 3.14 lib compatibility | **Fixed (spike)** | Third-party libs may not import on 3.14 | Full spike below: all 17 libraries OK, nothing moved to `extras-314-failures`. Caveats: MLflow prints an agent-hint banner on import — silence with `MLFLOW_DISABLE_AGENT_HINT=1`. PySpark 4.3 on pandas >= 3 emits a `FutureWarning` — expected and harmless |
 | 7 | Config drift | **Fixed** | `parameters.yml` shapes diverged from code contracts | Config aligned to code; bucket-file headers state the code contract per section (`sampling_params {method,test_size,stratify_col}`, `validation_params {fail_fast,required_cols,max_null_ratio}`, `modeling_params`, `feature_selection_params` flat keys, etc.) and `config_schema.py` models match |
-| 8 | Testpaths | **Fixed** | Bare `pytest` discovered nothing: `testpaths = ['src']` while tests lived in `tests/` | `pyproject.toml` now sets `testpaths = ['tests']` + `pythonpath = ['src']`, so bare `pytest` works; the explicit `PYTHONPATH=src python -m pytest tests/ -q` form still works |
-| 9 | H2O `predict_proba` | **Fixed** | H2O `predict()` returns labels, not probabilities; substituting them as proba silently corrupts metrics | `H2OAutoMLAdapter.predict_proba()` (`pipelines/modeling/adapters.py`) raises `NotImplementedError` when the fitted model has no callable `predict_proba`; labels are never used as a proba substitute. Use `predict()` for labels |
-| 10 | Params mutation | **Fixed** | Mutating shared param dicts across models in the zoo | Adapters never mutate input params: `_loss_kwargs()` / `_estimator_kwargs()` build fresh kwargs, and `train_models()` copies each model's params (`mp = dict(source)`). `ConfigLoader` normalises inputs to plain dicts on construction |
-| 11 | Console script name | **Fixed** | Old scaffold README invoked a non-existent `forecastin-ml` script | Only `forecast-ml` is declared (`pyproject.toml`); `__main__.py` delegates to `cli.main`. Use `uv run forecast-ml ...` |
+| 8 | Testpaths | **Fixed** | Bare `pytest` discovered nothing: `testpaths = ['src']` while tests lived in `tests/` | `pyproject.toml:100-101` now sets `testpaths = ['tests']` + `pythonpath = ['src']`, so bare `pytest` works; the explicit `PYTHONPATH=src python -m pytest tests/ -q` form still works |
+| 9 | H2O `predict_proba` | **Fixed** | H2O `predict()` returns labels, not probabilities; substituting them as proba silently corrupts metrics | `H2OAutoMLAdapter.predict_proba()` (`pipelines/modeling/adapters.py:766-782`) raises `NotImplementedError` when the fitted model has no callable `predict_proba`; labels are never used as a proba substitute. Use `predict()` for labels |
+| 10 | Params mutation | **Fixed** | Mutating shared param dicts across models in the zoo | Adapters never mutate input params: `_loss_kwargs()` / `_estimator_kwargs()` build fresh kwargs (`pipelines/modeling/adapters.py:297,332`), and `train_models()` copies each model's params (`pipelines/modeling/adapters.py:924`, `mp = dict(source)`). `ConfigLoader` normalises inputs to plain dicts on construction |
+| 11 | Console script name | **Fixed** | Old scaffold README invoked a non-existent `forecastin-ml` script | Only `forecast-ml` is declared (`pyproject.toml:81`); `__main__.py` delegates to `cli.main`. Use `uv run forecast-ml ...` |
 | 12 | Phase 3 pipelines not registered | **Fixed (Phase 4)** | `kedro run --pipeline eda|monitoring|retraining|cost_tracking|interpretability` failed — "pipeline not found" | `pipeline_registry._PIPELINE_MODULES` (`pipeline_registry.py:38-51`) now maps all 12 display names across 8 modules; verified by `tests/test_pipeline_registry.py` (12 keys) |
 | 13 | `parameters.yml` split migration | **Workaround** | Code/scripts reading `conf/base/parameters.yml` break — the file no longer exists | Edit the bucket that owns your section under `conf/base/parameters/` (see [Parameters split](#parameters-split-7-buckets)); Kedro/OmegaConf merges all `*.yml` there, so `params:<section>` references are unchanged. `conf/local/parameters.yml` still exists |
 | 14 | Metrics default-subset semantics | **Workaround (documented)** | Setting only `evaluation_params.metrics_to_calculate` in `evaluation.yml` has no effect on a Kedro `modeling` run — `evaluate_model_node` receives `params:modeling_params`, not `evaluation_params` (`pipelines/modeling/pipeline.py:462-466`) | Put `metrics`/`metrics_to_calculate` inside `modeling_params` for Kedro runs (absent → curated `DEFAULT_METRICS` subset; `'all'` → all 154; list → only those). See [Metrics selection](#metrics-selection-metrics_to_calculate) |
-| 15 | Spark scoring model broadcast | **Workaround** | Partitioned Spark scoring fails on executors with a pickling error for an unpicklable model object | The partition function closes over / broadcasts the model (`pipelines/scoring/pipeline.py:82`) — use a picklable sklearn/XGBoost/LightGBM/CatBoost estimator; keep batch sizes bounded |
-| 16 | `terraform validate` CI gate | **Fixed (W5)** | CI + `ci/run_checks.sh` run `terraform fmt -check` + `init -backend=false` + `terraform validate` for both stacks | Review `terraform plan` before `apply` |
-| 17 | MLflow serial marker | **Workaround** | Running the real-MLflow roundtrip test in parallel corrupts global mlflow state (tracking/registry URIs) | The test carries `@pytest.mark.serial` + a state-reset fixture (`tests/test_registry.py:449`) — run the full suite serially; do not parallelise with `pytest-xdist -n auto` |
+| 15 | Spark scoring model broadcast | **Workaround** | Partitioned Spark scoring fails on executors with a pickling error for an unpicklable model object | The partition function closes over / broadcasts the model (`pipelines/scoring/pipeline.py:64-82`) — use a picklable sklearn/XGBoost/LightGBM/CatBoost estimator; keep batch sizes bounded. See also accepted-risk #40 |
+| 16 | `terraform validate` CI gate | **Fixed (W5)** | CI + `ci/run_checks.sh` run `terraform fmt -check` + `init -backend=false` + `terraform validate` for both stacks (`ci/run_checks.sh:55-83`) | Review `terraform plan` before `apply` |
+| 17 | MLflow serial marker | **Workaround** | Running the real-MLflow roundtrip test in parallel corrupts global mlflow state (tracking/registry URIs) | The test carries `@pytest.mark.serial` + a state-reset fixture (`tests/test_registry.py:543`) — run the full suite serially; do not parallelise with `pytest-xdist -n auto` |
 
-### Known-issues audit — 2026-11-06 (post-Phase 7, 1218 tests at that land)
-#### Re-verified W13 (2026-11-07): items #21–#23, #25, #27, #28 updated
-to **Fixed** where W3/W4/W2/W5 landed; #18–#20 and #24, #29–#30 kept
-with softened refs where this docs pass verified the substance but
-not every exact line (`core/artifact_store.py:_SAFE_GLOBALS :42`,
-`_BOOSTER_GLOBALS :340`; `serving/model_loader.py:391,432-436,590-592`;
-`core/datasets.py:82,138-142`, read-only account required, A8).
-No code was changed by this docs pass.
+### Known-issues audit — 2026-11-07 (post-cycle-2 re-verification, docs pass)
+
+Re-verified against current code 2026-11-07 (no code changed by this
+docs pass). Updates from the earlier W13 pass are preserved here:
+items #21–#23, #25, #28 are **Fixed** where W3/W4/W2/W5 landed; #3
+and #20 now name the server-file denylist plus double-quote
+identifier scanning (A8); #18, #19, #24, #27, #29–#30 kept with
+freshly read-verified line refs (e.g.
+`core/artifact_store.py:_SAFE_GLOBALS :42`,
+`_BOOSTER_GLOBALS :340`;
+`serving/model_loader.py:391,432-436,590-592`;
+`core/datasets.py:28-72,75-133,136`;
+`serving/app.py:83-84,285-308,328-360,311-325,880-896,988`);
+#31–#40 are new accepted-risk entries from Lead ADRs D6/D7/D8
+(`.opencode/context/decisions.md`) and
+`.opencode/flaw-reports/forecast-qa-final.md` accepted risks.
+Counts (2794/2792/1759) unchanged by this docs pass.
 
 | # | Issue | Symptom | Impact | Workaround / config |
 |---|---|---|---|---|
 | 18 | H2O pickle serving rejected (no cluster) — re-verified (softened refs) | H2O globals are absent from the exact allowlist (`core/artifact_store.py:_SAFE_GLOBALS :42`, no `h2o` entries; zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only; there is no H2O cluster connect/load path | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change |
 | 19 | pyfunc opt-in, trusted registry only — re-verified | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:590-592`). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:391`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:432-436`) |
-| 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` accept only a single `SELECT`/`WITH` statement with denylisted keywords (`core/datasets.py:82,125,138-142`, denylist extended A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
-| 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:84,285-308,328-361,720-729`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
-| 22 | DNS rebinding — **Fixed (W4) + egress required (R-05)** | `_validate_uri_host` now re-validates via `socket.getaddrinfo` and rejects *any* non-global resolved address, fail-closed on error (`registry/model_registry.py:_validate_dns_host`) | Hostnames resolving to private/metadata IPs are caught at validation time; residual TOCTOU between validation and the MLflow client's own DNS resolution remains | Keep allowlisted registry hostname you control **and** run behind a network egress allowlist (allow only that hostname; block private/metadata) — see Registry DNS egress note above |
-| 23 | Pickle native-booster file-load — **Fixed (W2)** | `restricted_loads` runs a `pickletools` pre-scan rejecting `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (`core/artifact_store.py:340-380,475,679-680`) + `MAX_ARTIFACT_BYTES` size cap before unpickling; legit `NEWOBJ`+`BUILD` roundtrips still load | Booster file-load / oversized-pickle vectors closed | Load only artifacts produced by this framework from a fully trusted registry/store; treat any other pickle source as untrusted |
-| 24 | Dataproc / EMR stubs off by default | GCP Dataproc defaults `enable_dataproc = false`, `count = 0` (`infra/gcp/variables.tf:47-51`, `infra/gcp/main.tf:88`); AWS EMR defaults `enable_emr = false`, `count = 0` (`infra/aws/variables.tf:31-35`, `infra/aws/main.tf:83-85`). EMR autoscaling and the EventBridge scheduler ship commented-out | No cloud Spark compute exists until explicitly enabled; 100M-row cloud runs need manual provisioning | Set `-var="enable_dataproc=true"` (+ `autoscaling_enabled=true`) or `-var="enable_emr=true"` (+ `emr_subnet_id`), plan/apply, and destroy when idle (see `infra/README.md`) |
-| 25 | `terraform validate` in CI — **Fixed (W5)** | CI + `ci/run_checks.sh` run `terraform fmt -check` + `init -backend=false` + `terraform validate` for both stacks (fail-loud when binary absent) | Plan-time syntax errors are caught in CI | Still review `terraform plan` before `apply` |
+| 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` (`core/datasets.py:187,327`) accept only a single `SELECT`/`WITH` statement with the extended denylist incl. server-file primitives (`PG_READ_FILE`, `READFILE`, …) and double-quoted identifiers scanned verbatim (`core/datasets.py:28-72,75-133,136`, A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
+| 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:83-84,285-308`, bucket `serving/app.py:328-360`, check `serving/app.py:721`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter. The bucket is single-process (see #33) | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
+| 22 | DNS rebinding — **Fixed (W4) + egress required (R-05)** | `_validate_uri_host` now re-validates via `socket.getaddrinfo` and rejects *any* non-global resolved address, fail-closed on error (`registry/model_registry.py:161,173,197-270`) | Hostnames resolving to private/metadata IPs are caught at validation time; residual TOCTOU between validation and the MLflow client's own DNS resolution remains (see #32) | Keep allowlisted registry hostname you control **and** run behind a network egress allowlist (allow only that hostname; block private/metadata) — see Registry DNS egress note above |
+| 23 | Pickle native-booster file-load — **Fixed (W2)** | `restricted_loads` (`core/artifact_store.py:693`) runs a `pickletools` pre-scan rejecting `REDUCE`/`NEWOBJ_EX` to XGBoost/LightGBM `Booster` (`core/artifact_store.py:340,433`) + `MAX_ARTIFACT_BYTES` size cap before unpickling; legit `NEWOBJ`+`BUILD` roundtrips still load | Booster file-load / oversized-pickle vectors closed | Load only artifacts produced by this framework from a fully trusted registry/store; treat any other pickle source as untrusted |
+| 24 | Dataproc / EMR stubs off by default | GCP Dataproc defaults `enable_dataproc = false` (`infra/gcp/variables.tf:47-48`, `infra/gcp/main.tf:166` `count = var.enable_dataproc ? 1 : 0`); AWS EMR defaults `enable_emr = false` (`infra/aws/variables.tf:31-32`, `infra/aws/main.tf:199` `count = var.enable_emr ? 1 : 0`). EMR autoscaling and the EventBridge scheduler ship commented-out | No cloud Spark compute exists until explicitly enabled; 100M-row cloud runs need manual provisioning | Set `-var="enable_dataproc=true"` (+ `autoscaling_enabled=true`) or `-var="enable_emr=true"` (+ `emr_subnet_id`), plan/apply, and destroy when idle (see `infra/README.md`) |
+| 25 | `terraform validate` in CI — **Fixed (W5)** | CI + `ci/run_checks.sh` run `terraform fmt -check` + `init -backend=false` + `terraform validate` for both stacks (`ci/run_checks.sh:55-83`, fail-loud when binary absent in CI) | Plan-time syntax errors are caught in CI | Still review `terraform plan` before `apply` |
 | 26 | System-Anaconda skips | The uv venv is canonical; the system Anaconda env is explicitly not canonical and skips for missing deps (e.g. mlflow extras) are expected there | Running pytest under system Anaconda yields skips/false failures that do not reflect the real suite | Always use the uv environment: `uv sync`, then `uv run python -m pytest tests/ -q`. Do not treat Anaconda skips as regressions |
-| 27 | Metrics / charts size | `METRIC_REGISTRY` holds the full 154-name catalog (`pipelines/modeling/metrics.py:2049-2077` + `2079-2100`, registry build `2145-2149`); `make_charts` builds every chart for the task in one call and returns them closed. `'all'` selects every registry metric (`resolve_selected_metrics`, `metrics.py:2153`) | Selecting `'all'` metrics and/or all chart groups on large eval frames inflates time, memory, and artifact size | Keep metrics at the curated default (absent → `DEFAULT_METRICS`, `metrics.py:2104-2115`) unless you need more; select an explicit list, and save figures inside `make_charts` (they return closed) |
-| 28 | Health cache TTL — **Fixed (W3/R7)** | `/health` cache has a 30 s TTL (`FORECAST_HEALTH_CACHE_TTL`, `serving/app.py:880-896`) and refreshes on expiry and on successful `/predict` (`serving/app.py:988-989`) | Staleness window is 30 s, not process lifetime | Do not rely on `/health` changes alone to detect a model swapped at runtime |
-| 29 | Localhost allowed by design — re-verified (softened refs) | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:130,197-270`); subdomains of `localhost` and encoded/mapped loopback forms are rejected | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:314,323,328`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
+| 27 | Metrics / charts size | `METRIC_REGISTRY` holds the full 154-name catalog (`pipelines/modeling/metrics.py:2145-2149`); `make_charts` (`pipelines/modeling/charts.py:1743`) builds every chart for the task in one call and returns them closed. `'all'` selects every registry metric (`resolve_selected_metrics`, `metrics.py:2153`) | Selecting `'all'` metrics and/or all chart groups on large eval frames inflates time, memory, and artifact size | Keep metrics at the curated default (absent → `DEFAULT_METRICS`, `metrics.py:2114-2181`) unless you need more; select an explicit list, and save figures inside `make_charts` (they return closed) |
+| 28 | Health cache TTL — **Fixed (W3/R7)** | `/health` cache has a 30 s TTL (`FORECAST_HEALTH_CACHE_TTL`, `serving/app.py:87,311-325`, endpoint `serving/app.py:880-896`) and refreshes on expiry and on successful `/predict` (`serving/app.py:988`) | Staleness window is 30 s, not process lifetime | Do not rely on `/health` changes alone to detect a model swapped at runtime |
+| 29 | Localhost allowed by design — re-verified | Canonical `localhost`, `127.0.0.1`, and `::1` are explicitly allowed as registry hosts (`registry/model_registry.py:129,197-270`); subdomains of `localhost` and encoded/mapped loopback forms are rejected. Fail-closed auth (`serving/app.py:99-101,139-173`) refuses non-loopback binds without a key | Loopback registry URIs work by design — intended for local dev, but a misconfigured non-loopback deployment could still reach a local registry | Bind the CLI to `127.0.0.1` by default (`cli.py:314,323`) and only use loopback registry URIs for local development; do not expose the service with a loopback registry in production |
 | 30 | Dashboard sample data | The dashboard defaults to `sample/metrics.json` + `sample/charts/` (`web/app.js:6-7`), and that file self-identifies as sample/synthetic (`web/sample/metrics.json:12`, `generated_by: ... (sample/synthetic)`; `web/README.md:26-27`) | Opening the dashboard shows demo numbers, not your evaluation output — easy to mistake for real results | Point `CONFIG.metricsUrl` / `chartsBase` at real artifacts or copy them into `web/sample/` (`web/README.md:31,87`); serve via `python3 -m http.server` (fetch is blocked under `file://`) |
+
+### Accepted risks — 2026-11-07 (new #31–#40, Lead ADRs D6/D7/D8)
+
+These are documented limits, not regressions. Each cites the
+code that enforces or bounds it.
+
+| # | Issue | Symptom | Impact | Workaround / config |
+|---|---|---|---|---|
+| 31 | Single shared API key | Only one `FORECAST_API_KEY` exists (`serving/app.py:41-46,139-173`); revocation is all-or-nothing. Audit carries `actor='serving'` with an HMAC key-id (`serving/app.py:202-241`), not a human actor | No per-client identity; one compromised key compromises the service; key rotation requires redeploy | Use a gateway with per-client auth in front; rotate `FORECAST_API_KEY` by redeploying the service |
+| 32 | DNS TOCTOU | Validation resolves hostnames via `getaddrinfo` (`registry/model_registry.py:161,173,197-270`), but the MLflow client's own later DNS resolution can differ | A hostname that validates as global can still resolve to a private/metadata IP at connect time | Network egress allowlist MUST (allow only your registry hostname; block private/metadata) — the app-level check is not sufficient alone |
+| 33 | Global single-process rate bucket | Token bucket is in-process only (`serving/app.py:45-46,328-360,686-688`); no per-IP or per-client quota, no timeout backoff | Multi-process/multi-instance deployments limit independently; one noisy client can exhaust the shared bucket | Gateway MUST for production (per-client quotas, timeouts, distributed limits); the app bucket is a single-process safety net only |
+| 34 | CMEK opt-in | Artifact buckets use Google/AWS-managed encryption by default; CMEK key is optional (`infra/gcp/variables.tf:105-128`) | Dev default is not customer-managed encryption; prod deployments can silently run without CMEK unless gated | When `production = true`, validation requires a KMS key (GCP `kms_key_name` / AWS `kms_key_id`); set it and keep the role at `objectViewer` (`infra/gcp/main.tf:48`) |
+| 35 | No Docker | No container image is shipped; serving is `uvicorn` on the host (`serving/app.py:38-39`, `cli.py:108,126-131`) | Dev-only serving posture; production needs external process management/reverse proxy | Run behind a reverse proxy with TLS on a managed host; containerisation is out of scope (A5) |
+| 36 | `predict` name divergence | Registry display name `predict` maps to the `modeling` pipeline, while `forecast-ml predict` runs the `scoring` pipeline (`pipeline_registry.py:25-33`) | `kedro run --pipeline predict` and `forecast-ml predict` do different work despite similar names | Use the explicit pipeline name (`scoring`) when batch scoring is intended; both mappings are pinned by tests |
+| 37 | `X-Forwarded-Proto` HSTS trust | HSTS is sent when the ASGI scheme is `https`, when `X-Forwarded-Proto` is `https`, or when `FORECAST_TLS_ENABLED=1` (`serving/app.py:605-623`) | A spoofed `X-Forwarded-Proto: https` header on a plain-HTTP request triggers HSTS; plain-HTTP responses otherwise omit it | Behind a TLS-terminating proxy, set `FORECAST_TLS_ENABLED=1` and strip/override the header at the proxy; do not expose the app without TLS |
+| 38 | `/health` public model probe | `/health` is unauthenticated by design and returns `model_loaded` + a cached load probe (`serving/app.py:14-17,880-896`) | The endpoint leaks whether a model is loaded and can be used to probe service state | Keep it for probes/monitoring only; do not put sensitive state in the health payload; gate the full service with `FORECAST_REQUIRE_AUTH=1` where needed |
+| 39 | Audit bounded volatile list | Per-`/predict` audit entries go to the bounded in-process `app.state.audit_log` list, capped at 1000 entries, oldest dropped (`serving/app.py:89-90,220-241,857-865`) | Audit history is volatile and truncated under load; entries are lost on restart | Persist externally if retention is required; treat the in-process list as a bounded diagnostic, not a compliance record |
+| 40 | Spark partitioned scoring pickling | Partitioned scoring closes over / broadcasts the model for `mapPartitions`; the model must be picklable (`pipelines/scoring/pipeline.py:64-82`, see #15) | Unpicklable estimators fail on executors at runtime, not at plan time | Use picklable sklearn/XGBoost/LightGBM/CatBoost estimators; keep batch sizes bounded; validate the closure locally before cloud runs |
 
 ### Python 3.14 compatibility spike
 
@@ -2364,6 +2391,13 @@ dependency in the core set.
 | Override feature list was ignored / merged unexpectedly | A non-empty override wins alone by design. Empty it to get `selected + business − exclude` |
 | Keys in my new config section are rejected | A new *top-level* section is rejected by design: `ParametersConfig` is `extra='forbid'` (`core/config_schema.py:541`) — add a model for the section in `config_schema.py`. New *subkeys inside* an existing typed section pass (`extra='allow'` on submodels) |
 | First Kedro run fails on missing data files | `conf/base/catalog.yml` points at `data/raw/raw_data.csv` (or the env overlay path). Place your CSV/Parquet there, or re-point `data_params.train_data` at your catalog entry |
+| `/predict` returns 429 | The in-process token bucket is exhausted (Known Issue #21, fixed; single-process limit, Known Issue #33) — raise `FORECAST_RATE_LIMIT_PER_MINUTE` or put a gateway in front for production |
+| I need to revoke one client but not all | Not supported: there is a single shared `FORECAST_API_KEY` — rotation is all-or-nothing by redeploy (Known Issue #31) |
+| `production = true` plan fails | CMEK is required in production: set `kms_key_name` (GCP) / `kms_key_id` (AWS) to a real KMS key (Known Issue #34) |
+| HSTS missing on plain HTTP | Expected: HSTS is sent over TLS or when `X-Forwarded-Proto` is `https`; behind a TLS-terminating proxy set `FORECAST_TLS_ENABLED=1` (Known Issue #37) |
+| `/health` shows `model_loaded: false` | No model is configured/loaded; the endpoint is public by design (Known Issue #38) — check `MODEL_ARTIFACT_PATH` or the registry env vars |
+| Audit entries disappeared | The audit list is bounded and volatile (1000 entries, oldest dropped; Known Issue #39) — persist externally if retention is required |
+| Registry hostname resolves to a private IP | Expected fail-closed rejection at validation; add a network egress allowlist for your registry hostname (Known Issues #22, #32) |
 
 ## Phase 2 + Phase 3: landed
 
@@ -2375,7 +2409,7 @@ flowchart LR
   P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
   P5 --> P6["Phase 6 - done (parity)<br/>ntile eval-metric grammar<br/>lift table + threshold selection + promotion gate<br/>descriptive stats + confusion rates<br/>catalog anchors + eval_metric config<br/>1075 tests"]
   P6 --> P7["Phase 7 - done (high-value)<br/>fitted registry + tuning executor + imbalance<br/>prior-rate calibration + threshold application<br/>KNN + sequence routines + MLflow hooks<br/>two-stage scoring<br/>1218 tests"]
-  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>1749 test functions (static)"]
+  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>1759 test functions (static)"]
   LOOP --> REM["Remaining<br/>Docker (A5: dev-only, accepted)<br/>DVC exec<br/>pyfunc registration"]
 ```
 
@@ -2437,11 +2471,11 @@ flowchart LR
   alias, FE list, variables pointer, web offline-viewer note (A7),
   `cost_curve` row removed (W14/F5). 1218/1075 counts kept below as
   dated history.
-- Tests: 1749 test functions on disk (static `^def test_` count in
+- Tests: 1759 test functions on disk (static `^def test_` count in
   `tests/`, verified by grep in this docs pass); parametrize expands
-  the collected total to **2757 collected** (`pytest --collect-only
-  -q`) — full suite **2755 passed, 2 skipped, 0 failed**, coverage
-  **90.85%**, pylint **9.65** (Lead QA, pasted verbatim; prior W8a
+  the collected total to **2794 collected** (`pytest --collect-only
+  -q`) — full suite **2792 passed, 2 skipped, 0 failed**, coverage
+  **90.86%**, pylint **9.65** (Lead QA, pasted verbatim; prior W8a
   handoff of 2550 passed, 1 failed [external pinned test], 1 skipped
   superseded).
 

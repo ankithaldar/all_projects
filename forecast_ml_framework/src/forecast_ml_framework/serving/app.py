@@ -199,6 +199,29 @@ def _provided_key(headers):
   return ''
 
 
+def _keys_match(provided, expected):
+  '''Return True when a provided key matches the expected key.
+
+  Args:
+    provided: Client-supplied key (may contain non-ASCII
+      characters from latin-1 decoded header bytes).
+    expected: Server-configured key.
+
+  Returns:
+    True only on an exact match. Comparison is done on
+    UTF-8 bytes: str ``compare_digest`` raises TypeError
+    on non-ASCII input, which previously crashed a
+    non-ASCII header byte to a 500 before any audit
+    entry. Bytes never raise and non-ASCII simply
+    fails to match an ASCII expected key.
+  '''
+  if not provided or not expected:
+    return False
+  return secrets.compare_digest(
+      str(provided).encode('utf-8'),
+      str(expected).encode('utf-8'))
+
+
 def _hmac_key_id(provided):
   '''Return a truncated HMAC-SHA256 key-id for a provided key.
 
@@ -269,7 +292,9 @@ def _log_validation_error(exc):
 
   Field names are kept out of the 422 response body but
   remain available to operators in the server log, after
-  scrubbing. Never raises.
+  scrubbing. Control characters are stripped so a field
+  name containing a newline cannot forge a second log
+  line (``scrub_text`` preserves newlines). Never raises.
   '''
   try:
     # pylint: disable=import-outside-toplevel
@@ -277,6 +302,9 @@ def _log_validation_error(exc):
     detail = scrub_text(str(exc))
   except Exception:  # pylint: disable=broad-except
     detail = 'validation failed'
+  detail = ''.join(
+      char for char in detail
+      if ord(char) >= 32 and ord(char) != 127)
   _LOG.warning(
       'validation_error code=%s type=%s detail=%s',
       'validation_failed', type(exc).__name__, detail)
@@ -602,6 +630,28 @@ def _header_map(scope):
   }
 
 
+def _has_duplicate_auth_headers(scope):
+  '''Return True when an auth header appears more than once.
+
+  Args:
+    scope: ASGI connection scope.
+
+  Returns:
+    True when ``x-api-key`` or ``authorization`` occurs
+    more than once (case-insensitive) in the raw header
+    list, so a single canonical key cannot be picked
+    unambiguously from duplicate credentials.
+  '''
+  counts = {}
+  for pair in scope.get('headers', []):
+    name = pair[0].decode('latin-1').lower()
+    if name in ('x-api-key', 'authorization'):
+      counts[name] = counts.get(name, 0) + 1
+      if counts[name] > 1:
+        return True
+  return False
+
+
 def _security_headers(scope):
   '''Return security headers, adding HSTS over TLS.
 
@@ -706,8 +756,12 @@ class _CapAuthHeadersMiddleware:
     expected = os.environ.get('FORECAST_API_KEY')
     headers = _header_map(scope)
     provided = _provided_key(headers)
+    # C13-03: publish the canonical (last-wins) key the
+    # middleware authenticated so the endpoint audits
+    # exactly this key, not a first-wins dict(headers).
+    scope['forecast_provided_key'] = provided
     if expected and scope.get('path') != '/health':
-      if not provided or not secrets.compare_digest(
+      if _has_duplicate_auth_headers(scope) or not _keys_match(
               provided, expected):
         if scope.get('path') == '/predict':
           _log_access(
@@ -901,8 +955,14 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
       http_request: Request) -> PredictResponse:
     '''Return predictions for supplied features or records.'''
     started = time.monotonic()
-    headers = dict(http_request.headers)
-    provided = _provided_key(headers)
+    # C13-03: reuse the canonical key the middleware
+    # authenticated (stored in scope), falling back to
+    # the same last-wins _header_map extraction. Never
+    # use dict(headers), which is first-wins and would
+    # audit a different key than the one authenticated.
+    provided = http_request.scope.get('forecast_provided_key')
+    if provided is None:
+      provided = _provided_key(_header_map(http_request.scope))
     records = _records_from(request)
     try:
       _check_caps(records)

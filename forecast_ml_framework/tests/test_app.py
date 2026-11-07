@@ -1445,3 +1445,103 @@ def test_audit_failure_middleware_does_not_double_log(
               if 'predict_access' in row.getMessage()]
   assert len(accesses) == 1
   assert app.state.audit_log == []
+
+
+# --- S15 C13-01 RED: non-ASCII API key byte ---
+
+def test_non_ascii_api_key_byte_401_with_audit_entry(
+    monkeypatch, caplog):
+  '''Non-ASCII X-API-Key byte 0xe9 yields 401 plus audit entry.
+
+  Raw byte 0xe9 decodes as latin-1 e-acute; str
+  compare_digest raises TypeError on non-ASCII, which
+  previously crashed to 500 with no audit entry. The
+  request must instead be a clean 401 with an
+  unauthorized access and audit entry, no exception.
+  '''
+  import logging
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app, raise_server_exceptions=False)
+  with caplog.at_level(logging.INFO):
+    r = client.post(
+        '/predict', json={'features': {'a': 1.0}},
+        headers=[(b'x-api-key', b'\xe9')])
+  assert r.status_code == 401
+  assert r.json() == {'detail': 'unauthorized'}
+  assert 'predict_access' in caplog.text
+  assert 'outcome=unauthorized' in caplog.text
+  audit = app.state.audit_log
+  assert len(audit) == 1
+  assert audit[-1]['event'] == 'predict'
+  assert audit[-1]['actor'] == 'serving'
+
+
+# --- S15 C13-02 RED: validation log forging ---
+
+def test_validation_error_log_has_no_raw_newline(caplog):
+  '''Validation log emits one record with no raw newline.
+
+  A record key containing a newline reaches
+  _log_validation_error via the type-check message;
+  scrub_text keeps the newline, so logging it raw
+  would forge a second log line. Exactly one record
+  must be emitted and its message must contain no
+  newline or carriage-return characters.
+  '''
+  import logging
+  from forecast_ml_framework.serving.app import (
+    _log_validation_error,
+  )
+  exc = ValueError(
+      'feature a\nFORGED log line\rforged must be a '
+      'finite number')
+  with caplog.at_level(logging.WARNING):
+    _log_validation_error(exc)
+  assert len(caplog.records) == 1
+  message = caplog.records[0].getMessage()
+  assert '\n' not in message
+  assert '\r' not in message
+  assert 'validation_error' in message
+
+
+# --- S15 C13-03 RED: duplicate auth headers ---
+
+def test_duplicate_api_key_headers_canonical_audit(monkeypatch):
+  '''Duplicate X-API-Key headers cannot misattribute audit.
+
+  Middleware _header_map is last-wins while
+  dict(headers) is first-wins, so attacker then valid
+  previously passed auth as valid but audited the
+  attacker HMAC. The request must either be rejected
+  401 or, if it succeeds, its audit key_id must be
+  the canonical last (valid) key.
+  '''
+  import hashlib
+  import hmac
+  from fastapi.testclient import TestClient
+  from forecast_ml_framework.serving.app import create_app
+  key = 's3cret-test-key-1234567890'
+  monkeypatch.setenv('FORECAST_API_KEY', key)
+  monkeypatch.delenv('FORECAST_REQUIRE_AUTH', raising=False)
+  monkeypatch.delenv('FORECAST_ENV', raising=False)
+  app = create_app(dummy_loader)
+  client = TestClient(app, raise_server_exceptions=False)
+  r = client.post(
+      '/predict', json={'features': {'a': 1.0}},
+      headers=[('x-api-key', 'attacker'),
+               ('x-api-key', key)])
+  canonical = hmac.new(
+      key.encode(), key.encode(),
+      hashlib.sha256).hexdigest()[:16]
+  audit = app.state.audit_log
+  assert r.status_code in (200, 401)
+  assert audit
+  assert audit[-1]['details']['key_id_hmac'] == canonical
+  if r.status_code == 401:
+    assert r.json() == {'detail': 'unauthorized'}

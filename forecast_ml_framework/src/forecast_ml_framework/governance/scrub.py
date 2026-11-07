@@ -10,8 +10,10 @@ with all non-alphanumerics stripped, so ``accessKey``,
 ``access_key`` and ``AWSAccessKeyId`` all match -- recursively)
 so secrets never reach audit trails or telemetry contexts.
 Free-text strings and string detail values are scrubbed for
-``key=value`` secret patterns, space-separated
-``password <value>`` forms (including an optional
+``key=value`` secret patterns, HTTP auth schemes
+(``Basic``/``Digest``/``Negotiate`` between ``Authorization``
+and the credential, and bare scheme plus a base64-ish token),
+space-separated ``password <value>`` forms (including an optional
 ``is``/``was`` copula and ``api key`` space/hyphen
 variants), symbolic separators (any run of non-alphanumeric
 characters or underscores, e.g. ``>>``, ``~``, ``#``,
@@ -101,7 +103,13 @@ _INTRA_FILLER_WORDS = (
     'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen',
     'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
     'nineteen', 'twenty', 'a', 'b', 'c', 'd', 'e', 'f',
-    'filler', 'very2', '123')
+    'filler', 'very2', '123',
+    # Cycle13 S14: HTTP auth schemes, filler like ``is``/
+    # ``very`` in both filler vocabularies (see
+    # ``_FILLER_WORDS``), so ``api basic key`` and a marker
+    # chain (``Authorization: Basic Authorization: ...``)
+    # scan as one marker instead of rescanning per marker.
+    'basic', 'digest', 'negotiate')
 _INTRA_FILLER_SET = frozenset(_INTRA_FILLER_WORDS)
 _INTRA_FILLER = (
     '|'.join(sorted(_INTRA_FILLER_WORDS, key=len, reverse=True))
@@ -324,6 +332,25 @@ _BEARER_TEXT_RE = re.compile(
     r'key|keys|words|ids|tokens|secrets|passwords|credentials|'
     r'passphrases|word|phrase|code)(?:\s*[\)\]\}\x27"`]|'
     r'(?![A-Za-z0-9_.\-+/\=])))'
+    r'([A-Za-z0-9_.\-+/\=]+)', re.IGNORECASE)
+# Cycle13 S14: bare HTTP auth schemes (``Basic``/``Digest``/
+# ``Negotiate``) mirror ``Bearer`` but stay FP-guarded: a bare
+# scheme redacts only a base64-ish token (see
+# ``_is_base64ish_token``), so ordinary prose such as ``This
+# is basic math`` or ``Basic research ...`` is kept. The shape
+# check lives in ``_sub_spans`` (mode ``'scheme'``), not in
+# regex lookaheads: two ``[charset]*`` lookaheads backtrack
+# quadratically on a long token that fails the shape.
+# The ``Authorization`` context needs no such shape check --
+# scheme words are filler between that marker and its value
+# (see ``_FILLER_WORDS``), so any token after the scheme, even
+# a short one, redacts there. A marker word after a bare
+# scheme (``Basic token Z``) needs no skip here: it carries
+# no digit/``+/=``, so the marker scan redacts ``Z`` instead.
+_BARE_SCHEME_TEXT_RE = re.compile(
+    r'\b((?:Basic|Digest|Negotiate)'
+    r'(?:[\s,;:=)\]}]+(?:' + _INTRA_FILLER + r'))*'
+    r'[\s,;:=)\]}]+)'
     r'([A-Za-z0-9_.\-+/\=]+)', re.IGNORECASE)
 _URL_CRED_RE = re.compile(
     r'(://[^/\s:@]+:)([^\s/]+)(@[^/\s@]+)', re.IGNORECASE)
@@ -1182,7 +1209,13 @@ _FILLER_WORDS = frozenset({
     # ``particularly``/``especially`` are filler too.
     'tremendously', 'literally', 'literaly', 'honestly',
     'highly', 'incredibly', 'fairly', 'particularly',
-    'especially'})
+    'especially',
+    # Cycle13 S14: HTTP auth schemes are filler between a
+    # marker (``Authorization``) and its credential, so the
+    # token after the scheme is the value (``Authorization:
+    # Basic Z`` redacts ``Z``). Only in marker-scan context:
+    # prose without a marker never reaches ``_is_filler``.
+    'basic', 'digest', 'negotiate'})
 
 # Loop15 B1: parts of a glued marker phrase (``api*keys``,
 # ``aws*access*key``). A word whose alnum runs are all in
@@ -1597,6 +1630,21 @@ def _scan_word_branch(text, index, end, pos):
   return ('return', (index, value_end, REDACTED, value_end))
 
 
+def _is_base64ish_token(token):
+  '''Return True for a bare-scheme credential-shaped token.
+
+  Cycle13 S14: a bare ``Basic``/``Digest``/``Negotiate``
+  redacts only a token of length >= 8 carrying a letter
+  and a digit or ``+/=`` (base64-ish), so ordinary prose
+  (``basic math``, ``Basic research``) is preserved. The
+  ``Authorization`` context is checked in the marker scan
+  instead and redacts any token after the scheme.
+  '''
+  return (len(token) >= 8
+          and any(char.isalpha() for char in token)
+          and any(char.isdigit() or char in '+/=' for char in token))
+
+
 def _sub_spans(text, pos, redacted, pattern, mode):
   '''Apply one regex, recording its core span in ``redacted``.
 
@@ -1606,11 +1654,14 @@ def _sub_spans(text, pos, redacted, pattern, mode):
   coordinates even though earlier replacements shift
   lengths (``ß``/``þ``/Roman/squared expansions and
   ``REDACTED`` itself). ``mode`` is ``'whole'``,
-  ``'url'`` or ``'bearer'``: the core is the whole
-  match, URL group 2, or Bearer group 2, and preserved
-  prefix/suffix chars keep their original positions.
+  ``'url'``, ``'bearer'`` or ``'scheme'``: the core is
+  the whole match, URL group 2, Bearer group 2, or a
+  scheme token passing ``_is_base64ish_token`` (a scheme
+  match failing that shape is kept verbatim), and
+  preserved prefix/suffix chars keep their original
+  positions.
   Replacement text and output are byte-identical to the
-  equivalent ``re.sub``.
+  equivalent ``re.sub`` (except a kept scheme match).
   '''
   parts = []
   new_pos = []
@@ -1628,6 +1679,11 @@ def _sub_spans(text, pos, redacted, pattern, mode):
       parts.append(text[match.start(3):match.end(3)])
       new_pos.extend(pos[match.start(3):match.end(3)])
       core = match.span(2)
+    elif mode == 'scheme' and not _is_base64ish_token(
+        match.group(2)):
+      parts.append(text[match.start():match.end()])
+      new_pos.extend(pos[match.start():match.end()])
+      core = None
     else:
       parts.append(text[match.start(1):match.end(1)])
       new_pos.extend(pos[match.start(1):match.end(1)])
@@ -1637,9 +1693,10 @@ def _sub_spans(text, pos, redacted, pattern, mode):
     if mode == 'whole':
       parts.append(REDACTED)
       new_pos.extend([None] * len(REDACTED))
-    for idx in range(core[0], core[1]):
-      if pos[idx] is not None:
-        redacted.add(pos[idx])
+    if core is not None:
+      for idx in range(core[0], core[1]):
+        if pos[idx] is not None:
+          redacted.add(pos[idx])
     last = match.end()
   parts.append(text[last:])
   new_pos.extend(pos[last:])
@@ -1765,6 +1822,8 @@ def _scrub_text_inner_spans(text):
       text, pos, redacted, _URL_CRED_RE, 'url')
   text, pos = _sub_spans(
       text, pos, redacted, _BEARER_TEXT_RE, 'bearer')
+  text, pos = _sub_spans(
+      text, pos, redacted, _BARE_SCHEME_TEXT_RE, 'scheme')
   parts = []
   cursor = 0
   search_from = 0
@@ -2257,7 +2316,7 @@ def _scrub_text(text):
 
   Args:
     text: String that may embed ``key=value`` secret patterns
-      (or a bare ``Bearer <token>``).
+      (or a bare ``Bearer``/HTTP scheme ``<token>``).
 
   Returns:
     The string with secret values replaced by ``REDACTED``.

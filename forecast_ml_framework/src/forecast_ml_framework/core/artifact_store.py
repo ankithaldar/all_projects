@@ -14,12 +14,17 @@ loader functions such as ``pandas.read_pickle``/``read_csv``,
 ``os``/``subprocess``/``sys`` global are rejected, so a chained
 ``__reduce__`` payload cannot reach a file loader or shell.
 A ``pickletools`` pre-scan additionally rejects ``REDUCE`` /
-``NEWOBJ_EX`` construction of allowlisted ``Booster`` classes:
-framework pickles rebuild a ``Booster`` only via ``NEWOBJ``
-with empty args plus ``BUILD`` state, so a file-backed
-constructor call (valid model file, ``/etc/passwd``, a FIFO
-that would block forever) is pure attack surface and is
-rejected before any file is opened. Pickle payloads larger
+``NEWOBJ_EX`` / ``NEWOBJ`` / ``OBJ`` / ``INST`` construction
+targeting or embedding allowlisted ``Booster`` classes: the
+target and every argument are searched recursively for a
+``Booster`` global, so ``copyreg.__newobj__``/``__newobj_ex__``
+indirection (``__newobj__(Booster, ...)``) cannot smuggle a
+``Booster`` past the target check alone. Framework pickles
+rebuild a ``Booster`` only via ``NEWOBJ`` with empty args
+plus ``BUILD`` state, so a file-backed constructor call
+(valid model file, ``/etc/passwd``, a FIFO that would block
+forever) is pure attack surface and is rejected before any
+file is opened. Pickle payloads larger
 than ``MAX_ARTIFACT_BYTES`` (default 512 MB, env-overridable)
 are rejected before unpickling.
 Path jail checks stop keys escaping a store root.
@@ -335,8 +340,9 @@ _SAFE_GLOBALS = {
 # Booster classes whose constructor accepts a filesystem path
 # (xgboost/lightgbm ``model_file``, 3rd positional parameter).
 # Their framework pickles use NEWOBJ with empty args + BUILD,
-# never REDUCE/NEWOBJ_EX, so those call shapes are rejected
-# by the pre-scan below.
+# never REDUCE/NEWOBJ_EX and never as a nested argument to
+# another construction, so those call shapes are rejected by
+# the pre-scan below.
 _BOOSTER_GLOBALS = frozenset({
   ('xgboost.core', 'Booster'),
   ('lightgbm.basic', 'Booster'),
@@ -496,6 +502,68 @@ def _dict_with_item(token, key, value):
   return _UNKNOWN
 
 
+def _contains_booster_token(token):
+  '''Return True when ``token`` recursively contains a Booster.
+
+  Searches tuple, list, and dict token payloads (including
+  dict keys and values) for a Booster global token, following
+  memo references that the symbolic stack already resolved.
+  This catches ``copyreg.__newobj__``/``__newobj_ex__``
+  indirection, where ``Booster`` appears as a nested argument
+  rather than as the ``REDUCE`` callable itself.
+
+  Args:
+    token: Symbolic pickle stack token.
+
+  Returns:
+    True when a Booster global appears anywhere inside
+    ``token``.
+  '''
+  if _is_booster_token(token):
+    return True
+  if isinstance(token, tuple) and token:
+    if token[0] == 'tuple' and len(token) == 2:
+      return any(_contains_booster_token(item) for item in token[1])
+    if token[0] == 'list' and len(token) == 2:
+      return any(_contains_booster_token(item) for item in token[1])
+    if token[0] == 'dict' and len(token) == 2:
+      return any(
+        _contains_booster_token(key)
+        or _contains_booster_token(value)
+        for key, value in token[1])
+  return False
+
+
+def _list_with_item(token, item):
+  '''Return a list token with one item added, when possible.
+
+  Args:
+    token: Base symbolic token.
+    item: Item symbolic token.
+
+  Returns:
+    The updated list token, or unknown for non-list bases.
+  '''
+  if isinstance(token, tuple) and token and token[0] == 'list':
+    return ('list', token[1] + (item,))
+  return _UNKNOWN
+
+
+def _list_with_items(token, items):
+  '''Return a list token with multiple items added, when possible.
+
+  Args:
+    token: Base symbolic token.
+    items: Item symbolic tokens.
+
+  Returns:
+    The updated list token, or unknown for non-list bases.
+  '''
+  if isinstance(token, tuple) and token and token[0] == 'list':
+    return ('list', token[1] + tuple(items))
+  return _UNKNOWN
+
+
 def _global_token_from_arg(arg):
   '''Build a global token from a GLOBAL/INST opcode argument.
 
@@ -518,14 +586,19 @@ def _prescan_pickle(raw):
   A symbolic ``pickletools`` stack walk identifies the target
   of every ``REDUCE`` / ``NEWOBJ_EX`` / ``NEWOBJ`` / ``OBJ`` /
   ``INST`` opcode, following memo references, so indirection
-  through ``MEMOIZE``/``BINGET`` cannot hide the target. Any
-  such call targeting an allowlisted ``Booster`` class is
-  rejected: framework pickles only rebuild a ``Booster`` via
-  ``NEWOBJ`` with empty args plus ``BUILD`` state, so a
-  constructor call carrying a model file (including a FIFO,
-  which would block the unpickler indefinitely) never occurs
-  in a legitimate artifact. The rejection message is static
-  and never echoes a probed path.
+  through ``MEMOIZE``/``BINGET`` cannot hide the target. The
+  target and every argument are searched recursively for a
+  ``Booster`` global, so ``copyreg.__newobj__`` /
+  ``__newobj_ex__`` indirection (``__newobj__(Booster, ...)``)
+  is rejected even though the ``REDUCE`` callable itself is
+  only the reconstruction helper. Any such call targeting or
+  embedding an allowlisted ``Booster`` class is rejected:
+  framework pickles only rebuild a ``Booster`` via ``NEWOBJ``
+  with empty args plus ``BUILD`` state, so a constructor call
+  carrying a model file (including a FIFO, which would block
+  the unpickler indefinitely) never occurs in a legitimate
+  artifact. The rejection message is static and never echoes
+  a probed path.
 
   Args:
     raw: Pickle byte string to scan.
@@ -566,6 +639,8 @@ def _prescan_pickle(raw):
       stack.append(('tuple', ()))
     elif name == 'EMPTY_DICT':
       stack.append(('dict', ()))
+    elif name in ('EMPTY_LIST', 'EMPTY_SET'):
+      stack.append(('list', ()))
     elif name == 'TUPLE':
       stack.append(('tuple', tuple(_pop_until_mark(stack))))
     elif name in ('TUPLE1', 'TUPLE2', 'TUPLE3'):
@@ -582,8 +657,7 @@ def _prescan_pickle(raw):
       else:
         stack.append(_UNKNOWN)
     elif name in ('LIST', 'FROZENSET'):
-      _pop_until_mark(stack)
-      stack.append(_UNKNOWN)
+      stack.append(('list', tuple(_pop_until_mark(stack))))
     elif name == 'SETITEM':
       value = _pop_token(stack)
       key = _pop_token(stack)
@@ -596,18 +670,20 @@ def _prescan_pickle(raw):
         base = _dict_with_item(base, items[i], items[i + 1])
       stack.append(base)
     elif name == 'APPEND':
-      _pop_token(stack)
-      stack.append(_pop_token(stack))
+      value = _pop_token(stack)
+      base = _pop_token(stack)
+      stack.append(_list_with_item(base, value))
     elif name in ('APPENDS', 'ADDITEMS'):
-      _pop_until_mark(stack)
-      stack.append(_pop_token(stack))
+      items = _pop_until_mark(stack)
+      base = _pop_token(stack)
+      stack.append(_list_with_items(base, items))
     elif name == 'BUILD':
       _pop_token(stack)
       stack.append(_pop_token(stack))
     elif name == 'REDUCE':
-      _pop_token(stack)
+      args = _pop_token(stack)
       func = _pop_token(stack)
-      if _is_booster_token(func):
+      if _is_booster_token(func) or _contains_booster_token(args):
         raise ValueError(
             'Forbidden pickle payload: Booster construction '
             'is not allowed')
@@ -618,30 +694,34 @@ def _prescan_pickle(raw):
       empty = (
           isinstance(args, tuple) and len(args) == 2
           and args[0] == 'tuple' and args[1] == ())
-      if _is_booster_token(cls) and not empty:
+      if (_is_booster_token(cls) and not empty) \
+          or _contains_booster_token(args):
         raise ValueError(
             'Forbidden pickle payload: Booster construction '
             'is not allowed')
       stack.append(_UNKNOWN)
     elif name == 'NEWOBJ_EX':
-      _pop_token(stack)
-      _pop_token(stack)
+      kwargs = _pop_token(stack)
+      args = _pop_token(stack)
       cls = _pop_token(stack)
-      if _is_booster_token(cls):
+      if _is_booster_token(cls) \
+          or _contains_booster_token(args) \
+          or _contains_booster_token(kwargs):
         raise ValueError(
             'Forbidden pickle payload: Booster construction '
             'is not allowed')
       stack.append(_UNKNOWN)
     elif name == 'OBJ':
       items = _pop_until_mark(stack)
-      if items and _is_booster_token(items[0]):
+      if any(_contains_booster_token(item) for item in items):
         raise ValueError(
             'Forbidden pickle payload: Booster construction '
             'is not allowed')
       stack.append(_UNKNOWN)
     elif name == 'INST':
-      _pop_until_mark(stack)
-      if _is_booster_token(_global_token_from_arg(arg)):
+      items = _pop_until_mark(stack)
+      if _is_booster_token(_global_token_from_arg(arg)) \
+          or any(_contains_booster_token(item) for item in items):
         raise ValueError(
             'Forbidden pickle payload: Booster construction '
             'is not allowed')

@@ -4552,3 +4552,96 @@ def test_q5_short_and_plain_mid_controls_still_work():
   assert _Q5_SENTINEL not in str(out2)
 
 
+# --- cycle13 S14: HTTP auth schemes Basic/Digest/Negotiate (RED) ---
+
+
+@pytest.mark.parametrize('text', [
+    'Authorization: Basic HUNTER2ZQ9SENTINEL',
+    'Authorization: Digest HUNTER2ZQ9SENTINEL',
+    'Authorization: Negotiate HUNTER2ZQ9SENTINEL',
+    'Authorization: basic HUNTER2ZQ9SENTINEL',
+    'Authorization: DIGEST HUNTER2ZQ9SENTINEL',
+    'Authorization: negotiate HUNTER2ZQ9SENTINEL',
+    'Authorization: Basic hunter2',
+    'Authorization: Basic HUNTER2ZQ9SENTINEL end',
+    'Authorization: is Basic HUNTER2ZQ9SENTINEL',
+    'Authorization: Basic token HUNTER2ZQ9SENTINEL',
+])
+def test_s14_authorization_scheme_scrub_text(text):
+  '''S14: Authorization scheme credential is redacted in text.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert 'hunter2' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+  assert 'Authorization:' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Authorization: Basic HUNTER2ZQ9SENTINEL',
+    'Authorization: Digest HUNTER2ZQ9SENTINEL',
+    'Authorization: Negotiate HUNTER2ZQ9SENTINEL',
+    'Basic HUNTER2ZQ9SENTINEL',
+    'Digest Zq9SENTINEL7x',
+    'Negotiate AAA+BBB/CCC=',
+])
+def test_s14_scheme_sentinel_gone_all_sinks(text):
+  '''S14: scheme sentinel gone via audit and to_dict sinks.'''
+  from forecast_ml_framework.governance.audit import audit_log
+  from forecast_ml_framework.governance.scrub import scrub_details
+  from forecast_ml_framework.telemetry.exceptions import FrameworkError
+
+  entry = audit_log('train', 'alice', {'note': text})
+  assert 'HUNTER2ZQ9SENTINEL' not in json.dumps(entry), repr(text)
+  assert 'Zq9SENTINEL7x' not in json.dumps(entry), repr(text)
+  assert 'AAA+BBB/CCC=' not in json.dumps(entry), repr(text)
+  out = scrub_details({'headers': text, 'ok': 'keep'})
+  assert 'HUNTER2ZQ9SENTINEL' not in str(out), repr(text)
+  assert 'Zq9SENTINEL7x' not in str(out), repr(text)
+  assert out['ok'] == 'keep'
+  err = FrameworkError('m', context={'note': text})
+  assert 'HUNTER2ZQ9SENTINEL' not in json.dumps(err.to_dict()), (
+      repr(text))
+  assert 'Zq9SENTINEL7x' not in json.dumps(err.to_dict()), repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'Basic HUNTER2ZQ9SENTINEL',
+    'Digest HUNTER2ZQ9SENTINEL',
+    'Negotiate HUNTER2ZQ9SENTINEL',
+    'basic HUNTER2ZQ9SENTINEL',
+    'BASIC Zq9SENTINEL7x',
+    'Basic is HUNTER2ZQ9SENTINEL',
+    'Basic AAA+BBB/CCC=',
+])
+def test_s14_bare_scheme_base64_token_scrubbed(text):
+  '''S14: bare scheme plus base64-ish token is redacted.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert 'HUNTER2ZQ9SENTINEL' not in out, repr(text)
+  assert 'Zq9SENTINEL7x' not in out, repr(text)
+  assert 'AAA+BBB/CCC=' not in out, repr(text)
+  assert '***REDACTED***' in out, repr(text)
+
+
+@pytest.mark.parametrize('text', [
+    'This is basic math',
+    'This is basic math for beginners',
+    'basic math',
+    'Basic research methods are useful',
+    'Basic Principles of accounting',
+    'Digest the report carefully',
+    'Negotiate a deal with the vendor',
+    'This digest is easy to read',
+])
+def test_s14_scheme_fp_guards_preserved(text):
+  '''S14: ordinary scheme words without a credential stay.'''
+  from forecast_ml_framework.governance.scrub import scrub_text
+
+  out = scrub_text(text)
+  assert out == text, repr(text)
+  assert '***REDACTED***' not in out, repr(text)
+
+

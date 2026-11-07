@@ -1738,3 +1738,122 @@ def test_gcs_store_no_open_raises_promptly_without_download(monkeypatch):
   with pytest.raises(RuntimeError, match='GCS blob has no streaming open'):
     GCSArtifactStore('bkt').load('k.bin')
   assert calls['download'] == 0
+
+
+# --- S13: Booster smuggled via copyreg.__newobj__ REDUCE ---
+
+
+def _short_binunicode(text):
+  '''Encode text as a SHORT_BINUNICODE opcode.'''
+  raw = text.encode('utf-8')
+  return b'\x8c' + bytes([len(raw)]) + raw
+
+
+def _hand_newobj_booster_raw(module_name, model_path):
+  '''Build a hand pickle calling copyreg.__newobj__ on Booster.'''
+  body = b''
+  body += _short_binunicode('copyreg') + b'\x94'
+  body += _short_binunicode('__newobj__') + b'\x94'
+  body += b'\x93\x94'
+  body += _short_binunicode(module_name) + b'\x94'
+  body += _short_binunicode('Booster') + b'\x94'
+  body += b'\x93\x94'
+  body += b'0'
+  body += (
+    b'(' + b'h\x05' + b'NN' + _short_binunicode(model_path) + b'tR.')
+  return b'\x80\x04\x95' + len(body).to_bytes(8, 'little') + body
+
+
+def _hand_newobj_ex_booster_raw(module_name, model_path):
+  '''Build a hand pickle calling copyreg.__newobj_ex__ on Booster.'''
+  body = b''
+  body += _short_binunicode('copyreg') + b'\x94'
+  body += _short_binunicode('__newobj_ex__') + b'\x94'
+  body += b'\x93\x94'
+  body += _short_binunicode(module_name) + b'\x94'
+  body += _short_binunicode('Booster') + b'\x94'
+  body += b'\x93\x94'
+  body += b'0'
+  body += (
+    b'(' + b'h\x05' + b')' + b'}'
+    + _short_binunicode('model_file')
+    + _short_binunicode(model_path) + b'stR.')
+  return b'\x80\x04\x95' + len(body).to_bytes(8, 'little') + body
+
+
+def _hand_nested_newobj_booster_raw(module_name, model_path):
+  '''Build a hand pickle with a nested Booster args tuple.'''
+  body = b''
+  body += _short_binunicode('copyreg') + b'\x94'
+  body += _short_binunicode('__newobj__') + b'\x94'
+  body += b'\x93\x94'
+  body += _short_binunicode(module_name) + b'\x94'
+  body += _short_binunicode('Booster') + b'\x94'
+  body += b'\x93\x94'
+  body += b'0'
+  body += (
+    b'(' + b'h\x05' + b'(' + b'NN'
+    + _short_binunicode(model_path) + b'ttR.')
+  return b'\x80\x04\x95' + len(body).to_bytes(8, 'little') + body
+
+
+def test_restricted_loads_newobj_booster_smuggled_path_rejected(
+    monkeypatch):
+  '''Test restricted loads newobj booster smuggled path rejected.'''
+  import builtins
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  from xgboost.core import Booster
+  opened = []
+  initialized = []
+
+  def _guarded_open(file, *args, **kwargs):
+    '''Record open.'''
+    opened.append(str(file))
+    raise AssertionError('open must not be called')
+
+  def _guarded_init(self, *args, **kwargs):
+    '''Record Booster init.'''
+    initialized.append(True)
+    raise AssertionError('Booster __init__ must not run')
+
+  monkeypatch.setattr(builtins, 'open', _guarded_open)
+  monkeypatch.setattr(Booster, '__init__', _guarded_init)
+  raw = _hand_newobj_booster_raw(
+      'xgboost.core', '/tmp/definitely_missing_smuggle.model')
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(raw)
+  assert 'Forbidden pickle payload' in str(excinfo.value)
+  assert '/tmp/definitely_missing_smuggle.model' not in str(
+      excinfo.value)
+  assert opened == []
+  assert initialized == []
+
+
+def test_restricted_loads_newobj_ex_reduce_booster_rejected():
+  '''Test restricted loads newobj ex reduce booster rejected.'''
+  import pytest as _pytest
+  _pytest.importorskip('lightgbm')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  raw = _hand_newobj_ex_booster_raw(
+      'lightgbm.basic', '/tmp/definitely_missing_smuggle.txt')
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(raw)
+  assert 'Forbidden pickle payload' in str(excinfo.value)
+  assert '/tmp/definitely_missing_smuggle.txt' not in str(
+      excinfo.value)
+
+
+def test_restricted_loads_nested_newobj_booster_rejected():
+  '''Test restricted loads nested newobj booster rejected.'''
+  import pytest as _pytest
+  _pytest.importorskip('xgboost')
+  from forecast_ml_framework.core.artifact_store import restricted_loads
+  raw = _hand_nested_newobj_booster_raw(
+      'xgboost.core', '/tmp/definitely_missing_nested.model')
+  with _pytest.raises(ValueError) as excinfo:
+    restricted_loads(raw)
+  assert 'Forbidden pickle payload' in str(excinfo.value)
+  assert '/tmp/definitely_missing_nested.model' not in str(
+      excinfo.value)
