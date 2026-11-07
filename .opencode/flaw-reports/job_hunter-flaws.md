@@ -332,3 +332,17 @@ adversarial-tester ONLY
 ## FINAL (2026-11-07) — Cycle 15: 9 APPROVED / 1 REJECTED (devops commit-tracking only, resolved by commit)
 - Committed 9c0ea73 on top of c95fd3c (41 files, +4121/-420), pushed to origin agentic_ai/job-hunter. Tree clean.
 - Full suite at commit: 766 passed (post-commit). Total loop: 15 review cycles (10 reviewers each), 0 open code issues.
+
+## CYCLE 16 launched (post-commit-2, HEAD c5fd89e, Lead-verified 766 passed, clean tree)
+
+## CYCLE 16 RESULTS (9 APPROVED: reviewer, security, anti-arch, anti-sec, adversarial, tester, DB, frontend, devops / 1 REJECTED: docs)
+- All code dims approved. Docs: 1 MEDIUM false (3.12 conda fallback claim, no such docs + contradicts >=3.14 gate) + 4 LOW (import path, nice-to-have unknown, NOT NULL omissions, config docstring parenthetical).
+- Cycle-17 prep: docs-final worker dispatched.
+
+## CYCLE-17 PREP COMPLETE (docs-final DONE, Lead-verified full suite 771 passed)
+- 3.12 fallback claim deleted, import path fixed, nice-to-have neutral, NOT NULL DDL, config parenthetical dropped; counts 66.
+- Cycle 17 launched.
+
+## CYCLE 17 RESULTS (10 APPROVED / 0 REJECTED) — FULL LOOP CLOSED
+- Reviewer 0 issues, Security APPROVED, Anti-arch APPROVED, Anti-sec APPROVED, Adversarial 0 issues, Tester APPROVED (83%), DB APPROVED, Frontend APPROVED, DevOps APPROVED, Docs APPROVED.
+- All 17 cycles complete. Total: 17 review cycles (10 reviewers each), fix rounds 1-2, cycles 3-15 prep, microfixes, docs-final. Suite 771 passed. Committed post-loop: 9c0ea73 + c5fd89e + cycle17 docs/tests commit (this commit). 0 open code issues.

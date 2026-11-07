@@ -18,7 +18,7 @@ Inputs already fixed by the repository:
 2. An existing `llm_gateway` package at `src/job_hunter/llm_gateway/` is the
    **only** path for every agentic LLM call. Its observed public surface:
 
-   - `from job_hunter.llm_gateway import LLMGateway` (exports `SanitizedLLMGateway`)
+   - `from llm_gateway import LLMGateway` (exports `SanitizedLLMGateway`)
    - `LLMGateway(config_path, env_path, db_path=None, cache_path=None, provider_overrides=None)`
    - `complete(request) -> GatewayResponse`, `acomplete(...)`,
      `stream(request) -> Iterator[ProviderChunk]`, `astream(...)`
@@ -241,7 +241,7 @@ job_hunter/
 │   ├── verticals.yaml             ← taxonomy (§13)
 │   └── skills_aliases.yaml        ← starter skill taxonomy
 └── tests/
-    └── unit/…                     ← 65 unit test modules (60+; live list is tests/unit/;
+    └── unit/…                     ← 66 unit test modules (60+; live list is tests/unit/;
                                      counted dynamically as tests/unit/test_*.py;
                                      pytest; gateway tests via testpaths)
 ```
@@ -786,7 +786,7 @@ Weighted components (defaults; editable live in Settings, persisted per user):
 | Component | Default w | Score sᵢ ∈ [0,1] |
 |-----------|-----------|------------------|
 | must-have skill coverage | 0.30 | matched_must / total_must (unknown ⇒ 0.5 neutral) |
-| nice-to-have coverage | 0.10 | matched_nice / total_nice |
+| nice-to-have coverage | 0.10 | matched_nice / total_nice (unknown => 0.5 neutral) |
 | semantic similarity | 0.25 | `(cosine + 1) / 2` clamped to [0, 1]; token-overlap fallback when vectors are missing |
 | seniority fit | 0.10 | triangular peak at candidate years |
 | title fit | 0.05 | token-overlap of target-role tokens vs title tokens (overlap ratio × 2, capped at 1) |
@@ -877,7 +877,7 @@ CREATE TABLE companies (
   careers_url TEXT,
   ats_provider TEXT, board_ref TEXT,        -- token/org/account per provider
   vertical TEXT, sub_vertical TEXT, vertical_confidence REAL,
-  hq_city TEXT, india_presence INTEGER DEFAULT 1,
+  hq_city TEXT, india_presence INTEGER NOT NULL DEFAULT 1,
   size_band TEXT, funding_stage TEXT,
   priority INTEGER NOT NULL DEFAULT 3,       -- 1..5, 5 = pinned
   status TEXT NOT NULL DEFAULT 'active'
@@ -919,7 +919,7 @@ CREATE TABLE jobs (
   content_hash TEXT NOT NULL UNIQUE,         -- sha256(canonical url+company+title+desc-trimmed)
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active','stale','closed','error')),
-  quality_score REAL DEFAULT 0.5,
+  quality_score REAL NOT NULL DEFAULT 0.5,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_jobs_company_posted ON jobs(company_id, posted_at DESC);
@@ -1199,7 +1199,7 @@ User-visible errors always carry a run/event reference so Runs page explains the
   are yaml-only: change `config/app.yaml` and restart (no Settings UI
   for schedule or source toggles).
 - `AppSettings` (`core/config.py`) reads yaml + `APP_*`/`SALARY_HARD_FLOOR_LPA`
-  env at boot (env vars are read from the process environment — not loaded from a file, despite the module docstring mentioning `.env overrides`);
+  env at boot (env vars are read from the process environment — not loaded from a file);
   the `settings` table is seeded read-only from yaml
   (`ensure_defaults`, insert-only) and only the 4 PUT keys in §17 may be changed via
   the API/UI. `APP_*` vars must be exported/sourced in the shell — see
@@ -1234,7 +1234,7 @@ User-visible errors always carry a run/event reference so Runs page explains the
 | Anti-bot on career pages | some companies unfetchable | graceful skip + needs_review; optional browser-mcp later |
 | Free-tier LLM flakiness/quota | degraded enrichment | gateway cascade + rotation already; caches make reruns nearly free; rule fallbacks |
 | Hallucinated extraction (skills/salary) | bad matches | strict schemas, repair loop, confidence thresholds, spot-check queue in Jobs UI |
-| Py3.14 wheel lag (onnx/torch) | install friction | fastembed-first; documented 3.12 conda fallback |
+| Py3.14 wheel lag (onnx/torch) | install friction | fastembed-first |
 | SQLite write contention | slow UI spikes | WAL + busy_timeout + worker `BEGIN IMMEDIATE` claim discipline with short API transactions; reads are fine concurrently |
 | Over-scraping a host | IP blocks | token buckets, ETag reuse, low cadence, per-source breakers |
 | Scope creep toward applier too early | stalled v1 | applier explicitly parked; its schema/abstractions designed but unbuilt (roadmap) |
