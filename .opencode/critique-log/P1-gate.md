@@ -1,8 +1,8 @@
-# Gate log — P1 phase (updated, FIX-GATE-EVIDENCE, 2026-11-08)
+# Gate log — P1 phase (updated, FIX-GATE-EVIDENCE, 2026-11-08; Cycle 8 cited FIX-DOCS-6, 2026-11-08)
 
 Verdict: **APPROVED** — P1 Contracts Implementation phase gate.
 
-Sources (dual gates; prior state superseded):
+Sources (dual gates + Cycle 8 re-confirmation; prior state superseded):
 
 - Prior state in this file (FIX-DOCS-1): "none invented in this
   docs pass" — no per-task P1 anti-team verdict file was found
@@ -26,6 +26,14 @@ Sources (dual gates; prior state superseded):
   suites 1161 passed + 216 passed (`ADV-CYCLE7.md:85-88`).
   Cycle 6 shipped suites: 946 passed + 1162 passed
   (`ADV-CYCLE6.md:76-78`).
+- Re-confirmed (FIX-DOCS-6): `.opencode/handoffs/ADV-CYCLE8.md:21-24`
+  Verdict **APPROVED**, 0 blocking, forecast scope only
+  (`ADV-CYCLE8.md:9-13`); P1 vectors re-run and blocked in Cycle 8
+  (consent/PII, hostile pickle + envelope via file loader at
+  `ADV-CYCLE8.md:78-80,89-97`); extraction burst 640+ limiter check
+  at `ADV-CYCLE8.md:93-94` (auth burst 650 => 639x200/11x429,
+  token bucket 600/min, limiter works); shipped suites 1408 passed,
+  2 skipped + 216 passed (`ADV-CYCLE8.md:98-101`).
 - Downstream entry evidence that P1 landed: P3 entry gate
   requires `temporal_split` + `assert_no_leakage` implemented
   (P1-B1) — `.opencode/critique-log/P3-gate.md:5-8`,
@@ -44,7 +52,7 @@ named at `.opencode/plans/P1.md:711`, or a P1 handoff file) was
 found on the blackboard in `.opencode/critique-log/` /
 `.opencode/handoffs/` at write time. This APPROVED
 transcription rests on (a) the P0 dual APPROVED gate above,
-(b) the arch Cycle 6/7 APPROVED handoff verdicts covering the
+(b) the arch Cycle 6/7/8 APPROVED handoff verdicts covering the
 P1 surfaces, (c) downstream P2/P3 entry evidence that P1
 landed, and (d) Lead task FIX-GATE-EVIDENCE authority. It is
 not a docs-engineer self-approval; standalone gating-agent

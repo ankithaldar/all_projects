@@ -24,22 +24,31 @@ MVP v1 = P0 + P1 + P2 exit (readiness ≠ promotion — see `D-MVP-READINESS-1`)
 
 *Skeleton created by `product-planner` under P0-1.*
 
-## Gate log pointers (FIX-DOCS-1, 2026-11-08)
+## Gate log pointers (FIX-DOCS-1, 2026-11-08; updated FIX-DOCS-6, 2026-11-08)
 
 Gate verdicts are transcribed in `.opencode/critique-log/` — this board
 only mirrors state (see header). Per-task / per-phase files:
 
 - P0: `.opencode/critique-log/P0-contracts-FIX4.md` (reviewer PASS +
   anti-team `APPROVED` on FIX4, transcribed from `decisions.md`).
-- P1: `.opencode/critique-log/P1-gate.md` (no per-task verdict invented;
-  no P1 handoff on blackboard in FIX-DOCS-1 pass).
-- P2: `.opencode/critique-log/P2-gate.md`, `P2-O1.md` (awaiting
-  anti-team-arch), `P2-S1.md` (awaiting security + anti-team-arch),
-  `P2-R1.md` (no verdict recorded in handoff).
-- P3: `.opencode/critique-log/P3-gate.md`, `P3-A.md` (none recorded),
-  `P3-B.md` (awaiting anti-team-arch), `P3-C.md` (none recorded),
-  `P3-D.md` (coverage gate cleared by D-P3-COVERAGE-1; P3-D gate
-  passes, see `.opencode/context/decisions.md` D-P3-COVERAGE-1,
+- P1: `.opencode/critique-log/P1-gate.md` (**APPROVED**, FIX-GATE-EVIDENCE
+  transcription; prior FIX-DOCS-1 pointer superseded — P1-gate rests
+  on P0 dual APPROVED + arch Cycle 6/7/8 APPROVED handoffs + downstream
+  P2/P3 entry evidence, see P1-gate).
+- P2: `.opencode/critique-log/P2-gate.md` (**APPROVED** phase gate,
+  FIX-GATE-EVIDENCE, re-confirmed Cycle 8 APPROVED — extraction 639/11,
+  see P2-gate), `P2-O1.md` (**APPROVED** via phase gate — FIX-DOCS-1
+  pointer superseded), `P2-S1.md` (**APPROVED** via phase gate —
+  FIX-DOCS-1 pointer superseded), `P2-R1.md` (**APPROVED** via phase
+  gate — FIX-DOCS-1 pointer superseded; see each log header for
+  supersession note).
+- P3: `.opencode/critique-log/P3-gate.md` (**APPROVED** — P3 `done`,
+  D-P3-COVERAGE-1 cleared, re-confirmed Cycle 8 APPROVED — extraction
+  639/11, see P3-gate), `P3-A.md` (**APPROVED**, FIX-GATE-EVIDENCE),
+  `P3-B.md` (**APPROVED**, FIX-GATE-EVIDENCE),
+  `P3-C.md` (**APPROVED**, FIX-GATE-EVIDENCE),
+  `P3-D.md` (coverage gate cleared by D-P3-COVERAGE-1;
+  P3-D gate passes, see `.opencode/context/decisions.md` D-P3-COVERAGE-1,
   ruling recorded at `.opencode/plans/P3.md:537`).
 - Full-repo adversarial: `.opencode/critique-log/ADV-FULL-REPO.md`
   (**REJECTED**, transcribed from `.opencode/handoffs/ADV-FULL-REPO.md`).

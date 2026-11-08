@@ -134,13 +134,30 @@ operator-invoked through the secure channel only.
 3. Erasure (secure channel only): clear subject ID from env
    `FORECAST_ERASE_SUBJECT_ID` only — never argv, never logs —
    via `run_erasure` delegating to frozen `erase_subject`.
-   Operator CLI erasure is gated on new ADR `D-ERASURE-CLI-1`
-   (owner `solution-architect` + anti-team gate). Until that ADR
-   is frozen, erasure acceptance exercises the library path with
-   real fake stores; no production CLI erasure is enabled.
+   The operator CLI channel is **frozen under ADR `D-ERASURE-CLI-1`**
+   (anti-team `APPROVED` on FIX, 2026-11-08; `.opencode/context/decisions.md`
+   D-ERASURE-CLI-1, contract of record `.opencode/plans/D-ERASURE-CLI-1.md`):
+   env-only rows-only CLI — the CLI passes `artifacts={}` and writes
+   no markers. Production CLI erasure (rows-only) is enabled only after
+   the freeze, the `APPROVED`, and the mandatory library-caller step
+   below is documented and followed; the freeze alone does not authorize
+   production traffic, model promotion, or release (D-MVP-READINESS-1,
+   P11 only).
    The hash-only `--erase-subject-hash` CLI is removed (frozen
    `erase_subject(subject_id, ...)` requires the clear ID).
-4. Audit: actor hashed via `subject_hash` (never clear actor);
+4. Mandatory library-caller step (complete GDPR erasure): the rows-only
+   CLI deletes feature rows only — a CLI exit-0 line alone is **not**
+   complete GDPR erasure. In the same erasure case, a library caller
+   must (a) supply the artifact dicts (fitted registry + best-model
+   envelope), (b) let `erase_subject` write the exact-shape markers
+   `{subject_hash, requested_at, action}` with
+   `action == 'retrain_required'` (fitted registry
+   `__meta__.erasure`; best-model envelope top-level `erasure`), and
+   (c) re-save via the existing writers (registry JSON dataset;
+   best-model restricted-pickle dataset). Or record the artifact step
+   as outstanding. CLI exit 0 without this step must not be reported
+   as complete erasure.
+5. Audit: actor hashed via `subject_hash` (never clear actor);
    reports carry hashes/counts only, never clear subject ID.
 
 ## Residency note (non-binding)

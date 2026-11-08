@@ -1,8 +1,8 @@
-# Gate log — P2 phase (updated, FIX-GATE-EVIDENCE, 2026-11-08)
+# Gate log — P2 phase (updated, FIX-GATE-EVIDENCE, 2026-11-08; Cycle 8 cited FIX-DOCS-6, 2026-11-08)
 
 Verdict: **APPROVED** — P2 Platform / IaC phase gate.
 
-Sources (dual gates; prior state superseded):
+Sources (dual gates + Cycle 8 re-confirmation; prior state superseded):
 
 - Prior state in this file (FIX-DOCS-1): "no phase-level
   APPROVED verdict invented in this docs pass"; per-task files
@@ -26,6 +26,14 @@ Sources (dual gates; prior state superseded):
   extraction burst with limiter working (`ADV-CYCLE7.md:80-81`),
   shipped suites 1161 passed + 216 passed
   (`ADV-CYCLE7.md:85-88`).
+- Re-confirmed (FIX-DOCS-6): `.opencode/handoffs/ADV-CYCLE8.md:21-24`
+  Verdict **APPROVED**, 0 blocking, forecast scope only
+  (`ADV-CYCLE8.md:9-13`); P2 vectors re-run and blocked in Cycle 8:
+  auth default (`ADV-CYCLE8.md:72-77`), JWKS (`ADV-CYCLE8.md:83-85`),
+  OIDC no-sub (`ADV-CYCLE8.md:86-88`), extraction burst
+  (`ADV-CYCLE8.md:93-94` — auth burst 650 => 639x200/11x429, token
+  bucket 600/min app.py:99,511-528, limiter works), shipped suites
+  1408 passed, 2 skipped + 216 passed (`ADV-CYCLE8.md:98-101`).
 - Worker GREEN evidence, `.opencode/handoffs/`:
   - P2-O1 observability: `.opencode/handoffs/P2-O1.md:29`
     `10 passed`; promtool / otelcol validators exit 0
@@ -51,7 +59,7 @@ reviewer / security / anti-team-arch verdict file was found on
 the blackboard in `.opencode/critique-log/` at write time
 (per-task files still record awaiting/no-verdict). This
 APPROVED transcription rests on (a) the P0 dual APPROVED gate
-above, (b) the arch Cycle 6/7 APPROVED handoff verdicts
+above, (b) the arch Cycle 6/7/8 APPROVED handoff verdicts
 covering the P2 surfaces, (c) the P2 handoff GREEN evidence
 above, and (d) Lead task FIX-GATE-EVIDENCE authority. It is
 not a docs-engineer self-approval; standalone gating-agent

@@ -140,7 +140,7 @@ params, a smoke local profile, and a strict config schema — see the
   [Loss functions per model](#loss-functions-per-model)).
 - **FastAPI serving + registry.** `GET /health`, `POST /predict` with strict
   input validation and payload caps (`serving/app.py`); `create_app()`
-  accepts an injected loader or registry config (env `MODEL_REGISTRY_URI` /
+  (`serving/app.py:1112`) accepts an injected loader or registry config (env `MODEL_REGISTRY_URI` /
   `MODEL_NAME` / `MODEL_ALIAS`), and `RegistryModelLoader`
   (`serving/model_loader.py`) loads via the MLflow registry
   (`registry/model_registry.py`, alias promotion). Serving validation
@@ -150,16 +150,20 @@ params, a smoke local profile, and a strict config schema — see the
   `mlflow.sklearn.log_model` (sklearn flavor only, no pyfunc flavor);
   registry loading downloads the artifact bytes via the MLflow
   tracking client and decodes them with `restricted_loads`
-  (`serving/model_loader.py:6-13,543-588`; size cap plus optional
+  (`serving/model_loader.py`; size cap plus optional
   SHA-256 pin via `MODEL_SHA256` / `expected_sha256`) — it never
   calls `mlflow.sklearn.load_model` on registry bytes — with the
   pyfunc fallback gated behind `allow_pyfunc=True` (opt-in only).
   Docker image shipped (Dockerfile, fail-closed entrypoint);
   production promotion gated P11. Serving auth is fail-closed: `FORECAST_REQUIRE_AUTH=1`
   or a prod profile without `FORECAST_API_KEY` refuses startup, keys
-  shorter than 16 chars are refused, and every `/predict` writes a
+  shorter than 16 chars are refused (`MIN_API_KEY_LENGTH`,
+  `serving/app.py:96`), and every `/predict` writes a
   structured access log + persisted audit entry with an HMAC key-id
-  (`serving/app.py:151-174,225-238,241-267,270-287`; see
+  (`_validate_auth_config` `serving/app.py:287`, `validate_bind_host`
+  `serving/app.py:257`, `_hmac_key_id` `serving/app.py:373`,
+  `_audit_predict` `serving/app.py:395`, `_log_access`
+  `serving/app.py:424`; see
   [Serving API](#serving-api)).
 - **MLflow / DVC.** `mlflow_params` / `dvc_params` in `parameters/platform.yml`
   are validated by the schema; MLflow tracking/registry runs through
@@ -252,10 +256,10 @@ without running anything (`cli.py:281-298`). `--env` accepts
 
 | Variable | Use | Default |
 |---|---|---|
-| `MODEL_REGISTRY_URI` | MLflow registry URI for `RegistryModelLoader` (env read in `serving/app.py:569`, `_resolve_loader` `serving/app.py:551-580`) | unset |
+| `MODEL_REGISTRY_URI` | MLflow registry URI for `RegistryModelLoader` (env read in `serving/app.py`, `_resolve_loader` `serving/app.py:705`) | unset |
 | `MODEL_NAME` | Registered model name | unset → degraded mode |
 | `MODEL_ALIAS` | Registry alias | `production` |
-| `MODEL_ARTIFACT_PATH` | File-loader artifact path (env read at `serving/app.py:562-563`, explicit `artifact_path=` wins) | unset |
+| `MODEL_ARTIFACT_PATH` | File-loader artifact path (env read in `serving/app.py` `_resolve_loader`, explicit `artifact_path=` wins) | unset |
 | `FORECAST_API_KEY` | Fail-closed auth (see [Serving API](#serving-api)): when set, `/predict` requires it (`X-API-Key` or `Authorization: Bearer ...`); `/health` stays public (401 otherwise); required at startup when `FORECAST_REQUIRE_AUTH=1` or prod profile, min length 16 | off (dev, WARNING logged) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCP credentials for GCS/BigQuery | unset |
 | `AWS_PROFILE` / AWS env vars | AWS credentials for S3/Athena | unset |
@@ -472,6 +476,7 @@ forecast_ml_framework/
 │   │   │                       #   cost_tracking + interpretability params
 │   │   ├── catalog.yml         # Kedro Data Catalog entries (+ Phase 3: monitoring_report,
 │   │                           #   alerts, cost_log, lineage, audit_log)
+│   │   ├── platform.yml        # governance_params.retention_days (P2 retention job sole source)
 │   ├── local/                  # local overlay: catalog + parameters
 │   ├── gcp/                    # GCS + BigQuery overlay: catalog
 │   ├── azure/                  # Azure overlay: catalog (P2-I1)
@@ -2059,7 +2064,7 @@ materialises the full frame on the driver.
 `serving/app.py:create_app(model_loader=None, registry_uri=None,
 model_name=None, alias=None, artifact_path=None, host=None,
 rate_limit_per_minute=None, health_cache_ttl=None)`
-(`serving/app.py:861-863`) builds the FastAPI app
+(`serving/app.py:1112`) builds the FastAPI app
 (`title='forecast-ml serving'`; `artifact_path=` is the 5th param,
 W3). `model_loader` is a callable returning
 a model or the model itself; wire it to
@@ -2073,11 +2078,11 @@ loading, or inject a stub in tests. Alternatively pass registry config
 `restricted_loads` (size cap `MAX_ARTIFACT_BYTES` 512 MiB +
 optional SHA-256 pin via `MODEL_SHA256`/`expected_sha256`), with
 tracking/registry URIs kept separate. `create_app_from_registry(...)`
-(`serving/app.py:1059-1079`) is the registry-only shortcut.
+(`serving/app.py:1351`) is the registry-only shortcut.
 `RegistryModelLoader.load()` caches the model and raises `RuntimeError`
 (no URI leaked) when the registry model is not found. A/B + shadow
 routing lives in `serving/ab_testing.py` (`ABRouter`, modes `shadow`
-| `ab` only — `serving/ab_testing.py:225-226`) — see
+| `ab` only — `serving/ab_testing.py:187`) — see
 [Phase 3 pipelines](#phase-3-pipelines). Docker image shipped
 (Dockerfile, fail-closed entrypoint); production promotion gated P11:
 serving runs via uvicorn inside the image (`Dockerfile:39-43`).
@@ -2092,12 +2097,12 @@ curl http://127.0.0.1:8000/health
 ```
 
 `HealthResponse` carries `status` and `model_loaded`
-(`serving/app.py:394-398`). The first probe loads the model: on success
+(`serving/app.py:548`). The first probe loads the model: on success
 `status: ok, model_loaded: true`; on any load failure `status:
-degraded, model_loaded: false` (`serving/app.py:934-950`). The result
+degraded, model_loaded: false` (`serving/app.py:1219`). The result
 is cached on the app instance with a 30 s TTL (env
 `FORECAST_HEALTH_CACHE_TTL`, refreshed on expiry and on successful
-`/predict`, `serving/app.py:909,929-932,1048-1049`). With no model configured
+`/predict`, `serving/app.py:1188,1219,1333`). With no model configured
 (`DegradedLoader` — no injected loader, no `MODEL_ARTIFACT_PATH`,
 no `MODEL_NAME`), `/predict` returns 503 `model not configured` and
 `/health` reports `degraded`.
@@ -2122,46 +2127,46 @@ without leaking the server filesystem path. Feature-name contract
 sklearn estimator), that list is the required feature set and order;
 otherwise the first record's keys are used. Unknown features → 422.
 
-**Typed errors (`model_loader.py:253-262`).** Typed loader errors map to:
+**Typed errors (`serving/model_loader.py:406`).** Typed loader errors map to:
 `ModelNotConfiguredError` → 503 `model not configured`; missing
 artifact/version → `ModelNotFoundError` → 503 `model artifact not
 found`; malformed artifact or registry flavour mismatch →
 `ModelCorruptError` → 500 `model failed to load`. Validation
 `ValueError` → generic 422 `validation failed` (R-09/X1 landed:
-`serving/app.py:1026-1027` returns `detail='validation failed'`; the
+`serving/app.py` returns `detail='validation failed'`; the
 offending field is logged scrubbed server-side only via
-`_log_validation_error` at `serving/app.py:290-310`, never echoed to
+`_log_validation_error` at `serving/app.py:444`, never echoed to
 the client); model execution errors → generic 500 `prediction failed`
-(`serving/app.py:1046-1047`). Messages never contain the server
+(`serving/app.py`). Messages never contain the server
 filesystem path or registry URI.
 
 **Authentication (fail-closed, W3/X1 landed).** `_validate_auth_config`
-(`serving/app.py:151-174`, called at startup by `create_app` at
-`serving/app.py:898`) raises `RuntimeError` when
+(`serving/app.py:287`, called at startup by `create_app` at
+`serving/app.py:1168`) raises `RuntimeError` when
 `FORECAST_REQUIRE_AUTH=1` or a production profile
 (`FORECAST_ENV`/`ENVIRONMENT`/`APP_ENV` in `prod|production`) is set
 without a key, and when a key shorter than `MIN_API_KEY_LENGTH=16`
-(`serving/app.py:81`) is configured; a dev startup without a key logs
-a WARNING (`serving/app.py:170-174`). Non-loopback binds (`host=`)
-require a valid key (`validate_bind_host`, `serving/app.py:126-148`).
+(`serving/app.py:96`) is configured; a dev startup without a key logs
+a WARNING (`serving/app.py:287`). Non-loopback binds (`host=`)
+require a valid key (`validate_bind_host`, `serving/app.py:257`).
 When `FORECAST_API_KEY` is set, every path except `/health` requires
 the matching key (constant-time compare), else the app returns
-`401 {"detail": "unauthorized"}` (`serving/app.py:763-773`).
+`401 {"detail": "unauthorized"}` (`serving/app.py`).
 
 **Access + audit logging (X1 landed, D7/A4).** Every `/predict` attempt
 — success, 422, 500, 503, the endpoint `_check_caps` 413
-(`serving/app.py:450-465,968-976`) and the middleware streaming body-cap 413
-(`serving/app.py:794-803`), plus middleware 401/429
-(`serving/app.py:763-773,774-783`) — writes a structured access log
+(`serving/app.py:604`) and the middleware streaming body-cap 413
+(`serving/app.py:847`), plus middleware 401/429
+(`serving/app.py:847`) — writes a structured access log
 (`predict_access key_id=… outcome=… latency_ms=… records=…`,
-`_log_access` at `serving/app.py:270-287`) **and** a persisted audit
-entry via `_audit_predict` (`serving/app.py:241-267`): `audit_log(
+`_log_access` at `serving/app.py:424`) **and** a persisted audit
+entry via `_audit_predict` (`serving/app.py:395`): `audit_log(
 event='predict', actor='serving', details={key_id_hmac, outcome,
 latency_ms, records})` appended to the bounded `app.state.audit_log`
-list (`MAX_AUDIT_ENTRIES = 1000`, `serving/app.py:90`; shared list
-wired at `serving/app.py:913-918`, oldest entries dropped past the
+list (`MAX_AUDIT_ENTRIES = 1000`, `serving/app.py:105`; shared list
+wired at `serving/app.py:1195`, oldest entries dropped past the
 bound). The key-id is an HMAC-SHA256 truncated to 16 hex chars
-(`_hmac_key_id`, `serving/app.py:225-238`): the HMAC secret is the
+(`_hmac_key_id`, `serving/app.py:373`): the HMAC secret is the
 server `FORECAST_API_KEY` itself (or `'anonymous'` when no server
 key is configured), empty provided keys yield `'anonymous'`, and the
 raw key or payload is never logged. **Single-shared-key revocation
@@ -2172,15 +2177,15 @@ selectively, and a leaked key grants every caller the same access
 until rotation. Rate limiting is in-app and **single-process only
 (R-07):** the token bucket (`FORECAST_RATE_LIMIT_PER_MINUTE`,
 default **600/min**, burst = rate, `DEFAULT_RATE_LIMIT_PER_MINUTE`
-at `serving/app.py:84`, `_rate_limit_per_minute` at
-`serving/app.py:313-336`, `_TokenBucket` at `serving/app.py:356-389`,
-enforced at `serving/app.py:774-783` → 429) is per-process memory —
+at `serving/app.py:99`, `_rate_limit_per_minute` at
+`serving/app.py:467`, `_TokenBucket` at `serving/app.py:510`,
+enforced at `serving/app.py:847` → 429) is per-process memory —
 it resets on restart, is not shared across replicas, and has no
 per-IP limit or request timeout. In production you **MUST** put a
 gateway / load balancer in front with distributed per-IP limits and
 timeouts; the in-app bucket is defence in depth only. Exceptions are
 logged as code + type only (no message/`exc_info`,
-`_log_exception` at `serving/app.py:177-188`) so no secret leaks to
+`_log_exception` at `serving/app.py:325`) so no secret leaks to
 logs.
 
 ```bash
@@ -2201,7 +2206,7 @@ carries `x-content-type-options: nosniff`,
 `content-security-policy` (`default-src 'none'; frame-ancestors 'none'`),
 `x-permitted-cross-domain-policies: none`, and `strict-transport-security`
 (HSTS) when TLS is detected (`https` scheme, `X-Forwarded-Proto: https`,
-or `FORECAST_TLS_ENABLED=1`, `serving/app.py:655-673`).
+or `FORECAST_TLS_ENABLED=1`, `serving/app.py:809`).
 
 Registry note (Phase 4 final + W4, verified in
 `registry/model_registry.py`): registration uses
@@ -2220,10 +2225,13 @@ first version; `promote_alias` manual path is ungated. Wrong-version
 and digit-`run_id` fallbacks were deleted (exact run_id match only).
 Loading downloads the artifact bytes and decodes them with
 `restricted_loads` (size cap plus optional SHA-256 pin via
-`MODEL_SHA256` / `expected_sha256`, `serving/model_loader.py:6-13,543-588`)
-— it never calls `mlflow.sklearn.load_model` on registry bytes;
-the pyfunc fallback
-is opt-in only via `RegistryModelLoader(..., allow_pyfunc=True)` (a
+`MODEL_SHA256` / `expected_sha256`, `serving/model_loader.py`; the
+restricted path is `serving/model_loader.py:756`, and the pyfunc
+fallback is opt-in only via `RegistryModelLoader(..., allow_pyfunc=True)`
+(`serving/model_loader.py:518` — `allow_pyfunc` defaults to `False`
+at `serving/model_loader.py:544`, with the startup warning at
+`serving/model_loader.py:590` and the gated fallback at
+`serving/model_loader.py:756`); a
 startup warning is logged; pyfunc executes arbitrary code shipped
 with the model, so only enable it for fully trusted registries).
 Docker image shipped (Dockerfile, fail-closed entrypoint);

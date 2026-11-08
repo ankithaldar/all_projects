@@ -1,6 +1,7 @@
 # ADR D-ERASURE-CLI-1 — Operator erasure CLI channel (secure env only)
 
-> **Status:** Proposed (pending `anti-team-arch` `APPROVED`; not frozen)
+> **Status:** frozen (anti-team `APPROVED` on FIX; 2026-11-08 — authoritative
+> freeze record: `.opencode/context/decisions.md` D-ERASURE-CLI-1)
 > **Date:** 2026-11-08
 > **Owner:** `solution-architect` (contract) · gate: `anti-team-arch` · review: `security`
 > **Owns:** `.opencode/plans/D-ERASURE-CLI-1.md` only (this file).

@@ -1,22 +1,25 @@
 # Infrastructure — `infra/`
 
-Terraform (IaC) for forecast-ml-framework, Phase 2. Two independent stacks:
+Terraform (IaC) for forecast-ml-framework, Phase 2. Three independent stacks:
 
 | Stack | Directory | Creates |
 |---|---|---|
 | GCP (primary) | [`gcp/`](gcp/README.md) | GCS artifacts bucket (versioning on), GCS temp bucket, BigQuery dataset, single-node Dataproc dev cluster, retraining Cloud Scheduler job (off by default), alerts Pub/Sub topic |
 | AWS (config-ready) | [`aws/`](aws/README.md) | S3 artifacts bucket (versioning on), Athena database, EMR stub (off by default), retraining EventBridge rule stub (commented) |
+| Azure (config-ready) | [`azure/`](azure/README.md) | Private storage account (versioning on, private containers), private Key Vault, VNet + private endpoints, Entra OIDC federated credential, AKS stub (off by default) |
 
 **Secrets via env only.** No credentials, tokens, keys, project IDs, or
 account IDs are hardcoded in any `.tf` file. GCP auth comes from
 `GOOGLE_APPLICATION_CREDENTIALS` / Application Default Credentials; AWS auth
-from `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`. The GCP
-project ID is a required variable with no default; the AWS region/account
-come from variables + environment.
+from `AWS_PROFILE` or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`; Azure
+auth from `ARM_SUBSCRIPTION_ID` / `ARM_TENANT_ID` / `ARM_CLIENT_ID` /
+`ARM_CLIENT_SECRET` or `az login`. The GCP project ID and the Azure
+`subscription_id`/`tenant_id` are required variables with no defaults; the
+AWS region/account come from variables + environment.
 
 ## Apply order
 
-The two stacks are independent — apply whichever you need (GCP first, per
+The three stacks are independent — apply whichever you need (GCP first, per
 the Phase 2 plan). Within each stack:
 
 ```bash
@@ -26,6 +29,17 @@ terraform plan -var="project_id=YOUR_PROJECT_ID"   # GCP only; AWS needs no -var
 terraform apply -var="project_id=YOUR_PROJECT_ID"
 ```
 
+Azure (from `infra/azure/`, see its README):
+
+```bash
+cd infra/azure
+terraform init
+terraform plan -var="subscription_id=YOUR_SUBSCRIPTION_ID" -var="tenant_id=YOUR_TENANT_ID"
+terraform apply -var="subscription_id=YOUR_SUBSCRIPTION_ID" -var="tenant_id=YOUR_TENANT_ID"
+```
+
+(Or export `TF_VAR_subscription_id` / `TF_VAR_tenant_id` and omit `-var`.)
+
 Always review `terraform plan` output before `terraform apply`.
 Tear down with `terraform destroy` (same `-var`).
 
@@ -33,11 +47,15 @@ Tear down with `terraform destroy` (same `-var`).
 
 Local state (`terraform.tfstate`) by default — keep it out of git. For shared
 or production use, adopt the shipped `backend.tf.example` per stack
-(GCS for GCP, S3 + DynamoDB for AWS; A6 — commented, ignored by
-Terraform, no active `backend.tf`) by copying it to `backend.tf` and
-running `terraform init -migrate-state`. Never commit
-`*.tfstate*` or `*.tfvars` containing real values. **No Docker** (A5):
-serving is dev-only uvicorn.
+(GCS for GCP, S3 + DynamoDB for AWS, azurerm for Azure; A6 — commented,
+ignored by Terraform, no active `backend.tf`) by copying it to `backend.tf`
+and running `terraform init -migrate-state`. Never commit
+`*.tfstate*` or `*.tfvars` containing real values. **Serving image shipped:**
+the `Dockerfile` (multi-stage, digest-pinned, fail-closed entrypoint,
+non-root UID 10001) is the serving image; local development runs via
+uvicorn directly. The image alone is not production promotion — production
+traffic, model promotion, and release are gated on P11
+(D-MVP-READINESS-1, readiness ≠ promotion).
 
 ## Costs (summary)
 
@@ -139,5 +157,5 @@ temp bucket purges current + noncurrent objects after 7 days
 
 ```bash
 terraform fmt -check -recursive infra/
-terraform validate   # run inside infra/gcp and infra/aws after init
+terraform validate   # run inside infra/gcp, infra/aws, and infra/azure after init
 ```
