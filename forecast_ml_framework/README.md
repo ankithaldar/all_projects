@@ -11,15 +11,21 @@ or a loss function is a config edit, not a code edit.
 
 Phases 1–7 plus the Cycle-1 fix loop (W1–W14, M1–M6), P1 contracts,
 P2 platform, and P3 time-split are landed
-(**2423 test functions** on disk — static `^def test_` count in
-`tests/`, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in
-`tests/`; checked against `pipeline_registry.py` (12
+(**2337 test functions** on disk — static `^def test_` count in
+`tests/`, recounted 2026-11-08 in FIX-T1 by grep `^def test_` in
+`tests/` after deleting the byte-identical duplicate OIDC test module
+(non-`_auth` copy) — canonical `tests/test_p2_oidc_auth.py`
+kept; checked against `pipeline_registry.py` (12
 registered pipelines, 8 modules) and current code. Last full-suite
-handoff total (P3-D, `.opencode/handoffs/P3-D.md`): **3305 passed,
-4 skipped, 0 failed** — transcribed from that handoff, not re-run in
-this docs pass; see the Tests note. The static count
-is the on-disk `def test_` total, the collected total is the
-parametrized expansion — see the Tests note). Phase 7 (high-value) added the fitted preprocessing registry,
+collected total (FIX-T1, `.opencode/handoffs/FIX-T1.md`,
+2026-11-08): **3427 passed,
+4 skipped, 0 failed** — fresh pytest run (`uv run --frozen pytest
+tests/ -q` from `forecast_ml_framework/`, exit 0 in FIX-T1; log
+`/tmp/opencode/fix_t1_pytest_q.log`); see the Tests
+note. The static count
+is the on-disk `def test_` total (2337), the collected total
+(3427) is the parametrize-expanded expansion — see the Tests
+note). Phase 7 (high-value) added the fitted preprocessing registry,
 the tuning executor, class-imbalance handling, prior-rate probability
 calibration, threshold application at scoring, KNN + sequence
 routines, MLflow Kedro hooks, and two-stage scoring (see
@@ -46,6 +52,58 @@ params, a smoke local profile, and a strict config schema — see the
 > `conf/`, `cli.py`, and `serving/app.py`. All eight pipeline modules are **registered** for
 > `kedro run --pipeline <name>` (12 display names; former Known
 > Issue #12 is fixed).
+>
+> **Phase naming.** "Phases 1–7" in this README are the framework
+> build phases (Phase 1 scaffold … Phase 7 high-value). "P0–P11"
+> are the program phases in `.opencode/plans/program.md`;
+> `.opencode/context/decisions.md` (D-README-1 tie-break) is the
+> authority when the two ever conflict.
+
+### Implemented vs stub (what is real, what is not)
+
+Each row states **IMPLEMENTED** (real code path, test-covered),
+**STUB / CONFIG-ONLY / PLAN-ONLY / OFF-BY-DEFAULT** (present but
+does not execute or is off), or **DEFERRED** (frozen decision,
+P11-gated or P10-deferred). Every row cites the code/config that
+proves the label; production promotion is P11 only
+(D-MVP-READINESS-1).
+
+| Subsystem | Label | Proof (code/config path) |
+|---|---|---|
+| Kedro pipelines (8 modules, 12 names) | **IMPLEMENTED** | `pipeline_registry.py:38-51` + `pipelines/*/pipeline.py` `name=` values; `tests/test_pipeline_registry.py` asserts 12 keys |
+| Modeling zoo (H2O/XGB/LGBM/CatBoost/sklearn + dotted `model_handle`) | **IMPLEMENTED** | `pipelines/modeling/adapters.py:502,577,685,702,719,737,789` |
+| H2O AutoML adapter | **IMPLEMENTED** (real adapter; tests mock H2O when dep absent) | `adapters.py:737` `H2OAutoMLAdapter`; Known Issue #18 (H2O pickles not serveable — allowlist) |
+| Metrics v2 (154 names: 90 class + 64 reg) | **IMPLEMENTED** | `pipelines/modeling/metrics.py:2049-2100` lists; registry built `:2145-2149` |
+| Interpretability charts (27 distinct + `pdp_1d` alias = 28 `__all__`) | **IMPLEMENTED** | `pipelines/interpretability/charts.py:63-92` (`pdp_1d = pdp_1d_chart` at `:249`) |
+| Loss allowlist (15 sklearn + 3 framework = 18 dotted names) | **IMPLEMENTED** | `losses.py:22-38` (`_SKLEARN_LOSS_NAMES`), `:100-102` (3 custom), `LOSS_CALLABLES` `:107` |
+| MLflow registry | **IMPLEMENTED** (real; lazy import) | `registry/model_registry.py:514` "do not import mlflow yet"; `serving/model_loader.py:518` |
+| DVC | **CONFIG-ONLY** (no execution code) | `conf/base/parameters/platform.yml:79` `dvc_params`; `pyproject.toml:49-52` ("no `import dvc` in src/"); `core/config_schema.py:575` |
+| Retraining | **PLAN-ONLY** (never executes Kedro) | `pipelines/retraining/nodes.py:7,394` `build_retrain_plan`; `pipeline.py:15-16` |
+| Cost tracking | **IMPLEMENTED** offline arithmetic; **no cloud API calls** | `pipelines/cost_tracking/nodes.py:156` `estimate_cost`; `README Phase 3` + `infra/README.md` |
+| Feature store online | **IMPLEMENTED** in-memory + optional Redis (lazy, fallback to memory) | `feature_store/online.py:4,25-57` |
+| Spark | **IMPLEMENTED** factory + guards; **Dataproc/EMR OFF-BY-DEFAULT stubs** (no submit automation) | `core/spark_factory.py:1-13,30,33-37`; `infra/gcp/variables.tf:47-48`, `infra/aws/variables.tf:31-32` |
+| Infra AWS EMR / EventBridge | **STUB / OFF** (count=0, commented) | `infra/aws/variables.tf:31-32`; `infra/README.md:8,108,123` |
+| Infra Azure AKS | **STUB / OFF** | `infra/azure/main.tf:130-138` (`count = var.enable_aks ? 1 : 0`) |
+| Infra GCP Dataproc/scheduler | **OFF-BY-DEFAULT** | `infra/gcp/variables.tf:47-48,169`; `infra/README.md:7,67-71` |
+| Helm / observability | **IMPLEMENTED YAML** (present) + deploy drill script; firing proof uses synthetic values against live metric names | `deploy/helm/forecast-ml/Chart.yaml`; `deploy/observability/*`; `serving/metrics.py:1-24`; `docs/runbook-p2.md:90-110` |
+| Web dashboard | **IMPLEMENTED** static SPA + **sample data** (not live evaluation output) | `web/index.html/app.js/styles.css`; `web/sample/metrics.json:12` "(sample/synthetic)" |
+| Serving auth dev-mode | **IMPLEMENTED** fail-closed prod; **dev-mode 200 loopback by design** (R1 carried, loopback only) | `serving/app.py:287` `_validate_auth_config`, `:257` `validate_bind_host`, `:321` dev WARNING; D-ACCEPTED-RISK-1/2 |
+| ONNX sidecar | **DEFERRED P10** (`.onnx` rejected) | `serving/model_loader.py:739-744` ("P10 deferred"), `:505-506` FileLoader reject; `pipelines/modeling/envelope.py:10` |
+| pyfunc | **DEFERRED / opt-in only** (`allow_pyfunc=True`, trusted registry only) | `serving/model_loader.py:549,590-594,759` |
+| BigQuery / GCS / S3 | **IMPLEMENTED** datasets + overlays; **no live cloud calls in tests** (mocked/skipped) | `core/datasets.py:200,340,471`; `core/artifact_store.py:create_artifact_store`; `conf/gcp|catalog.yml`, `conf/aws|catalog.yml` |
+| Retention/erasure | **IMPLEMENTED** (rows-only CLI frozen) + **library-caller duty** for markers | `governance/erasure.py`, `governance/retention_job.py`; D-ERASURE-CLI-1; `docs/runbook-p2.md:117-161` |
+| Docker image | **IMPLEMENTED** (shipped; fail-closed) but **NOT production promotion** (P11 gate) | `Dockerfile:9,21,39-43`; `infra/README.md:53-58`; Known Issue #35 |
+
+> **Counts note.** Static `grep -r "^def test_" tests/ | wc -l` = **2337**
+> (on-disk functions, FIX-T1 recount 2026-11-08 after deleting the
+> byte-identical duplicate OIDC test module, non-`_auth` copy). Collected pytest = **3427** (parametrize-expanded;
+> FIX-T1 fresh run, `.opencode/handoffs/FIX-T1.md`, 2026-11-08).
+> Both numbers are correct; they measure different things.
+> Catalog: `conf/base/catalog.yml` has ≥100 top-level keys
+> (datasets + `*_params` + anchors); the table below lists selected entries —
+> full verification is `tests/test_catalog_gaps.py` (pipeline datasets ⊆
+> catalog keys). Telemetry public API = 11 names in `__all__`
+> (`telemetry/__init__.py:28-40`).
 
 ## Features
 
@@ -284,14 +342,17 @@ uv run pytest tests/ -q
 
 Both forms were used to verify this README's commands. Expected result on
 success: `pytest` exits 0 with all tests passing — last full-suite
-handoff total (P3-D, `.opencode/handoffs/P3-D.md`): **3305 passed,
-4 skipped, 0 failed** (transcribed from that handoff; `--collect-only`
-was not re-run in the 2026-11-08 FIX-DOCS-1 docs pass — no shell /
-pytest was available in that subagent environment, so no new collected
-total is claimed here).
-**2423 test functions** on disk (static `^def test_` count in
-`tests/`, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in
-`tests/`; parametrize expands the static count to the collected total)
+collected total (FIX-T1, `.opencode/handoffs/FIX-T1.md`,
+2026-11-08): **3427 passed,
+4 skipped, 0 failed** (`uv run --frozen pytest tests/ -q` from
+`forecast_ml_framework/`, exit 0 in FIX-T1; log
+`/tmp/opencode/fix_t1_pytest_q.log`).
+**2337 test functions** on disk (static `^def test_` count in
+`tests/`, recounted 2026-11-08 in FIX-T1 after deleting the
+byte-identical duplicate OIDC test module (non-`_auth` copy, 86 tests
+that had been double-counted before this recount); parametrize
+expands the static count to the collected total — 2337 static vs
+3427 collected, both correct, different measures).
 (including `test_high_fitted`, `test_high_tuning`,
 `test_high_tuning_wiring`, `test_high_imbalance`, `test_high_calibrate`,
 `test_high_priorrate`, `test_high_threshold_apply`, `test_high_routines`,
@@ -535,7 +596,7 @@ forecast_ml_framework/
 │   ├── telemetry/              # __init__.py + exceptions.py (FrameworkError hierarchy, wrap; public API, A2)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
 │   └── serving/                # app.py (FastAPI, GET /metrics), metrics.py (live /metrics producer), auth.py (P2-AU1 OIDC), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (2423 test functions, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in `tests/`; see Tests)
+├── tests/                      # pytest suite (2337 test functions, recounted 2026-11-08 in FIX-T1 by grep `^def test_` in `tests/` after deleting duplicate OIDC test module, non-`_auth` copy; see Tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
 
@@ -2226,12 +2287,13 @@ and digit-`run_id` fallbacks were deleted (exact run_id match only).
 Loading downloads the artifact bytes and decodes them with
 `restricted_loads` (size cap plus optional SHA-256 pin via
 `MODEL_SHA256` / `expected_sha256`, `serving/model_loader.py`; the
-restricted path is `serving/model_loader.py:756`, and the pyfunc
+restricted path is `serving/model_loader.py:756-757` (+ gate at
+`:759`), and the pyfunc
 fallback is opt-in only via `RegistryModelLoader(..., allow_pyfunc=True)`
 (`serving/model_loader.py:518` — `allow_pyfunc` defaults to `False`
-at `serving/model_loader.py:544`, with the startup warning at
-`serving/model_loader.py:590` and the gated fallback at
-`serving/model_loader.py:756`); a
+at `serving/model_loader.py:549`, with the startup warning at
+`serving/model_loader.py:590-594` and the gated fallback at
+`serving/model_loader.py:759`); a
 startup warning is logged; pyfunc executes arbitrary code shipped
 with the model, so only enable it for fully trusted registries).
 Docker image shipped (Dockerfile, fail-closed entrypoint);
@@ -2349,7 +2411,7 @@ Counts (2794/2792/1759) unchanged by this docs pass.
 | # | Issue | Symptom | Impact | Workaround / config |
 |---|---|---|---|---|
 | 18 | H2O pickle serving rejected (no cluster) — re-verified (softened refs) | H2O globals are absent from the exact allowlist (`core/artifact_store.py:_SAFE_GLOBALS :47`, no `h2o` entries; zoo pickles referencing non-allowlisted globals are rejected by design). Training is in-process only; there is no H2O cluster connect/load path | H2O models train in the modeling pipeline but cannot be re-loaded for serving/scoring in this repo; serving an H2O model fails at load (`ModelCorruptError`) | Serve sklearn/XGBoost/LightGBM/CatBoost pickles (allowlisted), or export the H2O model to MOJO/POJO outside this repo. Widening the allowlist with H2O globals requires a reviewed change |
-| 19 | pyfunc opt-in, trusted registry only — re-verified | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:590-592`). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:391`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:432-436`) |
+| 19 | pyfunc opt-in, trusted registry only — re-verified (CYCLE12-docs refs) | `RegistryModelLoader` loads the sklearn flavour only by default; a flavour mismatch raises `ModelCorruptError` instead of falling back (`serving/model_loader.py:759-761` gate). The pyfunc fallback executes arbitrary code shipped with the model | A non-sklearn-flavour model cannot serve by default; enabling pyfunc grants code execution to whoever controls the registry | Keep `allow_pyfunc=False` (default, `serving/model_loader.py:549`). Only pass `allow_pyfunc=True` for a fully trusted registry — a startup warning is logged (`serving/model_loader.py:590-594`) |
 | 20 | SQL trusted-config, not a sandbox (re-verifies #3) — re-verified | `SQLQueryDataSet` / `SparkSQLDataSet` (`core/datasets.py:200,340`) accept only a single `SELECT`/`WITH` statement with the extended denylist incl. server-file primitives (`PG_READ_FILE`, `READFILE`, …) and double-quoted identifiers scanned verbatim (`core/datasets.py:28-85,88-146,149`, A8), but a `SELECT` against any readable table still executes; the DB account itself must be read-only | Any trusted-config query can read whatever the DB account can read; this does not make untrusted SQL safe | Only put trusted catalog/params queries in config, never user input; use a read-only DB account |
 | 21 | No rate limiting — **Fixed (W3)** | Was: payload caps only. Now: in-app token-bucket rate limit (`FORECAST_RATE_LIMIT_PER_MINUTE`, default 600/min, `serving/app.py:83-84,313-336`, bucket `serving/app.py:356-389`, check `serving/app.py:774-783`) → HTTP 429 | Gateway still recommended for production per-client quotas, but the app no longer has no limiter. The bucket is single-process (see #33) | Keep gateway in front for production; set `FORECAST_API_KEY` in production |
 | 22 | DNS rebinding — **Fixed (W4) + egress required (R-05)** | `_validate_uri_host` now re-validates via `socket.getaddrinfo` and rejects *any* non-global resolved address, fail-closed on error (`registry/model_registry.py:161,173,197-270`) | Hostnames resolving to private/metadata IPs are caught at validation time; residual TOCTOU between validation and the MLflow client's own DNS resolution remains (see #32) | Keep allowlisted registry hostname you control **and** run behind a network egress allowlist (allow only that hostname; block private/metadata) — see Registry DNS egress note above |
@@ -2451,7 +2513,7 @@ flowchart LR
   P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
   P5 --> P6["Phase 6 - done (parity)<br/>ntile eval-metric grammar<br/>lift table + threshold selection + promotion gate<br/>descriptive stats + confusion rates<br/>catalog anchors + eval_metric config<br/>1075 tests"]
   P6 --> P7["Phase 7 - done (high-value)<br/>fitted registry + tuning executor + imbalance<br/>prior-rate calibration + threshold application<br/>KNN + sequence routines + MLflow hooks<br/>two-stage scoring<br/>1218 tests"]
-  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>2423 test functions (static, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep ^def test_ in tests/)"]
+  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>2337 test functions (static, recounted 2026-11-08 in FIX-T1 by grep ^def test_ in tests/ after deleting duplicate OIDC test module)"]
   LOOP --> PP1["P1 - done<br/>fitted_registry v2 dual-read<br/>best_model v2 envelope (envelope.py)<br/>temporal_split + assert_no_leakage"]
   PP1 --> PP2["P2 - done<br/>Dockerfile + Helm/K8s (deploy/)<br/>Azure IaC + observability + OIDC<br/>runbook docs/runbook-p2.md"]
   PP2 --> PP3["P3 - done<br/>purged_cv + backtest<br/>embargo/overlap guards<br/>calibrate prohibition"]
@@ -2470,6 +2532,40 @@ flowchart LR
 | Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-08 — FIX-T1 deduplicate OIDC test file + recount
+
+- Deleted the byte-identical duplicate `tests/test_p2_oidc.py` (1381
+  lines, 86 `^def test_`; verified `diff` exit 0 against
+  `tests/test_p2_oidc_auth.py`, canonical copy kept per
+  `docs/runbook-p2.md:87`). Static count 2423→**2337** (recount:
+  `grep -r "^def test_" tests/ --include="*.py" | wc -l`), collected
+  3513→**3427** (full suite 3427 passed, 4 skipped, 0 failed, exit 0;
+  log `/tmp/opencode/fix_t1_pytest_q.log`). Current-state count
+  sites (intro, Counts note, Tests, tree, phase diagram) updated to
+  2337/3427; older dated entries below keep the counts true at
+  their passes. No `src/` changes; `test_p2_oidc_auth.py` untouched.
+
+### 2026-11-08 — CYCLE12-docs docs truth audit
+
+- Docs only (no `src/` changes): replaced the stale collected-total
+  3305 (P3-D) at the current-state sites (intro + Tests) with
+  **3513 passed, 4 skipped, 0 failed** (Cycle 11, 2026-11-08,
+  `.opencode/handoffs/CYCLE11-test.md` + `ADV-CYCLE11.md`); static
+  **2423** `def test_` kept and distinguished (2423 static vs 3513
+  parametrize-expanded). Dated `3305` mentions below remain as
+  history. Verified METRIC_REGISTRY 154 (90+64, `metrics.py:2049-2100`),
+  charts 27+1 alias (28 `__all__`, `charts.py:63-92`), 7 parameter
+  buckets, loss allowlist 15+3=18 (`losses.py:22-38,107`), pipeline
+  node lists vs `name=` values (12 modeling, 6 data-prep, 3 scoring,
+  2 eda, 3 monitoring, 2 retraining, 3 cost, 5 interpretability),
+  tree entries on disk, and ≥20 serving refs (fixed pyfunc
+  `allow_pyfunc` default `544`→`549` and gated fallback `756`→`759`).
+  Added the Implemented-vs-Stub matrix and the framework-Phase 1–7
+  vs program-P0–P11 clarifying line (D-README-1 tie-break). Infra /
+  runbook / deploy READMEs verified (three-stack, shipped image,
+  frozen D-ERASURE-CLI-1 + library-caller duty, `conf/base/
+  platform.yml` sole retention source); no edits needed there.
 
 ### 2026-11-08 — FIX-GATE-EVIDENCE recount tests + gate/scope ADR sync
 

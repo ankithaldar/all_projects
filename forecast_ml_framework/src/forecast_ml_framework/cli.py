@@ -9,7 +9,8 @@ Delegates to ``kedro run`` when kedro is available, otherwise
 prints the planned command. Stdlib argparse only.
 
 Optional API-key auth is supported via FORECAST_API_KEY in the
-serving app (see README Serving API); no Docker is provided.
+serving app (see README Serving API); Docker image shipped
+(Dockerfile, fail-closed); production promotion gated P11.
 
 Registry aliases (V12): ``train`` runs the ``modeling``
 pipeline, ``predict`` runs ``scoring``, ``run`` runs the

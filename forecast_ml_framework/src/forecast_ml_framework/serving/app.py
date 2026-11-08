@@ -45,8 +45,8 @@ and the ``_check_caps`` 413) and the middleware
 logged server-side only, scrubbed. Security headers
 (nosniff, DENY, no-referrer, no-store, restrictive CSP)
 are applied to every response, plus Strict-Transport-Security
-when the request arrives over TLS. No Docker is
-provided.
+when the request arrives over TLS. Docker image shipped
+(Dockerfile, fail-closed); production promotion gated P11.
 
 Audit limits (accepted, documented): a single shared
 FORECAST_API_KEY, so revocation is all-or-nothing;
