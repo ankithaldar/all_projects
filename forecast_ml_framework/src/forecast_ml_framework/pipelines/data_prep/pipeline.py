@@ -90,7 +90,8 @@ def create_pipeline(**kwargs):
   )
   apply_node = node(
     func=apply_preprocess,
-    inputs=['test_raw', 'fitted_registry'],
+    inputs=['test_raw', 'fitted_registry',
+            'params:modeling_params'],
     outputs=['test_preprocessed_data'],
     name='apply_preprocess',
   )

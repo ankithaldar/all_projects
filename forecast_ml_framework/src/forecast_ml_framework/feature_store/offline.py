@@ -54,7 +54,8 @@ class OfflineFeatureStore(FeatureStore):
     self.store = artifact_store
 
   def materialize(self, dataframe, as_of=None, feature_names=None,
-                  entity_col=None, timestamp_col=None):
+                  entity_col=None, timestamp_col=None,
+                  pii_classes=None, consent_ledger=None):
     '''Save ``dataframe`` versioned by ``as_of`` date.
 
     Args:
@@ -64,6 +65,10 @@ class OfflineFeatureStore(FeatureStore):
       feature_names: Optional columns to keep besides entity/as_of.
       entity_col: Entity column override.
       timestamp_col: Timestamp column override.
+      pii_classes: Declared PII classes for the fail-closed
+        write guard (explicit ``['none']`` asserts no PII).
+      consent_ledger: Optional consent ledger; when supplied,
+        a granted record per distinct entity is required.
 
     Returns:
       The artifact key the snapshot was saved to.
@@ -72,14 +77,21 @@ class OfflineFeatureStore(FeatureStore):
       ValueError: When the frame lacks an entity column.
     '''
     _check_not_empty(dataframe)
+    resolved_entity_col = entity_col or self.entity_col
     frame = _naive_utc_frame(_normalize_frame(
         dataframe, as_of=as_of,
-        entity_col=entity_col or self.entity_col,
+        entity_col=resolved_entity_col,
         timestamp_col=timestamp_col or self.timestamp_col))
     if frame.empty:
       raise ValueError(
           'cannot materialize empty dataframe: '
           'offline feature store is empty')
+    # Normalized frame carries ENTITY_COL; pass it
+    # explicitly to the guard (no silent default).
+    from forecast_ml_framework.governance.pii import guard_write
+    guard_write(frame, pii_classes=pii_classes,
+                consent_ledger=consent_ledger,
+                entity_col=ENTITY_COL)
     if feature_names is not None:
       keep = [ENTITY_COL, 'as_of'] + [
           name for name in feature_names if name in frame.columns]
@@ -92,6 +104,27 @@ class OfflineFeatureStore(FeatureStore):
 
   # Alias matching ArtifactStore-style naming.
   save = materialize
+
+  def delete_entity(self, entity_id):
+    '''Delete every row for ``entity_id`` (idempotent).
+
+    Each snapshot under the prefix is row-filtered and
+    rewritten in place; a snapshot that would become empty
+    has its key deleted via ``ArtifactStore.delete``. A
+    snapshot without the entity is left untouched, so a
+    repeat call is a no-op.
+    '''
+    for key in self._all_keys():
+      frame = self._load_frame(key)
+      if frame is None or ENTITY_COL not in frame.columns:
+        continue
+      filtered = frame[frame[ENTITY_COL] != entity_id]
+      if len(filtered) == len(frame):
+        continue
+      if filtered.empty:
+        self.artifact_store.delete(key)
+      else:
+        self.artifact_store.save(key, filtered)
 
   def _all_keys(self):
     '''Return all snapshot keys under the prefix, sorted.'''

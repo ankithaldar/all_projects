@@ -1,0 +1,38 @@
+# LIVE: OTLP receiver (gRPC 4317 / HTTP 4318) + Prometheus exporter (:8888).
+# Scraped by prometheus.yaml as otel-collector:8888 (/metrics).
+# The serving app's /metrics producer (serving/metrics.py) emits
+# http_request_duration_seconds, predict_requests_total,
+# predict_errors_total, drift_psi and drift_ks; those live series
+# are the names dashboards and rules.yaml query.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8888
+
+processors:
+  batch: {}
+  resource:
+    attributes:
+      - key: service.name
+        value: forecast-ml
+        action: upsert
+      - key: service.version
+        value: ${env:SERVICE_VERSION}
+        action: upsert
+
+service:
+  telemetry:
+    logs:
+      level: INFO
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [prometheus]

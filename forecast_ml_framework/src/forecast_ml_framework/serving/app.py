@@ -3,7 +3,15 @@
 
 '''Minimal FastAPI serving app.
 
-Endpoints: GET /health, POST /predict.
+Endpoints: GET /health, POST /predict, GET /metrics.
+The /metrics producer (``serving.metrics``) renders
+Prometheus text: an ``http_request_duration_seconds``
+histogram, ``predict_requests_total`` /
+``predict_errors_total`` counters, and ``drift_psi`` /
+``drift_ks`` gauges refreshed by the monitoring
+pipeline hook. Like /health it is public (aggregate
+counts only, no keys or payloads) so Prometheus can
+scrape it without credentials.
 
 Models come from an injected loader (preferred) or from the
 MLflow registry via explicit config or MODEL_* env vars.
@@ -20,13 +28,15 @@ a key raises RuntimeError at startup, a key shorter
 than MIN_API_KEY_LENGTH is refused, and a dev startup
 without a key logs a WARNING. Binding a non-loopback
 host without a valid key is refused (see
-:func:`validate_bind_host`). /predict is rate-limited
-in-app with a token bucket (429 when exceeded) and
-every /predict attempt writes a structured access log
-with an HMAC key-id, outcome, and latency (never the
-raw key or payload), plus a persisted audit entry
-(``governance.audit_log``, actor ``serving``) on the
-bounded ``app.state.audit_log`` list. The access/audit
+:func:`validate_bind_host`), including a non-loopback
+FORECAST_BIND_HOST read by the module-level app, so
+importing this module cannot bypass the check. /predict
+is rate-limited in-app with a token bucket (429 when
+exceeded) and every /predict attempt writes a
+structured access log with an HMAC key-id, outcome,
+and latency (never the raw key or payload), plus a
+persisted audit entry (``governance.audit_log``, actor
+``serving``) on the bounded ``app.state.audit_log`` list. The access/audit
 boundary covers the endpoint (success, 422, 500, 503
 and the ``_check_caps`` 413) and the middleware
 (401, 429, the streaming body-cap 413, and schema
@@ -59,9 +69,13 @@ import time
 
 from forecast_ml_framework.core.predictions import (
   check_predictions_finite, materialize_predictions)
+from forecast_ml_framework.serving.auth import (
+  authenticate, load_revocation_list, OIDCVerifier)
+from forecast_ml_framework.serving.metrics import (
+  CONTENT_TYPE as _METRICS_CONTENT_TYPE, MetricsRegistry)
 
 try:
-  from fastapi import FastAPI, HTTPException, Request
+  from fastapi import FastAPI, HTTPException, Request, Response
   from pydantic import BaseModel, model_validator
   _IMPORT_ERROR = None
 except ImportError as _exc:  # pragma: no cover - missing deps
@@ -69,6 +83,7 @@ except ImportError as _exc:  # pragma: no cover - missing deps
   BaseModel = object
   HTTPException = Exception
   Request = object  # type: ignore[no-redef]
+  Response = object  # type: ignore[no-redef]
   _IMPORT_ERROR = _exc
 
 _LOG = logging.getLogger(__name__)
@@ -88,6 +103,8 @@ DEFAULT_HEALTH_CACHE_TTL = 30.0
 
 #: Maximum entries kept in the bounded per-app audit list.
 MAX_AUDIT_ENTRIES = 1000
+
+_OIDC_UNSET = object()
 
 
 def _truthy(value):
@@ -123,8 +140,122 @@ def _is_loopback_host(host):
     return False
 
 
+def _bind_host_from_env():
+  '''Return the bind host from env, or None when unset.
+
+  Returns:
+    FORECAST_BIND_HOST value, or None when unset
+    or blank. Lets the module-level app apply the
+    same non-loopback check as an explicit host.
+  '''
+  value = os.environ.get('FORECAST_BIND_HOST')
+  if value is None or not str(value).strip():
+    return None
+  return str(value).strip()
+
+
+def _oidc_env_values():
+  '''Return OIDC environment values mapping.'''
+  return {
+    'issuer': os.environ.get('FORECAST_OIDC_ISSUER'),
+    'audience': os.environ.get('FORECAST_OIDC_AUDIENCE'),
+    'jwks_url': os.environ.get('FORECAST_OIDC_JWKS_URL'),
+  }
+
+
+def _oidc_partial():
+  '''Return True when OIDC env is partially set.'''
+  values = _oidc_env_values()
+  present = any(
+    values[name] and str(values[name]).strip()
+    for name in ('issuer', 'audience', 'jwks_url')
+  )
+  if not present:
+    return False
+  issuer = values['issuer']
+  audience = values['audience']
+  complete = bool(
+    issuer and str(issuer).strip()
+    and audience and str(audience).strip()
+  )
+  return not complete
+
+
+def _oidc_configured_from_env():
+  '''Return True when issuer and audience are set.'''
+  values = _oidc_env_values()
+  issuer = values['issuer']
+  audience = values['audience']
+  return bool(
+    issuer and str(issuer).strip()
+    and audience and str(audience).strip()
+  )
+
+
+def _check_partial_oidc():
+  '''Raise RuntimeError when OIDC env is partial.
+
+  Raises:
+    RuntimeError: When any of issuer/audience/jwks_url
+      is set without both issuer and audience.
+  '''
+  if _oidc_partial():
+    raise RuntimeError(
+      'FORECAST_OIDC_* is incomplete; set '
+      'FORECAST_OIDC_ISSUER and FORECAST_OIDC_AUDIENCE '
+      'together or clear OIDC env')
+
+
+def _build_oidc_verifier(fetcher=None, clock=None):
+  '''Build an OIDCVerifier from env, or None.
+
+  Args:
+    fetcher: Injectable JWKS fetcher for tests.
+    clock: Injectable clock for tests.
+
+  Returns:
+    OIDCVerifier when issuer/audience are set,
+    otherwise None.
+
+  Raises:
+    RuntimeError: When OIDC env is partial.
+  '''
+  _check_partial_oidc()
+  values = _oidc_env_values()
+  if not _oidc_configured_from_env():
+    return None
+  issuer = str(values['issuer']).strip()
+  audience = str(values['audience']).strip()
+  jwks_url = values['jwks_url']
+  if jwks_url is not None:
+    jwks_url = str(jwks_url).strip() or None
+  return OIDCVerifier(
+    issuer=issuer,
+    audience=audience,
+    jwks_url=jwks_url,
+    fetcher=fetcher,
+    clock=clock,
+  )
+
+
+def _build_revocation_list():
+  '''Build a RevocationList from revocation env.
+
+  Returns:
+    RevocationList merging hashes env and file.
+  '''
+  return load_revocation_list(
+    revoked_hashes=os.environ.get(
+      'FORECAST_OIDC_REVOKED_HASHES'
+    ),
+    revoked_file=os.environ.get(
+      'FORECAST_OIDC_REVOKED_FILE'
+    ),
+  )
+
+
 def validate_bind_host(host):
-  '''Refuse non-loopback binds without a valid API key.
+  '''Refuse non-loopback binds without valid auth.
 
   Args:
     host: Bind host (for example ``--host 0.0.0.0``).
@@ -132,9 +263,14 @@ def validate_bind_host(host):
   Raises:
     RuntimeError: When a non-loopback host is bound
       without a configured key of at least
-      MIN_API_KEY_LENGTH characters.
+      MIN_API_KEY_LENGTH characters, or when OIDC
+      env is partial. Complete OIDC config exempts
+      the shared-key requirement.
   '''
   if _is_loopback_host(host):
+    return
+  _check_partial_oidc()
+  if _oidc_configured_from_env():
     return
   key = os.environ.get('FORECAST_API_KEY')
   if not key:
@@ -148,14 +284,26 @@ def validate_bind_host(host):
         f'is {MIN_API_KEY_LENGTH}')
 
 
-def _validate_auth_config():
+def _validate_auth_config(verifier=_OIDC_UNSET):
   '''Enforce fail-closed auth config at startup.
 
+  Args:
+    verifier: Injected OIDCVerifier for tests, None to
+      force no OIDC, or _OIDC_UNSET to read env.
+
   Raises:
-    RuntimeError: When auth is required (or the profile
-      is production) without a key, or the key is too
-      short.
+    RuntimeError: When OIDC env is partial, when auth
+      is required (or the profile is production)
+      without any auth, or when a shared key is too
+      short. OIDC principals are exempt from the
+      shared-key length and production checks.
   '''
+  _check_partial_oidc()
+  if verifier is _OIDC_UNSET:
+    if _oidc_configured_from_env():
+      return
+  elif verifier is not None:
+    return
   key = os.environ.get('FORECAST_API_KEY')
   required = _require_auth_enabled() or _is_production_profile()
   if required and not key:
@@ -223,18 +371,24 @@ def _keys_match(provided, expected):
 
 
 def _hmac_key_id(provided):
-  '''Return a truncated HMAC-SHA256 key-id for a provided key.
+  '''Return a truncated HMAC key-id for logging.
 
   The HMAC secret is the server FORECAST_API_KEY itself
   (``anonymous`` when no server key is configured), so the
   key-id differs per client key and cannot be reversed to
   the raw key. Empty provided keys yield ``anonymous``.
+  Precomputed ``oidc-`` key-ids pass through unchanged so
+  OIDC principals are audited by hashed subject, never
+  by raw token.
   '''
   if not provided:
     return 'anonymous'
+  text = str(provided)
+  if text.startswith('oidc-'):
+    return text
   secret = os.environ.get('FORECAST_API_KEY') or 'anonymous'
   return hmac.new(
-      secret.encode('utf-8'), str(provided).encode('utf-8'),
+      secret.encode('utf-8'), text.encode('utf-8'),
       hashlib.sha256).hexdigest()[:16]
 
 
@@ -691,7 +845,7 @@ async def _send_json(send, status_code, detail, headers=None):
 
 
 class _CapAuthHeadersMiddleware:
-  '''Pure ASGI: body cap, API key, rate limit, headers.
+  '''Pure ASGI: body cap, auth, rate limit, headers.
 
   The body cap counts bytes as ``http.request`` messages
   stream in (works for chunked bodies with no
@@ -707,8 +861,11 @@ class _CapAuthHeadersMiddleware:
   response start, deduped via the per-request scope
   marker (C4-R1) so an endpoint 422 is logged
   exactly once.
-  When FORECAST_API_KEY is set, every path except
-  /health requires it (401, constant-time compare).
+  When an OIDC verifier is configured, every path
+  except /health requires a valid Bearer OIDC token
+  (401 otherwise); the shared key is not consulted.
+  Otherwise when FORECAST_API_KEY is set, every path
+  except /health requires it (401, constant-time).
   /predict is token-bucket rate-limited (429 when the
   bucket is empty); use a gateway for distributed
   limits in production.
@@ -719,10 +876,18 @@ class _CapAuthHeadersMiddleware:
       overriding FORECAST_RATE_LIMIT_PER_MINUTE.
     audit_log: Bounded list receiving per-predict
       audit entries (shared with ``app.state``).
+    oidc_verifier: OIDCVerifier or None.
+    oidc_revocation: RevocationList or None.
+    metrics_registry: MetricsRegistry recording
+      HTTP timings and /predict counters; a new
+      registry is created when omitted.
   '''
 
-  def __init__(self, app, rate_limit_per_minute=None,
-               audit_log=None):
+  def __init__(
+    self, app, rate_limit_per_minute=None, audit_log=None,
+    oidc_verifier=None, oidc_revocation=None,
+    metrics_registry=None
+  ):
     '''Initialise app, rate limit, and audit sink.
 
     Args:
@@ -731,11 +896,44 @@ class _CapAuthHeadersMiddleware:
         overriding FORECAST_RATE_LIMIT_PER_MINUTE.
       audit_log: Bounded list receiving per-predict
         audit entries (shared with ``app.state``).
+      oidc_verifier: OIDCVerifier or None.
+      oidc_revocation: RevocationList or None.
+      metrics_registry: MetricsRegistry recording
+        HTTP timings and /predict counters; a new
+        registry is created when omitted.
     '''
     self.app = app
     self._bucket = _TokenBucket(
         _rate_limit_per_minute(rate_limit_per_minute))
     self._audit_log = audit_log
+    self._oidc_verifier = oidc_verifier
+    self._oidc_revocation = oidc_revocation
+    self._metrics = (
+      metrics_registry if metrics_registry is not None
+      else MetricsRegistry())
+
+  def _record_metrics(self, path, code, started):
+    '''Record timing and /predict counters for one request.
+
+    Args:
+      path: ASGI request path.
+      code: HTTP status code of the response.
+      started: ``time.monotonic()`` start timestamp.
+
+    Returns:
+      None. /metrics itself is never recorded (it
+      would pollute latency series with scrapes),
+      and unknown paths are bucketed as ``unknown``
+      so arbitrary URLs cannot explode label
+      cardinality.
+    '''
+    if path == '/metrics':
+      return
+    route = path if path in ('/health', '/predict') else 'unknown'
+    self._metrics.observe_http(
+      time.monotonic() - started, route, code)
+    if path == '/predict':
+      self._metrics.record_predict(code)
 
   async def __call__(self, scope, receive, send):
     '''Handle one ASGI request through auth and limits.
@@ -756,27 +954,73 @@ class _CapAuthHeadersMiddleware:
     expected = os.environ.get('FORECAST_API_KEY')
     headers = _header_map(scope)
     provided = _provided_key(headers)
+    auth_result = None
+    needs_auth = (
+      self._oidc_verifier is not None or bool(expected)
+    )
+    if scope.get('path') in ('/health', '/metrics'):
+      needs_auth = False
+    if needs_auth:
+      if _has_duplicate_auth_headers(scope):
+        log_key = (
+          'oidc-anonymous'
+          if self._oidc_verifier is not None
+          else provided
+        )
+        if scope.get('path') == '/predict':
+          _log_access(
+              log_key, 'unauthorized',
+              time.monotonic() - started,
+              audit_list=self._audit_log)
+        self._record_metrics(
+            scope.get('path'), 401, started)
+        await _send_json(
+            send, 401, 'unauthorized', headers=sec_headers)
+        return
+      try:
+        auth_result = authenticate(
+          headers,
+          verifier=self._oidc_verifier,
+          revocation=self._oidc_revocation,
+          shared_key=expected,
+        )
+      except ValueError:
+        log_key = (
+          'oidc-anonymous'
+          if self._oidc_verifier is not None
+          else provided
+        )
+        if scope.get('path') == '/predict':
+          _log_access(
+              log_key, 'unauthorized',
+              time.monotonic() - started,
+              audit_list=self._audit_log)
+        self._record_metrics(
+            scope.get('path'), 401, started)
+        await _send_json(
+            send, 401, 'unauthorized', headers=sec_headers)
+        return
+      if self._oidc_verifier is not None:
+        principal = auth_result.get('principal_hash')
+        if principal:
+          provided = 'oidc-' + str(principal)[:16]
+        else:
+          provided = 'oidc-anonymous'
     # C13-03: publish the canonical (last-wins) key the
     # middleware authenticated so the endpoint audits
     # exactly this key, not a first-wins dict(headers).
     scope['forecast_provided_key'] = provided
-    if expected and scope.get('path') != '/health':
-      if _has_duplicate_auth_headers(scope) or not _keys_match(
-              provided, expected):
-        if scope.get('path') == '/predict':
-          _log_access(
-              provided, 'unauthorized',
-              time.monotonic() - started,
-              audit_list=self._audit_log)
-        await _send_json(
-            send, 401, 'unauthorized', headers=sec_headers)
-        return
+    scope['forecast_auth_mode'] = (
+      auth_result.get('auth_mode') if auth_result else None
+    )
     if scope.get('path') == '/predict':
       if not self._bucket.allow():
         _log_access(
             provided, 'rate_limited',
             time.monotonic() - started,
             audit_list=self._audit_log)
+        self._record_metrics(
+            scope.get('path'), 429, started)
         await _send_json(
             send, 429, 'rate limit exceeded',
             headers=sec_headers)
@@ -797,6 +1041,8 @@ class _CapAuthHeadersMiddleware:
               provided, 'payload_too_large',
               time.monotonic() - started,
               audit_list=self._audit_log)
+        self._record_metrics(
+            scope.get('path'), 413, started)
         await _send_json(
             send, 413, 'request body too large',
             headers=sec_headers)
@@ -806,6 +1052,7 @@ class _CapAuthHeadersMiddleware:
         break
     body = b''.join(chunks)
     replayed = False
+    response_status = {'code': None}
 
     async def _replay_receive():
       '''Replay the buffered body to the downstream app.
@@ -834,6 +1081,7 @@ class _CapAuthHeadersMiddleware:
       '''
       if message.get('type') == 'http.response.start':
         status = message.get('status')
+        response_status['code'] = status
         if status == 422 and scope.get('path') == '/predict':
           # C4-R1: pydantic schema 422 never reached the
           # endpoint, so record repudiation here unless
@@ -856,18 +1104,27 @@ class _CapAuthHeadersMiddleware:
       await send(message)
 
     await self.app(scope, _replay_receive, _send_with_headers)
+    if response_status['code'] is not None:
+      self._record_metrics(
+          scope.get('path'), response_status['code'], started)
 
 
 def create_app(model_loader=None, registry_uri=None, model_name=None,
                alias=None, artifact_path=None, host=None,
-               rate_limit_per_minute=None, health_cache_ttl=None):
+               rate_limit_per_minute=None, health_cache_ttl=None,
+               oidc_verifier=_OIDC_UNSET,
+               oidc_revocation=_OIDC_UNSET, oidc_fetcher=None,
+               oidc_clock=None, metrics_registry=None):
   '''Create FastAPI app with injected or registry model loader.
 
   Never raises for a missing loader: without an injected
   loader, MODEL_ARTIFACT_PATH, or registry config, the
   app runs in degraded mode (health reports degraded and
   /predict returns 503). Auth is fail-closed (see
-  :func:`_validate_auth_config`).
+  :func:`_validate_auth_config`). Complete OIDC config
+  (explicit verifier or FORECAST_OIDC_ISSUER/AUDIENCE
+  env) makes OIDC authoritative and exempts the
+  shared-key checks; the shared key is not consulted.
 
   Args:
     model_loader: Callable returning a model, or a model.
@@ -880,12 +1137,25 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     artifact_path: File-loader artifact path (or
       MODEL_ARTIFACT_PATH); takes precedence over
       registry config.
-    host: Bind host; non-loopback binds require a valid
-      API key (see :func:`validate_bind_host`).
+    host: Bind host; non-loopback binds require valid
+      auth (see :func:`validate_bind_host`). When
+      None, FORECAST_BIND_HOST is consulted so the
+      module-level app cannot bypass the check.
     rate_limit_per_minute: /predict rate limit,
       overriding FORECAST_RATE_LIMIT_PER_MINUTE.
     health_cache_ttl: Health-cache TTL in seconds,
       overriding FORECAST_HEALTH_CACHE_TTL.
+    oidc_verifier: Injected OIDCVerifier for tests,
+      None to force no OIDC, or default to read env.
+    oidc_revocation: Injected RevocationList for tests,
+      None to disable, or default to read env.
+    oidc_fetcher: JWKS fetcher for env-built verifier.
+    oidc_clock: Clock for env-built verifier.
+    metrics_registry: MetricsRegistry for /metrics;
+      a new one is created when omitted. The drift
+      hook is ``metrics_registry.update_from_...``
+      (see ``serving.metrics``); reach it via
+      ``app.state.metrics_registry``.
 
   Returns:
     Configured FastAPI application.
@@ -895,9 +1165,18 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     RuntimeError: When fail-closed auth or bind-host
       validation refuses startup.
   '''
-  _validate_auth_config()
-  if host is not None:
-    validate_bind_host(host)
+  _validate_auth_config(oidc_verifier)
+  if oidc_verifier is _OIDC_UNSET:
+    oidc_verifier = _build_oidc_verifier(
+      fetcher=oidc_fetcher, clock=oidc_clock
+    )
+  if oidc_revocation is _OIDC_UNSET:
+    oidc_revocation = _build_revocation_list()
+  effective_host = host
+  if effective_host is None:
+    effective_host = _bind_host_from_env()
+  if effective_host is not None and oidc_verifier is None:
+    validate_bind_host(effective_host)
   model_loader = _resolve_loader(
       model_loader, registry_uri, model_name, alias,
       artifact_path=artifact_path)
@@ -908,15 +1187,21 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     ) from _IMPORT_ERROR
   ttl = _health_cache_ttl(health_cache_ttl)
   app = FastAPI(title='forecast-ml serving')
+  if metrics_registry is None:
+    metrics_registry = MetricsRegistry()
   # Bounded audit list shared by the middleware (413/401/429
   # branches) and the endpoint; exposed as app.state.audit_log.
   _audit_entries = []
   app.add_middleware(
       _CapAuthHeadersMiddleware,
       rate_limit_per_minute=rate_limit_per_minute,
-      audit_log=_audit_entries)
+      audit_log=_audit_entries,
+      oidc_verifier=oidc_verifier,
+      oidc_revocation=oidc_revocation,
+      metrics_registry=metrics_registry)
   app.state.audit_log = _audit_entries
   app._audit_log = _audit_entries
+  app.state.metrics_registry = metrics_registry
   # Health probe cache on the app instance: dict with
   # 'result' -> HealthResponse or None when not yet
   # probed, and 'probed_at' -> monotonic timestamp of
@@ -1053,6 +1338,13 @@ def create_app(model_loader=None, registry_uri=None, model_name=None,
     http_request.scope['forecast_audit_logged'] = True
     return PredictResponse(predictions=predictions)
 
+  @app.get('/metrics')
+  def metrics():
+    '''Render Prometheus metrics in text format.'''
+    return Response(
+      content=metrics_registry.render(),
+      media_type=_METRICS_CONTENT_TYPE)
+
   return app
 
 
@@ -1079,6 +1371,10 @@ def create_app_from_registry(registry_uri, model_name,
   return create_app(loader)
 
 
+# Module-level app for uvicorn (``app:app``). Creation
+# is fail-closed: a non-loopback FORECAST_BIND_HOST
+# without a key raises RuntimeError here, so importing
+# this module (and therefore serving) is refused.
 try:
   app = create_app()
 except ImportError:  # pragma: no cover - missing fastapi

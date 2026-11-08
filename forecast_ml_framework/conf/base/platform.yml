@@ -1,0 +1,7 @@
+# Platform governance params for the P2 retention job.
+# Sole retention-params source for governance.retention_job
+# (loaded via --governance-params, default this file). No
+# secret values are stored here; runtime secrets come from
+# the environment only.
+governance_params:
+  retention_days: 365

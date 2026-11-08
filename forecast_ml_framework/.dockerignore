@@ -1,0 +1,18 @@
+# Keep the build context small without dropping build inputs.
+.git
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+data
+artifacts
+mlflow.db
+catboost_info
+tests
+deploy
+infra
+web

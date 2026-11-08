@@ -11,6 +11,7 @@ from forecast_ml_framework.feature_store.store import (
     ENTITY_COL, FeatureStore, _check_not_empty, _naive_utc,
     _naive_utc_frame, _native_features, _normalize_frame,
     _resolve_time)
+from forecast_ml_framework.governance.scrub import subject_hash
 
 LOG = logging.getLogger(__name__)
 
@@ -101,8 +102,8 @@ class OnlineFeatureStore(FeatureStore):
     except (TypeError, ValueError, RuntimeError, OSError,
             AttributeError) as exc:
       LOG.warning('online feature store: redis write failed for'
-                  ' entity %r: %s; in-memory record retained',
-                  entity, exc)
+                  ' entity %s: %s; in-memory record retained',
+                  subject_hash(entity), exc)
 
   def _redis_get(self, entity):
     '''Best-effort read; returns a record list or None.'''
@@ -114,7 +115,8 @@ class OnlineFeatureStore(FeatureStore):
     except (RuntimeError, OSError, TypeError, ValueError,
             AttributeError) as exc:
       LOG.warning('online feature store: redis read failed for'
-                  ' entity %r: %s; using memory', entity, exc)
+                  ' entity %s: %s; using memory',
+                  subject_hash(entity), exc)
       return None
     if raw is None:
       return None
@@ -129,7 +131,8 @@ class OnlineFeatureStore(FeatureStore):
     except (TypeError, ValueError, UnicodeDecodeError,
             AttributeError, KeyError) as exc:
       LOG.warning('online feature store: bad redis payload for'
-                  ' entity %r: %s; using memory', entity, exc)
+                  ' entity %s: %s; using memory',
+                  subject_hash(entity), exc)
       return None
 
   def _records_for(self, entity):
@@ -161,7 +164,8 @@ class OnlineFeatureStore(FeatureStore):
 
   # -- Writes ------------------------------------------------------
   def set_features(self, entity_id, features, as_of=None,
-                   request_time=None):
+                   request_time=None, pii_classes=None,
+                   consent_ledger=None):
     '''Store ``features`` for one entity at ``as_of``.
 
     Args:
@@ -171,7 +175,32 @@ class OnlineFeatureStore(FeatureStore):
         so they round-trip through Redis JSON.
       as_of: Timestamp for this record.
       request_time: Alias timestamp (wins over ``as_of``).
+      pii_classes: Declared PII classes for the fail-closed
+        write guard (explicit ``['none']`` asserts no PII).
+      consent_ledger: Optional consent ledger; when supplied,
+        a granted record per entity is required.
+
+    Raises:
+      ValueError: When ``features`` carries the entity
+        column (``entity_id``) -- the guard frame always
+        checks the explicit ``entity_id`` argument, so a
+        smuggled entity value in ``features`` can never
+        bypass the consent check -- or when validation /
+        consent fails.
     '''
+    from forecast_ml_framework.governance.pii import guard_write
+    import pandas as pd
+    feature_dict = dict(features)
+    if ENTITY_COL in feature_dict:
+      raise ValueError(
+          'features must not contain the entity column'
+          ' (entity_id): consent checks use the explicit'
+          ' entity_id argument')
+    guard_frame = pd.DataFrame(
+        [{**feature_dict, ENTITY_COL: entity_id}])
+    guard_write(guard_frame, pii_classes=pii_classes,
+                consent_ledger=consent_ledger,
+                entity_col=ENTITY_COL)
     when = _resolve_naive(as_of=as_of, request_time=request_time)
     if when is None:
       raise ValueError('set_features requires as_of')
@@ -187,7 +216,8 @@ class OnlineFeatureStore(FeatureStore):
   set_feature = set_features
 
   def materialize(self, dataframe, as_of=None, feature_names=None,
-                  entity_col=None, timestamp_col=None):
+                  entity_col=None, timestamp_col=None,
+                  pii_classes=None, consent_ledger=None):
     '''Load features from ``dataframe`` into the online store.
 
     Args:
@@ -196,19 +226,30 @@ class OnlineFeatureStore(FeatureStore):
       feature_names: Optional feature columns to keep.
       entity_col: Entity column override.
       timestamp_col: Timestamp column override.
+      pii_classes: Declared PII classes for the fail-closed
+        write guard (explicit ``['none']`` asserts no PII).
+      consent_ledger: Optional consent ledger; when supplied,
+        a granted record per distinct entity is required.
 
     Returns:
       Number of entity records stored.
     '''
     _check_not_empty(dataframe)
+    resolved_entity_col = entity_col or self.entity_col
     frame = _naive_utc_frame(_normalize_frame(
         dataframe, as_of=as_of,
-        entity_col=entity_col or self.entity_col,
+        entity_col=resolved_entity_col,
         timestamp_col=timestamp_col or self.timestamp_col))
     if frame.empty:
       raise ValueError(
           'cannot materialize empty dataframe: '
           'online feature store is empty')
+    # Normalized frame carries ENTITY_COL; pass it
+    # explicitly to the guard (no silent default).
+    from forecast_ml_framework.governance.pii import guard_write
+    guard_write(frame, pii_classes=pii_classes,
+                consent_ledger=consent_ledger,
+                entity_col=ENTITY_COL)
     if feature_names is not None:
       keep = [ENTITY_COL, 'as_of'] + [
           n for n in feature_names if n in frame.columns]
@@ -229,6 +270,22 @@ class OnlineFeatureStore(FeatureStore):
     return count
 
   load_from_dataframe = materialize
+
+  def delete(self, entity_id):
+    '''Delete all records for ``entity_id`` (idempotent).
+
+    Memory is always purged. Redis is purged only when a
+    client exists (``_client() is not None``); a Redis error
+    propagates to the caller after the memory purge, so the
+    caller retries.
+
+    Args:
+      entity_id: Entity id to delete.
+    '''
+    self._store.pop(entity_id, None)
+    client = self._client()
+    if client is not None:
+      client.delete(f'feature:{entity_id}')
 
   # -- Reads -------------------------------------------------------
   def get_features(self, entity_ids, feature_names=None, as_of=None,

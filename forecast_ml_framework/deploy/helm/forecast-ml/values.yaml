@@ -1,0 +1,43 @@
+# Frozen P2-C1 values keys. Secret entries are names and
+# keys only; never put a secret value in this file.
+image:
+  repository: forecast-ml
+  tag: '0.1.0'
+  pullPolicy: IfNotPresent
+replicaCount: 2
+# Map of NAME to plain (non-secret) value. The default
+# deployment requires auth: the app is fail-closed
+# without FORECAST_API_KEY (or OIDC), so a chart install
+# with no key is refused at startup instead of serving
+# unauthenticated. FORECAST_API_KEY itself is supplied
+# via secrets below, never as a plain value here.
+env:
+  FORECAST_REQUIRE_AUTH: '1'
+  FORECAST_BIND_HOST: '0.0.0.0'
+# List of secretRef / configMapRef entries, names only.
+envFrom: []
+# Map of NAME to {secretName, key} rendered as secretKeyRef.
+secrets: {}
+serviceAccount:
+  create: true
+  name: forecast-ml
+  annotations: {}
+service:
+  type: ClusterIP
+  port: 8000
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+ingress:
+  enabled: false
+  className: nginx
+  hosts: []

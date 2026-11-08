@@ -196,6 +196,8 @@ def score_data_prep(data, fitted_registry=None, params=None):
       must never silently fall back to identity when training
       used fitted steps. With no fitted steps declared, an
       empty registry remains identity for back-compat.
+      ``fitted_registry_v2`` in scoring_params is forwarded
+      as ``require_v2`` to the fitted reader.
 
   Returns:
     The scoring frame with fitted preprocessing applied via
@@ -224,7 +226,8 @@ def score_data_prep(data, fitted_registry=None, params=None):
         'preprocessing steps %r; refusing identity scoring'
         % (steps,))
     return data
-  return apply_preprocess(data, fitted_registry)
+  require_v2 = bool((params or {}).get('fitted_registry_v2', False))
+  return apply_preprocess(data, fitted_registry, require_v2=require_v2)
 
 
 def create_pipeline(scoring_params=None, **kwargs):

@@ -28,12 +28,19 @@ def test_fitted_train_only_mu_sd_not_full():
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     apply_preprocess,
     fit_preprocess,
+    read_registry,
   )
   train = pd.DataFrame({'f1': [1.0, 2.0, 3.0], 'target': [0, 1, 0]})
   _, registry = fit_preprocess(
     train, _norm_params(),
     {'num_cols': ['f1'], 'cat_cols': []})
-  state = registry['Normalizations']['f1']
+  # v2 writer: nested steps under 'steps', version 2.
+  assert registry['version'] == 2
+  assert registry['schema'] == 'fitted_registry.v2'
+  assert 'steps' in registry
+  assert 'Normalizations' not in registry
+  state = read_registry(registry)['Normalizations']['f1']
+  assert state == registry['steps']['Normalizations']['f1']
   mu, sd = state['mu'], state['sd']
   assert mu == pytest.approx(2.0)
   # Population (ddof=0) sd of [1,2,3] is sqrt(2/3) ~ 0.8165.

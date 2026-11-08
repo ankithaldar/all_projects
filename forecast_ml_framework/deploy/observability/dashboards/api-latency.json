@@ -1,0 +1,65 @@
+{
+  "title": "API latency",
+  "uid": "api-latency",
+  "schemaVersion": 39,
+  "version": 2,
+  "description": "Live latency and predict counters from the app /metrics producer: http_request_duration_seconds histogram, predict_requests_total and predict_errors_total counters.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "p50 latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "p95 latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Predict rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(predict_requests_total[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_request_duration_seconds_count{route=\"/predict\"}[5m]))",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "5xx error rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_request_duration_seconds_count{code=~\"5..\"}[5m])) / sum(rate(http_request_duration_seconds_count[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(predict_errors_total[5m])) / clamp_min(sum(rate(predict_requests_total[5m])), 0.001)",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

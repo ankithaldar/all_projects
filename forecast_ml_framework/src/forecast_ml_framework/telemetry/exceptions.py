@@ -24,18 +24,26 @@ would silently break downstream emitters.
 A3 adjudication (``_coerce`` vs ``scrub_details``):
 ``_coerce`` is intentionally retained. ``scrub_details``
 is the secret-redaction owner (this module already
-imports its leaf helpers and caps so the two cannot
-drift), but ``scrub_details`` does not cap size,
-encode bytes, summarise DataFrames, detect cycles,
-reject OmegaConf containers, or preserve tuple/
-frozenset key structure for downstream scrubbing.
-Replacing ``_coerce`` with a bare ``scrub_details``
-call changes observable ``context`` values (verified by
-the 133 exception tests), so unification is deferred:
-keep ``_coerce`` as the cap/coerce stage, keep the
-cap+coerce-then-scrub order, and change the two
-together in one tested commit if unification is ever
-attempted.
+imports its leaf helpers and caps via the ``scrub``
+facade over ``scrub_keys``/``scrub_text``, so the
+two cannot drift -- the imported objects are the
+leaf objects, pinned by identity tests), but
+``scrub_details`` does not cap size, encode bytes,
+summarise DataFrames, detect cycles, reject
+OmegaConf containers, or preserve tuple/frozenset
+key structure for downstream scrubbing. The
+governance leaves define no ``_coerce``; this
+module is its sole owner. Replacing ``_coerce``
+with a bare ``scrub_details`` call changes
+observable ``context`` values (verified by the
+133 exception tests), so unification is deferred:
+keep ``_coerce`` as the cap/coerce stage, keep
+the cap+coerce-then-scrub order, and change the
+two together in one tested commit if unification
+is ever attempted. No exact duplicate remains:
+the safe/marker helpers and caps are shared, not
+copied, and the remaining differences are the
+deliberate ones above.
 '''
 
 import base64

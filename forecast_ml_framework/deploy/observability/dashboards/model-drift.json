@@ -1,0 +1,35 @@
+{
+  "title": "Model drift",
+  "uid": "model-drift",
+  "schemaVersion": 39,
+  "version": 2,
+  "description": "Live drift gauges from the app /metrics producer: drift_psi and drift_ks (feature=\"prediction\"), refreshed by the monitoring pipeline hook MetricsRegistry.update_from_monitoring_report.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Drift PSI",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [ { "expr": "drift_psi", "refId": "A" } ]
+    },
+    {
+      "id": 2,
+      "title": "Drift KS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [ { "expr": "drift_ks", "refId": "A" } ]
+    },
+    {
+      "id": 3,
+      "title": "Drift PSI trend",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "drift_psi - avg_over_time(drift_psi[5m])",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

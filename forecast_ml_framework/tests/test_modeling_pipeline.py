@@ -44,16 +44,22 @@ def test_pipeline_end_to_end_sklearn():
       frame, params)
   model, per_model, _ = nodes['train_models_node'].func(
       x_tr, y_tr, x_te, y_te, params)
-  calibrated, _ = nodes['calibrate_model_node'].func(
+  envelope, _ = nodes['calibrate_model_node'].func(
       model, x_tr, y_tr, params)
-  y_pred = calibrated.predict(x_te)
-  proba = calibrated.predict_proba(x_te)
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] == ['0', '1']
+  from forecast_ml_framework.pipelines.modeling.pipeline import (
+      _predict, _predict_proba)
+  y_pred = _predict(envelope, x_te)
+  proba = _predict_proba(envelope, x_te, params['task_type'])
+  assert proba.shape[1] == 2
   metrics = nodes['evaluate_model_node'].func(
       y_te, y_pred, proba, x_te, params)
   figs = nodes['make_charts_node'].func(
       y_te, y_pred, proba, x_te, params)
   artifact = nodes['explain_model_node'].func(
-      calibrated, x_te, y_te, params)
+      envelope, x_te, y_te, params)
   assert 'f1_weighted' in metrics['global']
   assert len(figs) >= 5
   assert artifact['global_importance']
@@ -90,10 +96,12 @@ def test_modeling_pipeline_explain_artifact_shape():
       frame, params)
   model, _pm, _ = nodes['train_models_node'].func(
       x_tr, y_tr, x_te, y_te, params)
-  calibrated, _ = nodes['calibrate_model_node'].func(
+  envelope, _ = nodes['calibrate_model_node'].func(
       model, x_tr, y_tr, params)
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
   artifact = nodes['explain_model_node'].func(
-      calibrated, x_te, y_te, params)
+      envelope, x_te, y_te, params)
   assert artifact['global_importance']
   assert 'method' in artifact and 'per_row' in artifact
   assert 'shap_available' in artifact

@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: forecast-ml-retention
+  labels:
+    app.kubernetes.io/name: forecast-ml
+    app.kubernetes.io/component: retention
+spec:
+  schedule: '0 3 * * *'
+  suspend: false
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: forecast-ml
+            app.kubernetes.io/component: retention
+        spec:
+          serviceAccountName: forecast-ml
+          restartPolicy: OnFailure
+          containers:
+            - name: retention
+              image: forecast-ml:0.1.0
+              imagePullPolicy: IfNotPresent
+              command:
+                - python
+                - -m
+                - forecast_ml_framework.governance.retention_job
+                - --retention
+                - --governance-params
+                - /etc/forecast-ml/platform.yml
+              env:
+                - name: FORECAST_ACTOR
+                  value: forecast-ml-retention-job
+              volumeMounts:
+                - name: platform
+                  mountPath: /etc/forecast-ml
+                  readOnly: true
+          volumes:
+            - name: platform
+              configMap:
+                name: forecast-ml-platform

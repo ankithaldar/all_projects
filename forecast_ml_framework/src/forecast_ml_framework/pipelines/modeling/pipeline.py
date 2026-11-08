@@ -77,7 +77,8 @@ Datasets (split-first, A9, breaking at 0.1.0):
   honest split meta, merged as raw_* keys) ->
   x_train/x_test/y_train/y_test/split_meta
   (sampling_method='presplit', no shuffle)
-  -> best_model/per_model_metrics/best_model_name.
+  -> best_model(envelope)/per_model_metrics/best_model_name.
+  best_model is the v2 envelope dict from train_models.
   ``modeling_input`` is deprecated and no longer
   consumed by this pipeline (kept in the catalog for
   back-compat only).
@@ -111,7 +112,15 @@ from forecast_ml_framework.pipelines.modeling.charts import (
   make_charts,
 )
 from forecast_ml_framework.pipelines.modeling.data_split import (
+  _embargo_str,
+  _frames_max_min,
+  _parse_embargo,
+  assert_no_leakage,
+  assert_no_overlap,
   split_data,
+)
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
 )
 from forecast_ml_framework.pipelines.modeling.evaluate import (
   evaluate_model,
@@ -217,6 +226,49 @@ def split_presplit_data(train_df, test_df, params=None,
     test_size = float(len(y_test) / total) if total else 0.0
   raw = split_meta_raw or {}
   raw = raw if isinstance(raw, dict) else {}
+  time_col_presplit = params.get('time_col', sampling.get('time_col'))
+  if time_col_presplit is None:
+    time_col_presplit = raw.get('time_col')
+  embargo_raw_presplit = sampling.get(
+    'embargo', params.get('embargo', raw.get('embargo', 0)))
+  max_str_presplit = raw.get('max_time_train')
+  min_str_presplit = raw.get('min_time_test')
+  gap_str_presplit = None
+  is_dt_presplit = True
+  if (max_str_presplit is None or min_str_presplit is None) \
+      and time_col_presplit is not None \
+      and time_col_presplit in train_df.columns \
+      and time_col_presplit in test_df.columns:
+    max_str_presplit, min_str_presplit, gap_str_presplit, \
+      is_dt_presplit = _frames_max_min(
+        train_df, test_df, time_col_presplit)
+  elif max_str_presplit is not None and min_str_presplit is not None:
+    # Raw meta already carries gap info; recompute gap without
+    # moving rows so meta records honest gap.
+    try:
+      from forecast_ml_framework.pipelines.modeling.data_split import (
+        _parse_meta_time,
+      )
+      max_value, max_is_dt = _parse_meta_time(max_str_presplit)
+      min_value, _min_is_dt = _parse_meta_time(min_str_presplit)
+      is_dt_presplit = bool(max_is_dt or _min_is_dt)
+      gap_str_presplit = str(min_value - max_value)
+    except Exception:
+      gap_str_presplit = None
+  leakage_checked_presplit = bool(
+    max_str_presplit is not None and min_str_presplit is not None)
+  embargo_str_presplit = None
+  if leakage_checked_presplit:
+    embargo_parsed_presplit = _parse_embargo(
+      embargo_raw_presplit, is_datetime=is_dt_presplit)
+    embargo_str_presplit = _embargo_str(
+      embargo_parsed_presplit, is_datetime=is_dt_presplit)
+    check_meta = {
+      'max_time_train': max_str_presplit,
+      'min_time_test': min_str_presplit,
+      'embargo': embargo_raw_presplit,
+    }
+    assert_no_leakage(check_meta)
   meta = {
     'task_type': params.get('task_type', 'classification'),
     'test_size': test_size,
@@ -225,27 +277,41 @@ def split_presplit_data(train_df, test_df, params=None,
     'sampling_method': 'presplit',
     'requested_method': 'presplit',
     'shuffle': False,
-    'time_col': params.get('time_col', sampling.get('time_col')),
+    'time_col': time_col_presplit,
     'n_train': int(len(y_train)),
     'n_test': int(len(y_test)),
+    'n_embargoed': int(raw.get('n_embargoed', 0) or 0),
+    'embargo': embargo_str_presplit,
+    'max_time_train': max_str_presplit,
+    'min_time_test': min_str_presplit,
+    'leakage_checked': leakage_checked_presplit,
+    'leakage_gap': gap_str_presplit,
+    'gap': gap_str_presplit,
     'raw_sampling_method': raw.get('sampling_method'),
     'raw_requested_method': raw.get('requested_method'),
     'raw_shuffle': raw.get('shuffle'),
     'raw_time_col': raw.get('time_col'),
   }
+  if time_col_presplit is not None and leakage_checked_presplit:
+    assert_no_overlap([{
+      'fold_index': 0,
+      'test_df': test_df,
+      'fold_meta': meta,
+    }])
   return x_train, x_test, y_train, y_test, meta
 
 
 def _predict(model, x_test):
   '''Predict labels with the calibrated model.'''
-  return model.predict(x_test)
+  return unwrap_envelope(model).predict(x_test)
 
 
 def _predict_proba(model, x_test, task_type):
   '''Predict proba, or None for regression.'''
+  unwrapped = unwrap_envelope(model)
   if normalize_task_kind(task_type) != 'classification':
     return None
-  return model.predict_proba(x_test)
+  return unwrapped.predict_proba(x_test)
 
 
 def build_lift_table(y_test, y_pred, y_proba, params=None,
@@ -331,6 +397,7 @@ def explain_model(model, x, y, params):
     value), ``per_row`` (row index to SHAP values), and
     ``shap_available``.
   '''
+  model = unwrap_envelope(model)
   _ = y
   cfg = (params or {}).get('shap_params', {}) or {}
   interp_params = {
@@ -447,7 +514,7 @@ def create_pipeline(**kwargs):
          name='train_models_node'),
     node(func=calibrate_model,
          inputs=['best_model', 'x_train', 'y_train',
-                 'params:modeling_params'],
+                 'params:modeling_params', 'split_meta'],
          outputs=['calibrated_model', 'calibration_meta'],
          name='calibrate_model_node'),
     node(func=_predict,

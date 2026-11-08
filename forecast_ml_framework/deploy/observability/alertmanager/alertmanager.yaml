@@ -1,0 +1,31 @@
+# P2-O2 Alertmanager routing: Slack + PagerDuty via K8s Secret files.
+# Secrets are mounted by Kubernetes at the *_file paths below (for
+# example from Secrets alertmanager-slack and alertmanager-pagerduty).
+# No webhook URL, routing key, or other secret value appears here.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: slack-ops
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: pagerduty-critical
+      matchers:
+        - severity = "critical"
+    - receiver: slack-ops
+      matchers:
+        - severity = "warning"
+
+receivers:
+  - name: slack-ops
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack-webhook
+        channel: '#forecast-ml-ops'
+        send_resolved: true
+  - name: pagerduty-critical
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty-routing-key
+        send_resolved: true

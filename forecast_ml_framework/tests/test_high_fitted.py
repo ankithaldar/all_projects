@@ -159,17 +159,25 @@ def test_fit_non_fitted_step_raises():
 
 
 def test_registry_has_version_and_schema():
-  '''Registry carries version and schema.'''
+  '''Registry carries version and schema (v2 nested steps).'''
   import pandas as pd
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     fit_preprocess,
+    read_registry,
   )
   train = pd.DataFrame({'f1': [0.0, 10.0], 'target': [0, 1]})
   params = [{'Normalizations': {'args': {
     'handle': 'MinMaxScaler', 'cols': {'include_cols': ['f1']}}}}]
   _, registry = fit_preprocess(train, params, {'num_cols': ['f1']})
-  assert registry.get('version') == 1
-  assert registry.get('schema')
+  assert registry.get('version') == 2
+  assert registry.get('schema') == 'fitted_registry.v2'
+  # v2 writer nests step state under 'steps' (no flat step keys).
+  assert 'steps' in registry
+  assert 'Normalizations' not in registry
+  steps = read_registry(registry)
+  assert set(steps) == {'Normalizations'}
+  assert steps['Normalizations']['f1']['lo'] == 0.0
+  assert steps['Normalizations']['f1']['hi'] == 10.0
 
 
 def test_apply_ohe_filters_unseen_categories():
@@ -200,9 +208,10 @@ def test_apply_ohe_respects_max_cols_cap():
     apply_preprocess,
   )
   score = pd.DataFrame({'cat': ['a', 'b'] * 600})
-  registry = {'CategoricalEncoding': {'cat': {
-    'categories': ['c%d' % i for i in range(2000)],
-    'ohe': True, 'max_cols': 1000}}}
+  registry = {'version': 2, 'schema': 'fitted_registry.v2',
+              'steps': {'CategoricalEncoding': {'cat': {
+                'categories': ['c%d' % i for i in range(2000)],
+                'ohe': True, 'max_cols': 1000}}}}
   with pytest.raises(ValueError, match='max_cols'):
     apply_preprocess(score, registry)
 
@@ -250,7 +259,14 @@ def test_nodes_fit_preprocess_returns_registry_and_frame():
   out, registry = fit_preprocess(
     train, params, {'num_cols': ['f1']})
   assert list(out['f1']) == [0.0, 1.0]
-  assert registry['version'] == 1
+  assert registry['version'] == 2
+  assert registry['schema'] == 'fitted_registry.v2'
+  assert 'steps' in registry
+  assert 'Normalizations' not in registry
+  from forecast_ml_framework.pipelines.data_prep.fitted import (
+    read_registry,
+  )
+  assert set(read_registry(registry)) == {'Normalizations'}
 
 
 def test_qcut_small_data_does_not_crash():
@@ -280,8 +296,9 @@ def test_apply_normalize_nonfinite_mu_raises():
     apply_preprocess,
   )
   for mu in (float('nan'), float('inf'), 'bad', None):
-    reg = {'version': 1, 'schema': 'fitted_registry.v1',
-           'Normalizations': {'f1': {'kind': 'standard', 'mu': mu, 'sd': 1.0}}}
+    reg = {'version': 2, 'schema': 'fitted_registry.v2',
+           'steps': {'Normalizations': {
+             'f1': {'kind': 'standard', 'mu': mu, 'sd': 1.0}}}}
     with pytest.raises(ValueError, match='f1'):
       apply_preprocess(pd.DataFrame({'f1': [1.0]}), reg)
 
@@ -293,12 +310,14 @@ def test_apply_normalize_nonfinite_sd_and_lohi_raises():
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     apply_preprocess,
   )
-  reg = {'version': 1, 'Normalizations': {
-    'f1': {'kind': 'standard', 'mu': 0.0, 'sd': float('inf')}}}
+  reg = {'version': 2, 'schema': 'fitted_registry.v2',
+         'steps': {'Normalizations': {
+           'f1': {'kind': 'standard', 'mu': 0.0, 'sd': float('inf')}}}}
   with pytest.raises(ValueError, match='f1'):
     apply_preprocess(pd.DataFrame({'f1': [1.0]}), reg)
-  reg = {'version': 1, 'Normalizations': {
-    'f1': {'kind': 'minmax', 'lo': float('nan'), 'hi': 1.0}}}
+  reg = {'version': 2, 'schema': 'fitted_registry.v2',
+         'steps': {'Normalizations': {
+           'f1': {'kind': 'minmax', 'lo': float('nan'), 'hi': 1.0}}}}
   with pytest.raises(ValueError, match='f1'):
     apply_preprocess(pd.DataFrame({'f1': [1.0]}), reg)
 
@@ -312,8 +331,9 @@ def test_apply_discretize_unsorted_or_nan_edges_raises():
   )
   for edges in ([0.0, 2.0, 1.0], [0.0, float('nan'), 1.0],
                 [0.0, float('inf')], [], [1.0], ['a', 'b']):
-    reg = {'version': 1, 'QuantileDiscretizer': {
-      'f1': {'edges': edges}}}
+    reg = {'version': 2, 'schema': 'fitted_registry.v2',
+           'steps': {'QuantileDiscretizer': {
+             'f1': {'edges': edges}}}}
     with pytest.raises(ValueError, match='f1'):
       apply_preprocess(pd.DataFrame({'f1': [0.5]}), reg)
 
@@ -326,8 +346,9 @@ def test_apply_impute_nonfinite_fill_raises():
     apply_preprocess,
   )
   for fill in (float('nan'), float('inf'), None):
-    reg = {'version': 1, 'Imputations': {
-      'f1': {'fill': fill, 'strategy': 'mean'}}}
+    reg = {'version': 2, 'schema': 'fitted_registry.v2',
+           'steps': {'Imputations': {
+             'f1': {'fill': fill, 'strategy': 'mean'}}}}
     with pytest.raises(ValueError, match='f1'):
       apply_preprocess(pd.DataFrame({'f1': [float('nan')]}), reg)
 
@@ -340,8 +361,9 @@ def test_apply_target_encode_nonfinite_global_raises():
     apply_preprocess,
   )
   for glob in (float('nan'), float('inf')):
-    reg = {'version': 1, 'TargetEncoding': {'cat': {
-      'mapping': [['a', 0.5]], 'global': glob}}}
+    reg = {'version': 2, 'schema': 'fitted_registry.v2',
+           'steps': {'TargetEncoding': {'cat': {
+             'mapping': [['a', 0.5]], 'global': glob}}}}
     with pytest.raises(ValueError, match='cat'):
       apply_preprocess(pd.DataFrame({'cat': ['a']}), reg)
 
@@ -354,7 +376,8 @@ def test_apply_registry_version_mismatch_raises():
     apply_preprocess,
   )
   reg = {'version': 999, 'schema': 'fitted_registry.v1',
-         'Normalizations': {'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}
+         'steps': {'Normalizations': {
+           'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}}
   with pytest.raises(ValueError, match='version'):
     apply_preprocess(pd.DataFrame({'f1': [0.5]}), reg)
 
@@ -504,9 +527,10 @@ def test_apply_ohe_dummy_name_collision_pair():
     apply_preprocess,
   )
   score = pd.DataFrame({'a': ['b_c'], 'a_b': ['c']})
-  registry = {'CategoricalEncoding': {
-    'a': {'categories': ['b_c'], 'ohe': True, 'max_cols': 100},
-    'a_b': {'categories': ['c'], 'ohe': True, 'max_cols': 100}}}
+  registry = {'version': 2, 'schema': 'fitted_registry.v2',
+              'steps': {'CategoricalEncoding': {
+                'a': {'categories': ['b_c'], 'ohe': True, 'max_cols': 100},
+                'a_b': {'categories': ['c'], 'ohe': True, 'max_cols': 100}}}}
   with pytest.raises(ValueError, match='collision|a_b_c'):
     apply_preprocess(score, registry)
 
@@ -519,8 +543,9 @@ def test_apply_ohe_dummy_collides_with_existing_column():
     apply_preprocess,
   )
   score = pd.DataFrame({'cat': ['a'], 'cat_a': [1]})
-  registry = {'CategoricalEncoding': {
-    'cat': {'categories': ['a'], 'ohe': True, 'max_cols': 100}}}
+  registry = {'version': 2, 'schema': 'fitted_registry.v2',
+              'steps': {'CategoricalEncoding': {
+                'cat': {'categories': ['a'], 'ohe': True, 'max_cols': 100}}}}
   with pytest.raises(ValueError, match='collision|cat_a'):
     apply_preprocess(score, registry)
 
@@ -533,12 +558,14 @@ def test_apply_registry_schema_mismatch_raises():
     apply_preprocess,
   )
   reg = {'version': 1, 'schema': 'other.v9',
-         'Normalizations': {'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}
+         'steps': {'Normalizations': {
+           'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}}
   with pytest.raises(ValueError, match='schema'):
     apply_preprocess(pd.DataFrame({'f1': [0.5]}), reg)
   reg2 = {'version': 1, 'schema': 'fitted_registry.v1',
           '__meta__': {'version': 999, 'schema': 'fitted_registry.v1'},
-          'Normalizations': {'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}
+          'steps': {'Normalizations': {
+            'f1': {'kind': 'minmax', 'lo': 0.0, 'hi': 1.0}}}}
   with pytest.raises(ValueError, match='version'):
     apply_preprocess(pd.DataFrame({'f1': [0.5]}), reg2)
 

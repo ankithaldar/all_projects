@@ -27,6 +27,7 @@ passes ``smoothing: 10``).
 import datetime
 import json
 import logging
+import re
 import uuid
 from decimal import Decimal
 
@@ -43,10 +44,11 @@ from forecast_ml_framework.pipelines.data_prep.nodes import (
 
 LOG = logging.getLogger(__name__)
 
-FITTED_REGISTRY_VERSION = 1
+FITTED_REGISTRY_VERSION = 2
 REGISTRY_VERSION = FITTED_REGISTRY_VERSION
-REGISTRY_SCHEMA = 'fitted_registry.v1'
+REGISTRY_SCHEMA = 'fitted_registry.v2'
 FITTED_REGISTRY_SCHEMA = REGISTRY_SCHEMA
+_SUPPORTED_REGISTRY_VERSIONS = frozenset({1, 2})
 MAX_NUM_BUCKETS = 1000
 _REGISTRY_META_KEYS = frozenset({
   'version', '__version__', 'schema', '__schema__', '__meta__', 'steps',
@@ -256,45 +258,148 @@ def _check_dummy_collision(expected_dummies, existing):
         % (dummy, dummy))
 
 
-def _check_registry_version(registry):
-  '''Raise ValueError when a present registry version/schema differs.'''
+def _validate_erasure_marker(marker):
+  '''Validate a ``__meta__.erasure`` marker shape.
+
+  Raises:
+    ValueError: If the marker is not exactly
+      ``{subject_hash: 64-hex str, requested_at: ISO-8601 str,
+      action: 'retrain_required'}``.
+  '''
+  if not isinstance(marker, dict):
+    raise ValueError(
+      'fitted_registry erasure marker must be a dict with '
+      'subject_hash, requested_at, action')
+  if set(marker) != {'subject_hash', 'requested_at', 'action'}:
+    raise ValueError(
+      'fitted_registry erasure marker must have exactly '
+      'subject_hash, requested_at, action')
+  subject_hash = marker.get('subject_hash')
+  if (not isinstance(subject_hash, str)
+      or re.fullmatch(r'[0-9a-fA-F]{64}', subject_hash) is None):
+    raise ValueError(
+      'fitted_registry erasure marker subject_hash must be a '
+      '64-hex string')
+  requested_at = marker.get('requested_at')
+  if not isinstance(requested_at, str):
+    raise ValueError(
+      'fitted_registry erasure marker requested_at must be an '
+      'ISO-8601 string')
+  text = requested_at.strip()
+  if text.endswith('Z'):
+    text = text[:-1] + '+00:00'
+  try:
+    datetime.datetime.fromisoformat(text)
+  except ValueError as exc:
+    raise ValueError(
+      'fitted_registry erasure marker requested_at must be an '
+      'ISO-8601 string') from exc
+  if marker.get('action') != 'retrain_required':
+    raise ValueError(
+      'fitted_registry erasure marker action must be '
+      "'retrain_required'")
+
+
+def _check_registry_version(registry, *, require_v2=False):
+  '''Raise unless version/schema are in {1,2} and consistent.
+
+  Every present version-kind value must agree on one V in
+  {1, 2}; every present schema-kind value must equal
+  ``fitted_registry.vV`` for that same V. Mixed or unknown
+  values raise ``ValueError('fitted_registry schema
+  mismatch: version/schema ...')``. When ``require_v2`` is
+  true, V must be 2, else ``ValueError('requires
+  fitted_registry v2')``. A present ``__meta__.erasure``
+  marker must validate (see :func:`_validate_erasure_marker`).
+  '''
   if not isinstance(registry, dict):
-    return
-  candidates = []
+    raise ValueError('fitted_registry must be a dict')
+  version_values = []
+  schema_values = []
   for key in ('version', '__version__'):
     if key in registry:
-      candidates.append(('version', registry[key]))
+      version_values.append(registry[key])
   for key in ('schema', '__schema__'):
     if key in registry:
-      candidates.append(('schema', registry[key]))
+      schema_values.append(registry[key])
   meta = registry.get('__meta__')
   if isinstance(meta, dict):
     for key in ('version', '__version__'):
       if key in meta:
-        candidates.append(('version', meta[key]))
+        version_values.append(meta[key])
     for key in ('schema', '__schema__'):
       if key in meta:
-        candidates.append(('schema', meta[key]))
-  for kind, value in candidates:
-    expected = (FITTED_REGISTRY_VERSION if kind == 'version'
-                else REGISTRY_SCHEMA)
-    if value != expected:
+        schema_values.append(meta[key])
+    if 'erasure' in meta:
+      _validate_erasure_marker(meta['erasure'])
+  version = None
+  if version_values:
+    distinct = set()
+    for value in version_values:
+      if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+          'fitted_registry schema mismatch: version/schema '
+          'unknown version %r' % (value,))
+      distinct.add(value)
+    if len(distinct) != 1:
       raise ValueError(
-        'fitted_registry %s mismatch: got %r, expected %r'
-        % (kind, value, expected))
+        'fitted_registry schema mismatch: version/schema '
+        'versions %r are inconsistent' % (sorted(distinct),))
+    version = distinct.pop()
+    if version not in _SUPPORTED_REGISTRY_VERSIONS:
+      raise ValueError(
+        'fitted_registry schema mismatch: version/schema '
+        'unknown version %r' % (version,))
+    expected_schema = 'fitted_registry.v%d' % version
+    for value in schema_values:
+      if value != expected_schema:
+        raise ValueError(
+          'fitted_registry schema mismatch: version/schema '
+          'schema %r does not match version %r'
+          % (value, version))
+  elif schema_values:
+    distinct_schemas = set(schema_values)
+    if len(distinct_schemas) != 1:
+      raise ValueError(
+        'fitted_registry schema mismatch: version/schema '
+        'schemas %r are inconsistent'
+        % (sorted(distinct_schemas, key=str),))
+    schema = distinct_schemas.pop()
+    if schema not in ('fitted_registry.v1', 'fitted_registry.v2'):
+      raise ValueError(
+        'fitted_registry schema mismatch: version/schema '
+        'unknown schema %r' % (schema,))
+    version = int(schema.rsplit('.v', 1)[1])
+  if require_v2 and version != 2:
+    raise ValueError('requires fitted_registry v2')
 
 
-def _registry_steps(registry):
-  '''Return step->state mapping excluding registry meta keys.'''
-  registry = registry or {}
-  if not isinstance(registry, dict):
+def read_registry(obj, *, require_v2=False):
+  '''Return steps_dict only from a v1 flat or v2 nested registry.
+
+  Args:
+    obj: Registry dict (v1 flat keys or v2 nested ``steps``).
+    require_v2: If true, only version 2 is accepted.
+
+  Returns:
+    Dict ``{StepName: {col: state}}`` with no
+    version/schema/meta keys.
+
+  Raises:
+    ValueError: On non-dict input, mixed/unknown
+      version/schema, duplicate step names, or (when
+      ``require_v2``) a non-v2 registry.
+  '''
+  if not isinstance(obj, dict):
     raise ValueError('fitted_registry must be a dict')
-  _check_registry_version(registry)
+  _check_registry_version(obj, require_v2=require_v2)
   steps = {}
-  nested = registry.get('steps')
-  if isinstance(nested, dict):
+  nested = obj.get('steps')
+  if nested is not None:
+    if not isinstance(nested, dict):
+      raise ValueError('fitted_registry steps must be a dict')
     steps.update(nested)
-  for name, state in registry.items():
+  for name, state in obj.items():
     if name in _REGISTRY_META_KEYS:
       continue
     if name in steps:
@@ -302,6 +407,14 @@ def _registry_steps(registry):
         'Duplicate preprocessing step name: %s' % name)
     steps[name] = state
   return steps
+
+
+def _registry_steps(registry, *, require_v2=False):
+  '''Return step->state mapping via :func:`read_registry`.'''
+  registry = registry or {}
+  if not isinstance(registry, dict):
+    raise ValueError('fitted_registry must be a dict')
+  return read_registry(registry, require_v2=require_v2)
 
 
 def _registry_has_typed_categories(registry):
@@ -905,7 +1018,8 @@ def fit_preprocess(df, prep_params, variables):
 
   Returns:
     Tuple of (transformed df, registry dict) where registry
-    is ``{step_name: {col: state}}`` JSON-serializable.
+    is the v2 envelope (nested ``steps`` only)
+    JSON-serializable.
   '''
   variables = variables or {}
   df = df.copy()
@@ -944,18 +1058,19 @@ def fit_preprocess(df, prep_params, variables):
       'schema': REGISTRY_SCHEMA,
       'typed_categories': True,
     },
+    'steps': registry,
   }
-  registry_out.update(registry)
   return df, _jsonable(registry_out)
 
 
-def apply_preprocess(df, registry):
+def apply_preprocess(df, registry, *, require_v2=False):
   '''Replay fitted registry state verbatim on df.
 
   Args:
     df: Scoring dataframe.
     registry: Dict from :func:`fit_preprocess` (or JSON
-      round-trip of it).
+      round-trip of it); v1 flat or v2 nested.
+    require_v2: If true, only version 2 registries apply.
 
   Returns:
     Transformed dataframe copy.
@@ -963,7 +1078,7 @@ def apply_preprocess(df, registry):
   df = df.copy()
   if isinstance(registry, str):
     registry = registry_from_json(registry) if registry else {}
-  steps = _registry_steps(registry)
+  steps = _registry_steps(registry, require_v2=require_v2)
   _check_legacy_typed_data(df, registry, steps)
   for name, state in steps.items():
     fn = _APPLY.get(name)

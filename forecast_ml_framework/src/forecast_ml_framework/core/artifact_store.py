@@ -39,6 +39,21 @@ import pickle
 import pickletools
 from pathlib import Path
 
+# Calibrated envelopes (Contracts Sec-3.2 FIX3-4, verified via
+# pickletools on CalibratedClassifierCV sigmoid/isotonic + _BetaCal).
+# No prefix/module-wide entries; all seven are exact (module, name).
+# Single source for these seven: _SAFE_GLOBALS is the union below.
+_SAFE_GLOBALS_ADDITIONS_CALIBRATED = frozenset({
+  ('sklearn.calibration', 'CalibratedClassifierCV'),
+  ('sklearn.calibration', '_CalibratedClassifier'),
+  ('sklearn.calibration', '_SigmoidCalibration'),
+  ('sklearn.isotonic', 'IsotonicRegression'),
+  ('forecast_ml_framework.pipelines.modeling.calibration',
+   '_BetaCalWrapper'),
+  ('betacal', 'BetaCalibration'),
+  ('betacal.beta_calibration', '_BetaCal'),
+})
+
 # EXACT (module, name) allowlist. No prefix/module-wide entries:
 # any global not listed here (including every read_*/load/loader,
 # eval/exec/open, and os/subprocess/sys callable) is rejected.
@@ -336,6 +351,8 @@ _SAFE_GLOBALS = {
   ('catboost.core', 'CatBoostRegressor'),
   ('catboost.core', 'CatBoostClassifier'),
 }
+
+_SAFE_GLOBALS = _SAFE_GLOBALS | _SAFE_GLOBALS_ADDITIONS_CALIBRATED
 
 # Booster classes whose constructor accepts a filesystem path
 # (xgboost/lightgbm ``model_file``, 3rd positional parameter).
@@ -858,6 +875,34 @@ def _validate_cloud_key(path):
   return key
 
 
+def _is_missing_key_error(exc, names):
+  '''Return True when ``exc`` signals a missing cloud object.
+
+  Matches by exception type name, by a boto-style error code in
+  ``exc.response``, or by an SDK ``NotFound`` mention in the
+  class name, so mocked NotFound/NoSuchKey errors and the real
+  GCS/S3 missing-key errors are both recognised without
+  importing the SDKs at module level.
+
+  Args:
+    exc: Raised exception to classify.
+    names: Type/error-code names that mean "missing key".
+
+  Returns:
+    True for missing-key errors, False otherwise.
+  '''
+  exc_type = type(exc).__name__
+  if exc_type in names:
+    return True
+  response = getattr(exc, 'response', None)
+  if isinstance(response, dict):
+    error = response.get('Error') or {}
+    if isinstance(error, dict) and error.get('Code') in names:
+      return True
+  exc_name = type(exc).__module__ + '.' + exc_type
+  return any(name in exc_name for name in names)
+
+
 class ArtifactStore(abc.ABC):
   '''Abstract artifact store interface.
 
@@ -905,6 +950,17 @@ class ArtifactStore(abc.ABC):
 
     Returns:
       A sorted list of object keys.
+    '''
+
+  @abc.abstractmethod
+  def delete(self, path):
+    '''Delete the object at ``path``.
+
+    Delete is idempotent: a missing key is a no-op, never an
+    error, so retention and erasure sweeps stay retryable.
+
+    Args:
+      path: Object key or relative file path to delete.
     '''
 
 
@@ -1013,6 +1069,23 @@ class LocalArtifactStore(ArtifactStore):
         full = os.path.join(dirpath, name)
         results.append(os.path.relpath(full, self.base_path))
     return sorted(results)
+
+  def delete(self, path):
+    '''Delete the file at ``path``; a missing file is a no-op.
+
+    Args:
+      path: Relative file path to delete (path-jailed).
+
+    Raises:
+      ValueError: When ``path`` escapes the store base.
+    '''
+    full = self._full_path(path)
+    if not os.path.isfile(full):
+      return
+    try:
+      os.remove(full)
+    except FileNotFoundError:
+      return
 
 
 class GCSArtifactStore(ArtifactStore):
@@ -1123,6 +1196,24 @@ class GCSArtifactStore(ArtifactStore):
     return sorted(blob.name for blob in bucket.list_blobs(
         prefix=str(prefix)))
 
+  def delete(self, path):
+    '''Delete ``path`` from the bucket; missing is a no-op.
+
+    Args:
+      path: Object key to delete (cloud-key validated).
+
+    Raises:
+      ValueError: When ``path`` is absolute or escapes.
+    '''
+    key = _validate_cloud_key(path)
+    blob = self._client().bucket(self.bucket).blob(key)
+    try:
+      blob.delete()
+    except Exception as exc:
+      if _is_missing_key_error(exc, ('NotFound',)):
+        return
+      raise
+
 
 class S3ArtifactStore(ArtifactStore):
   '''Store artifacts in an Amazon S3 bucket.
@@ -1223,6 +1314,23 @@ class S3ArtifactStore(ArtifactStore):
       for obj in page.get('Contents', []):
         keys.append(obj['Key'])
     return sorted(keys)
+
+  def delete(self, path):
+    '''Delete ``path`` from the bucket; missing is a no-op.
+
+    Args:
+      path: Object key to delete (cloud-key validated).
+
+    Raises:
+      ValueError: When ``path`` is absolute or escapes.
+    '''
+    key = _validate_cloud_key(path)
+    try:
+      self._client().delete_object(Bucket=self.bucket, Key=key)
+    except Exception as exc:
+      if _is_missing_key_error(exc, ('NoSuchKey', 'NotFound')):
+        return
+      raise
 
 
 def create_artifact_store(config=None):

@@ -9,15 +9,15 @@ configuration (`variables.yml`, the split `parameters/*.yml` buckets,
 `catalog.yml`) plus per-environment overlays. Changing a dataset, a model,
 or a loss function is a config edit, not a code edit.
 
-Phases 1–7 plus the Cycle-1 fix loop (W1–W14, M1–M6) are landed
-(1760 test functions on disk — static `def test_` count in `tests/`,
-checked in this docs pass against `pipeline_registry.py` (12
-registered pipelines, 8 modules) and current code; parametrize
-expands the collected total to **2795 collected** (`pytest
---collect-only -q`) — full suite: **2793 passed, 2 skipped, 0 failed**,
-coverage **90.86%**, pylint **9.65** (Lead QA; collected/passed/skipped/
-coverage/pylint pasted verbatim from Lead QA, static count verified
-by grep `^def test_` in `tests/` in this docs pass); the static count
+Phases 1–7 plus the Cycle-1 fix loop (W1–W14, M1–M6), P1 contracts,
+P2 platform, and P3 time-split are landed
+(**2423 test functions** on disk — static `^def test_` count in
+`tests/`, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in
+`tests/`; checked against `pipeline_registry.py` (12
+registered pipelines, 8 modules) and current code. Last full-suite
+handoff total (P3-D, `.opencode/handoffs/P3-D.md`): **3305 passed,
+4 skipped, 0 failed** — transcribed from that handoff, not re-run in
+this docs pass; see the Tests note. The static count
 is the on-disk `def test_` total, the collected total is the
 parametrized expansion — see the Tests note). Phase 7 (high-value) added the fitted preprocessing registry,
 the tuning executor, class-imbalance handling, prior-rate probability
@@ -153,8 +153,9 @@ params, a smoke local profile, and a strict config schema — see the
   (`serving/model_loader.py:6-13,543-588`; size cap plus optional
   SHA-256 pin via `MODEL_SHA256` / `expected_sha256`) — it never
   calls `mlflow.sklearn.load_model` on registry bytes — with the
-  pyfunc fallback gated behind `allow_pyfunc=True` (opt-in only),
-  and there is still no Docker. Serving auth is fail-closed: `FORECAST_REQUIRE_AUTH=1`
+  pyfunc fallback gated behind `allow_pyfunc=True` (opt-in only).
+  Docker image shipped (Dockerfile, fail-closed entrypoint);
+  production promotion gated P11. Serving auth is fail-closed: `FORECAST_REQUIRE_AUTH=1`
   or a prod profile without `FORECAST_API_KEY` refuses startup, keys
   shorter than 16 chars are refused, and every `/predict` writes a
   structured access log + persisted audit entry with an HMAC key-id
@@ -278,11 +279,14 @@ uv run pytest tests/ -q
 ```
 
 Both forms were used to verify this README's commands. Expected result on
-success: `pytest` exits 0 with all tests passing — **2795 collected**
-(`pytest --collect-only -q`), full suite **2793 passed, 2 skipped,
-0 failed**, coverage **90.86%**, pylint **9.65** (Lead QA, pasted
-verbatim; static count verified by grep in this docs pass).
-**1760 test functions** on disk (static `^def test_` count in
+success: `pytest` exits 0 with all tests passing — last full-suite
+handoff total (P3-D, `.opencode/handoffs/P3-D.md`): **3305 passed,
+4 skipped, 0 failed** (transcribed from that handoff; `--collect-only`
+was not re-run in the 2026-11-08 FIX-DOCS-1 docs pass — no shell /
+pytest was available in that subagent environment, so no new collected
+total is claimed here).
+**2423 test functions** on disk (static `^def test_` count in
+`tests/`, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in
 `tests/`; parametrize expands the static count to the collected total)
 (including `test_high_fitted`, `test_high_tuning`,
 `test_high_tuning_wiring`, `test_high_imbalance`, `test_high_calibrate`,
@@ -466,15 +470,28 @@ forecast_ml_framework/
 │   │   │   └── platform.yml    # spark, mlflow, dvc, shap, registry, scoring, infra, monitoring,
 │   │   │                       #   retraining, feature_store, ab, cost, governance,
 │   │   │                       #   cost_tracking + interpretability params
-│   │   └── catalog.yml         # Kedro Data Catalog entries (+ Phase 3: monitoring_report,
+│   │   ├── catalog.yml         # Kedro Data Catalog entries (+ Phase 3: monitoring_report,
 │   │                           #   alerts, cost_log, lineage, audit_log)
 │   ├── local/                  # local overlay: catalog + parameters
 │   ├── gcp/                    # GCS + BigQuery overlay: catalog
+│   ├── azure/                  # Azure overlay: catalog (P2-I1)
 │   └── aws/                    # S3 + Athena overlay: catalog
 ├── infra/                      # Terraform IaC (Phase 2)
-│   ├── gcp/                    # GCS, BigQuery, Dataproc (off by default), scheduler, Pub/Sub alerts
-│   ├── aws/                    # S3, Athena, EMR stub (off), EventBridge stub
+│   ├── gcp/                    # GCS, BigQuery, Dataproc (off by default), scheduler, Pub/Sub alerts; secrets.tf (P2-S1)
+│   ├── aws/                    # S3, Athena, EMR stub (off), EventBridge stub; secrets.tf (P2-S1)
+│   ├── azure/                  # VNet, private endpoints, Entra OIDC, Key Vault, AKS stub (P2-I1); secrets.tf (P2-S1)
 │   └── README.md               # apply order, state, costs, 100M-row sizing
+├── deploy/                     # P2 platform deploy (see deploy/README.md)
+│   ├── README.md               # deploy index (chart, observability, secrets wiring)
+│   ├── helm/forecast-ml/       # Chart.yaml, values.yaml, templates/{deployment,service,ingress,serviceaccount,hpa,networkpolicy}.yaml
+│   ├── k8s/                    # retention-cronjob.yaml (P2-S1)
+│   ├── observability/          # otel-collector.yaml, prometheus.yaml, prometheus/rules.yaml, alertmanager/alertmanager.yaml, dashboards/{model-drift,api-latency}.json, scripts/synthetic-drift.sh
+│   └── scripts/                # rollback-drill.sh
+├── docs/
+│   └── runbook-p2.md           # P2 operator runbook (deploy, rollback, OIDC, alerts, retention/erasure)
+├── ci/
+│   └── run_checks.sh           # local CI gate (terraform fmt/validate gcp+aws+azure, helm, tests)
+├── Dockerfile                  # multi-stage serving image (P2-C1, digest-pinned, fail-closed entrypoint)
 ├── web/                        # static evaluation dashboard (Phase 2, no build step)
 │   ├── index.html / app.js / styles.css
 │   └── sample/                 # sample metrics.json + chart PNGs
@@ -490,14 +507,15 @@ forecast_ml_framework/
 │   │   ├── artifact_store.py   # local/GCS/S3 stores, restricted unpickler
 │   │   ├── config_loader.py    # ConfigLoader: lookup, task_type, feature merge
 │   │   ├── config_schema.py    # Pydantic models + OmegaConf load_config()
-│   │   ├── datasets.py         # SQLQueryDataSet, SparkSQLDataSet
+│   │   ├── datasets.py         # SQLQueryDataSet, SparkSQLDataSet, RestrictedPickleDataset
+│   │   ├── handle.py           # canonical handle resolver
 │   │   ├── params.py           # canonical parse_int/parse_float/get_first/parse_datetime
 │   │   ├── predictions.py      # materialize_predictions + finite checks
 │   │   └── spark_factory.py    # SparkSessionFactory, to_pandas(), pandas 5M guard, autoscaling defaults
 │   ├── pipelines/
 │   │   ├── data_prep/          # pipeline.py, nodes.py, fitted.py (fit/replay registry, Phase 7)
-│   │   ├── modeling/           # pipeline.py, adapters.py, calibration.py,
-│   │   │                       # data_split.py, evaluate.py, metrics.py (154 registry),
+│   │   ├── modeling/           # pipeline.py, adapters.py, calibration.py, envelope.py (P1-A2 best_model v2),
+│   │   │                       # data_split.py, purged_cv.py + backtest.py (P3), evaluate.py, metrics.py (154 registry),
 │   │   │                       # charts.py (groups I-VII); SHAP via interpretability.nodes.shap_explain;
 │   │   │                       # ntile.py, lift_table.py, threshold.py, validation.py (Phase 6 parity);
 │   │   │                       # tuning.py, imbalance.py (Phase 7 high-value)
@@ -508,13 +526,23 @@ forecast_ml_framework/
 │   │   ├── cost_tracking/      # pipeline.py, nodes.py (offline cost estimation)
 │   │   └── interpretability/   # pipeline.py, nodes.py, charts.py (SHAP/PDP/LIME + 27 charts)
 │   ├── feature_store/          # store.py, offline.py, online.py (point-in-time consistency)
-│   ├── governance/             # audit.py, lineage.py, retention.py, scrub.py (sole redaction leaf)
+│   ├── governance/             # __init__.py, audit.py, consent.py, erasure.py, lineage.py, pii.py, retention.py, retention_job.py (P2-S1 CLI), scrub.py facade (851 lines), scrub_keys.py (1200 lines), scrub_text.py (1489 lines)
 │   ├── telemetry/              # __init__.py + exceptions.py (FrameworkError hierarchy, wrap; public API, A2)
 │   ├── registry/               # model_registry.py (MLflow registry, alias promotion, lazy import)
-│   └── serving/                # app.py (FastAPI), model_loader.py, ab_testing.py
-├── tests/                      # pytest suite (1760 test functions; see Tests)
+│   └── serving/                # app.py (FastAPI, GET /metrics), metrics.py (live /metrics producer), auth.py (P2-AU1 OIDC), model_loader.py, ab_testing.py
+├── tests/                      # pytest suite (2423 test functions, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep `^def test_` in `tests/`; see Tests)
 └── .venv/                      # created by `uv sync`, never commit
 ```
+
+Tree regenerated 2026-11-08 from the filesystem (FIX-DOCS-3,
+superseding the FIX-DOCS-2 pass): every entry above was verified
+to exist on disk, including `deploy/`
+(helm/k8s/observability/scripts — see `deploy/README.md`),
+`docs/runbook-p2.md`, all `governance/` files (below: `scrub.py`
+facade, 851 lines, plus `scrub_keys.py`, 1200 lines, and
+`scrub_text.py`, 1489 lines),
+`pipelines/modeling/envelope.py`, and `serving/metrics.py`
+(live `/metrics` producer, listed in the `serving/` line above).
 
 ### Pipeline list and nodes
 
@@ -760,8 +788,12 @@ documented as public contract.
   and online causes train/serve skew — keep `entity_key` in sync.
 - **Governance** (`governance/`): pure functions, **no persistence** —
   the caller (or catalog) saves the returned dicts. `scrub.py` is the
-  sole redaction leaf (stdlib-only, no governance/telemetry imports,
-  `governance/scrub.py:1-58`); `audit.py` is now a short pointer to it
+  canonical public redaction facade (stdlib-only, no governance/telemetry
+  imports, `governance/scrub.py:1-26`): markers/confusables/key
+  normalization live in `scrub_keys.py` (1200 lines) and text/composite
+  scrubbing in `scrub_text.py` (1489 lines), re-exported verbatim through
+  the facade (`governance/scrub.py:280-290`); `audit.py` is now a short
+  pointer to it
   (W1/F11) and `audit_log(event, actor, details, ...)` requires a
   non-blank actor and deep-scrubs secret-like keys
   (`password`/`secret`/`token`/`api_key`/…) to `***REDACTED***`.
@@ -770,7 +802,7 @@ documented as public contract.
   names like `key_cols_list`; only unambiguous compounds redact
   (`api_key`, `encryption_key`, `master_key`, `signing_key`,
   `aws_key`, `gcp_key`, `otp`, `pin_code`/`pin_number`,
-  `private_key`) — see `governance/scrub.py:40-50`. `lineage.py`:
+  `private_key`) — see `governance/scrub_keys.py:22-30`. `lineage.py`:
   run lineage with
   `config_hash` = sha256 of canonical JSON of `variables`+`parameters`.
   `retention.py`: `check_retention` splits artifacts into keep/delete
@@ -2046,8 +2078,9 @@ tracking/registry URIs kept separate. `create_app_from_registry(...)`
 (no URI leaked) when the registry model is not found. A/B + shadow
 routing lives in `serving/ab_testing.py` (`ABRouter`, modes `shadow`
 | `ab` only — `serving/ab_testing.py:225-226`) — see
-[Phase 3 pipelines](#phase-3-pipelines). **No Docker** (A5, accepted):
-serving is dev-only uvicorn; container deployment is out of scope.
+[Phase 3 pipelines](#phase-3-pipelines). Docker image shipped
+(Dockerfile, fail-closed entrypoint); production promotion gated P11:
+serving runs via uvicorn inside the image (`Dockerfile:39-43`).
 **Remote TF backend:** `backend.tf.example` per stack (A6, opt-in —
 no active `backend.tf`; see `infra/*/README.md`).
 
@@ -2193,7 +2226,8 @@ the pyfunc fallback
 is opt-in only via `RegistryModelLoader(..., allow_pyfunc=True)` (a
 startup warning is logged; pyfunc executes arbitrary code shipped
 with the model, so only enable it for fully trusted registries).
-No Docker is provided (A5 — dev-only serving).
+Docker image shipped (Dockerfile, fail-closed entrypoint);
+production promotion gated P11 (`Dockerfile:39-43`).
 
 **Registry DNS egress + TOCTOU (R-05):** registry/tracking URIs are
 validated by resolving the hostname with `socket.getaddrinfo` and
@@ -2331,7 +2365,7 @@ code that enforces or bounds it.
 | 32 | DNS TOCTOU | Validation resolves hostnames via `getaddrinfo` (`registry/model_registry.py:161,173,197-270`), but the MLflow client's own later DNS resolution can differ | A hostname that validates as global can still resolve to a private/metadata IP at connect time | Network egress allowlist MUST (allow only your registry hostname; block private/metadata) — the app-level check is not sufficient alone |
 | 33 | Global single-process rate bucket | Token bucket is in-process only (`serving/app.py:45-46,356-389,774-783`); no per-IP or per-client quota, no timeout backoff | Multi-process/multi-instance deployments limit independently; one noisy client can exhaust the shared bucket | Gateway MUST for production (per-client quotas, timeouts, distributed limits); the app bucket is a single-process safety net only |
 | 34 | CMEK opt-in | Artifact buckets use Google/AWS-managed encryption by default; CMEK key is optional (`infra/gcp/variables.tf:105-128`) | Dev default is not customer-managed encryption; prod deployments can silently run without CMEK unless gated | When `production = true`, validation requires a KMS key (GCP `kms_key_name` / AWS `kms_key_id`); set it and keep the role at `objectViewer` (`infra/gcp/main.tf:48`) |
-| 35 | No Docker | No container image is shipped; serving is `uvicorn` on the host (`serving/app.py:38-39`, `cli.py:108,126-131`) | Dev-only serving posture; production needs external process management/reverse proxy | Run behind a reverse proxy with TLS on a managed host; containerisation is out of scope (A5) |
+| 35 | Docker image shipped; production promotion gated P11 | A container image **is** shipped: multi-stage digest-pinned `Dockerfile` (`Dockerfile:9,21`, `python:3.14-slim@sha256:9aaa…`) with a fail-closed entrypoint that validates the non-loopback bind (`FORECAST_API_KEY` or OIDC) before serving (`Dockerfile:39-43`); serving runs via uvicorn inside the image | The image is **not** production promotion: production traffic, model promotion, and release remain gated on P11 (D-MVP-READINESS-1) | Run the shipped image with `FORECAST_REQUIRE_AUTH=1` + `FORECAST_API_KEY` (or OIDC); do not promote to production before the P11 gate passes |
 | 36 | `predict` name divergence | Registry display name `predict` maps to the `modeling` pipeline, while `forecast-ml predict` runs the `scoring` pipeline (`pipeline_registry.py:25-33`) | `kedro run --pipeline predict` and `forecast-ml predict` do different work despite similar names | Use the explicit pipeline name (`scoring`) when batch scoring is intended; both mappings are pinned by tests |
 | 37 | `X-Forwarded-Proto` HSTS trust | HSTS is sent when the ASGI scheme is `https`, when `X-Forwarded-Proto` is `https`, or when `FORECAST_TLS_ENABLED=1` (`serving/app.py:655-673`) | A spoofed `X-Forwarded-Proto: https` header on a plain-HTTP request triggers HSTS; plain-HTTP responses otherwise omit it | Behind a TLS-terminating proxy, set `FORECAST_TLS_ENABLED=1` and strip/override the header at the proxy; do not expose the app without TLS |
 | 38 | `/health` public model probe | `/health` is unauthenticated by design and returns `model_loaded` + a cached load probe (`serving/app.py:14-17,934-950`) | The endpoint leaks whether a model is loaded and can be used to probe service state | Keep it for probes/monitoring only; do not put sensitive state in the health payload; gate the full service with `FORECAST_REQUIRE_AUTH=1` where needed |
@@ -2409,8 +2443,11 @@ flowchart LR
   P4 --> P5["Phase 5 - done (clean-ux)<br/>kedro markers + CLI list-pipelines / validate-config / dry-run<br/>degraded health + typed errors<br/>sample data + eda params + smoke local profile<br/>strict schema<br/>955 tests"]
   P5 --> P6["Phase 6 - done (parity)<br/>ntile eval-metric grammar<br/>lift table + threshold selection + promotion gate<br/>descriptive stats + confusion rates<br/>catalog anchors + eval_metric config<br/>1075 tests"]
   P6 --> P7["Phase 7 - done (high-value)<br/>fitted registry + tuning executor + imbalance<br/>prior-rate calibration + threshold application<br/>KNN + sequence routines + MLflow hooks<br/>two-stage scoring<br/>1218 tests"]
-  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>1760 test functions (static)"]
-  LOOP --> REM["Remaining<br/>Docker (A5: dev-only, accepted)<br/>DVC exec<br/>pyfunc registration"]
+  P7 --> LOOP["Cycle-1 fix loop (W1-W14, M1-M6)<br/>split-first + split-first breaking change<br/>registry/auth/rate-limit/scrub hardening<br/>2423 test functions (static, recounted 2026-11-08 in FIX-GATE-EVIDENCE by grep ^def test_ in tests/)"]
+  LOOP --> PP1["P1 - done<br/>fitted_registry v2 dual-read<br/>best_model v2 envelope (envelope.py)<br/>temporal_split + assert_no_leakage"]
+  PP1 --> PP2["P2 - done<br/>Dockerfile + Helm/K8s (deploy/)<br/>Azure IaC + observability + OIDC<br/>runbook docs/runbook-p2.md"]
+  PP2 --> PP3["P3 - done<br/>purged_cv + backtest<br/>embargo/overlap guards<br/>calibrate prohibition"]
+  PP3 --> REM["Remaining<br/>P4+ per program.md<br/>DVC exec<br/>pyfunc registration"]
 ```
 
 | Area | Status on disk |
@@ -2420,11 +2457,114 @@ flowchart LR
 | DVC integration | Parameters/config only; no execution code |
 | IaC | **Done (Phase 2):** Terraform in `infra/gcp` + `infra/aws` (Dataproc/EMR off by default, retraining scheduler + alerts Pub/Sub; AWS EventBridge stub commented). `terraform validate` gate in CI (`ci/run_checks.sh`, W5); remote backend as `backend.tf.example` per stack (A6, opt-in) |
 | Monitoring / observability | **Done (Phase 3):** PSI/KS drift + alerts (`pipelines/monitoring`), plan-only retraining, cost tracking; static dashboard in `web/` (offline viewer only, A7) |
-| Serving | FastAPI + fail-closed API-key auth (`FORECAST_API_KEY`, `FORECAST_REQUIRE_AUTH`) + in-app rate limit (429) + registry (`alias=None` + `promoted`, promotion gate wired) + A/B shadow (`ABRouter`); `serve` CLI wired to uvicorn; degraded health (30 s TTL) when no model; no Docker (A5) |
+| Serving | FastAPI + fail-closed API-key auth (`FORECAST_API_KEY`, `FORECAST_REQUIRE_AUTH`) + in-app rate limit (429) + registry (`alias=None` + `promoted`, promotion gate wired) + A/B shadow (`ABRouter`); `serve` CLI wired to uvicorn; degraded health (30 s TTL) when no model; Docker image shipped (Dockerfile, fail-closed entrypoint); production promotion gated P11 |
 | Phase 3 pipelines | **Registered (Phase 4):** all 12 display names in `pipeline_registry.py`; `tests/test_pipeline_registry.py` asserts 12 keys (former Known Issue #12 fixed) |
 | Phase 4 hardening | SHAP moved to `interpretability.nodes.shap_explain` (legacy `modeling.pipeline.explain_model` wraps it); serving validates against `feature_names_in_`; registry verified unchanged (sklearn flavor registration; pyfunc loading is opt-in only via `allow_pyfunc=True`) — Phase 4 final |
 
 ## Change Log
+
+### 2026-11-08 — FIX-GATE-EVIDENCE recount tests + gate/scope ADR sync
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2423** (2026-11-08,
+  FIX-GATE-EVIDENCE); replaced the stale 2414 counts at the
+  current-state count sites (intro, Tests, folder tree, phase
+  diagram) with 2423 plus the date/command above. The
+  FIX-DOCS-5 and earlier entries below keep their dated counts
+  as the record at those passes.
+- Gate files synced in the same pass (no verdict invented by
+  this recount): P3-A/B/C implementation **APPROVED** and
+  P1/P2 phase-gate **APPROVED** verdicts transcribed in
+  `.opencode/critique-log/` from arch Cycle 6/7 APPROVED
+  evidence + P3 handoffs GREEN + dual gates, flaw-report
+  **PASS** transcribed in `.opencode/flaw-reports/P1-flaws.md`
+  / `P2-flaws.md`, and scope + accepted-risk ADRs
+  (`D-SCOPE-FORECAST-1`, `D-ACCEPTED-RISK-1`,
+  `D-ACCEPTED-RISK-2`) recorded in
+  `.opencode/context/decisions.md` — forecast scope only,
+  F2/F6 periphery OUT, residuals JWKS TOCTOU / rate /
+  PII N1/N6 as accepted risk (Lead adjudication).
+
+### 2026-11-08 — FIX-DOCS-5 recount tests
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2414** (2026-11-08, FIX-DOCS-5);
+  replaced the stale 2403 counts at the current-state count sites
+  (intro, Tests, folder tree, phase diagram) with 2414 plus the
+  date/command above. The FIX-DOCS-4 and earlier entries below
+  keep their dated counts as the record at those passes.
+
+### 2026-11-08 — FIX-DOCS-4 recount tests
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2403** (2026-11-08, FIX-DOCS-4);
+  replaced the stale 2366 counts at the current-state count sites
+  (intro, Tests, folder tree, phase diagram) with 2403 plus the
+  date/command above. The FIX-DOCS-3 and earlier entries below
+  keep their dated counts as the record at those passes.
+
+### 2026-11-08 — FIX-DOCS-3 counts, scrub tree, Docker
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2366** (2026-11-08, FIX-DOCS-3);
+  replaced the stale pre-FIX-DOCS-3 counts at all five count
+  sites (intro, Tests, folder tree, phase diagram, this log)
+  with 2366 plus the date/command above. The FIX-DOCS-2 entry
+  below keeps its dated 2359 count as the record at that pass.
+- Updated the governance tree to the scrub split, verified on
+  disk: `scrub.py` facade (851 lines), `scrub_keys.py`
+  (1200 lines), `scrub_text.py` (1489 lines); the Governance
+  bullet now cites the facade (`scrub.py:1-26,280-290`) and
+  the marker list in `scrub_keys.py:22-30`.
+- Flipped current-state no-Docker claims to the shipped-image
+  wording — Docker image shipped (Dockerfile, fail-closed
+  entrypoint); production promotion gated P11 — in Features
+  (README:157), Serving API, registry note, Known Issue #35,
+  and the Serving status row, verified against `Dockerfile`
+  (digest-pinned base `Dockerfile:9,21`, fail-closed
+  entrypoint `Dockerfile:39-43`). Dated changelog entries
+  below retain their dated no-Docker wording as history.
+
+### 2026-11-08 — FIX-DOCS-2 stale wording + recount + tree fix
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2359** (2026-11-08, FIX-DOCS-2);
+  replaced the stale pre-FIX-DOCS-2 counts at all five count
+  sites (intro, Tests, folder tree, phase diagram, this log)
+  with 2359 plus the date/command above. The FIX-DOCS-1 entry
+  below keeps its dated count as the record at that pass.
+- Flipped stale stub / no-producer wording to live-producer wording
+  in `deploy/README.md`, `deploy/observability/scripts/synthetic-drift.sh`,
+  and `docs/runbook-p2.md`: `/metrics` is live
+  (`src/forecast_ml_framework/serving/metrics.py`, served by
+  `serving/app.py` `GET /metrics`); `synthetic-drift.sh` feeds
+  synthetic `drift_psi = 0.25` values against the live-named
+  `DriftPsiHigh` rule — the values are synthetic, the metric
+  name is live.
+- Regenerated the folder tree from the filesystem: added the
+  missing `serving/metrics.py` to the `serving/` tree line
+  (verified on disk alongside `app.py`, `auth.py`,
+  `model_loader.py`, `ab_testing.py`).
+
+### 2026-11-08 — FIX-DOCS-1 docs recount + tree regeneration
+
+- Docs only (no code changes): recounted test functions by grep
+  `^def test_` in `tests/` → **2303** (2026-11-08); replaced the stale
+  pre-FIX-DOCS-1 counts at all five count sites (intro, Tests, folder
+  tree, phase diagram, this log) with 2303 plus the last full-suite
+  handoff total (P3-D: 3305 passed, 4 skipped, transcribed from
+  `.opencode/handoffs/P3-D.md`; `--collect-only` was not re-run in
+  this docs pass, so no new collected total is claimed).
+- Regenerated the folder tree from the filesystem: added `deploy/`
+  (helm/k8s/observability/scripts), `docs/runbook-p2.md`, all
+  `governance/` files (`audit, consent, erasure, lineage, pii,
+  retention, retention_job, scrub`), and
+  `pipelines/modeling/envelope.py` (plus `purged_cv.py`,
+  `backtest.py`, `serving/auth.py`, `core/handle.py`).
+- Fixed `deploy/README.md` runbook links to `../docs/runbook-p2.md`
+  and `../../.github/workflows/forecast-ml-ci.yml`, and flipped
+  `.opencode/plans/contracts.md` status headers `proposed` → `frozen`
+  (FIX4 banner, 2026-11-08) to align with `decisions.md`.
 
 ### 2026-11-07 — Cycle-1 fix loop (W1–W14, M1–M6), docs pass W13
 
@@ -2471,13 +2611,12 @@ flowchart LR
   alias, FE list, variables pointer, web offline-viewer note (A7),
   `cost_curve` row removed (W14/F5). 1218/1075 counts kept below as
   dated history.
-- Tests: 1760 test functions on disk (static `^def test_` count in
-  `tests/`, verified by grep in this docs pass); parametrize expands
-  the collected total to **2795 collected** (`pytest --collect-only
-  -q`) — full suite **2793 passed, 2 skipped, 0 failed**, coverage
-  **90.86%**, pylint **9.65** (Lead QA, pasted verbatim; prior W8a
-  handoff of 2550 passed, 1 failed [external pinned test], 1 skipped
-  superseded).
+- Tests: **2366 test functions** on disk (static `^def test_` count in
+  `tests/`, recounted 2026-11-08 in FIX-DOCS-3 by grep `^def test_` in
+  `tests/`);
+  last full-suite handoff total (P3-D, `.opencode/handoffs/P3-D.md`):
+  **3305 passed, 4 skipped, 0 failed** (transcribed from that handoff;
+  `--collect-only` was not re-run in the 2026-11-08 docs pass).
 
 ### 2026-11-06 — Phase 7 high-value
 

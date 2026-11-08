@@ -12,6 +12,9 @@ from forecast_ml_framework.pipelines.modeling.calibration import (
 from forecast_ml_framework.pipelines.modeling.data_split import (
   split_data,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
 
 
 def _frame(n=100):
@@ -59,8 +62,14 @@ def test_calibrate_classification_returns_proba_model():
   base = SklearnAdapter({}).fit(x, y)
   params = {'task_type': 'classification',
             'calibration': {'method': 'sigmoid', 'cv': 2}}
-  calibrated, meta = calibrate_model(base, x, y, params)
+  envelope, meta = calibrate_model(base, x, y, params)
   assert meta['calibrated'] is True
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] == ['0', '1']
+  assert envelope['registry_ref'] is None
+  assert envelope['onnx_sidecar'] is None
+  calibrated = unwrap_envelope(envelope)
   assert calibrated.predict_proba(x).shape[1] == 2
 
 
@@ -79,8 +88,12 @@ def test_calibrate_accepts_calibration_handle():
       'sklearn.calibration.CalibratedClassifierCV',
     'calibration': {'method': 'sigmoid', 'cv': 2},
   }
-  calibrated, meta = calibrate_model(base, x, y, params)
+  envelope, meta = calibrate_model(base, x, y, params)
   assert meta['calibrated'] is True
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] == ['0', '1']
+  calibrated = unwrap_envelope(envelope)
   assert calibrated.predict_proba(x).shape[1] == 2
 
 
@@ -114,9 +127,17 @@ def test_calibrate_regression_passthrough():
   base = SklearnAdapter({'model_type': 'linear_regression'}).fit(x, y)
   params = {'task_type': 'regression',
             'calibration': {'method': 'sigmoid', 'cv': 2}}
-  calibrated, meta = calibrate_model(base, x, y, params)
+  envelope, meta = calibrate_model(base, x, y, params)
   assert meta['calibrated'] is False
-  assert calibrated is base
+  # Regression passthrough returns an envelope (not the bare
+  # base adapter): label_set is None (regression bijection)
+  # and the unwrapped model is the uncalibrated base estimator.
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] is None
+  assert envelope['registry_ref'] is None
+  assert envelope['onnx_sidecar'] is None
+  assert unwrap_envelope(envelope) is base.model
 
 
 def test_split_rejects_bad_test_size():
@@ -163,11 +184,15 @@ def test_calibrate_betacal_missing_library_falls_back_to_sigmoid(
     'task_type': 'classification',
     'calibration': {'method': 'betacal', 'cv': 2},
   }
-  calibrated, meta = calibrate_model(base, x, y, params)
+  envelope, meta = calibrate_model(base, x, y, params)
   assert meta['calibrated'] is True
   assert meta['method'] == 'sigmoid'
   assert meta['requested_method'] == 'betacal'
   assert meta['fallback'] is True
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] == ['0', '1']
+  calibrated = unwrap_envelope(envelope)
   assert calibrated.predict_proba(x).shape[1] == 2
 
 
@@ -188,9 +213,14 @@ def test_calibrate_betacal_handle_string_falls_back_when_missing(
     'calibration_handle': 'betacal.BetaCalibration',
     'calibration': {'method': 'sigmoid', 'cv': 2},
   }
-  calibrated, meta = calibrate_model(base, x, y, params)
+  envelope, meta = calibrate_model(base, x, y, params)
   assert meta['method'] == 'sigmoid'
   assert meta['calibrated'] is True
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert envelope['label_set'] == ['0', '1']
+  calibrated = unwrap_envelope(envelope)
+  assert calibrated.predict_proba(x).shape[1] == 2
 
 
 def test_beta_cal_wrapper_delegates_to_base_and_calibrator():
@@ -233,8 +263,12 @@ def test_calibrate_task_alias_binary_calibrates():
     base = SklearnAdapter({}).fit(x, y)
     params = {'task_type': alias,
               'calibration': {'method': 'sigmoid', 'cv': 2}}
-    calibrated, meta = calibrate_model(base, x, y, params)
+    envelope, meta = calibrate_model(base, x, y, params)
     assert meta['calibrated'] is True, alias
+    assert set(envelope) == {
+        'model', 'label_set', 'registry_ref', 'onnx_sidecar'}, alias
+    assert envelope['label_set'] == ['0', '1'], alias
+    calibrated = unwrap_envelope(envelope)
     assert calibrated.predict_proba(x).shape[1] == 2
 
 

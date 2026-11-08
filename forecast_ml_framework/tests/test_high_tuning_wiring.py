@@ -10,6 +10,9 @@ from forecast_ml_framework.pipelines.modeling.adapters import (
   SklearnAdapter,
   train_models,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
 
 
 def _clf_data():
@@ -36,15 +39,17 @@ def test_train_models_with_tuning_report():
     },
     'model_params': {'sklearn': {'model_type': 'logistic_regression'}},
   }
-  model, per_model, best = train_models(x, y, x, y, params)
+  envelope, per_model, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
   assert 'tuning' in per_model['sklearn']
   assert per_model['sklearn']['tuning']['method'] == 'grid'
   assert per_model['sklearn']['tuning']['best_params']['C'] in (
     0.1, 1.0)
-  assert model.model.get_params()['C'] == (
+  assert unwrap_envelope(envelope).get_params()['C'] == (
     per_model['sklearn']['tuning']['best_params']['C'])
-  assert len(model.predict(x)) == len(y)
+  assert len(unwrap_envelope(envelope).predict(x)) == len(y)
 
 
 def test_tuning_report_persisted_via_pipeline_node():
@@ -173,9 +178,12 @@ def test_train_models_balance_via_params():
     'balance': True,
     'model_params': {'sklearn': {'model_type': 'logistic_regression'}},
   }
-  model, _per_model, best = train_models(x, y, x, y, params)
+  envelope, _per_model, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
-  assert model.model.get_params().get('class_weight') is not None
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert unwrap_envelope(envelope).get_params().get(
+    'class_weight') is not None
 
 
 def _fake_module(monkeypatch, name, **attrs):

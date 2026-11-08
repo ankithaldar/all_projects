@@ -12,12 +12,18 @@ module never breaks environments without mlflow installed.
 
 import importlib
 import ipaddress
+import json
 import logging
 import math
 import re
 import socket
 from collections.abc import Mapping
 from urllib.parse import urlparse
+
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  model_classes,
+  unwrap_envelope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -772,6 +778,32 @@ class ModelRegistry:
     metrics = dict(metrics or {})
     params = dict(params or {})
     tags = dict(tags or {})
+    # Contract 3 C2: unwrap envelope, derive label_set.
+    sk_model = unwrap_envelope(model)
+    # label_set: carried from envelope, or tags, or derived
+    label_set = None
+    if isinstance(model, dict) and 'label_set' in model:
+      label_set = model.get('label_set')
+    elif 'label_set' in tags:
+      raw = tags.get('label_set')
+      try:
+        label_set = json.loads(raw) if isinstance(raw, str) else raw
+      except Exception:  # pylint: disable=broad-exception-caught
+        label_set = raw
+    if label_set is None:
+      classes = model_classes(sk_model)
+      if classes is not None:
+        label_set = [str(c) for c in classes]
+    task_type = tags.get('task_type') or params.get('task_type')
+    if not task_type:
+      task_type = 'regression' if label_set is None else 'classification'
+    version_tags = {
+      'label_set': json.dumps(label_set),
+      'task_type': str(task_type),
+    }
+    excluded = ('label_set', 'task_type')
+    run_tags = {k: v for k, v in tags.items() if k not in excluded}
+    log_tags = {**run_tags, **version_tags}
     run_id = None
     model_uri = None
     version = None
@@ -780,11 +812,11 @@ class ModelRegistry:
         mlflow.log_params(params)
       if metrics:
         mlflow.log_metrics(metrics)
-      if tags:
-        mlflow.set_tags(tags)
+      if run_tags:
+        mlflow.set_tags(run_tags)
       logged = sklearn.log_model(
-        sk_model=model, name='model',
-        registered_model_name=name, tags=tags or None)
+        sk_model=sk_model, name='model',
+        registered_model_name=name, tags=log_tags or None)
       model_uri = (getattr(logged, 'model_uri', None)
                    or getattr(logged, 'uri', None))
       version = getattr(logged, 'version', None)

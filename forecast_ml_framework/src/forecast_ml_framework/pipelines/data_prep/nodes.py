@@ -833,7 +833,7 @@ def fit_preprocess(df, prep_params, variables,
   return _fitted_fit_preprocess(df, prep_params, variables)
 
 
-def apply_preprocess(df, registry):
+def apply_preprocess(df, registry, params=None):
   '''Replay fitted registry state on a held-out frame.
 
   Kedro node wrapper around
@@ -845,6 +845,9 @@ def apply_preprocess(df, registry):
   Args:
     df: Test dataframe (raw split frame).
     registry: Dict from :func:`fit_preprocess`.
+    params: ``params:modeling_params`` dict; its
+      ``fitted_registry_v2`` flag is forwarded as
+      ``require_v2`` (default False).
 
   Returns:
     Transformed dataframe copy.
@@ -852,7 +855,8 @@ def apply_preprocess(df, registry):
   from forecast_ml_framework.pipelines.data_prep.fitted import (
     apply_preprocess as _fitted_apply_preprocess,
   )
-  return _fitted_apply_preprocess(df, registry)
+  require_v2 = bool((params or {}).get('fitted_registry_v2', False))
+  return _fitted_apply_preprocess(df, registry, require_v2=require_v2)
 
 
 def split_raw_data_with_meta(df, params, variables=None):

@@ -21,7 +21,8 @@
 # credentials/metadata for file datasets; SparkDataset adds
 # file_format='parquet' default).
 
-# --- Anchors (merge with <<: *anchor, then override per entry) ----------------
+# --- anchors ---
+# Anchors (merge with <<: *anchor, then override per entry)
 # BigQuery/Spark input anchor. Type: our SparkSQLDataSet (Kedro
 # AbstractDataset subclass, importable). Keys are the runtime params
 # the Spark BQ dataset needs; write_mode 'overwrite' is safe here
@@ -48,11 +49,14 @@ _save_json: &save_json
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   backend: 'pickle'
 
-# --- Raw data -----------------------------------------------------------------
+# --- data-raw ---
+# Raw data
 # CSV raw input. Type: kedro_datasets.pandas.CSVDataset (filepath...).
 raw_data:
   type: 'kedro_datasets.pandas.CSVDataset'
   filepath: 'data/raw/raw_data.csv'
+  metadata:
+    pii_classes: ['none']
 
 # Parquet raw input. Type: kedro_datasets.pandas.ParquetDataset.
 raw_data_parquet:
@@ -64,7 +68,8 @@ raw_data_regression:
   type: 'kedro_datasets.pandas.CSVDataset'
   filepath: 'data/raw/raw_data_regression.csv'
 
-# --- BigQuery/Spark inputs (this framework *_input_params pattern) -------------------------
+# --- data-inputs ---
+# BigQuery/Spark inputs (this framework *_input_params pattern)
 # Train input: Spark BQ anchor + BigQuery SQL (backtick
 # project.dataset.table). WARNING: SQL is trusted config only;
 # SparkSQLDataSet enforces single-statement read-only intent, it is
@@ -92,7 +97,8 @@ score_input_params:
     `${params:etl_project}.${params:etl_dataset}.${params:etl_table}`
     WHERE run_date = '${params:score_run_dt}'
 
-# --- Sampled / preprocessed frames (parquet via _save_parquet) ----------------
+# --- data-frames ---
+# Sampled / preprocessed frames (parquet via _save_parquet)
 # Sampled training frame. Type: kedro_datasets.spark.SparkDataset.
 sampled_df_params:
   <<: *save_parquet
@@ -108,7 +114,8 @@ train_pp_data_df_params:
   <<: *save_parquet
   filepath: '${params:output_gcs_location}/${params:model_id_prefix}_train_pp_data_${params:suffix}/'
 
-# --- Models (pickle via _save_json) -------------------------------------------
+# --- model-params ---
+# Models (pickle via _save_json)
 # Fitted model artifact. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 fitted_model_params:
   <<: *save_json
@@ -119,7 +126,8 @@ calibrated_model_params:
   <<: *save_json
   filepath: '${params:output_gcs_location}/calib.pkl'
 
-# --- Predictions (parquet) -----------------------------------------------------
+# --- predictions-params ---
+# Predictions (parquet)
 # Train predictions. Type: kedro_datasets.pandas.ParquetDataset.
 train_prediction_df_params:
   type: 'kedro_datasets.pandas.ParquetDataset'
@@ -140,7 +148,8 @@ test_lift_df_params:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: '${params:output_gcs_location}/${params:model_id_prefix}_test_lift_${params:suffix}/'
 
-# --- Metrics / lift BigQuery tables (this framework BQTable pattern) -----------------------
+# --- metrics-bq ---
+# Metrics / lift BigQuery tables (this framework BQTable pattern)
 # BQ table entries use our SQLQueryDataSet type (the only SQL/BQ type
 # allowed in this catalog, per project rule) with this framework table keys:
 # project/dataset/table_name identify the table, save_args carry
@@ -244,7 +253,8 @@ valid_model_lift_params:
 test_model_lift_params:
   <<: *classification_model_decile_metrics
 
-# --- Processed / split data (generic, kept) -----------------------------------
+# --- data-processed ---
+# Processed / split data (generic, kept)
 # Processed frame. Type: kedro_datasets.pandas.ParquetDataset.
 processed_data:
   type: 'kedro_datasets.pandas.ParquetDataset'
@@ -265,7 +275,8 @@ test_data:
 selected_features:
   type: 'kedro.io.MemoryDataset'
 
-# --- Models (generic, kept) ----------------------------------------------------
+# --- models ---
+# Models (generic, kept)
 # Fitted model. Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
@@ -309,7 +320,8 @@ model_memory:
 calibration_model_memory:
   type: 'kedro.io.MemoryDataset'
 
-# --- Metrics (generic, kept) ---------------------------------------------------
+# --- metrics ---
+# Metrics (generic, kept)
 # Metrics JSON. Type: kedro_datasets.json.JSONDataset.
 metrics:
   type: 'kedro_datasets.json.JSONDataset'
@@ -320,7 +332,8 @@ metrics_csv:
   type: 'kedro_datasets.pandas.CSVDataset'
   filepath: 'artifacts/metrics/metrics.csv'
 
-# --- Predictions (generic, kept) ----------------------------------------------
+# --- predictions ---
+# Predictions (generic, kept)
 # Predictions parquet. Type: kedro_datasets.pandas.ParquetDataset.
 predictions:
   type: 'kedro_datasets.pandas.ParquetDataset'
@@ -331,7 +344,8 @@ predictions_csv:
   type: 'kedro_datasets.pandas.CSVDataset'
   filepath: 'artifacts/predictions/predictions.csv'
 
-# --- SHAP artifacts (generic, kept) -------------------------------------------
+# --- shap ---
+# SHAP artifacts (generic, kept)
 # SHAP values parquet. Type: kedro_datasets.pandas.ParquetDataset.
 shap_values:
   type: 'kedro_datasets.pandas.ParquetDataset'
@@ -342,14 +356,16 @@ shap_summary:
   type: 'kedro_datasets.json.JSONDataset'
   filepath: 'artifacts/shap/shap_summary.json'
 
-# --- Charts (generic, kept) ----------------------------------------------------
+# --- charts ---
+# Charts (generic, kept)
 # Chart figures dict in memory. Type: kedro.io.MemoryDataset.
 # Persisted single figures: kedro_datasets.matplotlib.MatplotlibDataset
 # (filepath='artifacts/charts/<name>.png', save_args/overwrite).
 charts:
   type: 'kedro.io.MemoryDataset'
 
-# --- Batch scoring input/output (phase 2) -------------------------------------
+# --- scoring-io ---
+# Batch scoring input/output (phase 2)
 # scoring_input: batch scoring input frame.
 # Type: kedro_datasets.pandas.ParquetDataset. Names the catalog input
 # consumed by scoring_params.input_dataset (see parameters.yml).
@@ -368,7 +384,8 @@ scoring_output:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'artifacts/scoring/output.parquet'
 
-# --- Batch scoring SQL sources (BigQuery / Athena via our SQL datasets) -------
+# --- scoring-sources ---
+# Batch scoring SQL sources (BigQuery / Athena via our SQL datasets)
 # scoring_input_bq: BigQuery batch scoring input.
 # Type: forecast_ml_framework.core.datasets.SQLQueryDataSet (our SQL
 # dataset, the only SQL type allowed in this catalog). SQL is trusted
@@ -417,7 +434,8 @@ scoring_output_athena:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'artifacts/scoring/output_athena.parquet'
 
-# --- Model registry placeholder (phase 2) --------------------------------------
+# --- model-registry ---
+# Model registry placeholder (phase 2)
 # registry_model: registered model artifact placeholder.
 # Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset. Placeholder location for
 # the registry worker (registry_params in parameters.yml); the real
@@ -427,7 +445,8 @@ registry_model:
   type: 'forecast_ml_framework.core.datasets.RestrictedPickleDataset'
   filepath: 'artifacts/models/registry_model.pkl'
 
-# --- Phase 3: monitoring / cost / governance outputs ---------------------------
+# --- monitoring-cost-governance ---
+# Phase 3: monitoring / cost / governance outputs
 # monitoring_report: drift/PSI/KS monitoring report frame.
 # Type: kedro_datasets.pandas.ParquetDataset (writable parquet).
 monitoring_report:
@@ -460,7 +479,8 @@ audit_log:
   type: 'kedro_datasets.pandas.ParquetDataset'
   filepath: 'artifacts/governance/audit_log.parquet'
 
-# --- Clean-UX: pipeline intermediate datasets (Tasks 5) -------------------------
+# --- pipeline-intermediates ---
+# Clean-UX: pipeline intermediate datasets (Tasks 5)
 # validated_data: validated frame from data_prep validate_data node.
 # Type: kedro_datasets.pandas.ParquetDataset.
 validated_data:
@@ -559,7 +579,8 @@ eda_summary:
 eda_report:
   type: 'kedro.io.MemoryDataset'
 
-# --- Modeling pipeline outputs (persisted) ------------------------------------
+# --- modeling-outputs ---
+# Modeling pipeline outputs (persisted)
 # best_model: fitted model selected by train_models.
 # Type: forecast_ml_framework.core.datasets.RestrictedPickleDataset.
 best_model:
@@ -649,7 +670,8 @@ fitted_registry:
 score_prep_params:
   type: 'kedro.io.MemoryDataset'
 
-# --- Interpretability inputs ---------------------------------------------------
+# --- interpretability ---
+# Interpretability inputs
 # X / y: feature frame and target for interpretability nodes.
 # Type: kedro.io.MemoryDataset (in-memory frames).
 X:
@@ -681,7 +703,8 @@ interpretability_charts:
 diagnostics_charts:
   type: 'kedro.io.MemoryDataset'
 
-# --- Cost tracking -------------------------------------------------------------
+# --- cost-tracking ---
+# Cost tracking
 # run_info: one run's usage/metadata dict. Type: kedro.io.MemoryDataset.
 run_info:
   type: 'kedro.io.MemoryDataset'
@@ -697,7 +720,8 @@ cost_record:
 cost_summary:
   type: 'kedro.io.MemoryDataset'
 
-# --- Monitoring inputs / drift ---------------------------------------------------
+# --- monitoring ---
+# Monitoring inputs / drift
 # reference_data / current_data: baseline and current windows.
 # Type: kedro_datasets.pandas.ParquetDataset.
 reference_data:
@@ -728,7 +752,8 @@ current_metrics:
 drift_report:
   type: 'kedro.io.MemoryDataset'
 
-# --- Retraining ------------------------------------------------------------------
+# --- retraining ---
+# Retraining
 # last_train_info: last training timestamp/row count dict.
 # Type: kedro.io.MemoryDataset.
 last_train_info:
@@ -742,7 +767,8 @@ retrain_decision:
 retrain_plan:
   type: 'kedro.io.MemoryDataset'
 
-# --- Data prep / scoring -----------------------------------------------------------
+# --- data-prep-scoring ---
+# Data prep / scoring
 # selection_report: select_features report dict. Type: kedro.io.MemoryDataset.
 selection_report:
   type: 'kedro.io.MemoryDataset'

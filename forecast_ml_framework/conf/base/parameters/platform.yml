@@ -188,6 +188,11 @@ registry_params:
 # registry_params.
 # --- Batch scoring ------------------------------------------------------------
 scoring_params:
+  # fitted_registry_v2: require v2 fitted_registry on read
+  # (scoring score_data_prep node). Operator sets the same
+  # bool under modeling_params in modeling.yml in the same
+  # change (both-flags); default false = dual-read v1+v2.
+  fitted_registry_v2: false
   # input_dataset: catalog name of the scoring input (example: 'scoring_input').
   input_dataset: 'scoring_input'
   # output_dataset: catalog name of the scored output; 'predictions' matches the pipeline default (example: 'predictions').

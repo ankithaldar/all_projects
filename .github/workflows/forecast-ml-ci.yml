@@ -158,6 +158,7 @@ jobs:
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
+          terraform_wrapper: false
 
       - name: Terraform fmt check
         # Runs fmt check on infra/; fails the job on unformatted .tf.
@@ -165,16 +166,166 @@ jobs:
         # continue-on-error is needed.
         run: terraform fmt -check -recursive forecast_ml_framework/infra
 
-      - name: Terraform validate (both stacks)
+      - name: Terraform validate (all stacks)
         # init -backend=false needs no credentials and no state: it
-        # resolves providers against the committed
-        # .terraform.lock.hcl, then validate checks both stacks
+        # resolves providers against the committed scope
+        # .terraform.lock.hcl, then validate checks every stack
         # semantically (MLops-9). fmt alone passed stacks whose
         # provider schema no longer matched (now fixed + gated).
+        # aws + gcp + azure (azure parity, P2-I1): same stack set
+        # as the terraform-validate matrix job below. This legacy
+        # job is kept for the existing `terraform` gate name; the
+        # terraform-validate matrix is the P2 exit gate.
         run: >-
-          for stack in aws gcp; do
+          for stack in aws gcp azure; do
           echo "--- infra/${stack} ---";
           (cd forecast_ml_framework/infra/${stack}
           && terraform init -backend=false -input=false
           && terraform validate);
           done
+
+  terraform-validate:
+    name: terraform-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: false
+    strategy:
+      fail-fast: true
+      matrix:
+        stack: [gcp, aws, azure]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform fmt check
+        # Runs fmt check on infra/; fails the job on unformatted .tf.
+        # Terraform is present via setup-terraform, so no
+        # continue-on-error is needed.
+        run: terraform fmt -check -recursive forecast_ml_framework/infra
+
+      - name: Terraform validate (${{ matrix.stack }})
+        # init -backend=false needs no credentials and no state: it
+        # resolves providers against the committed
+        # .terraform.lock.hcl, then validate checks the stack
+        # semantically (MLops-9). fmt alone passed stacks whose
+        # provider schema no longer matched (now fixed + gated).
+        # Matrix covers gcp + aws + azure (azure parity, P2-I1):
+        # this is the exit-gate terraform validate green
+        # gcp+aws+azure in CI. Supersedes the legacy `terraform`
+        # job (aws+gcp only).
+        run: >-
+          echo "--- infra/${{ matrix.stack }} ---";
+          (cd forecast_ml_framework/infra/${{ matrix.stack }}
+          && terraform init -backend=false -input=false
+          && terraform validate)
+
+  helm-lint:
+    name: helm-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Helm
+        # Frozen pin: azure/setup-helm v3 with helm CLI v3.15.2.
+        uses: azure/setup-helm@5119fcb9089d432beecbf79bb2c7915207344b78 # v3
+        with:
+          version: v3.15.2
+
+      - name: Helm lint
+        run: helm lint forecast_ml_framework/deploy/helm/forecast-ml
+
+      - name: Helm template smoke
+        run: helm template forecast-ml forecast_ml_framework/deploy/helm/forecast-ml
+
+  observability-check:
+    name: observability-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Prometheus tools (amtool + promtool)
+        # Prometheus release archive pin v2.55.1 supplies promtool;
+        # amtool ships with the Alertmanager release (v0.27.0),
+        # pinned alongside v2.55.1. Both binaries are validated
+        # before the check steps.
+        run: >-
+          curl -fsSL -o /tmp/prometheus.tar.gz
+          https://github.com/prometheus/prometheus/releases/download/v2.55.1/prometheus-2.55.1.linux-amd64.tar.gz &&
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp --strip-components=1 &&
+          curl -fsSL -o /tmp/alertmanager.tar.gz
+          https://github.com/prometheus/alertmanager/releases/download/v0.27.0/alertmanager-0.27.0.linux-amd64.tar.gz &&
+          tar -xzf /tmp/alertmanager.tar.gz -C /tmp --strip-components=1 &&
+          sudo mv /tmp/promtool /tmp/amtool /usr/local/bin/ &&
+          promtool --version && amtool --version
+
+      - name: amtool check-config
+        run: amtool check-config forecast_ml_framework/deploy/observability/alertmanager/alertmanager.yaml
+
+      - name: promtool check config
+        run: promtool check config forecast_ml_framework/deploy/observability/prometheus.yaml
+
+      - name: promtool check rules
+        run: promtool check rules forecast_ml_framework/deploy/observability/prometheus/rules.yaml
+
+      - name: Synthetic-drift firing proof
+        run: bash forecast_ml_framework/deploy/observability/scripts/synthetic-drift.sh
+
+  k8s-drill:
+    name: k8s-drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Helm
+        # Frozen pin: azure/setup-helm v3 with helm CLI v3.15.2
+        # (same SHA/version tuple as the helm-lint job).
+        uses: azure/setup-helm@5119fcb9089d432beecbf79bb2c7915207344b78 # v3
+        with:
+          version: v3.15.2
+
+      - name: Install kubeconform
+        # Frozen pin reference:
+        # instrumenta/kubeconform-action v0.6.5 / archive v0.6.7.
+        # The action repo is currently unavailable (404), so CI
+        # installs the kubeconform binary at the same pinned
+        # archive version v0.6.7 via the run step below.
+        run: >-
+          curl -fsSL -o /tmp/kubeconform.tar.gz
+          https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz &&
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform &&
+          sudo mv /tmp/kubeconform /usr/local/bin/
+
+      - name: Install kind
+        # Frozen pin reference: kindest/action-kind v0.26.0
+        # with kind binary v0.25.3. The action repo is currently
+        # unavailable (404), and no v0.25.3 kind release asset
+        # exists (nearest real release is v0.25.0), so CI installs
+        # the v0.25.0 binary directly. The v0.25.3 string is
+        # retained here for pin traceability per the frozen spec.
+        run: >-
+          curl -fsSL -o /tmp/kind
+          https://github.com/kubernetes-sigs/kind/releases/download/v0.25.0/kind-linux-amd64 &&
+          sudo chmod +x /tmp/kind &&
+          sudo mv /tmp/kind /usr/local/bin/ && kind version
+
+      - name: Kubeconform retention CronJob
+        continue-on-error: false
+        run: >-
+          kubeconform -summary
+          forecast_ml_framework/deploy/k8s/retention-cronjob.yaml
+
+      - name: Deploy + rollback drill
+        continue-on-error: false
+        run: >-
+          bash forecast_ml_framework/deploy/scripts/rollback-drill.sh

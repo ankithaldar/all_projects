@@ -3,7 +3,11 @@
 
 '''Two-stage scoring DAG (vz-high Task 9).'''
 
+from pathlib import Path
+
 import pandas as pd
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_scoring_pipeline_has_score_data_prep():
@@ -20,7 +24,7 @@ def test_catalog_has_fitted_registry():
   '''Catalog has fitted_registry entry.'''
   import yaml
 
-  with open('conf/base/catalog.yml', encoding='utf-8') as fh:
+  with open(_ROOT / 'conf/base/catalog.yml', encoding='utf-8') as fh:
     catalog = yaml.safe_load(fh)
   assert 'fitted_registry' in catalog
   assert catalog['fitted_registry']['type'] == (

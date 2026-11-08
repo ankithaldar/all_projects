@@ -49,8 +49,161 @@ import threading
 from pathlib import Path
 
 from forecast_ml_framework.core.artifact_store import restricted_loads
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  model_classes,
+  unwrap_envelope,
+  validate_envelope,
+)
 from forecast_ml_framework.registry.model_registry import (
   validate_alias, validate_model_name, validate_registry_uri)
+
+import json as _json
+
+
+def _validate_dict_envelope(obj, task_type=None):
+  '''Validate a dict envelope, raising corrupt on failure.
+
+  Args:
+    obj: Envelope dict to validate.
+    task_type: Explicit task kind; when None it is
+      inferred as classification when ``label_set`` is
+      not None or the model exposes ``classes_``, else
+      as regression.
+
+  Raises:
+    ModelCorruptError: When ``obj`` is not a valid
+      envelope, per ``validate_envelope``.
+  '''
+  if task_type is None:
+    task = ('classification'
+            if obj.get('label_set') is not None
+            or model_classes(obj) is not None
+            else 'regression')
+  else:
+    task = task_type
+  try:
+    validate_envelope(obj, task)
+  except ValueError:
+    raise ModelCorruptError('model artifact corrupt') from None
+
+
+def _validated_unwrap(loaded):
+  '''Validate a dict envelope and unwrap it, else return as-is.
+
+  Args:
+    loaded: Unpickled object from a file or registry.
+
+  Returns:
+    The fitted model unwrapped from a dict envelope, or
+    ``loaded`` unchanged when it is not a dict.
+
+  Raises:
+    ModelCorruptError: When a dict envelope is invalid,
+      per :func:`_validate_dict_envelope`.
+  '''
+  if isinstance(loaded, dict):
+    _validate_dict_envelope(loaded)
+    return unwrap_envelope(loaded)
+  return loaded
+
+
+def load_model(obj, *, allow_pyfunc=False, task_type=None):
+  '''Load model from envelope dict or path; .onnx raises.
+
+  Args:
+    obj: Envelope dict, or a path to a pickle artifact.
+    allow_pyfunc: Opt in to the pyfunc fallback when
+      restricted loading of a pickle file fails.
+    task_type: Explicit task kind used to validate a
+      dict envelope; inferred when None.
+
+  Returns:
+    The fitted model unwrapped from a dict envelope, or
+    the object stored in a pickle file.
+
+  Raises:
+    ModelNotFoundError: When a pickle file is missing.
+    ModelCorruptError: When a dict envelope is invalid,
+      a path is .onnx, or a pickle cannot be loaded.
+  '''
+  if isinstance(obj, dict):
+    _validate_dict_envelope(obj, task_type)
+    return unwrap_envelope(obj)
+  path = str(obj)
+  if path.endswith('.onnx'):
+    raise ModelCorruptError('model artifact corrupt')
+  if path.endswith(('.pkl', '.pickle')):
+    if not os.path.isfile(path):
+      raise ModelNotFoundError('model artifact not found')
+    raw = _read_file_capped(path, _max_artifact_bytes())
+    _verify_sha256(raw, _expected_sha256())
+    try:
+      loaded = restricted_loads(raw)
+    except Exception:  # pylint: disable=broad-exception-caught
+      if not allow_pyfunc:
+        raise ModelCorruptError('model artifact corrupt') from None
+      # pyfunc fallback only when explicitly allowed
+      try:
+        import mlflow
+        return mlflow.pyfunc.load_model(path)
+      except Exception:  # pylint: disable=broad-exception-caught
+        raise ModelCorruptError('model artifact corrupt') from None
+    if isinstance(loaded, dict):
+      _validate_dict_envelope(loaded, task_type)
+    return unwrap_envelope(loaded)
+  raise ModelCorruptError('model artifact corrupt')
+
+
+def load_best_model(obj, *, allow_pyfunc=False, task_type=None):
+  '''Load best model; alias for load_model (Contract 3).
+
+  Args:
+    obj: Envelope dict, or a path to a pickle artifact.
+    allow_pyfunc: Opt in to the pyfunc fallback when
+      restricted loading of a pickle file fails.
+    task_type: Explicit task kind used to validate a
+      dict envelope; inferred when None.
+
+  Returns:
+    The fitted model from the envelope or artifact.
+
+  Raises:
+    ModelNotFoundError: When a pickle file is missing.
+    ModelCorruptError: When an envelope or artifact is
+      invalid, per :func:`load_model`.
+  '''
+  return load_model(obj, allow_pyfunc=allow_pyfunc,
+                    task_type=task_type)
+
+
+def reconstruct_label_set(version_obj, estimator):
+  '''Return label_set from version tags or model_classes fallback.'''
+  tags = {}
+  if isinstance(version_obj, dict):
+    tags = dict(version_obj.get('tags') or {})
+  else:
+    tags = dict(getattr(version_obj, 'tags', {}) or {})
+  raw = tags.get('label_set')
+  if raw is not None:
+    try:
+      parsed = _json.loads(raw)
+    except Exception:  # pylint: disable=broad-exception-caught
+      parsed = raw
+    if isinstance(parsed, list):
+      return [str(x) for x in parsed]
+  classes = model_classes(estimator)
+  if classes is None:
+    raise ModelCorruptError('model corrupt')
+  return [str(c) for c in classes]
+
+
+def reconstruct_registry_ref(loader, version_obj):
+  '''Build registry_ref dict from loader + resolved_version.'''
+  return {
+    'name': getattr(loader, 'model_name', None),
+    'alias': getattr(loader, 'alias', None),
+    'version': getattr(loader, 'resolved_version', None),
+  }
 
 logger = logging.getLogger(__name__)
 
@@ -340,21 +493,26 @@ class FileModelLoader:
       expected_sha256: SHA-256 pin overriding env.
 
     Returns:
-      The unpickled model.
+      The unpickled model, unwrapped from a dict envelope
+      when the pickle holds one.
 
     Raises:
       ModelNotFoundError: With a generic message (no leak).
       ModelCorruptError: When the pickle is forbidden,
-        malformed, oversized, or fails its SHA pin.
+        malformed, oversized, fails its SHA pin, or holds
+        an invalid dict envelope.
     '''
+    if str(path).endswith('.onnx'):
+      raise ModelCorruptError('model artifact corrupt')
     cap = _max_artifact_bytes(max_artifact_bytes)
     expected = _expected_sha256(expected_sha256)
     raw = _read_file_capped(path, cap)
     _verify_sha256(raw, expected)
     try:
-      return restricted_loads(raw)
+      loaded = restricted_loads(raw)
     except Exception:  # pylint: disable=broad-exception-caught
       raise ModelCorruptError('model artifact corrupt') from None
+    return _validated_unwrap(loaded)
 
 
 class RegistryModelLoader:
@@ -435,6 +593,7 @@ class RegistryModelLoader:
         'pyfunc executes arbitrary code from the registry '
         'model -- only use with a fully trusted registry')
     self._model = None
+    self.resolved_version = None
     self._lock = threading.Lock()
 
   def load(self):
@@ -546,8 +705,11 @@ class RegistryModelLoader:
     The alias is resolved through the tracking client
     and the resolved version is logged. Artifact bytes
     are downloaded, size-capped, SHA-pinned, and decoded
-    with ``restricted_loads`` only. Alias/model-not-found
-    becomes a ModelNotFoundError, missing mlflow a
+    with ``restricted_loads`` only. A dict result is
+    validated as an envelope and unwrapped; an invalid
+    envelope is ModelCorruptError and never falls back
+    to pyfunc. Alias/model-not-found becomes a
+    ModelNotFoundError, missing mlflow a
     ModelNotConfiguredError, and every other failure a
     ModelCorruptError, so no URI/detail leaks. The
     pyfunc fallback runs only when ``allow_pyfunc=True``
@@ -573,6 +735,13 @@ class RegistryModelLoader:
       _log_failure('registry version lookup failed', exc)
       raise ModelCorruptError('model corrupt') from None
     version = self._version_field(version_obj, 'version')
+    self.resolved_version = str(version) if version is not None else None
+    # .onnx always rejected (P10 deferred)
+    src = self._version_field(version_obj, 'source')
+    src = src or self._version_field(version_obj, 'artifact_uri')
+    src = src or ''
+    if str(src).endswith('.onnx'):
+      raise ModelCorruptError('model corrupt')
     logger.info(
       'registry model resolved name=%r alias=%r version=%r',
       self.model_name, self.alias, str(version))
@@ -585,7 +754,7 @@ class RegistryModelLoader:
       raise ModelCorruptError('model corrupt') from None
     _verify_sha256(raw, _expected_sha256(self._expected_sha256))
     try:
-      return restricted_loads(raw)
+      loaded = restricted_loads(raw)
     except Exception as exc:  # pylint: disable=broad-exception-caught
       if not self.allow_pyfunc:
         _log_failure('registry artifact load failed', exc)
@@ -599,3 +768,4 @@ class RegistryModelLoader:
         return mlflow.pyfunc.load_model(uri)
       except Exception:  # pylint: disable=broad-exception-caught
         raise ModelCorruptError('model corrupt') from None
+    return _validated_unwrap(loaded)

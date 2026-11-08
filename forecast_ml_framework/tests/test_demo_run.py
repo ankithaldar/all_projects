@@ -39,6 +39,9 @@ from forecast_ml_framework.pipelines.modeling.charts import make_charts
 from forecast_ml_framework.pipelines.modeling.data_split import (
   split_data,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
 from forecast_ml_framework.pipelines.modeling.evaluate import (
   evaluate_model,
 )
@@ -155,7 +158,10 @@ def test_demo_pipeline_end_to_end_tiny():
 
   model, per_model, best = train_models(x_tr, y_tr, x_te, y_te, params)
   assert best == 'sklearn' and 'sklearn' in per_model
-  calibrated, _cal_meta = calibrate_model(model, x_tr, y_tr, params)
+  envelope, _cal_meta = calibrate_model(model, x_tr, y_tr, params)
+  assert set(envelope) == {
+      'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  calibrated = unwrap_envelope(envelope)
   y_pred = calibrated.predict(x_te)
   proba = calibrated.predict_proba(x_te)
   assert len(y_pred) == len(y_te)

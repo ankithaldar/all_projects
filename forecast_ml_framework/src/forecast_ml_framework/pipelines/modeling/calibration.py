@@ -13,6 +13,15 @@ from forecast_ml_framework.pipelines.modeling.adapters import (
 from forecast_ml_framework.pipelines.modeling.ntile import (
   normalize_task_kind,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  model_classes as _model_classes,
+)
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  wrap_envelope,
+)
 
 
 class _BetaCalWrapper:
@@ -234,7 +243,40 @@ def _take(x, idx):
   return np.asarray(x)[idx]
 
 
-def calibrate_model(model, x_train, y_train, params):
+def _is_temporal_split(params, split_meta):
+  '''Return True if any real temporal signal is present.
+
+  Args:
+    params: Modeling-params dict (may be None).
+    split_meta: Split meta dict (may be None).
+
+  Returns:
+    True when any checked method value, stripped
+    and lowercased, is in {temporal, time, ordered}.
+    'presplit' alone is not temporal.
+  '''
+  aliases = {'temporal', 'time', 'ordered'}
+  values = []
+  params = params if isinstance(params, dict) else {}
+  values.append(params.get('method'))
+  sampling = params.get('sampling_params')
+  if not isinstance(sampling, dict):
+    sampling = {}
+  values.append(sampling.get('method'))
+  meta = split_meta if isinstance(split_meta, dict) else {}
+  values.append(meta.get('sampling_method'))
+  values.append(meta.get('requested_method'))
+  values.append(meta.get('raw_sampling_method'))
+  values.append(meta.get('raw_requested_method'))
+  for value in values:
+    if value is None:
+      continue
+    if str(value).strip().lower() in aliases:
+      return True
+  return False
+
+
+def calibrate_model(model, x_train, y_train, params, split_meta=None):
   '''Calibrate a fitted classification model.
 
   Args:
@@ -247,19 +289,42 @@ def calibrate_model(model, x_train, y_train, params):
       from ``_oof_proba``; when the ``betacal`` library is
       missing it warns and falls back to sigmoid, recording
       both the requested and the used method in meta.
+    split_meta: Optional split meta dict for temporal
+      detection via :func:`_is_temporal_split`.
 
   Returns:
     Tuple (calibrated model, meta dict) with keys
-    calibrated, method (used), requested_method, and
-    fallback (True only on the betacal->sigmoid fallback).
+    calibrated, method (used), requested_method,
+    fallback (True only on the betacal->sigmoid
+    fallback), and temporal_calibration_allowed
+    (always a bool, True only when the allow_temporal
+    exception is actually used).
 
   Raises:
     ValueError: If method is not one of sigmoid|isotonic|betacal
       (or 'none' for passthrough), cv is not an int in
-      [2, smallest class count], y_train has < 2 classes, or
-      betacal is requested for a non-binary target.
+      [2, smallest class count], y_train has < 2 classes,
+      betacal is requested for a non-binary target, or
+      calibration is prohibited with a temporal split.
   '''
   params = params or {}
+  task_kind = normalize_task_kind(
+    params.get('task_type', 'classification'))
+  # C1 single unwrap mechanism: unwrap envelope first.
+  original = model
+  model = unwrap_envelope(model)
+  if isinstance(original, dict) and 'label_set' in original:
+    orig_label_set = original.get('label_set')
+    orig_registry_ref = original.get('registry_ref')
+    orig_onnx = original.get('onnx_sidecar')
+  else:
+    orig_label_set = None
+    orig_registry_ref = None
+    orig_onnx = None
+    cls = _model_classes(model)
+    # model_classes unwraps adapters internally.
+    if cls is not None:
+      orig_label_set = [str(c) for c in cls]
   cfg = params.get('calibration', {}) or {}
   method = cfg.get('method', 'sigmoid')
   handle = (params.get('calibration_handle')
@@ -279,10 +344,35 @@ def calibrate_model(model, x_train, y_train, params):
       # CalibratedClassifierCV below with calibrator_cls
       # left as None.
       _ = resolve_handle(handle)
-  if (normalize_task_kind(params.get('task_type', 'classification'))
-          != 'classification' or method == 'none'):
-    return model, {'calibrated': False, 'method': method,
-                   'requested_method': method, 'fallback': False}
+  if isinstance(method, str):
+    effective_method = method.strip().lower()
+  else:
+    effective_method = method
+  allow_temporal = bool(cfg.get('allow_temporal', False))
+  temporal_detected = _is_temporal_split(params, split_meta)
+  temporal_calibration_allowed = bool(
+    temporal_detected and effective_method != 'none'
+    and allow_temporal)
+  if (temporal_detected and effective_method != 'none'
+      and not allow_temporal):
+    raise ValueError(
+      'calibrate_model prohibited with temporal split '
+      f'(calibration.method={effective_method}); set '
+      'calibration.allow_temporal=True only under '
+      'P11-reviewed exception')
+  if task_kind != 'classification' or method == 'none':
+    raw = getattr(model, 'model', model)
+    label_set = orig_label_set
+    # regression passthrough never yields a label set
+    if task_kind == 'regression':
+      label_set = None
+    env = wrap_envelope(
+      raw, label_set, registry_ref=orig_registry_ref,
+      onnx_sidecar=orig_onnx)
+    return env, {'calibrated': False, 'method': method,
+                 'requested_method': method, 'fallback': False,
+                 'temporal_calibration_allowed':
+                 temporal_calibration_allowed}
   if not isinstance(method, str):
     raise ValueError(
       f'calibration method must be one of '
@@ -315,14 +405,22 @@ def calibrate_model(model, x_train, y_train, params):
       fitted = BetaCalibration()
       fitted.fit(_oof_proba(base, x_train, y_train, cv), y_train)
       wrapped = _BetaCalWrapper(base, fitted)
-      return _wrap(wrapped), {'calibrated': True,
-                              'method': 'betacal',
-                              'requested_method': 'betacal',
-                              'fallback': False}
+      env = wrap_envelope(
+        wrapped, orig_label_set, registry_ref=orig_registry_ref,
+        onnx_sidecar=orig_onnx)
+      return env, {'calibrated': True, 'method': 'betacal',
+                   'requested_method': 'betacal', 'fallback': False,
+                   'temporal_calibration_allowed':
+                   temporal_calibration_allowed}
   from sklearn.calibration import CalibratedClassifierCV
   calibrator_cls = calibrator_cls or CalibratedClassifierCV
   calibrated = calibrator_cls(base, method=method, cv=cv)
   calibrated.fit(x_train, y_train)
-  return _wrap(calibrated), {'calibrated': True, 'method': method,
-                             'requested_method': requested,
-                             'fallback': requested != method}
+  env = wrap_envelope(
+    calibrated, orig_label_set, registry_ref=orig_registry_ref,
+    onnx_sidecar=orig_onnx)
+  return env, {'calibrated': True, 'method': method,
+               'requested_method': requested,
+               'fallback': requested != method,
+               'temporal_calibration_allowed':
+               temporal_calibration_allowed}

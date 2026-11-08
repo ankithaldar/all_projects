@@ -20,6 +20,9 @@ from forecast_ml_framework.pipelines.modeling.adapters import (
   resolve_handle,
   train_models,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
 from forecast_ml_framework.pipelines.modeling.metrics import (
   compute_metrics,
 )
@@ -227,11 +230,13 @@ def test_train_models_selects_best_by_metric():
     'random_state': 42,
     'model_params': {'sklearn': {'model_type': 'logistic_regression'}},
   }
-  model, per_model, best = train_models(x, y, x, y, params)
+  envelope, per_model, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
   assert 'sklearn' in per_model
   assert 'f1_weighted' in per_model['sklearn']
-  assert len(model.predict(x)) == len(y)
+  assert len(unwrap_envelope(envelope).predict(x)) == len(y)
 
 
 def test_resolve_handle_real_sklearn():
@@ -283,10 +288,12 @@ def test_train_models_accepts_model_handle_in_params():
       },
     },
   }
-  model, per_model, best = train_models(x, y, x, y, params)
+  envelope, per_model, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
   assert 'f1_weighted' in per_model['sklearn']
-  assert len(model.predict(x)) == len(y)
+  assert len(unwrap_envelope(envelope).predict(x)) == len(y)
 
 
 def test_train_models_accepts_handle_as_model_name():
@@ -299,9 +306,11 @@ def test_train_models_accepts_handle_as_model_name():
     'random_state': 42,
     'model_params': {},
   }
-  model, per_model, best = train_models(x, y, x, y, params)
+  envelope, per_model, best = train_models(x, y, x, y, params)
   assert best == 'sklearn.linear_model.LogisticRegression'
-  assert len(model.predict(x)) == len(y)
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert len(unwrap_envelope(envelope).predict(x)) == len(y)
 
 
 def test_compute_metrics_classification_keys():

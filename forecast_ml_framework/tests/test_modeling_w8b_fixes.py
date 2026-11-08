@@ -31,7 +31,8 @@ class _StubModel:
     self.perfect = perfect_on_train
 
   def fit(self, x, y):
-    '''Accept fit without doing anything.'''
+    '''Accept fit, expose binary classes_ like a fitted model.'''
+    self.classes_ = np.array([0, 1])
     return self
 
   def _pred(self, x):

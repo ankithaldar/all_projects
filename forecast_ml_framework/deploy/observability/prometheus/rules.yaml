@@ -1,0 +1,36 @@
+# P2-O2 Prometheus rules: recording + alerting (LIVE metrics).
+# Queries the live series emitted by the /metrics producer
+# (serving/metrics.py): drift_psi, drift_ks (gauges),
+# http_request_duration_seconds (histogram),
+# predict_requests_total, predict_errors_total (counters).
+groups:
+  - name: forecast-ml-recording
+    interval: 30s
+    rules:
+      - record: job:predict_rate5m
+        expr: rate(predict_requests_total[5m])
+      - record: job:http_p95_5m
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+  - name: forecast-ml-alerts
+    rules:
+      - alert: HighPredictErrorRate
+        expr: rate(predict_errors_total[5m]) / clamp_min(rate(predict_requests_total[5m]), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High predict error rate
+      - alert: DriftPsiHigh
+        expr: drift_psi > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Model drift PSI high
+      - alert: ApiLatencyHigh
+        expr: job:http_p95_5m > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API p95 latency high (over 500ms)

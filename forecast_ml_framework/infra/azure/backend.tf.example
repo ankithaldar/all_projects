@@ -1,0 +1,20 @@
+# Remote backend example for infra/azure.
+#
+# This file is an EXAMPLE only: it is NOT active. Terraform only
+# loads *.tf / *.tf.json, so `backend.tf.example` is ignored by
+# `terraform init` / `terraform validate` / `terraform fmt` and the
+# stack keeps working from a fresh checkout with local state.
+#
+# To adopt a remote backend with state locking (shared use / CI
+# applies): create the storage account for state out of band (with
+# versioning on), copy this file to `backend.tf`, replace the
+# placeholders, and run `terraform init -migrate-state`.
+
+# terraform {
+#   backend "azurerm" {
+#     resource_group_name  = "forecast-ml-tfstate-rg"  # create this RG first, out of band
+#     storage_account_name = "forecastmltfstate"      # create this account first, out of band
+#     container_name       = "tfstate"
+#     key                  = "forecast-ml/azure.tfstate"
+#   }
+# }

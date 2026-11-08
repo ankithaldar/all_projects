@@ -75,6 +75,11 @@ h2o_automl_params:
 modeling_params:
   task_type: 'classification'
   target_col: 'target'
+  # fitted_registry_v2: require v2 fitted_registry on read
+  # (data_prep apply node). Operator sets the same bool
+  # under scoring_params in platform.yml in the same
+  # change (both-flags); default false = dual-read v1+v2.
+  fitted_registry_v2: false
   feature_cols: null
   models_to_use:
     - 'h2o_automl'
@@ -100,9 +105,31 @@ modeling_params:
     method: 'stratified'
     test_size: 0.2
     stratify_col: 'target'
+    time_col: null
+    embargo: 0
+    purge: null
+    n_splits: 3
+    window: 'expanding'
   calibration:
     method: 'betacal'
     cv: 5
+    allow_temporal: false
+  purged_cv:
+    n_splits: 3
+    test_size: 0.2
+    embargo: 0
+    purge: null
+    window: 'expanding'
+    min_train_rows: 1
+  backtest:
+    n_splits: 3
+    test_size: 0.2
+    embargo: 0
+    purge: null
+    window: 'expanding'
+    target_col: 'target'
+    task_type: 'classification'
+    feature_cols: null
   model_handle: 'xgboost.XGBClassifier'
   calibration_handle: 'sklearn.calibration.CalibratedClassifierCV'
   tuning_handle: 'sklearn.model_selection.GridSearchCV'

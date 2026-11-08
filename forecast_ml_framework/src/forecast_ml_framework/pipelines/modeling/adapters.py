@@ -9,6 +9,10 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  model_classes,
+  wrap_envelope,
+)
 from forecast_ml_framework.pipelines.modeling.ntile import (
   normalize_task_kind,
 )
@@ -1027,7 +1031,11 @@ def train_models(x_train, y_train, x_test, y_test, params):
     params: modeling_params dict (see pipeline header).
 
   Returns:
-    Tuple of (best fitted adapter, per-model metrics, best name).
+    Tuple of (best_model envelope dict, per-model metrics,
+    best name). The envelope holds the best adapter's raw
+    estimator (``adapter.model``) with ``label_set`` from
+    ``model_classes`` plus ``registry_ref``/``onnx_sidecar``
+    from params; it round-trips via ``restricted_loads``.
   '''
   # pylint: disable=unused-argument
   task = normalize_task_kind(
@@ -1045,4 +1053,21 @@ def train_models(x_train, y_train, x_test, y_test, params):
     per_model[name] = metrics
     fitted[name] = adapter
   best = _pick_best(per_model, params) or names[0]
-  return fitted[best], per_model, best
+  adapter = fitted[best]
+  classes = model_classes(adapter)
+  if task == 'classification':
+    if classes is None:
+      raise ValueError(
+        'classification model has no classes_: cannot '
+        'build a best_model envelope without label_set '
+        '(fail loud, never emit label_set=None)')
+    label_set = [str(c) for c in classes]
+  else:
+    label_set = None
+  raw_model = getattr(adapter, 'model', adapter)
+  envelope = wrap_envelope(
+      raw_model, label_set,
+      registry_ref=params.get('registry_ref'),
+      onnx_sidecar=params.get('onnx_sidecar'),
+      task_type=task)
+  return envelope, per_model, best

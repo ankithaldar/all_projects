@@ -52,14 +52,16 @@ uv build --wheel --project "${PROJECT_DIR}" --out-dir "${WHEEL_CHECK_DIR}"
 python3 -c 'import sys, zipfile; names=zipfile.ZipFile(sys.argv[1]).namelist(); assert "forecast_ml_framework/conf/base/catalog.yml" in names, [n for n in names if "catalog" in n]; print("wheel namelist ok: forecast_ml_framework/conf/base/catalog.yml")' "${WHEEL_CHECK_DIR}"/*.whl
 rm -rf "${WHEEL_CHECK_DIR}"
 
-echo "==> terraform fmt + validate (both stacks) <=="
+echo "==> terraform fmt + validate (all stacks: aws + gcp + azure) <=="
 TF_ABSENT=0
 if command -v terraform >/dev/null 2>&1; then
   terraform fmt -check -recursive "${PROJECT_DIR}/infra"
   # init -backend=false needs no credentials and no state: it
   # resolves providers against the committed .terraform.lock.hcl,
   # so an out-of-date lock file fails here, not at apply time.
-  for stack in aws gcp; do
+  # azure parity (P2-I1): same init/validate gate as aws + gcp —
+  # ONE loop over all three stacks, no per-stack divergence.
+  for stack in aws gcp azure; do
     echo "--- terraform init -backend=false + validate: infra/${stack} ---"
     (cd "${PROJECT_DIR}/infra/${stack}" \
       && terraform init -backend=false -input=false \
@@ -73,8 +75,9 @@ else
   echo "=================================================================="
   echo "WARNING: terraform binary NOT FOUND -- fmt/validate SKIPPED."
   echo "WARNING: infrastructure was NOT validated locally. Install"
-  echo "WARNING: terraform (>= 1.3) to validate infra/aws + infra/gcp,"
-  echo "WARNING: or rely on CI (forecast-ml-ci.yml terraform job)."
+  echo "WARNING: terraform (>= 1.3) to validate infra/aws + infra/gcp +"
+  echo "WARNING: infra/azure, or rely on CI (forecast-ml-ci.yml"
+  echo "WARNING: terraform-validate job, matrix gcp/aws/azure)."
   echo "=================================================================="
 fi
 

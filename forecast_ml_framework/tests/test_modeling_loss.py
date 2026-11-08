@@ -19,6 +19,9 @@ from forecast_ml_framework.pipelines.modeling.adapters import (
   get_loss,
   train_models,
 )
+from forecast_ml_framework.pipelines.modeling.envelope import (
+  unwrap_envelope,
+)
 
 
 def _data():
@@ -232,9 +235,12 @@ def test_train_models_top_level_loss_function():
         'sklearn': {'model_type': 'gradient_boosting_regressor'},
     },
   }
-  model, _, best = train_models(x, y, x, y, params)
+  envelope, _, best = train_models(x, y, x, y, params)
   assert best == 'sklearn'
-  assert model.model.get_params()['loss'] == 'absolute_error'
+  assert set(envelope) == {
+    'model', 'label_set', 'registry_ref', 'onnx_sidecar'}
+  assert unwrap_envelope(envelope).get_params()['loss'] == (
+    'absolute_error')
 
 
 # --- cycle3 loss audit (RED) ---
