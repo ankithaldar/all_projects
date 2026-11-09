@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Tests for the curriculum mapping and model-description helpers.'''
 
-from world_of_supply.rl.training import (
-    CURRICULUM_ATTR,
-    apply_curriculum,
-    make_policy_mapping_fn,
-)
+from world_of_supply.rl.training import apply_curriculum
+from world_of_supply.rl.training import make_policy_mapping_fn
 
 
 def test_toy_only_mapping_starts_frozen_elsewhere():
+  '''Verify toy-only mapping starts frozen outside toy factories.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   mapping, state = make_policy_mapping_fn(train_toy_factories_only=True)
   assert mapping('ToyFactoryCell_3p') == 'ppo_producer'
   assert mapping('ToyFactoryCell_3c') == 'ppo_consumer'
@@ -19,16 +22,27 @@ def test_toy_only_mapping_starts_frozen_elsewhere():
 
 
 def test_default_mapping_trains_everything():
+  '''Verify default mapping trains every facility type.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   mapping, state = make_policy_mapping_fn(train_toy_factories_only=False)
   assert mapping('SteelFactoryCell_1p') == 'ppo_producer'
   assert state['all_trainable'] is True
 
 
 def test_curriculum_promotes_prefixes_at_thresholds():
-  mapping, state = make_policy_mapping_fn(train_toy_factories_only=True)
+  '''Verify curriculum promotes prefixes once thresholds pass.
 
+  Returns:
+    None: Test completes without assertion failure.
+  '''
+  mapping, state = make_policy_mapping_fn(train_toy_factories_only=True)
   assert mapping('WarehouseCell_6p') == 'frozen_producer'
-  promoted = apply_curriculum(state, iteration=2, n_iterations=8, schedule=((0.25, 'WarehouseCell'),))
+  schedule = ((0.25, 'WarehouseCell'),)
+  promoted = apply_curriculum(state, iteration=2, n_iterations=8,
+                              schedule=schedule)
   assert promoted == {'ToyFactoryCell', 'WarehouseCell'}
   assert mapping('WarehouseCell_6p') == 'ppo_producer'
   assert mapping('WarehouseCell_6c') == 'ppo_consumer'
@@ -36,6 +50,11 @@ def test_curriculum_promotes_prefixes_at_thresholds():
 
 
 def test_apply_curriculum_is_idempotent():
+  '''Verify repeated curriculum calls keep promoted prefixes stable.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   _, state = make_policy_mapping_fn(train_toy_factories_only=True)
   schedule = ((0.25, 'WarehouseCell'), (0.35, 'WarehouseCell'))
   apply_curriculum(state, iteration=3, n_iterations=10, schedule=schedule)

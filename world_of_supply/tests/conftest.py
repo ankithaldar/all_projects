@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''Pytest bootstrap: make the src layout importable without installation.'''
+
+'''Pytest bootstrap: make the src layout importable without install.'''
 
 import sys
 from pathlib import Path

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''Tests for scripted RL-level heuristics and rendering components.'''
+
+'''Tests for scripted RL-level heuristics and rendering parts.'''
 
 import pytest
 
@@ -11,10 +12,23 @@ from world_of_supply.rl.env import EnvConfig, WorldOfSupplyEnv
 
 @pytest.fixture(scope='module')
 def env():
+  '''Build the shared module-scoped RL environment.
+
+  Returns:
+    WorldOfSupplyEnv: Environment with duration 200.
+  '''
   return WorldOfSupplyEnv(EnvConfig(episode_duration=200))
 
 
 def test_scripted_actions_respect_action_space_bounds(env):
+  '''Verify scripted actions stay inside every action space.
+
+  Args:
+    env: Shared RL environment fixture.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   env.reset(seed=0)
   actions = env.scripted_actions(seed=0)
   assert set(actions) == set(env.agent_ids)
@@ -25,19 +39,36 @@ def test_scripted_actions_respect_action_space_bounds(env):
 
 
 def test_scripted_episode_runs_to_horizon(env):
+  '''Verify scripted episode runs exactly to its time horizon.
+
+  Args:
+    env: Shared RL environment fixture.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   env.reset(seed=3)
   done = False
   steps = 0
   while not done:
-    _, rewards, terminated, truncated, _ = env.step(env.scripted_actions(seed=5))
+    actions = env.scripted_actions(seed=5)
+    _, rewards, terminated, truncated, _ = env.step(actions)
     done = truncated.get('__all__', False) or terminated.get('__all__', False)
     steps += 1
     assert steps <= 25
-  expected_steps = env.config.episode_duration // env.config.downsampling_rate
-  assert steps == expected_steps
+  expected = env.config.episode_duration // env.config.downsampling_rate
+  assert steps == expected
 
 
 def test_status_formatter_emits_all_sections(env):
+  '''Verify status formatter emits early facility identifiers.
+
+  Args:
+    env: Shared RL environment fixture.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   from world_of_supply.rendering.status import WorldStatusFormatter
 
   env.reset(seed=0)
@@ -49,6 +80,11 @@ def test_status_formatter_emits_all_sections(env):
 
 
 def test_railroad_sprite_picks_crossing_glyph():
+  '''Verify railroad sprite picks the crossing glyph in a grid.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   from world_of_supply.rendering.sprites import railroad_glyph
 
   grid_neighbors = {
@@ -61,22 +97,29 @@ def test_railroad_sprite_picks_crossing_glyph():
 
 
 def test_truck_status_uses_legacy_words(env):
+  '''Verify truck status formatter uses legacy wording.
+
+  Args:
+    env: Shared RL environment fixture.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
+  from world_of_supply.facility import ToyFactoryCell, WarehouseCell
   from world_of_supply.rendering.status import WorldStatusFormatter
 
   env.reset(seed=0)
   formatter = WorldStatusFormatter()
-  toy_factory = [f for f in env.world.facilities.values() if f.__class__.__name__ == 'ToyFactoryCell'][0]
+  toy_factory = env.world.get_facilities(ToyFactoryCell)[0]
   truck = toy_factory.distribution.fleet[0]
   assert formatter.status(truck) == 'IDLE'
-
-  destination = [f for f in env.world.facilities.values() if f.__class__.__name__ == 'WarehouseCell'][0]
+  destination = env.world.get_facilities(WarehouseCell)[0]
   truck.schedule(env.world, destination, 'toy_car', 3)
   truck.payload = 3
   for _ in range(truck.path_len()):
     truck.act()
   line = formatter.status(truck)
   assert line.startswith('BACK ') and line.endswith('-> home')
-
   truck.step = -1
   truck.location_pointer = truck.path_len() - 1
   truck.payload = 3
@@ -86,6 +129,14 @@ def test_truck_status_uses_legacy_words(env):
 
 
 def test_ascii_renderer_produces_image(env):
+  '''Verify ASCII renderer produces a non-empty PIL image.
+
+  Args:
+    env: Shared RL environment fixture.
+
+  Returns:
+    None: Test completes without assertion failure.
+  '''
   pillow = pytest.importorskip('PIL')
   from world_of_supply.rendering.renderer import AsciiWorldRenderer
 
