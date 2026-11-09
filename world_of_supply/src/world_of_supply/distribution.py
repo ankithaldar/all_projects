@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''Distribution units: order queues plus truck fleets that fulfill them.'''
+
+'''Distribution units: order queues plus truck fleets.'''
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ class Order:
   '''A purchase order placed by some consumer facility.
 
   Attributes:
-    destination: Facility that placed the order and will receive goods.
+    destination: Facility that placed the order.
     product_id: Requested product.
     quantity: Requested number of units.
     unit_price: Price locked in at placement time.
@@ -35,15 +36,15 @@ class Order:
 
 @dataclass
 class DistributionEconomy:
-  '''Commercial parameters and statistics of a distribution unit.
+  '''Commercial parameters and statistics of distribution.
 
   Attributes:
     unit_price: Price charged per shipped unit.
-    wrong_order_penalty: Penalty per unit for orders of a foreign product.
-    pending_order_penalty: Penalty per still-queued order per tick.
+    wrong_order_penalty: Penalty per unit for foreign products.
+    pending_order_penalty: Fee per queued order per tick.
     order_checkin: Revenue accumulator flushed once per act.
-    total_wrong_order_penalties: Lifetime wrong-order penalty total.
-    total_pending_order_penalties: Lifetime pending-order penalty total.
+    total_wrong_order_penalties: Lifetime wrong-order total.
+    total_pending_order_penalties: Lifetime pending-order total.
   '''
 
   unit_price: int = 0
@@ -68,9 +69,9 @@ class DistributionEconomy:
 class DistributionUnit(Agent):
   '''Runs the outbound logistics of a facility.
 
-  Orders arrive via :meth:`place_order`, sit in a FIFO queue, and are picked
-  up by idle trucks one at a time. Every queued order costs a pending fee per
-  tick; orders for products the facility does not produce are penalized.
+  Orders arrive via :meth:`place_order`, sit in a FIFO queue, and
+  are picked up by idle trucks. Every queued order costs a fee;
+  foreign-product orders are penalized.
 
   Attributes:
     facility: Owning facility.
@@ -93,24 +94,29 @@ class DistributionUnit(Agent):
       fleet_size: Number of trucks.
       economy: Commercial parameters.
       transport_economy: Per-truck freight-cost parameters.
+
+    Returns:
+      None: The unit is mutated in place.
     '''
     self.facility = facility
-    self.fleet = [Transport(facility, transport_economy) for _ in range(fleet_size)]
+    self.fleet = [
+        Transport(facility, transport_economy)
+        for _ in range(fleet_size)
+    ]
     self.order_queue: deque[Order] = deque()
     self.economy = economy
 
   def place_order(self, order: Order) -> int:
     '''Register an incoming order and return the buyer payment.
 
-    Valid orders join the queue and generate immediate revenue (the buyer
-    pre-pays). Orders for a product this facility does not produce incur a
-    penalty which is tracked in the statistics but not booked as revenue.
+    Valid orders join the queue and generate immediate revenue.
+    Foreign-product orders incur a tracked penalty.
 
     Args:
       order: The incoming order.
 
     Returns:
-      int: Positive amount the buyer has to pay. Zero when the order is empty.
+      int: Positive amount the buyer has to pay.
     '''
     if order.quantity <= 0:
       return 0
@@ -124,27 +130,33 @@ class DistributionUnit(Agent):
     self.economy.order_checkin += payment
     return payment
 
-  def act(self, control: 'FacilityControl | None') -> BalanceSheet:
-    '''Dispatch trucks, apply penalties, and flush booked revenue.
+  def act(
+      self,
+      control: 'FacilityControl | None' = None,
+  ) -> BalanceSheet:
+    '''Dispatch trucks, apply penalties, and flush revenue.
 
     Args:
-      control: Carries ``unit_price`` updates; ``None`` keeps the price.
+      control: Carries ``unit_price`` updates; None keeps the price.
 
     Returns:
       BalanceSheet: Revenue minus pending fees and freight costs.
     '''
     if control is not None and control.unit_price is not None:
       self.economy.unit_price = control.unit_price
-
     sheets = BalanceSheet()
     for truck in self.fleet:
       if len(self.order_queue) > 0 and not truck.is_enroute():
         order = self.order_queue.popleft()
-        truck.schedule(self.facility.world, order.destination, order.product_id, order.quantity)
+        truck.schedule(
+            self.facility.world,
+            order.destination,
+            order.product_id,
+            order.quantity,
+        )
       sheets += truck.act()
-
-    pending_penalty = self.economy.pending_order_penalty * len(self.order_queue)
-    self.economy.total_pending_order_penalties -= pending_penalty
+    pending = self.economy.pending_order_penalty * len(self.order_queue)
+    self.economy.total_pending_order_penalties -= pending
     revenue = self.economy.order_checkin
     self.economy.order_checkin = 0
-    return BalanceSheet(revenue, -pending_penalty) + sheets
+    return BalanceSheet(revenue, -pending) + sheets

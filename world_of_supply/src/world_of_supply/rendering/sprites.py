@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Railroad sprite selection for text renderers.
 
 Picks a box-drawing character for each railroad cell based on which
-neighbors are also railroads (e.g. ═ for horizontal runs, ╬ for crossings).
+neighbors are also railroads (e.g. ═ for horizontal runs, ╬ for
+crossings).
 '''
 
 from __future__ import annotations
@@ -25,13 +27,18 @@ _SPRITE_TABLE = {
 }
 
 
-def railroad_glyph(x: int, y: int, is_railroad: Callable[[int, int], bool]) -> str:
+def railroad_glyph(
+    x: int,
+    y: int,
+    is_railroad: Callable[[int, int], bool],
+) -> str:
   '''Select the box-drawing glyph for one railroad cell.
 
   Args:
     x: Cell x position.
     y: Cell y position.
-    is_railroad: Predicate telling whether a neighbor cell is railroad.
+    is_railroad: Predicate telling whether a neighbor cell is
+      railroad.
 
   Returns:
     str: Box-drawing character; empty string for isolated cells.

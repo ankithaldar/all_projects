@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''RLlib RLModule wrappers around :class:`FacilityNet` (new API stack).'''
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ def make_multi_categorical_cls(branch_sizes: list[int]):
   )
 
   class BoundMultiCategorical(TorchMultiCategorical):
+    '''MultiCategorical distribution bound to fixed branch sizes.
+
+    Attributes:
+      None: Branch sizes are bound by the factory closure.
+    '''
 
     @classmethod
     def from_logits(cls, logits, input_lens=None, temperatures=None, **kwargs):
@@ -53,8 +59,13 @@ def make_multi_categorical_cls(branch_sizes: list[int]):
       Returns:
         TorchMultiCategorical: Ready-to-sample distribution.
       '''
-      resolved = input_lens if input_lens is not None else list(branch_sizes)
-      return super().from_logits(logits, resolved, temperatures=temperatures, **kwargs)
+      if input_lens is not None:
+        resolved = input_lens
+      else:
+        resolved = list(branch_sizes)
+      return super().from_logits(
+          logits, resolved, temperatures=temperatures, **kwargs
+      )
 
   return BoundMultiCategorical
 
@@ -86,22 +97,34 @@ if HAS_RAY_RLMODULES:
     Produces ``action_dist_inputs`` (concatenated MultiDiscrete logits) for
     all forward modes, ``vf_preds`` for training, and implements
     :class:`ValueFunctionAPI` so RLLib's GAE connector can query values.
+
+    Attributes:
+      net: FacilityNet policy/value network.
+      action_dist_cls: Bound distribution class for action sampling.
     '''
 
     def setup(self) -> None:
-      '''Build the underlying FacilityNet from the module configuration.'''
+      '''Build the underlying FacilityNet from the module configuration.
+
+      Returns:
+        None: Network is stored on the module.
+      '''
       super().setup()
       config = _module_config(self)
       obs_space = self._obs_space()
       action_space = self._action_space()
       nvec = list(getattr(action_space, 'nvec', []))
+      use_lstm = bool(config.get('use_lstm', False))
+      hidden_layers = int(config.get('hidden_layers', 1))
+      hidden_size = int(config.get('hidden_size', 256))
+      lstm_cell_size = int(config.get('lstm_cell_size', 64))
       self.net = FacilityNet(
           obs_dim=int(obs_space.shape[0]),
           action_nvec=nvec,
-          hidden_size=int(config.get('hidden_size', 256)),
-          hidden_layers=int(config.get('hidden_layers', 1)),
-          lstm_cell_size=int(config.get('lstm_cell_size', 64)),
-          use_lstm=bool(config.get('use_lstm', False)),
+          hidden_size=hidden_size,
+          hidden_layers=hidden_layers,
+          lstm_cell_size=lstm_cell_size,
+          use_lstm=use_lstm,
       )
       self.action_dist_cls = make_multi_categorical_cls(nvec)
 
@@ -141,9 +164,18 @@ if HAS_RAY_RLMODULES:
       if self.net.use_lstm:
         raw_state = batch.get(Columns.STATE_IN)
         if raw_state is not None:
-          state = [torch.as_tensor(np.asarray(part), dtype=torch.float32) for part in raw_state]
+          state = [
+              torch.as_tensor(
+                  np.asarray(part), dtype=torch.float32
+              )
+              for part in raw_state
+          ]
       logits, values, _ = self.net(tensor, state)
-      return {_ACTION_DIST_INPUTS_KEY: logits, _VF_PREDS_KEY: values}
+      output = {
+          _ACTION_DIST_INPUTS_KEY: logits,
+          _VF_PREDS_KEY: values,
+      }
+      return output
 
     def forward_inference(self, batch: dict, **kwargs) -> dict:
       '''Compute inference outputs (no value head required).
@@ -155,7 +187,8 @@ if HAS_RAY_RLMODULES:
       Returns:
         dict: Action-distribution inputs only.
       '''
-      return {_ACTION_DIST_INPUTS_KEY: self._forward(batch)[_ACTION_DIST_INPUTS_KEY]}
+      computed = self._forward(batch)
+      return {_ACTION_DIST_INPUTS_KEY: computed[_ACTION_DIST_INPUTS_KEY]}
 
     def forward_exploration(self, batch: dict, **kwargs) -> dict:
       '''Compute exploration outputs identical to inference here.
@@ -167,7 +200,8 @@ if HAS_RAY_RLMODULES:
       Returns:
         dict: Action-distribution inputs only.
       '''
-      return {_ACTION_DIST_INPUTS_KEY: self._forward(batch)[_ACTION_DIST_INPUTS_KEY]}
+      computed = self._forward(batch)
+      return {_ACTION_DIST_INPUTS_KEY: computed[_ACTION_DIST_INPUTS_KEY]}
 
     def forward_train(self, batch: dict, **kwargs) -> dict:
       '''Compute training outputs including value predictions.
@@ -195,7 +229,9 @@ if HAS_RAY_RLMODULES:
       observations = input_batch.get(Columns.OBS, None)
       if observations is None:
         observations = np.asarray(input_batch['obs'])
-      tensor = torch.as_tensor(np.asarray(observations), dtype=torch.float32)
+      tensor = torch.as_tensor(
+          np.asarray(observations), dtype=torch.float32
+      )
       _, values, _ = self.net(tensor)
       return values
 

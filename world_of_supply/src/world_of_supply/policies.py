@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Hand-coded facility control policies (Strategy pattern).
 
 These operate directly on :class:`World` objects and produce
-:class:`Control` dictionaries — no reinforcement-learning stack required.
-They serve as the behavioral baseline the RL agents are compared against.
+:class:`Control` dictionaries — no reinforcement-learning stack
+is required. They serve as the behavioral baseline the RL
+agents are compared against.
 '''
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from typing import Protocol
 
 from world_of_supply.facility import (
     FacilityCell,
-    FacilityConfig,
     FacilityControl,
     RawMaterialsFactoryCell,
     RetailerCell,
@@ -34,7 +35,11 @@ _ORDER_QUANTITY = 8
 
 
 class ControlPolicy(Protocol):
-  '''Anything that can translate a world state into per-facility controls.'''
+  '''Anything translating world state into per-facility controls.
+
+  Attributes:
+    None: Policy holds no per-facility state by contract.
+  '''
 
   def compute_control(self, world: World) -> Control:
     '''Produce controls for all facilities of a world.
@@ -44,16 +49,22 @@ class ControlPolicy(Protocol):
 
     Returns:
       Control: Controls keyed by facility id.
+
+    Raises:
+      NotImplementedError: Policies must implement this method.
     '''
-    ...
+    raise NotImplementedError
 
 
 class ScriptedSupplyChainPolicy:
-  '''Heuristic baseline mirroring the legacy ``SimpleControlPolicy``.
+  '''Heuristic baseline mirroring the legacy SimpleControlPolicy.
 
-  Sets class-specific fixed prices, keeps production at a moderate rate,
-  and reorders the least-stocked BOM input from a random exporting source
-  while the facility is solvent and has storage head-room.
+  Sets class-specific fixed prices, keeps production at a moderate
+  rate, and reorders the least-stocked BOM input from a random
+  exporting source while solvent and with storage head-room.
+
+  Attributes:
+    None: Random state is private (``_rng``).
   '''
 
   def __init__(self, seed: int | None = None) -> None:
@@ -61,6 +72,9 @@ class ScriptedSupplyChainPolicy:
 
     Args:
       seed: Optional seed for reproducible supplier choices.
+
+    Returns:
+      None: The policy is mutated in place.
     '''
     self._rng = random.Random(seed)
 
@@ -71,18 +85,19 @@ class ScriptedSupplyChainPolicy:
       world: Current world snapshot.
 
     Returns:
-      Control: One :class:`FacilityControl` per facility id.
+      Control: One FacilityControl per facility id.
     '''
     controls: dict[str, FacilityControl] = {}
     for facility in world.facilities.values():
       price = self._price_for(facility)
       product_id, source_id = self._select_source(facility)
+      quantity = _ORDER_QUANTITY if product_id is not None else 0
       controls[facility.id] = FacilityControl(
           unit_price=price,
           production_rate=_PRODUCTION_RATE,
           consumer_product_id=product_id,
           consumer_source_id=source_id,
-          consumer_quantity=_ORDER_QUANTITY if product_id is not None else 0,
+          consumer_quantity=quantity,
       )
     return Control(controls)
 
@@ -100,50 +115,55 @@ class ScriptedSupplyChainPolicy:
         return _DEFAULT_PRICES[clazz]
     return 0
 
-  def _select_source(self, facility: FacilityCell) -> tuple[str | None, int | None]:
+  def _select_source(
+      self, facility: FacilityCell,
+  ) -> tuple[str | None, int | None]:
     '''Pick product and supplier to reorder from, if any.
 
     Stops ordering when out of money or when booked inventory
-    (stock plus open orders) exceeds capacity. Otherwise orders the input
-    with the lowest fulfillment ratio.
+    exceeds capacity. Otherwise orders the lowest-fulfilled input.
 
     Args:
       facility: Ordering facility.
 
     Returns:
-      tuple[str | None, int | None]: Product id and supplier index, or
-      ``(None, None)`` when no order should be placed.
+      tuple[str | None, int | None]: Product id and supplier index,
+        or ``(None, None)`` when no order should be placed.
     '''
-    if facility.consumer is None or not facility.economy.total_balance.total() > 0:
+    consumer = facility.consumer
+    if consumer is None or not facility.economy.total_balance.total() > 0:
       return (None, None)
-
     inputs = dict(facility.bom.inputs)
     open_orders: dict[str, int] = {}
-    for counter in facility.consumer.open_orders.values():
+    for counter in consumer.open_orders.values():
       for product_id, quantity in counter.items():
-        open_orders[product_id] = open_orders.get(product_id, 0) + quantity
-
+        prior = open_orders.get(product_id, 0)
+        open_orders[product_id] = prior + quantity
     assert facility.storage is not None
-    booked_total = facility.storage.used_capacity() + sum(open_orders.values())
-    if booked_total > facility.storage.max_capacity:
+    storage = facility.storage
+    used = storage.used_capacity()
+    booked_total = used + sum(open_orders.values())
+    if booked_total > storage.max_capacity:
       return (None, None)
-
     most_needed_product: str | None = None
     min_ratio = float('inf')
     for product_id, required in inputs.items():
-      booked = open_orders.get(product_id, 0) + facility.storage.stock_levels.get(product_id, 0)
+      booked = open_orders.get(product_id, 0)
+      booked += storage.stock_levels.get(product_id, 0)
       ratio = booked / required
       if ratio < min_ratio:
         min_ratio = ratio
         most_needed_product = product_id
-
     exporters = self.find_exporting_sources(facility, most_needed_product)
     if not exporters:
       return (None, None)
     return (most_needed_product, self._rng.choice(exporters))
 
   @staticmethod
-  def find_exporting_sources(facility: FacilityCell, product_id: str | None) -> list[int]:
+  def find_exporting_sources(
+      facility: FacilityCell,
+      product_id: str | None,
+  ) -> list[int]:
     '''List indices of sources that output the requested product.
 
     Args:
@@ -155,8 +175,8 @@ class ScriptedSupplyChainPolicy:
     '''
     if product_id is None or facility.consumer is None:
       return []
-    return [
-        index
-        for index, source in enumerate(facility.consumer.sources)
-        if source.bom.output_product_id == product_id
-    ]
+    exporters = []
+    for index, source in enumerate(facility.consumer.sources):
+      if source.bom.output_product_id == product_id:
+        exporters.append(index)
+    return exporters

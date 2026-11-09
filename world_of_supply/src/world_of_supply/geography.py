@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Grid geography: terrain, railroads, and the cell base class.'''
 
 from __future__ import annotations
@@ -21,18 +22,35 @@ class Cell(ABC):
     Args:
       x: Horizontal position.
       y: Vertical position.
+
+    Returns:
+      None: The cell is mutated in place.
     '''
     self.x = x
     self.y = y
 
   def __repr__(self) -> str:
-    '''Render as ``ClassName (x, y)``.'''
+    '''Render as ``ClassName (x, y)``.
+
+    Returns:
+      str: Human-readable cell description.
+    '''
     return f'{self.__class__.__name__} ({self.x}, {self.y})'
 
 
 class TerrainCell(Cell):
-  '''Impassable filler making up the default background of the map.'''
+  '''Impassable filler making up the default background.
+
+  Attributes:
+    x: Horizontal grid position inherited from :class:`Cell`.
+    y: Vertical grid position inherited from :class:`Cell`.
+  '''
 
 
 class RailroadCell(Cell):
-  '''Traversable road segment used by transport vehicles.'''
+  '''Traversable road segment used by transport vehicles.
+
+  Attributes:
+    x: Horizontal grid position inherited from :class:`Cell`.
+    y: Vertical grid position inherited from :class:`Cell`.
+  '''

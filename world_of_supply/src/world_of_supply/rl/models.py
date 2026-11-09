@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''PyTorch policy/value network for facility agents.
 
 This is the direct PyTorch port of the legacy TensorFlow ``FacilityNet``
@@ -62,6 +63,9 @@ class FacilityNet(nn.Module):
       hidden_layers: Number of Linear+ReLU layers before the heads.
       lstm_cell_size: Hidden size of the optional LSTM.
       use_lstm: Enable the recurrent layer.
+
+    Returns:
+      None: The network is mutated in place.
     '''
     super().__init__()
     self.use_lstm = use_lstm
@@ -117,7 +121,10 @@ class FacilityNet(nn.Module):
       if observations.dim() == 2:
         observations = observations.unsqueeze(1)
       if state is not None:
-        state = [_normalize_lstm_state(part, observations.shape[0]) for part in state]
+        batch_size = observations.shape[0]
+        state = [
+            _normalize_lstm_state(part, batch_size) for part in state
+        ]
       else:
         state = self.initial_state(observations.shape[0])
       features, (h, c) = self.lstm(self.trunk(observations), tuple(state))

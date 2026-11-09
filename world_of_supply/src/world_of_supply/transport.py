@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Transport vehicles moving products along railroad paths.
 
-A :class:`Transport` cycles through load → move → unload → return. Its state
-machine is driven by two integers: ``step`` (+1 outbound, -1 returning,
-0 idle) and ``location_pointer`` (index into the precomputed path).
+A :class:`Transport` cycles through load, move, unload, return.
+Its state machine is driven by two integers: ``step`` (+1 outbound,
+-1 returning, 0 idle) and ``location_pointer`` (path index).
 '''
 
 from __future__ import annotations
@@ -17,12 +18,12 @@ from world_of_supply.base import Agent
 from world_of_supply.economy import BalanceSheet
 
 if TYPE_CHECKING:
-  from world_of_supply.facility import FacilityCell
+  from world_of_supply.facility import FacilityCell, FacilityControl
   from world_of_supply.world import World
 
 
 class TransportState(Enum):
-  '''High-level state of a vehicle, derived from the low-level pointers.
+  '''High-level state of a vehicle, derived from low-level pointers.
 
   Attributes:
     IDLE: Parked at home with no assignment.
@@ -44,7 +45,7 @@ class TransportEconomy:
   '''Cost parameters of a vehicle.
 
   Attributes:
-    unit_transport_cost: Cost of moving one payload unit one cell.
+    unit_transport_cost: Cost of moving one unit one cell.
   '''
 
   unit_transport_cost: int = 1
@@ -54,7 +55,7 @@ class TransportEconomy:
 
     Args:
       payload: Units currently carried.
-      step: Movement direction magnitude (+1/-1 moving, 0 stationary).
+      step: Movement magnitude (+1/-1 moving, 0 stationary).
 
     Returns:
       BalanceSheet: Loss proportional to payload and distance.
@@ -71,18 +72,25 @@ class Transport(Agent):
     destination: Delivery target facility, or ``None`` when idle.
     product_id: Product carried on the current assignment.
     requested_quantity: Quantity requested when scheduled.
-    path: Precomputed coordinate sequence from source to destination.
+    path: Precomputed route from source to destination.
     location_pointer: Current index into ``path``.
     step: Direction flag (+1 outbound, -1 returning, 0 idle).
     payload: Units currently loaded.
   '''
 
-  def __init__(self, source: 'FacilityCell', economy: TransportEconomy) -> None:
+  def __init__(
+      self,
+      source: 'FacilityCell',
+      economy: TransportEconomy,
+  ) -> None:
     '''Create an idle truck at its home facility.
 
     Args:
       source: Home facility.
       economy: Freight-cost parameters.
+
+    Returns:
+      None: The truck is mutated in place.
     '''
     self.source = source
     self.economy = economy
@@ -96,11 +104,16 @@ class Transport(Agent):
 
   @property
   def state(self) -> TransportState:
-    '''Derive the high-level state from movement pointers.'''
+    '''Derive the high-level state from movement pointers.
+
+    Returns:
+      TransportState: Current high-level vehicle state.
+    '''
     if self.destination is None:
       return TransportState.IDLE
     at_origin = self.location_pointer == 0
-    at_goal = self.path is not None and self.location_pointer == len(self.path) - 1
+    path_len = len(self.path) if self.path is not None else 0
+    at_goal = self.path is not None and self.location_pointer == path_len - 1
     if self.step > 0 and at_origin and self.payload == 0:
       return TransportState.LOADING
     if self.step > 0:
@@ -124,10 +137,15 @@ class Transport(Agent):
       product_id: Product to deliver.
       quantity: Requested delivery size.
 
+    Returns:
+      None: The truck is mutated in place.
+
     Raises:
-      ValueError: If no traversable route exists to the destination.
+      ValueError: If no traversable route exists.
     '''
-    path = world.find_path((self.source.x, self.source.y), (destination.x, destination.y))
+    start = (self.source.x, self.source.y)
+    goal = (destination.x, destination.y)
+    path = world.find_path(start, goal)
     if path is None:
       raise ValueError(f'Destination {destination} is unreachable')
     self.destination = destination
@@ -147,29 +165,36 @@ class Transport(Agent):
     return len(self.path) if self.path is not None else 0
 
   def is_enroute(self) -> bool:
-    '''Return True when the truck carries an active assignment.'''
+    '''Return True when the truck carries an active assignment.
+
+    Returns:
+      bool: True when a destination is set.
+    '''
     return self.destination is not None
 
   def current_location(self) -> tuple[int, int]:
     '''Return the truck grid position.
 
     Returns:
-      tuple[int, int]: Coordinate on the path, or home position when idle.
+      tuple[int, int]: Coordinate on the path, or home when idle.
     '''
     if self.path is None:
       return (self.source.x, self.source.y)
     return self.path[self.location_pointer]
 
   def try_loading(self, quantity: int) -> bool:
-    '''Attempt to take the requested payload from the home facility.
+    '''Attempt to take the payload from the home facility.
 
     Args:
       quantity: Number of units to load.
 
     Returns:
-      bool: True when the full quantity was available and loaded.
+      bool: True when the full quantity was loaded.
     '''
-    loaded = self.source.storage.try_take_units({self.product_id: quantity})
+    assert self.source.storage is not None
+    loaded = self.source.storage.try_take_units(
+        {self.product_id: quantity},
+    )
     if loaded:
       self.payload = quantity
     return loaded
@@ -177,25 +202,35 @@ class Transport(Agent):
   def try_unloading(self) -> int:
     '''Deposit the payload into the destination storage.
 
-    Units that do not fit are lost (legacy semantics); a successful deposit
-    notifies the destination consumer so its open-order book is updated.
+    Units that do not fit are lost (legacy semantics); a successful
+    deposit notifies the destination consumer.
 
     Returns:
       int: Number of units actually delivered.
     '''
     assert self.destination is not None
-    deposited = self.destination.storage.try_add_units({self.product_id: self.payload}, all_or_nothing=False)
+    assert self.destination.storage is not None
+    payload = {self.product_id: self.payload}
+    deposited = self.destination.storage.try_add_units(
+        payload, all_or_nothing=False,
+    )
     delivered = deposited.get(self.product_id, 0)
     if delivered > 0:
-      self.destination.consumer.on_order_reception(self.source.id, self.product_id, delivered)
+      assert self.destination.consumer is not None
+      self.destination.consumer.on_order_reception(
+          self.source.id, self.product_id, delivered,
+      )
     self.payload = 0
     return delivered
 
-  def act(self, control=None) -> BalanceSheet:
+  def act(
+      self,
+      control: 'FacilityControl | None' = None,
+  ) -> BalanceSheet:
     '''Advance the load/move/unload/return cycle by one tick.
 
     Args:
-      control: Unused; accepted to satisfy the :class:`Agent` protocol.
+      control: Unused; accepted to satisfy the Agent protocol.
 
     Returns:
       BalanceSheet: Freight cost incurred during this tick.

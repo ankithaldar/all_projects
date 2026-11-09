@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Human-readable world status formatting for logs and status panels.'''
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import singledispatchmethod
 
 from world_of_supply.distribution import DistributionUnit, Order, Transport
-from world_of_supply.economy import BalanceSheet
 from world_of_supply.facility import FacilityCell
 from world_of_supply.storage import StorageUnit
 from world_of_supply.transport import TransportState
@@ -26,7 +27,8 @@ def ascii_progress_bar(done: float, limit: float, bar_length: int = 15) -> str:
     str: Bar like ``======------- 6/15``.
   '''
   done_chars = round(min(done, limit) / limit * bar_length) if limit else 0
-  return '=' * done_chars + '-' * (bar_length - done_chars) + f' {done}/{limit}'
+  bar = '=' * done_chars + '-' * (bar_length - done_chars)
+  return f'{bar} {done}/{limit}'
 
 
 def counter_to_dict(counter: dict) -> dict:
@@ -44,8 +46,8 @@ def counter_to_dict(counter: dict) -> dict:
 class WorldStatusFormatter:
   '''Builds nested plain-data structures describing the world state.
 
-  The output contains only strings, numbers, lists and dicts, so it can be
-  dumped as YAML/JSON or printed directly.
+  The output contains only strings, numbers, lists and dicts, so
+  it can be dumped as YAML/JSON or printed directly.
   '''
 
   @singledispatchmethod
@@ -57,6 +59,10 @@ class WorldStatusFormatter:
 
     Returns:
       list: Nested human-readable status lines.
+
+    Raises:
+      NotImplementedError: If no formatter is registered for the
+        object's type.
     '''
     raise NotImplementedError(f'No formatter registered for {type(obj)}')
 
@@ -70,14 +76,98 @@ class WorldStatusFormatter:
     Returns:
       list: Header entry plus one entry per facility.
     '''
-    status = [
-        [
-            'World:',
-            [f'Time step: {world.time_step}', f'Global balance: {world.economy.global_balance()}'],
-        ]
-    ]
-    status.extend(self.status(facility) for facility in world.facilities.values())
+    time_line = f'Time step: {world.time_step}'
+    balance_line = f'Global balance: {world.economy.global_balance()}'
+    status = [['World:', [time_line, balance_line]]]
+    facilities = world.facilities.values()
+    status.extend(self.status(facility) for facility in facilities)
     return status
+
+  def _distribution_status(self, facility: FacilityCell) -> list:
+    '''Build the distribution section for one facility.
+
+    Args:
+      facility: Facility snapshot.
+
+    Returns:
+      list: Fleet, inbound-order, price, and penalty lines; empty
+        when the facility has no distribution unit.
+    '''
+    if not isinstance(facility.distribution, DistributionUnit):
+      return []
+    fleet = [self._fleet_line(truck) for truck in facility.distribution.fleet]
+    orders = [
+        self._order_line(order)
+        for order in facility.distribution.order_queue
+    ]
+    economy = facility.distribution.economy
+    price_line = f'Current unit price: ${economy.unit_price}'
+    penalties = (
+        f'wrong orders {economy.total_wrong_order_penalties}, '
+        f'pending orders {economy.total_pending_order_penalties}'
+    )
+    return [
+        ['Fleet:', fleet],
+        ['Inbound orders:', orders],
+        [price_line],
+        ['Penalties:', penalties],
+    ]
+
+  def _consumer_status(self, facility: FacilityCell) -> list:
+    '''Build the consumer section for one facility.
+
+    Args:
+      facility: Facility snapshot.
+
+    Returns:
+      list: Outbound-order and purchase/receipt totals; empty when
+        the facility has no consumer unit.
+    '''
+    if facility.consumer is None:
+      return []
+    outbound = [
+        f'{src}: {counter_to_dict(dict(book))}'
+        for src, book in facility.consumer.open_orders.items()
+    ]
+    economy = facility.consumer.economy
+    return [
+        ['Outbound orders:', outbound],
+        [f'Total units purchased: {economy.total_units_purchased}'],
+        [f'Total units received: {economy.total_units_received}'],
+    ]
+
+  def _seller_status(self, facility: FacilityCell) -> list:
+    '''Build the seller section for one facility.
+
+    Args:
+      facility: Facility snapshot.
+
+    Returns:
+      list: Price, demand, and units-sold lines; empty when the
+        facility has no seller unit.
+    '''
+    if facility.seller is None:
+      return []
+    economy = facility.seller.economy
+    return [
+        [f'Current unit price: ${economy.unit_price}'],
+        [f'Current demand: {economy.market_demand(economy.unit_price)}'],
+        [f'Total units sold: {economy.total_units_sold}'],
+    ]
+
+  def _storage_status(self, facility: FacilityCell) -> list:
+    '''Build the storage section for one facility.
+
+    Args:
+      facility: Facility snapshot.
+
+    Returns:
+      list: Storage status lines, or a ``No storage`` placeholder
+        when the facility has no storage unit.
+    '''
+    if facility.storage is None:
+      return ['No storage']
+    return self.status(facility.storage)
 
   @status.register
   def _(self, facility: FacilityCell) -> list:
@@ -90,33 +180,10 @@ class WorldStatusFormatter:
       list: Identity line followed by unit sub-statuses.
     '''
     substatus: list = [f'Balance: {facility.economy.total_balance}']
-    if isinstance(facility.distribution, DistributionUnit):
-      substatus.append(
-          ['Fleet:', [self._fleet_line(truck) for truck in facility.distribution.fleet]]
-      )
-      substatus.append(
-          ['Inbound orders:', [self._order_line(order) for order in facility.distribution.order_queue]]
-      )
-      substatus.append([f'Current unit price: ${facility.distribution.economy.unit_price}'])
-      substatus.append([
-          'Penalties:',
-          (
-              f'wrong orders {facility.distribution.economy.total_wrong_order_penalties}, '
-              f'pending orders {facility.distribution.economy.total_pending_order_penalties}'
-          ),
-      ])
-    if facility.consumer is not None:
-      in_transit = sum(sum(counter.values()) for counter in facility.consumer.open_orders.values())
-      substatus.append(['Outbound orders:', [f'{src}: {counter_to_dict(dict(book))}' for src, book in facility.consumer.open_orders.items()]])
-      substatus.append([f'Total units purchased: {facility.consumer.economy.total_units_purchased}'])
-      substatus.append([f'Total units received: {facility.consumer.economy.total_units_received}'])
-    if facility.seller is not None:
-      economy = facility.seller.economy
-      substatus.append([f'Current unit price: ${economy.unit_price}'])
-      substatus.append([f'Current demand: {economy.market_demand(economy.unit_price)}'])
-      substatus.append([f'Total units sold: {economy.total_units_sold}'])
-    storage_status = self.status(facility.storage) if facility.storage is not None else ['No storage']
-    substatus.append(['Storage:', storage_status])
+    substatus.extend(self._distribution_status(facility))
+    substatus.extend(self._consumer_status(facility))
+    substatus.extend(self._seller_status(facility))
+    substatus.append(['Storage:', self._storage_status(facility)])
     return [f'{facility.id} ({facility.x}, {facility.y})', substatus]
 
   @staticmethod
@@ -129,7 +196,11 @@ class WorldStatusFormatter:
     Returns:
       str: Compact single-line description.
     '''
-    return f'{order.product_id}:{order.quantity} at ${order.unit_price} -> {order.destination.id}'
+    product = order.product_id
+    quantity = order.quantity
+    price = order.unit_price
+    destination = order.destination.id
+    return f'{product}:{quantity} at ${price} -> {destination}'
 
   def _fleet_line(self, truck: Transport) -> str:
     '''Describe one truck with its route progress bar (legacy format).
@@ -140,8 +211,114 @@ class WorldStatusFormatter:
     Returns:
       str: Status line followed by a route progress bar.
     '''
-    progress = ascii_progress_bar(truck.location_pointer, max(truck.path_len() - 1, 0), 5)
+    limit = max(truck.path_len() - 1, 0)
+    progress = ascii_progress_bar(truck.location_pointer, limit, 5)
     return f'{self.status(truck)} {progress}'
+
+  @staticmethod
+  def _transport_destination(truck: Transport) -> str:
+    '''Resolve the display destination for one truck.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: Destination facility id, or ``home`` when idle at base.
+    '''
+    if truck.destination is not None:
+      return truck.destination.id
+    return 'home'
+
+  @staticmethod
+  def _transport_cargo(truck: Transport) -> str:
+    '''Describe the cargo carried by one truck.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: ``product:payload`` cargo description.
+    '''
+    return f'{truck.product_id}:{truck.payload}'
+
+  def _idle_line(self, unused_truck: Transport) -> str:
+    '''Describe an idle truck.
+
+    Args:
+      unused_truck: Transport snapshot; unused because idle trucks
+        have no destination or cargo to report.
+
+    Returns:
+      str: ``IDLE`` line.
+    '''
+    return 'IDLE'
+
+  def _loading_line(self, truck: Transport) -> str:
+    '''Describe a loading truck.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: ``LOAD`` line with requested quantity and destination.
+    '''
+    destination = self._transport_destination(truck)
+    product = truck.product_id
+    quantity = truck.requested_quantity
+    return f'LOAD {product}:{quantity} -> {destination}'
+
+  def _enroute_line(self, truck: Transport) -> str:
+    '''Describe an en-route truck.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: ``MOVE`` line with cargo and destination.
+    '''
+    destination = self._transport_destination(truck)
+    cargo = self._transport_cargo(truck)
+    return f'MOVE {cargo} -> {destination}'
+
+  def _unloading_line(self, truck: Transport) -> str:
+    '''Describe an unloading truck.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: ``UNLD`` line with cargo and destination.
+    '''
+    destination = self._transport_destination(truck)
+    cargo = self._transport_cargo(truck)
+    return f'UNLD {cargo} -> {destination}'
+
+  def _returning_line(self, truck: Transport) -> str:
+    '''Describe a truck returning home.
+
+    Args:
+      truck: Transport snapshot.
+
+    Returns:
+      str: ``BACK`` line with destination and home.
+    '''
+    destination = self._transport_destination(truck)
+    return f'BACK {destination} -> home'
+
+  def _transport_formatters(self) -> dict[TransportState, Callable]:
+    '''Map each transport state to its line formatter.
+
+    Returns:
+      dict[TransportState, Callable]: State to bound formatter
+        method mapping; the returning formatter is the fallback
+        for unlisted states.
+    '''
+    return {
+        TransportState.IDLE: self._idle_line,
+        TransportState.LOADING: self._loading_line,
+        TransportState.EN_ROUTE: self._enroute_line,
+        TransportState.UNLOADING: self._unloading_line,
+    }
 
   @status.register
   def _(self, truck: Transport) -> str:
@@ -153,18 +330,9 @@ class WorldStatusFormatter:
     Returns:
       str: One of LOAD/MOVE/UNLD/BACK/IDLE lines.
     '''
-    state = truck.state
-    destination = truck.destination.id if truck.destination is not None else 'home'
-    cargo = f'{truck.product_id}:{truck.payload}'
-    if state == TransportState.IDLE:
-      return 'IDLE'
-    if state == TransportState.LOADING:
-      return f'LOAD {truck.product_id}:{truck.requested_quantity} -> {destination}'
-    if state == TransportState.EN_ROUTE:
-      return f'MOVE {cargo} -> {destination}'
-    if state == TransportState.UNLOADING:
-      return f'UNLD {cargo} -> {destination}'
-    return f'BACK {destination} -> home'
+    formatters = self._transport_formatters()
+    formatter = formatters.get(truck.state, self._returning_line)
+    return formatter(truck)
 
   @status.register
   def _(self, storage: StorageUnit) -> list:
@@ -176,8 +344,10 @@ class WorldStatusFormatter:
     Returns:
       list: Usage bar, cost line, and inventory mapping.
     '''
+    usage = ascii_progress_bar(storage.used_capacity(), storage.max_capacity)
+    cost = storage.economy.unit_storage_cost
     return [
-        f'Usage: {ascii_progress_bar(storage.used_capacity(), storage.max_capacity)}',
-        f'Storage cost/unit: {storage.economy.unit_storage_cost}',
+        f'Usage: {usage}',
+        f'Storage cost/unit: {cost}',
         f'Inventory: {counter_to_dict(storage.stock_levels)}',
     ]

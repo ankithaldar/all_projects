@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''Storage units: bounded inventories that hold product stock levels.'''
+
+'''Storage units: bounded inventories that hold product stock.'''
 
 from __future__ import annotations
 
@@ -31,13 +32,13 @@ class StorageEconomy:
       used_capacity: Number of units currently stored.
 
     Returns:
-      BalanceSheet: Loss proportional to the occupied capacity.
+      BalanceSheet: Loss proportional to occupied capacity.
     '''
     return BalanceSheet(0, -used_capacity * self.unit_storage_cost)
 
 
 class StorageUnit(Agent):
-  '''A capacity-bounded inventory mapping product ids to stock counts.
+  '''A capacity-bounded inventory mapping product ids to counts.
 
   Attributes:
     max_capacity: Maximum number of units the storage can hold.
@@ -51,6 +52,9 @@ class StorageUnit(Agent):
     Args:
       max_capacity: Maximum total number of units.
       economy: Holding-cost parameters.
+
+    Returns:
+      None: The storage is mutated in place.
     '''
     self.max_capacity = max_capacity
     self.stock_levels: dict[str, int] = {}
@@ -72,31 +76,37 @@ class StorageUnit(Agent):
     '''
     return self.max_capacity - self.used_capacity()
 
-  def try_add_units(self, product_quantities: dict[str, int], all_or_nothing: bool = True) -> dict[str, int]:
+  def try_add_units(
+      self,
+      product_quantities: dict[str, int],
+      all_or_nothing: bool = True,
+  ) -> dict[str, int]:
     '''Deposit units into storage, respecting the capacity limit.
 
     Args:
-      product_quantities: Mapping of product id to requested quantity.
-      all_or_nothing: When True, deposit only if everything fits at once;
-        otherwise deposit as much as fits, product by product.
+      product_quantities: Mapping of product id to quantity.
+      all_or_nothing: When True deposit only if all fits; else
+        deposit as much as fits, product by product.
 
     Returns:
-      dict[str, int]: Quantities actually deposited per product id.
+      dict[str, int]: Quantities actually deposited per product.
     '''
-    if all_or_nothing and self.available_capacity() < sum(product_quantities.values()):
+    total = sum(product_quantities.values())
+    if all_or_nothing and self.available_capacity() < total:
       return {}
     deposited: dict[str, int] = {}
     for product_id, quantity in product_quantities.items():
-      quantity_deposited = min(self.available_capacity(), quantity)
-      self.stock_levels[product_id] = self.stock_levels.get(product_id, 0) + quantity_deposited
-      deposited[product_id] = quantity_deposited
+      qty = min(self.available_capacity(), quantity)
+      stock = self.stock_levels.get(product_id, 0) + qty
+      self.stock_levels[product_id] = stock
+      deposited[product_id] = qty
     return deposited
 
   def try_take_units(self, product_quantities: dict[str, int]) -> bool:
-    '''Withdraw units atomically; nothing is taken unless all is available.
+    '''Withdraw units atomically; nothing unless all is available.
 
     Args:
-      product_quantities: Mapping of product id to requested quantity.
+      product_quantities: Mapping of product id to quantity.
 
     Returns:
       bool: True when the full withdrawal succeeded.
@@ -123,11 +133,14 @@ class StorageUnit(Agent):
     self.stock_levels[product_id] = available - actual
     return actual
 
-  def act(self, control: 'FacilityControl | None' = None) -> BalanceSheet:
+  def act(
+      self,
+      control: 'FacilityControl | None' = None,
+  ) -> BalanceSheet:
     '''Book holding costs for one time step.
 
     Args:
-      control: Unused; accepted to satisfy the :class:`Agent` protocol.
+      control: Unused; accepted to satisfy the Agent protocol.
 
     Returns:
       BalanceSheet: Storage cost of the current stock level.

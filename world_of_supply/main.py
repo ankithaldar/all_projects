@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Entry-point shim delegating to the package CLI.
 
-Allows running the project from a source checkout without installation by
-putting ``src`` on ``sys.path`` first.
+Allows running the project from a source checkout without
+installation by putting ``src`` on ``sys.path`` first.
 '''
 
 from __future__ import annotations

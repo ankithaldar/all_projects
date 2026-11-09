@@ -1,20 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-'''World of Supply: a multi-agent supply-chain simulation and RL sandbox.
+
+'''World of Supply: a multi-agent supply-chain RL sandbox.
 
 The package is split into focused modules:
 
 * ``economy`` / ``geography`` — money and grid primitives.
-* ``storage`` / ``manufacturing`` / ``distribution`` / ``transport`` /
-  ``consumer`` / ``seller`` — facility units.
-* ``facility`` / ``world`` / ``scenario`` — agents, step engine, builder.
+* ``storage`` / ``manufacturing`` / ``distribution`` /
+  ``transport`` / ``consumer`` / ``seller`` — facility units.
+* ``facility`` / ``world`` / ``scenario`` — agents, step engine.
 * ``policies`` — scripted control baselines.
 * ``rendering`` — ASCII/PIL visualization and status formatting.
 * ``analytics`` — experiment tracking and hardware probes.
-* ``rl`` — Gymnasium/RLLib environment, encoders, PyTorch model, training.
+* ``rl`` — Gymnasium/RLLib environment, encoders, PyTorch model.
 
-Heavy RL dependencies (Ray) are imported lazily so the pure simulation runs
-without them.
+Heavy RL dependencies (Ray) are imported lazily so the pure
+simulation runs without them.
 '''
 
 from __future__ import annotations
@@ -33,15 +34,23 @@ from world_of_supply.facility import (
     WarehouseCell,
 )
 from world_of_supply.manufacturing import BillOfMaterials
-from world_of_supply.policies import ControlPolicy, ScriptedSupplyChainPolicy
+from world_of_supply.policies import (
+    ControlPolicy,
+    ScriptedSupplyChainPolicy,
+)
 from world_of_supply.rendering.renderer import AsciiWorldRenderer
 from world_of_supply.rendering.status import WorldStatusFormatter
-from world_of_supply.scenario import PRODUCT_IDS, ScenarioConfig, WorldBuilder
+from world_of_supply.scenario import (
+    PRODUCT_IDS,
+    ScenarioConfig,
+    WorldBuilder,
+)
 from world_of_supply.world import Control, StepOutcome, World
 
 __version__ = '1.0.0'
 
 __all__ = [
+    'AsciiWorldRenderer',
     'BalanceSheet',
     'BillOfMaterials',
     'Control',
@@ -63,7 +72,6 @@ __all__ = [
     'World',
     'WorldBuilder',
     'WorldStatusFormatter',
-    'AsciiWorldRenderer',
     '__version__',
 ]
 

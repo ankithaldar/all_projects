@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Reinforcement-learning subpackage: env, encoders, models, training.
 
 Heavy dependencies (torch, ray) are imported lazily so the environment,
 encoders, and heuristics remain usable without them.
 '''
 
-from world_of_supply.rl.actions import ActionDecoder, PRICE_LEVELS, QUANTITY_LEVELS, RATE_LEVELS
+from world_of_supply.rl.actions import (
+    ActionDecoder,
+    PRICE_LEVELS,
+    QUANTITY_LEVELS,
+    RATE_LEVELS,
+)
 from world_of_supply.rl.agents import (
     consumer_agent_id,
     facility_id_of,
@@ -16,7 +22,10 @@ from world_of_supply.rl.agents import (
 )
 from world_of_supply.rl.env import EnvConfig, WorldOfSupplyEnv
 from world_of_supply.rl.observations import ObservationEncoder, normalize
-from world_of_supply.rl.rewards import RetailerProfitRewardShaper, RewardShaper
+from world_of_supply.rl.rewards import (
+    RetailerProfitRewardShaper,
+    RewardShaper,
+)
 
 __all__ = [
     'ActionDecoder',

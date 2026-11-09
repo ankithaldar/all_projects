@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Training entry points: PPO via RLLib 2.x and scripted baseline evaluation.'''
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ POLICY_MODEL_CONFIGS = {
 }
 
 
-def make_policy_mapping_fn(train_toy_factories_only: bool = False, state: dict | None = None):
+def make_policy_mapping_fn(
+    train_toy_factories_only: bool = False, state: dict | None = None
+):
   '''Create a policy-mapping function over agent ids.
 
   The mapping consults a mutable state dict so a training curriculum can
@@ -36,8 +39,11 @@ def make_policy_mapping_fn(train_toy_factories_only: bool = False, state: dict |
     names, the state enables curriculum updates.
   '''
   if state is None:
+    trainable_prefixes = {TOY_FACTORY_PREFIX}
+    if not train_toy_factories_only:
+      trainable_prefixes = set()
     state = {
-        'trainable_prefixes': {TOY_FACTORY_PREFIX} if train_toy_factories_only else set(),
+        'trainable_prefixes': trainable_prefixes,
         'all_trainable': not train_toy_factories_only,
     }
 
@@ -51,7 +57,9 @@ def make_policy_mapping_fn(train_toy_factories_only: bool = False, state: dict |
     Returns:
       str: Policy name.
     '''
-    trainable = state['all_trainable'] or agent_id.startswith(tuple(state['trainable_prefixes']))
+    prefixes = tuple(state['trainable_prefixes'])
+    trainable = state['all_trainable']
+    trainable = trainable or agent_id.startswith(prefixes)
     role = 'producer' if is_producer(agent_id) else 'consumer'
     prefix = 'ppo' if trainable else 'frozen'
     return f'{prefix}_{role}'
@@ -59,7 +67,9 @@ def make_policy_mapping_fn(train_toy_factories_only: bool = False, state: dict |
   return mapping_fn, state
 
 
-def apply_curriculum(state: dict | None, iteration: int, n_iterations: int, schedule) -> set[str]:
+def apply_curriculum(
+    state: dict | None, iteration: int, n_iterations: int, schedule
+) -> set[str]:
   '''Promote facility-class prefixes to trainable policies at thresholds.
 
   Mirrors the legacy curriculum: e.g. ``((0.25, 'WarehouseCell'),)``
@@ -103,6 +113,89 @@ def _configure(config, **settings):
     else:
       config.training(**{key: value})
   return config
+
+
+def _probe_spaces(env_class, env_config: dict):
+  '''Probe role spaces from a throwaway environment instance.
+
+  Args:
+    env_class: Environment class to instantiate for probing.
+    env_config: Serialized :class:`EnvConfig` fields for workers.
+
+  Returns:
+    tuple: ``(producer_space, consumer_space, observation_space)``.
+  '''
+  probe_env = env_class(env_config['env'])
+  producer_space = probe_env.action_space[probe_env.agent_ids[0]]
+  consumer_space = probe_env.action_space[probe_env.agent_ids[1]]
+  observation_space = probe_env.observation_space[probe_env.agent_ids[0]]
+  return producer_space, consumer_space, observation_space
+
+
+def _build_policy_specs(
+    policy_spec, producer_space, consumer_space, observation_space
+):
+  '''Build PolicySpec entries for trainable and frozen policies.
+
+  Args:
+    policy_spec: PolicySpec class used to build the specs.
+    producer_space: Producer action space.
+    consumer_space: Consumer action space.
+    observation_space: Shared observation space.
+
+  Returns:
+    dict: Policy name to :class:`PolicySpec`.
+  '''
+  specs = {}
+  for name in (*TRAINABLE_POLICIES, *FROZEN_POLICIES):
+    is_producer_policy = name.endswith('producer')
+    if is_producer_policy:
+      action_space = producer_space
+    else:
+      action_space = consumer_space
+    specs[name] = policy_spec(
+        policy_class=None,
+        observation_space=observation_space,
+        action_space=action_space,
+    )
+  return specs
+
+
+def _build_module_specs(
+    module_spec, module_class, producer_space, consumer_space,
+    observation_space, use_lstm: bool
+):
+  '''Build RLModuleSpec entries for every policy.
+
+  Args:
+    module_spec: RLModuleSpec class used to build the specs.
+    module_class: RLModule implementation class.
+    producer_space: Producer action space.
+    consumer_space: Consumer action space.
+    observation_space: Shared observation space.
+    use_lstm: Enable the recurrent variant of FacilityNet.
+
+  Returns:
+    dict: Policy name to :class:`RLModuleSpec`.
+  '''
+  specs = {}
+  for name in (*TRAINABLE_POLICIES, *FROZEN_POLICIES):
+    is_producer_policy = name.endswith('producer')
+    role = 'producer' if is_producer_policy else 'consumer'
+    model_config = dict(POLICY_MODEL_CONFIGS[role])
+    model_config['lstm_cell_size'] = 64
+    model_config['use_lstm'] = use_lstm
+    if is_producer_policy:
+      action_space = producer_space
+    else:
+      action_space = consumer_space
+    specs[name] = module_spec(
+        module_class=module_class,
+        observation_space=observation_space,
+        action_space=action_space,
+        model_config=model_config,
+    )
+  return specs
 
 
 def build_ppo_algorithm(
@@ -150,60 +243,53 @@ def build_ppo_algorithm(
   from world_of_supply.rl.env import WorldOfSupplyEnv
   from world_of_supply.rl.rl_modules import FacilityRLModule
 
-  probe_env = WorldOfSupplyEnv(env_config['env'])
-  module_class = FacilityRLModule if FacilityRLModule is not None else TorchRLModule
-  producer_space = probe_env.action_space[probe_env.agent_ids[0]]
-  consumer_space = probe_env.action_space[probe_env.agent_ids[1]]
-  observation_space = probe_env.observation_space[probe_env.agent_ids[0]]
-  policy_specs = {
-      name: PolicySpec(
-          policy_class=None,
-          observation_space=observation_space,
-          action_space=producer_space if name.endswith('producer') else consumer_space,
-      )
-      for name in (*TRAINABLE_POLICIES, *FROZEN_POLICIES)
-  }
-  mapping_fn, curriculum_state = make_policy_mapping_fn(train_toy_factories_only)
+  probed = _probe_spaces(WorldOfSupplyEnv, env_config)
+  producer_space, consumer_space, observation_space = probed
+  if FacilityRLModule is not None:
+    module_class = FacilityRLModule
+  else:
+    module_class = TorchRLModule
+  policy_specs = _build_policy_specs(
+      PolicySpec, producer_space, consumer_space, observation_space
+  )
+  module_specs = _build_module_specs(
+      RLModuleSpec, module_class, producer_space, consumer_space,
+      observation_space, use_lstm,
+  )
+  mapping_fn, curriculum_state = make_policy_mapping_fn(
+      train_toy_factories_only
+  )
 
   config = PPOConfig()
-  config = _configure(config, lr=lr, gamma=gamma, train_batch_size=train_batch_size)
+  config = _configure(
+      config, lr=lr, gamma=gamma, train_batch_size=train_batch_size
+  )
   environment_class = env_class or WorldOfSupplyEnv
   config = config.environment(env=environment_class, env_config=env_config)
-  runners = config.env_runners if hasattr(config, 'env_runners') else config.rollout
-  worker_key = 'num_env_runners' if hasattr(config, 'env_runners') else 'num_rollout_workers'
-  config = runners(
-      **{worker_key: num_workers, 'rollout_fragment_length': rollout_fragment_length}
+  if hasattr(config, 'env_runners'):
+    runners = config.env_runners
+  else:
+    runners = config.rollout
+  if hasattr(config, 'env_runners'):
+    worker_key = 'num_env_runners'
+  else:
+    worker_key = 'num_rollout_workers'
+  worker_settings = {
+      worker_key: num_workers,
+      'rollout_fragment_length': rollout_fragment_length,
+  }
+  config = runners(**worker_settings)
+  config = config.training(
+      vf_loss_coeff=vf_loss_coeff,
+      vf_clip_param=vf_clip_param,
   )
-  config = (
-      config.training(
-          vf_loss_coeff=vf_loss_coeff,
-          vf_clip_param=vf_clip_param,
-      )
-      .multi_agent(
-          policies=policy_specs,
-          policy_mapping_fn=mapping_fn,
-          policies_to_train=list(TRAINABLE_POLICIES),
-      )
-      .rl_module(
-          rl_module_spec=MultiRLModuleSpec(
-              rl_module_specs={
-                  name: RLModuleSpec(
-                      module_class=module_class,
-                      observation_space=observation_space,
-                      action_space=(
-                          producer_space if name.endswith('producer') else consumer_space
-                      ),
-                      model_config={
-                          **POLICY_MODEL_CONFIGS['producer' if name.endswith('producer') else 'consumer'],
-                          'lstm_cell_size': 64,
-                          'use_lstm': use_lstm,
-                      },
-                  )
-                  for name in (*TRAINABLE_POLICIES, *FROZEN_POLICIES)
-              }
-          )
-      )
+  config = config.multi_agent(
+      policies=policy_specs,
+      policy_mapping_fn=mapping_fn,
+      policies_to_train=list(TRAINABLE_POLICIES),
   )
+  module_spec = MultiRLModuleSpec(rl_module_specs=module_specs)
+  config = config.rl_module(rl_module_spec=module_spec)
   algorithm = config.build(env=environment_class)
   setattr(algorithm, CURRICULUM_ATTR, curriculum_state)
   return algorithm
@@ -229,9 +315,11 @@ def describe_model(use_lstm: bool = False) -> str:
   lines = []
   for role in ('producer', 'consumer'):
     agent_id = env.agent_ids[0] if role == 'producer' else env.agent_ids[1]
+    obs_dim = int(env.observation_space[agent_id].shape[0])
+    action_nvec = list(env.action_space[agent_id].nvec)
     net = FacilityNet(
-        obs_dim=int(env.observation_space[agent_id].shape[0]),
-        action_nvec=list(env.action_space[agent_id].nvec),
+        obs_dim=obs_dim,
+        action_nvec=action_nvec,
         hidden_size=POLICY_MODEL_CONFIGS[role]['hidden_size'],
         hidden_layers=POLICY_MODEL_CONFIGS[role]['hidden_layers'],
         lstm_cell_size=64,
@@ -253,6 +341,9 @@ def _apply_to_envs(env, fn):
   Args:
     env: An environment, vector environment, or ``None``.
     fn: Callable receiving each concrete (unwrapped) environment.
+
+  Returns:
+    None: Envs are mutated in place by ``fn``.
   '''
   if env is None:
     return
@@ -266,7 +357,10 @@ def _apply_to_envs(env, fn):
       fn(getattr(candidate, 'unwrapped', candidate))
 
 
-def train(algorithm, n_iterations: int, log=lambda iteration, result: None, curriculum=()) -> object:
+def train(
+    algorithm, n_iterations: int, log=lambda iteration, result: None,
+    curriculum=()
+) -> object:
   '''Run PPO iterations with curriculum progress reporting.
 
   Works across Ray 2.x releases by resolving the env-runner group through
@@ -293,14 +387,18 @@ def train(algorithm, n_iterations: int, log=lambda iteration, result: None, curr
     try:
       return algorithm.env_runner_group
     except AttributeError:
-      return algorithm.workers() if callable(algorithm.workers) else algorithm.workers
+      workers = algorithm.workers
+      return workers() if callable(workers) else workers
 
   curriculum_state = getattr(algorithm, CURRICULUM_ATTR, None)
   promoted_seen: set[str] = set()
   for iteration in range(n_iterations):
-    promoted = apply_curriculum(curriculum_state, iteration, n_iterations, curriculum)
+    promoted = apply_curriculum(
+        curriculum_state, iteration, n_iterations, curriculum
+    )
     if promoted and promoted != promoted_seen:
-      print(f'curriculum: trainable facility prefixes now {sorted(promoted)}')
+      message = sorted(promoted)
+      print(f'curriculum: trainable facility prefixes now {message}')
       promoted_seen = set(promoted)
     worker_set = resolve_worker_set()
     if hasattr(worker_set, 'foreach_env_runner'):
@@ -311,14 +409,18 @@ def train(algorithm, n_iterations: int, log=lambda iteration, result: None, curr
       )
     else:
       worker_set.foreach_worker(
-          lambda worker: worker.foreach_env(lambda env: env.set_iteration(iteration, n_iterations))
+          lambda worker: worker.foreach_env(
+              lambda env: env.set_iteration(iteration, n_iterations)
+          )
       )
     result = algorithm.train()
     log(iteration, result)
   return algorithm
 
 
-def evaluate_scripted(env, episodes: int = 3, seed: int | None = None) -> list[float]:
+def evaluate_scripted(
+    env, episodes: int = 3, seed: int | None = None
+) -> list[float]:
   '''Score the hand-coded baseline directly against the environment.
 
   Args:
@@ -331,14 +433,20 @@ def evaluate_scripted(env, episodes: int = 3, seed: int | None = None) -> list[f
   '''
   episode_returns: list[float] = []
   for episode_index in range(episodes):
-    observations, _ = env.reset(seed=None if seed is None else seed + episode_index)
+    if seed is None:
+      reset_seed = None
+    else:
+      reset_seed = seed + episode_index
+    env.reset(seed=reset_seed)
     actions_seed = None if seed is None else seed + episode_index
     done = False
     total_reward = 0.0
     while not done:
       action_dict = env.scripted_actions(seed=actions_seed)
-      observations, rewards, terminated, truncated, _ = env.step(action_dict)
+      _, rewards, terminated, truncated, _ = env.step(action_dict)
       total_reward += sum(rewards.values())
-      done = bool(truncated.get('__all__', False)) or bool(terminated.get('__all__', False))
+      all_terminated = bool(terminated.get('__all__', False))
+      all_truncated = bool(truncated.get('__all__', False))
+      done = all_terminated or all_truncated
     episode_returns.append(total_reward)
   return episode_returns

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Action decoding: flat agent actions to facility controls.'''
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ class ActionDecoder:
 
   Producer actions are ``(price_index, rate_index)`` pairs; consumer actions
   are ``(product_index, source_index, quantity_index)`` triples.
+
+  Attributes:
+    product_ids: Sorted product ids (action column order).
   '''
 
   def __init__(self, product_ids: list[str]) -> None:
@@ -29,6 +33,9 @@ class ActionDecoder:
 
     Args:
       product_ids: Sorted product ids (action column order).
+
+    Returns:
+      None: The decoder is mutated in place.
     '''
     self.product_ids = list(product_ids)
 
@@ -42,7 +49,9 @@ class ActionDecoder:
     Returns:
       Control: Controls keyed by facility id.
     '''
-    actions_by_facility: dict[str, list[tuple[str, object]]] = defaultdict(list)
+    actions_by_facility: dict[str, list[tuple[str, object]]] = (
+        defaultdict(list)
+    )
     for agent_id, action in action_dict.items():
       actions_by_facility[facility_id_of(agent_id)].append((agent_id, action))
 
@@ -53,7 +62,9 @@ class ActionDecoder:
       )
     return Control(controls)
 
-  def _decode_facility(self, facility, actions: list[tuple[str, object]]) -> FacilityControl:
+  def _decode_facility(
+      self, facility, actions: list[tuple[str, object]]
+  ) -> FacilityControl:
     '''Merge all role actions of one facility into a single control.
 
     Args:
@@ -64,7 +75,10 @@ class ActionDecoder:
       FacilityControl: Combined control.
     '''
     control = FacilityControl()
-    n_sources = len(facility.consumer.sources) if facility.consumer is not None else 0
+    if facility.consumer is not None:
+      n_sources = len(facility.consumer.sources)
+    else:
+      n_sources = 0
 
     def element(action, index: int) -> int:
       '''Safely read one component of an action vector.
@@ -85,9 +99,12 @@ class ActionDecoder:
         control.production_rate = RATE_LEVELS[element(action, 1)]
       else:
         source_index = min(element(action, 1), max(n_sources - 1, 0))
-        control.consumer_product_id = self.product_ids[element(action, 0) % len(self.product_ids)]
+        product_ids = self.product_ids
+        product_index = element(action, 0) % len(product_ids)
+        control.consumer_product_id = product_ids[product_index]
         control.consumer_source_id = source_index
-        control.consumer_quantity = (
-            QUANTITY_LEVELS[element(action, 2)] if n_sources > 0 else 0
-        )
+        if n_sources > 0:
+          control.consumer_quantity = QUANTITY_LEVELS[element(action, 2)]
+        else:
+          control.consumer_quantity = 0
     return control

@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 '''Manufacturing units and bills of materials.
 
 A manufacturing unit converts one lot of input products into
-``output_lot_size`` units of its output product, consuming storage space and
-booking production cost.
+``output_lot_size`` units of its output product, consuming storage
+space and booking production cost.
 '''
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ class BillOfMaterials:
   output_lot_size: int = 1
 
   def input_units_per_lot(self) -> int:
-    '''Return the total number of input units consumed by one lot.
+    '''Return the total number of input units per lot.
 
     Returns:
       int: Sum of all per-lot input quantities.
@@ -73,40 +74,65 @@ class ManufacturingUnit(Agent):
     economy: Cost parameters.
   '''
 
-  def __init__(self, facility: 'FacilityCell', economy: ManufacturingEconomy) -> None:
+  def __init__(
+      self,
+      facility: 'FacilityCell',
+      economy: ManufacturingEconomy,
+  ) -> None:
     '''Attach the unit to a facility.
 
     Args:
       facility: Owning facility.
       economy: Cost parameters.
+
+    Returns:
+      None: The unit is mutated in place.
     '''
     self.facility = facility
     self.economy = economy
 
-  def act(self, control: 'FacilityControl | None') -> BalanceSheet:
-    '''Run up to ``control.production_rate`` production lots.
-
-    A lot only executes when the storage can absorb the net output volume
-    (output lot minus consumed inputs) and all BOM inputs are in stock.
+  def _produce_one_lot(self, storage, bom: BillOfMaterials) -> bool:
+    '''Attempt one production lot.
 
     Args:
-      control: Carries ``production_rate``; ``None`` means zero lots.
+      storage: Facility storage (narrow interface).
+      bom: Production recipe.
 
     Returns:
-      BalanceSheet: Production cost of everything actually produced.
+      bool: True when the lot was produced.
+    '''
+    space_needed = bom.output_lot_size - bom.input_units_per_lot()
+    if storage.available_capacity() < space_needed:
+      return False
+    if not storage.try_take_units(dict(bom.inputs)):
+      return False
+    product_id = bom.output_product_id
+    stock = storage.stock_levels.get(product_id, 0)
+    storage.stock_levels[product_id] = stock + bom.output_lot_size
+    return True
+
+  def act(
+      self,
+      control: 'FacilityControl | None' = None,
+  ) -> BalanceSheet:
+    '''Run up to ``control.production_rate`` production lots.
+
+    A lot only executes when storage can absorb the net output
+    volume and all BOM inputs are in stock.
+
+    Args:
+      control: Carries ``production_rate``; None means zero lots.
+
+    Returns:
+      BalanceSheet: Production cost of everything produced.
     '''
     production_rate = control.production_rate if control is not None else 0
     bom = self.facility.bom
     storage = self.facility.storage
+    assert storage is not None
     units_produced = 0
     for _ in range(production_rate or 0):
-      space_needed = bom.output_lot_size - bom.input_units_per_lot()
-      if storage.available_capacity() < space_needed:
-        continue
-      if not storage.try_take_units(dict(bom.inputs)):
-        continue
-      storage.stock_levels[bom.output_product_id] = (
-          storage.stock_levels.get(bom.output_product_id, 0) + bom.output_lot_size
-      )
-      units_produced += bom.output_lot_size
+      produced = self._produce_one_lot(storage, bom)
+      if produced:
+        units_produced += bom.output_lot_size
     return self.economy.step_balance_sheet(units_produced)
