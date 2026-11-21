@@ -115,29 +115,42 @@ def test_choose_returns_wait_when_nothing_available():
 
 # --- F21 / F22: close targets, bag exit, collect tap ------------------------
 
-def test_choose_popup_dismisses_with_back_not_close_taps():
-  """POPUP dismisses with BACK even when a close X is matched."""
+def test_choose_popup_taps_any_close_target():
+  """POPUP taps the center of whichever close X variant is matched."""
   navigator = Navigator(object())
   for name in ('close_dialog', 'close_dialog_2', 'close_dialog_3',
                'close_dialog_4', 'close_dialog_5'):
     close = Match(name, Rect(1000, 100, 16, 16), 0.9)
     action = navigator.choose(_detection(GameState.POPUP, [close]),
                               Memory(), None)
-    assert action.kind is ActionKind.BACK
+    assert action.kind is ActionKind.TAP
     assert action.reason == 'dismiss'
-    assert action.point is None
+    assert action.point == Point(1008, 108)
     assert action.end is None
 
 
-def test_choose_dialog_dismisses_with_back():
-  """DIALOG dismisses with BACK even when a close X is matched."""
+def test_choose_popup_taps_highest_scored_close_target():
+  """POPUP taps the popup X, not the lower-scored craft-screen X."""
   navigator = Navigator(object())
-  close = Match('close_dialog_4', Rect(100, 200, 16, 16), 0.9)
-  action = navigator.choose(_detection(GameState.DIALOG, [close]),
-                            Memory(), None)
-  assert action.kind is ActionKind.BACK
+  craft_x = Match('close_dialog_2', Rect(532, 2067, 16, 16), 0.999)
+  popup_x = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.000)
+  action = navigator.choose(
+      _detection(GameState.POPUP, [craft_x, popup_x]), Memory(), None)
+  assert action.kind is ActionKind.TAP
   assert action.reason == 'dismiss'
-  assert action.point is None
+  assert action.point == Point(540, 1960)
+
+
+def test_choose_dialog_taps_highest_scored_close_target():
+  """DIALOG taps the popup X, not the lower-scored craft-screen X."""
+  navigator = Navigator(object())
+  craft_x = Match('close_dialog_2', Rect(532, 2067, 16, 16), 0.999)
+  popup_x = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.000)
+  action = navigator.choose(
+      _detection(GameState.DIALOG, [craft_x, popup_x]), Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+  assert action.point == Point(540, 1960)
 
 
 def test_choose_popup_without_close_match_still_dismisses_with_back():
@@ -150,16 +163,17 @@ def test_choose_popup_without_close_match_still_dismisses_with_back():
   assert action.reason == 'dismiss'
 
 
-def test_choose_popup_repeated_ticks_keep_dismissing_with_back():
-  """Repeated POPUP ticks keep returning BACK, never a close-screen tap."""
+def test_choose_popup_repeated_ticks_tap_close_each_time():
+  """Repeated POPUP ticks keep producing one dismiss tap each."""
   navigator = Navigator(object())
-  close = Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9)
+  close = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.0)
   detection = _detection(GameState.POPUP, [close])
   memory = Memory()
   for _ in range(3):
     action = navigator.choose(detection, memory, None)
-    assert action.kind is ActionKind.BACK
+    assert action.kind is ActionKind.TAP
     assert action.reason == 'dismiss'
+    assert action.point == Point(540, 1960)
 
 
 def test_choose_popup_with_no_matches_backs_out():

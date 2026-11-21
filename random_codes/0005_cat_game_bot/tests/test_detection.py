@@ -347,14 +347,14 @@ def test_real_fresh_fruit_template_scores_high_on_source():
 
 
 def test_real_fresh_fruit_popup_is_dismissed_through_real_rules():
-  """The real FRESH FRUIT screenshot is a BACK-dismissed POPUP/DIALOG."""
+  """The real FRESH FRUIT screenshot is a close-X TAP-dismissed POPUP/DIALOG."""
   detector, _, _ = _committed_detector()
   image = cv2.imread(str(FRESH_FRUIT_FIXTURE), cv2.IMREAD_COLOR)
   assert image is not None
   detection = detector.detect(Screen(image))
   assert detection.state in (GameState.POPUP, GameState.DIALOG)
   action = Navigator(detector).choose(detection, Memory(), None)
-  assert action.kind is ActionKind.BACK
+  assert action.kind is ActionKind.TAP
   assert action.reason == 'dismiss'
 
 

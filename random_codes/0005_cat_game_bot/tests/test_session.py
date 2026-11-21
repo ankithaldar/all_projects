@@ -723,7 +723,7 @@ def test_no_collect_tap_when_no_completed_tile():
 
 
 def test_popup_during_batch_executes_one_dismiss_fallback_action():
-  """A popup with the step template absent yields one BACK dismiss."""
+  """A popup with the step template absent yields one close-TAP dismiss."""
   craft = Match('item_silver', Rect(100, 200, 16, 16), 0.9)
   close = Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9)
   ready = Match('craft_ready_check', Rect(300, 400, 16, 16), 0.9)
@@ -743,16 +743,16 @@ def test_popup_during_batch_executes_one_dismiss_fallback_action():
   assert env.planner.next_step.call_count == 1
   assert stats.actions == 4
   assert stats.errors == 0
-  assert env.adb.tap.call_count == 3
-  assert env.adb.back.call_count == 1
+  assert env.adb.tap.call_count == 4
+  assert env.adb.back.call_count == 0
   dismiss = next(call for call in env.db.log_action.call_args_list
                  if call.args[2].reason == 'dismiss')
-  assert dismiss.args[2].kind is ActionKind.BACK
+  assert dismiss.args[2].kind is ActionKind.TAP
   assert dismiss.args[3].ok is True
 
 
 def test_ok_fallback_logs_one_action_increment_and_zero_errors():
-  """A BACK dismiss contributes one ACTION row and one action."""
+  """A dismiss TAP contributes one ACTION row and one action."""
   close = Match('close_dialog_3', Rect(1000, 100, 16, 16), 0.9)
   env = _make([(GameState.POPUP, [close])], max_actions=1)
   _use_real_navigator(env)
@@ -761,14 +761,14 @@ def test_ok_fallback_logs_one_action_increment_and_zero_errors():
   assert env.db.log_action.call_count == 1
   assert stats.actions == 1
   assert stats.errors == 0
-  assert env.adb.tap.call_count == 0
-  assert env.adb.back.call_count == 1
+  assert env.adb.tap.call_count == 1
+  assert env.adb.back.call_count == 0
   assert env.db.log_action.call_args.args[2].reason == 'dismiss'
   assert env.db.log_action.call_args.args[3].ok is True
 
 
 def test_ok_fallback_persists_one_action_row_and_zero_errors():
-  """A successful BACK dismiss writes exactly one ACTION row and no error."""
+  """A successful dismiss TAP writes exactly one ACTION row and no error."""
   close = Match('close_dialog_3', Rect(1000, 100, 16, 16), 0.9)
   env = _make([(GameState.POPUP, [close])], max_actions=1)
   _use_real_navigator(env)
@@ -780,7 +780,7 @@ def test_ok_fallback_persists_one_action_row_and_zero_errors():
   rows = real_db.connection.execute(
       'SELECT kind, ok FROM actions').fetchall()
   assert len(rows) == 1
-  assert rows[0][0] == ActionKind.BACK.value
+  assert rows[0][0] == ActionKind.TAP.value
   assert rows[0][1] == 1
   assert stats.actions == 1
   assert stats.errors == 0
@@ -788,7 +788,7 @@ def test_ok_fallback_persists_one_action_row_and_zero_errors():
 
 
 def test_batch_resumes_after_periodic_bag_visit_and_back():
-  """Popup and bag BACK dismisses let the batch still reach mark_placed."""
+  """Popup close-TAP and bag BACK dismisses let the batch reach mark_placed."""
   craft = Match('item_silver', Rect(100, 200, 16, 16), 0.9)
   close = Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9)
   bag = Match('bag_marker', Rect(200, 2200, 16, 16), 0.9)
@@ -809,7 +809,7 @@ def test_batch_resumes_after_periodic_bag_visit_and_back():
       'item_silver', 'dismiss', 'dismiss', 'bag_marker',
       'close_bag', 'item_silver']
   env.planner.mark_placed.assert_called_once_with('silver')
-  assert env.adb.back.call_count == 3
+  assert env.adb.back.call_count == 1
   assert stats.errors == 0
   assert stats.result == 'MAX_ACTIONS'
 
