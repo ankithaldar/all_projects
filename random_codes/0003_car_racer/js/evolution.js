@@ -9,8 +9,16 @@
 // Evolution owns THE mulberry32 instance for the whole lineage (see plan
 // EVOLUTION + DETERMINISM). All randomness flows through it:
 //   * gen 1 — 20 nets via NeuralNetwork.randomInit(this.rng)
-//   * each later gen — child0 = best.clone() EXACT (elitism / replay anchor);
-//     children 1..19 = best.clone().mutate(MUTATION_RATE, MUTATION_SCALE, rng)
+//   * gen 51 — ONE-TIME full restart ONLY: all 20 children are FRESH
+//     new NeuralNetwork(this.rng) nets from the CURRENT stream (20 × 800 =
+//     16,000 fixed draws). The elite clone is DELIBERATELY DROPPED at this one
+//     generation — the single escape from the oval-specialist local optimum.
+//   * EVERY other generation — explicitly INCLUDING 101, 151 and 201, which
+//     are NOT restart boundaries — child0 = best.clone() EXACT (elitism /
+//     replay anchor, zero draws) and children 1..19 =
+//     best.clone().mutate(MUTATION_RATE, MUTATION_SCALE, rng). No re-diversification.
+// Resume byte-identity still holds via the validated rngState cursor (see
+// resumeFromBest / STATE PORTABILITY below).
 // No Math.random anywhere in this file (or anywhere in the train path).
 //
 // DETERMINISM CONTRACT: same seed + same track ⇒ byte-identical populations
@@ -226,9 +234,9 @@ class Evolution {
   // Returns { distance, topSpeed, timeAlive, crashed, stuck }:
   //   distance  — FITNESS: car.odometer + laps × LAP_BONUS_TRACK_LENGTHS × track.length
   //               (net signed px + lap bonus; may be negative) — the selection currency
-  //   topSpeed  — max forward speed seen, px/s (selection tiebreak #1)
-  //   timeAlive — simulated seconds lived (selection tiebreak #2: LOWER wins)
-  //   crashed   — true if a wall collision ended the run
+  //   topSpeed  — max forward speed seen, px/s (reported only; not used by selectBest)
+  //   timeAlive — simulated seconds lived (exact-distance tiebreak: HIGHER wins)
+  //   crashed   — true if a wall collision ended the run (exact-distance tiebreak: non-crashed wins)
   //   stuck     — true if the stagnation timer ended the run
   // (Per tick — order, liveness unwrap, kill caps, 'finished' terminal — see js/driver-sim.js;
   //  the raw odometer and the lap counter are NOT surfaced here — fitness() is the currency.)
@@ -274,8 +282,11 @@ class Evolution {
   }
 
   // selectBest(results) — fitness = distance (net signed px + lap bonus; may
-  // be negative); tiebreaks: higher topSpeed, then lower timeAlive. Exact
-  // float comparisons (deterministic). Static.
+  // be negative). PRIMARY ordering is by distance ONLY and is never changed:
+  // bestIndex is always a max-distance driver (main.js:1238 stays truthful).
+  // On an EXACT distance tie: prefer a non-crashed driver (null-safe `!crashed`
+  // so false/0/undefined all count as "not crashed"), then prefer HIGHER
+  // timeAlive. Exact float comparisons (deterministic). Static.
   static selectBest(results) {
     var r = assertResultsArray(results);
     var best = 0;
@@ -283,34 +294,67 @@ class Evolution {
       var a = r[i], b = r[best];
       if (a.distance > b.distance) { best = i; continue; }
       if (a.distance === b.distance) {
-        if (a.topSpeed > b.topSpeed) { best = i; continue; }
-        if (a.topSpeed === b.topSpeed && a.timeAlive < b.timeAlive) { best = i; }
+        var aAlive = !a.crashed, bAlive = !b.crashed;
+        if (aAlive !== bAlive) {
+          if (aAlive) best = i;        // non-crashed beats crashed
+        } else if (a.timeAlive > b.timeAlive) {
+          best = i;                    // equal crash status: longer life wins
+        }
       }
     }
     return best;
   }
 
   // ---- spawn the next generation from the recorded best index.
-  // child0 = best.clone() EXACT (elitism; replay/resume anchor).
-  // children 1..19 = best.clone().mutate(MUTATION_RATE, MUTATION_SCALE, rng).
+  // For every target generation the routine is uniform (see _spawnChildren):
+  // child0 = best.clone() EXACT (elitism / replay anchor) and children 1..19
+  // are Gaussian mutants — EXCEPT the one-time full restart at generation 51,
+  // where all 20 children are fresh nets and the elite clone is dropped.
+  // 101/151/201 are ordinary mutant generations, NOT restart boundaries.
+  // The TARGET generation is passed EXPLICITLY (this.generation + 1) BEFORE
+  // the counter is incremented. Resume byte-identity is preserved because the
+  // rng cursor at that point is exactly the validated rngState handshake.
   spawnNextGeneration() {
     if (!this.population || this.bestIndex < 0) {
       throw new ValidationError('spawnNextGeneration requires a recorded evaluation — bestIndex unknown');
     }
     var parent = this.population[this.bestIndex];
-    this.population = this._spawnChildren(parent);
+    this.population = this._spawnChildren(parent, this.generation + 1);
     this.generation += 1;
     this.bestIndex = -1;
     this.lastResults = null;
     return this.population;
   }
 
-  // _spawnChildren(parent) — the single spawn routine used by BOTH the normal
-  // path (parent = current best) and the resume path (parent = best weights
-  // loaded from the DB). Consumes exactly 19×mutate draws from this.rng, in
-  // fixed child order — byte-identical output for the same parent + rng state.
-  _spawnChildren(parent) {
+  // _spawnChildren(parent, nextGeneration) — the single spawn routine used by
+  // BOTH the normal path (parent = current best) and the resume path (parent =
+  // best weights loaded from the DB).
+  //
+  // ONE-TIME FULL RESTART at nextGeneration === 51 (and ONLY 51): every child
+  // 0..19 is a FRESH new NeuralNetwork(this.rng) from the CURRENT stream — the
+  // same constructor path as randomInit, 800 fixed draws each (20 × 800 =
+  // 16,000 draws), biases zero-filled. The elite clone is DELIBERATELY DROPPED
+  // at this generation. This is the single escape from the oval-specialist
+  // local optimum.
+  //
+  // EVERY OTHER generation — explicitly INCLUDING 101, 151 and 201 — is an
+  // ordinary mutant spawn: child0 = parent.clone() EXACT (elitism / replay
+  // anchor, zero RNG draws), children 1..19 = parent.clone().mutate(
+  // MUTATION_RATE, MUTATION_SCALE, this.rng). There is NO re-diversification
+  // at 101/151/201; they are not boundaries. Population stays exactly 20 and
+  // the draw count is a pure function of nextGeneration + the rng cursor.
+  // Resume byte-identity still holds: the caller's validated rngState cursor
+  // reproduces this stream exactly (see resumeFromBest).
+  _spawnChildren(parent, nextGeneration) {
     var children = new Array(POPULATION);
+    if (nextGeneration === 51) {
+      // One-time full restart: all 20 fresh nets, elite clone deliberately dropped.
+      for (var f = 0; f < POPULATION; f++) {
+        children[f] = new _NeuralNetwork(this.rng);
+      }
+      return children;
+    }
+    // Every other generation (incl. 101/151/201): exact elite clone + 19 mutants.
     children[0] = parent.clone(); // elitism anchor — NO rng draws
     for (var i = 1; i < POPULATION; i++) {
       children[i] = parent.clone().mutate(MUTATION_RATE, MUTATION_SCALE, this.rng);
@@ -332,7 +376,13 @@ class Evolution {
     var state = assertUint32(rngState, 'resumeFromBest rngState');
     var parent = _NeuralNetwork.fromJSON(bestWeights); // full weights validation
     var evo = new Evolution(0, { rngState: state });
-    evo.population = evo._spawnChildren(parent);
+    // Pass the TARGET generation explicitly BEFORE setting evo.generation —
+    // evo.generation is still 0 here, so reading it would compute the wrong
+    // target. completedGeneration + 1 is the generation being resumed into
+    // (e.g. 51 for the one-time full restart); the validated rngState cursor
+    // restores the exact stream so the spawn is byte-identical to an
+    // uninterrupted run.
+    evo.population = evo._spawnChildren(parent, completedGeneration + 1);
     evo.generation = completedGeneration + 1;
     evo.bestIndex = -1;
     evo.lastResults = null;
@@ -347,9 +397,11 @@ class Evolution {
   }
 
   // bestWeights() — the full weight payload of the CURRENT best net. Call it
-  // BEFORE spawnNextGeneration() mutates anything (elitism child0 is the same
-  // tensor set anyway; this is the read the logger/replay wants). Throws until
-  // an evaluation has been recorded.
+  // BEFORE spawnNextGeneration() mutates anything; this is the read the
+  // logger/replay/resume wants. Paired with rngState() (the validated cursor),
+  // it lets resumeFromBest() rebuild the exact next population — at the one-time
+  // gen-51 restart AND at every ordinary mutant generation — byte-identically.
+  // Throws until an evaluation has been recorded.
   bestWeights() {
     if (!this.population || this.bestIndex < 0) {
       throw new ValidationError('bestWeights() requires a recorded evaluation — call evaluatePopulation() first');
