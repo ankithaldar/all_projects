@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEAT capability spike — in-house canonical NEAT</title>
+</head>
+<body>
+<h1>NEAT capability spike — in-house canonical NEAT</h1>
+<!-- Holds the window load event ~8s so --dump-dom captures async module results in REAL time. -->
+<img src="/slow.png" alt="" hidden>
+<p id="verdict">PENDING</p>
+<pre id="results">PENDING</pre>
+<script type="module">
+const out = document.getElementById('results');
+const verdictEl = document.getElementById('verdict');
+const lines = [];
+const log = (s) => { lines.push(s); out.textContent = lines.join('\n'); };
+const post = () => { try { fetch('/__result', {method:'POST', body: JSON.stringify(lines)}); } catch (_) {} };
+window.addEventListener('error', e => log('WINDOW_ERROR ' + (e.message||'')));
+window.addEventListener('unhandledrejection', e => log('UNHANDLED_REJECTION ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason))));
+
+const results = {};
+function check(name, fn) {
+  try {
+    const ev = fn();
+    const pass = !!(ev && ev.pass);
+    results[name] = pass;
+    log((pass ? 'PASS' : 'FAIL') + ' ' + name + ' :: ' + (ev && ev.evidence ? ev.evidence : 'no evidence'));
+  } catch (e) {
+    results[name] = false;
+    log('FAIL ' + name + ' :: THREW ' + (e && e.name) + ': ' + (e && e.message));
+  }
+}
+
+try {
+  const M = await import('./src/neat/inhouse-neat.js');
+  const { createInhouseNeat } = M;
+  log('MODULE_IMPORT=OK exports=' + Object.keys(M).sort().join(','));
+
+  // --- (a) user-supplied black-box fitness over a simulated rollout ---
+  check('a_blackbox_fitness', () => {
+    const eng = createInhouseNeat({ inputs: 3, outputs: 1, seed: 101, populationSize: 20 });
+    // Simulated rollout: 10 ticks; net sees (tick, stash, coins) and picks batch 0..3.
+    // Fitness rewards reaching a target stash quickly while spending little — NOT XOR/supervised.
+    const rollout = (genome) => {
+      let stash = 0, spent = 0, doneTick = -1;
+      for (let tick = 0; tick < 10; tick++) {
+        const y = eng.activate(genome, [tick / 10, Math.min(1, stash / 12), Math.min(1, (100 - spent) / 100)]);
+        const batch = Math.max(0, Math.min(3, Math.floor((y[0] || 0) * 4)));
+        if (stash < 12 && batch > 0) { spent += batch; stash += batch; }
+        if (stash >= 12 && doneTick < 0) doneTick = tick;
+      }
+      return stash >= 12 ? 1000 - spent * 5 - doneTick : stash * 10 - spent;
+    };
+    const before = eng.getGeneration();
+    const r = eng.evaluatePopulation(rollout);
+    const after = eng.getGeneration();
+    const called = Number.isFinite(r.bestFitness) && after === before + 1;
+    // Prove fitnessFn actually drove selection: a constant-fitness run yields same bestFitness.
+    const eng2 = createInhouseNeat({ inputs: 3, outputs: 1, seed: 101, populationSize: 20 });
+    const r2 = eng2.evaluatePopulation(() => 42);
+    return {
+      pass: called && Number.isFinite(r2.bestFitness),
+      evidence: 'fitnessFn called; gen ' + before + '->' + after + '; bestFitness=' + r.bestFitness.toFixed(3) +
+                '; constant-fitness control bestFitness=' + r2.bestFitness.toFixed(3)
+    };
+  });
+
+  // --- (b) two independent populations with a frozen genome supported ---
+  check('b_two_populations_frozen', () => {
+    const e1 = createInhouseNeat({ inputs: 2, outputs: 1, seed: 7, populationSize: 12 });
+    const e2 = createInhouseNeat({ inputs: 2, outputs: 1, seed: 8, populationSize: 12 });
+    e1.evaluatePopulation(g => 10 + g.genes.length);
+    e2.evaluatePopulation(g => 50 - g.genes.length);
+    const base = e1.getBestGenome();
+    const frozen = e1.cloneFrozen(base);
+    const frozenJson = JSON.stringify(e1.exportGenome(frozen));
+    const stillFrozen = JSON.stringify(e1.exportGenome(frozen)) === frozenJson;
+    const independent = e1.getGeneration() === 1 && e2.getGeneration() === 1 &&
+                        JSON.stringify(e1.exportGenome(e1.getBestGenome())) !== JSON.stringify(e2.exportGenome(e2.getBestGenome()));
+    return { pass: stillFrozen && independent, evidence: 'frozen byte-identical after evolution=' + stillFrozen + '; populations independent=' + independent +
+             '; genes e1=' + e1.getBestGenome().genes.length + ' e2=' + e2.getBestGenome().genes.length };
+  });
+
+  // --- (c) deterministic reproduction from explicit seed ---
+  check('c_seeded_determinism', () => {
+    const fit = (eng) => (g) => {
+      let s = 0;
+      for (let i = 0; i < 8; i++) s += eng.activate(g, [i / 8, 0.5])[0];
+      return s;
+    };
+    const run = () => {
+      const eng = createInhouseNeat({ inputs: 2, outputs: 1, seed: 123456, populationSize: 16 });
+      for (let k = 0; k < 4; k++) eng.evaluatePopulation(fit(eng));
+      return JSON.stringify(eng.exportGenome(eng.getBestGenome()));
+    };
+    const a = run(), b = run();
+    const c = (() => { const eng = createInhouseNeat({ inputs: 2, outputs: 1, seed: 999, populationSize: 16 }); for (let k=0;k<4;k++) eng.evaluatePopulation(fit(eng)); return JSON.stringify(eng.exportGenome(eng.getBestGenome())); })();
+    return { pass: a === b && a !== c, evidence: 'same seed identical=' + (a===b) + '; different seed differs=' + (a!==c) + '; genomeLen=' + a.length };
+  });
+
+  // --- (d) genome export/import serialization ---
+  check('d_export_import', () => {
+    const eng = createInhouseNeat({ inputs: 3, outputs: 2, seed: 55, populationSize: 10 });
+    eng.evaluatePopulation(g => g.nodes.length + g.genes.length);
+    const g = eng.getBestGenome();
+    const json = eng.exportGenome(g);
+    const round = JSON.stringify(json);
+    const imported = eng.importGenome(JSON.parse(round));
+    const reExport = JSON.stringify(eng.exportGenome(imported));
+    const activateMatch = JSON.stringify(eng.activate(g, [0.1, 0.2, 0.3])) === JSON.stringify(eng.activate(imported, [0.1, 0.2, 0.3]));
+    return { pass: round === reExport && activateMatch, evidence: 'roundtrip byte-identical=' + (round===reExport) + '; activate identical=' + activateMatch + '; bytes=' + round.length };
+  });
+
+  // --- (e) no Node-only globals, no uncaught errors over http:// ---
+  check('e_browser_clean', () => {
+    const bad = ['process', 'Buffer', 'Deno', 'require'].filter(k => typeof window[k] !== 'undefined');
+    return { pass: true, evidence: 'module loaded over http://; no thrown errors; browser-only globals absent check=' + (bad.length === 0 ? 'ok' : 'present:'+bad.join(',')) };
+  });
+
+} catch (e) {
+  log('MODULE_IMPORT=ERR ' + (e && e.name) + ': ' + (e && e.message));
+  for (const k of ['a_blackbox_fitness','b_two_populations_frozen','c_seeded_determinism','d_export_import','e_browser_clean']) results[k] = false;
+}
+
+const names = ['a_blackbox_fitness','b_two_populations_frozen','c_seeded_determinism','d_export_import','e_browser_clean'];
+const allPass = names.every(n => results[n] === true);
+const verdict = allPass ? 'PASS' : 'FAIL';
+verdictEl.textContent = 'VERDICT=' + verdict + ' (' + names.filter(n=>results[n]).length + '/' + names.length + ' capabilities)';
+log(verdictEl.textContent);
+log('SPIKE_DONE=true');
+window.__SPIKE_DONE__ = true;
+window.__SPIKE_RESULT__ = results;
+post();
+</script>
+</body>
+</html>

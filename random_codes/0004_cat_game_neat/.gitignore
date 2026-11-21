@@ -1,0 +1,6 @@
+# random_codes/0004_cat_game_neat data files (initial state, best schedule) — local only
+#
+# Saved app data: `data/initial-state.json` (initial state the best schedule was generated
+# from) and `data/best-schedule.csv` (the app's best schedule, pivot by ticks).
+# "It's for the current use to see only" — not committed (this .gitignore).
+data/

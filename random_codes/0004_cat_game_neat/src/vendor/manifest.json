@@ -1,0 +1,10 @@
+{
+  "package": "@stsoftware/neat-ai",
+  "version": "7.1.22",
+  "url": "https://esm.sh/@jsr/stsoftware__neat-ai@7.1.22/es2022/stsoftware__neat-ai.bundle.mjs",
+  "file": "neat-ai/neat-ai.bundle.mjs",
+  "sha256": "86337d1c26d30870c8b2685d5aace197ea2efbd1abe8273c34d2932297dd198d",
+  "bytes": 1178777,
+  "retrievedAt": "2026-11-18T17:25:48Z",
+  "notes": "Self-contained esm.sh bundle. Verified HTTP 200, application/javascript, no external import statements in module graph. Candidate URL 2 (esm.sh/jsr/...?bundle) is only a 135-byte re-export stub with an external import and was rejected."
+}

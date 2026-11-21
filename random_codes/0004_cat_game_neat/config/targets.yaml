@@ -1,0 +1,12 @@
+targets:
+  silver: 12
+  gold: 13
+  pendant: 1
+  necklace: 15
+  orb: 20
+  water: 5
+  fire: 4
+  waterstone: 6
+  firestone: 5
+  elementstone: 10
+  artifact: 3

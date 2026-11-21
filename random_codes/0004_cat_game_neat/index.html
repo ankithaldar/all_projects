@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://esm.sh; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+<title>Cat Game NEAT — Combinatorial Optimizer</title>
+<link rel="stylesheet" href="./styles.css">
+<script defer src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.1/dist/js-yaml.min.js" integrity="sha384-ZeqCzuWczURac3RacSufGD7oSbzeaX7xxnnOr3PTcYTLx4Av0qBj0kBq7AeCtHLA" crossorigin="anonymous"></script>
+</head>
+<body>
+<header class="app-header">
+  <div class="title-block">
+    <h1>Cat Game NEAT</h1>
+    <p class="subtitle">Simulation-based combinatorial optimizer · 23 items · 19 nets</p>
+    <p id="wall-clock" class="wall-clock" role="timer" aria-label="Simulated time: 0 minutes" aria-live="off">Sim time: 0 min</p>
+  </div>
+  <form id="controls" class="controls" aria-label="Simulation controls">
+    <div class="control-group btn-group">
+      <button type="button" id="btn-start" class="btn btn-primary" title="Start — validate controls, then begin silent training and the main-thread display run.">Start</button>
+      <button type="button" id="btn-pause" class="btn" title="Pause — freeze the display run; press Start again to resume.">Pause</button>
+      <button type="button" id="btn-reset" class="btn" title="Reset — stop the run and worker, clear the log and restore the idle state.">Reset</button>
+    </div>
+    <label class="control">Speed
+      <select id="speed" title="Display speed — 1x: 500 ms/tick; 10x: 50 ms/tick; fast: no delay.">
+        <option value="1x" selected>1x (500 ms)</option>
+        <option value="10x">10x (50 ms)</option>
+        <option value="fast">Fast (no delay)</option>
+      </select>
+    </label>
+    <label class="control">Seed
+      <input id="seed" type="number" min="0" max="4294967295" step="1" value="1" title="Seed — uint32 (0..4294967295). Same seed + config reproduces the same genome and schedule.">
+    </label>
+    <label class="control">Preset
+      <select id="preset" title="Start preset — reuse: pre-delivered stash reserved from consumption; empty: empty stash, 0 coins, unlimited bases.">
+        <option value="reuse">Reuse (pre-delivered, reserved)</option>
+        <option value="empty" selected>Empty stash · 0 coins</option>
+      </select>
+    </label>
+    <label class="control">Pop size
+      <input id="pop-size" type="number" min="1" max="500" step="1" value="20" title="Population size per item net — integer 1..500.">
+    </label>
+    <label class="control">Generations
+      <input id="generations" type="number" min="1" max="10000" step="1" value="100" title="Generations per item net — integer 1..10000.">
+    </label>
+  </form>
+</header>
+
+<!-- Editable initial state: prefilled from targets.yaml (targets) and the
+     active preset (coins/stash) after config resolves. No inline handlers. -->
+<section id="initial-state-panel" class="initial-state-panel" aria-labelledby="initial-state-title">
+  <h2 id="initial-state-title" class="panel-title">Initial state</h2>
+  <p class="initial-state-note">Edit counts, then Apply (or Start). Reset restores the preset defaults.</p>
+  <div class="initial-state-grid">
+    <fieldset class="initial-state-group">
+      <legend>Starting coins</legend>
+      <label class="control">Coins
+        <input id="initial-coins" type="number" min="0" max="1000000000" step="1" value="0" title="Starting coins — integer 0..1000000000. Applies to worker training and the display run on Start.">
+      </label>
+    </fieldset>
+    <fieldset class="initial-state-group">
+      <legend>Targets (11, from targets.yaml)</legend>
+      <label class="control">Silver <input id="initial-target-silver" type="number" min="0" max="10000000" step="1" value="12" title="Silver target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Gold <input id="initial-target-gold" type="number" min="0" max="10000000" step="1" value="13" title="Gold target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Pendant <input id="initial-target-pendant" type="number" min="0" max="10000000" step="1" value="1" title="Pendant target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Necklace <input id="initial-target-necklace" type="number" min="0" max="10000000" step="1" value="15" title="Necklace target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Orb <input id="initial-target-orb" type="number" min="0" max="10000000" step="1" value="20" title="Orb target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Water <input id="initial-target-water" type="number" min="0" max="10000000" step="1" value="5" title="Water target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Fire <input id="initial-target-fire" type="number" min="0" max="10000000" step="1" value="4" title="Fire target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Waterstone <input id="initial-target-waterstone" type="number" min="0" max="10000000" step="1" value="6" title="Waterstone target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Firestone <input id="initial-target-firestone" type="number" min="0" max="10000000" step="1" value="5" title="Firestone target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Elementstone <input id="initial-target-elementstone" type="number" min="0" max="10000000" step="1" value="10" title="Elementstone target — integer 0..10000000. Units required by the run."></label>
+      <label class="control">Artifact <input id="initial-target-artifact" type="number" min="0" max="10000000" step="1" value="3" title="Artifact target — integer 0..10000000. Units required by the run."></label>
+    </fieldset>
+    <fieldset class="initial-state-group">
+      <legend>Starter stash (19 craftable items)</legend>
+      <label class="control">String <input id="initial-stash-string" type="number" min="0" max="1000000000" step="1" value="0" title="String starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Wood <input id="initial-stash-wood" type="number" min="0" max="1000000000" step="1" value="0" title="Wood starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Metal <input id="initial-stash-metal" type="number" min="0" max="1000000000" step="1" value="0" title="Metal starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Bronze <input id="initial-stash-bronze" type="number" min="0" max="1000000000" step="1" value="0" title="Bronze starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Amethyst <input id="initial-stash-amethyst" type="number" min="0" max="1000000000" step="1" value="0" title="Amethyst starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Orb <input id="initial-stash-orb" type="number" min="0" max="1000000000" step="1" value="0" title="Orb starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Ribbon <input id="initial-stash-ribbon" type="number" min="0" max="1000000000" step="1" value="0" title="Ribbon starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Needles <input id="initial-stash-needles" type="number" min="0" max="1000000000" step="1" value="0" title="Needles starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Sparkles <input id="initial-stash-sparkles" type="number" min="0" max="1000000000" step="1" value="0" title="Sparkles starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Silver <input id="initial-stash-silver" type="number" min="0" max="1000000000" step="1" value="0" title="Silver starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Gold <input id="initial-stash-gold" type="number" min="0" max="1000000000" step="1" value="0" title="Gold starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Pendant <input id="initial-stash-pendant" type="number" min="0" max="1000000000" step="1" value="0" title="Pendant starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Water <input id="initial-stash-water" type="number" min="0" max="1000000000" step="1" value="0" title="Water starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Necklace <input id="initial-stash-necklace" type="number" min="0" max="1000000000" step="1" value="0" title="Necklace starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Fire <input id="initial-stash-fire" type="number" min="0" max="1000000000" step="1" value="0" title="Fire starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Waterstone <input id="initial-stash-waterstone" type="number" min="0" max="1000000000" step="1" value="0" title="Waterstone starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Firestone <input id="initial-stash-firestone" type="number" min="0" max="1000000000" step="1" value="0" title="Firestone starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Elementstone <input id="initial-stash-elementstone" type="number" min="0" max="1000000000" step="1" value="0" title="Elementstone starter stash — integer 0..1000000000. Units available at tick 0."></label>
+      <label class="control">Artifact <input id="initial-stash-artifact" type="number" min="0" max="1000000000" step="1" value="0" title="Artifact starter stash — integer 0..1000000000. Units available at tick 0."></label>
+    </fieldset>
+  </div>
+  <div class="initial-state-actions">
+    <button type="button" id="initial-apply" class="btn btn-primary" title="Apply — validate the edits, then start the run with the new initial state.">Apply</button>
+    <button type="button" id="initial-reset" class="btn" title="Reset — stop the run and restore the preset coins, targets and stash.">Reset</button>
+    <button type="button" id="initial-zero" class="btn" title="Reset to 0 — fill only: zero the starting coins and all 19 starter-stash items, leave the 11 targets unchanged. Press Apply to run.">Reset to 0</button>
+  </div>
+</section>
+
+<aside id="stash-panel" class="stash-panel" aria-label="Stash and coin balance">
+  <h2 class="panel-title">Stash</h2>
+  <div class="coin-block">
+    <div class="coin-line"><span>Coins</span><strong id="coin-counter">0</strong></div>
+    <div class="coin-line"><span>Spent</span><strong id="coin-spent">0</strong></div>
+  </div>
+  <div id="stash-list" class="stash-list"></div>
+</aside>
+
+<main class="app-main">
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button type="button" id="tab-train" class="tab is-active" role="tab" aria-selected="true" aria-controls="panel-train" title="Train / DAG — live crafting graph; click a node to trace its full ancestry.">Train / DAG</button>
+    <button type="button" id="tab-logger" class="tab" role="tab" aria-selected="false" aria-controls="panel-logger" title="Logger — bounded 5,000-entry event log with filters.">Logger</button>
+    <button type="button" id="tab-results" class="tab" role="tab" aria-selected="false" aria-controls="panel-results" title="Results — best schedule, totals, verdict and per-genome per-item breakdown.">Results</button>
+  </nav>
+
+  <section id="panel-train" class="panel" role="tabpanel" aria-labelledby="tab-train">
+    <div class="dag-header">
+      <h2 class="panel-title">Crafting DAG <small>dependency depth 0 → 10 (YAML tier is metadata only)</small></h2>
+      <ul class="legend" aria-label="Node state legend">
+        <li><span class="legend-swatch legend-material"></span> Material starved</li>
+        <li><span class="legend-swatch legend-coin"></span> Coin starved</li>
+        <li><span class="legend-swatch legend-both"></span> Both</li>
+        <li><span class="legend-swatch legend-busy"></span> Busy</li>
+      </ul>
+    </div>
+    <div class="dag-scroll">
+      <svg id="dag-svg" role="img" aria-label="Ingredient to product crafting dependency graph"></svg>
+    </div>
+  </section>
+
+  <section id="panel-logger" class="panel" role="tabpanel" aria-labelledby="tab-logger" hidden>
+    <div class="logger-tools">
+      <label class="control">Filter
+        <input id="log-filter" type="text" placeholder="type or item" autocomplete="off" title="Filter log rows by event type or item (substring).">
+      </label>
+      <button type="button" id="log-clear" class="btn" title="Clear all buffered and displayed log rows.">Clear log</button>
+      <span class="logger-note">Bounded at 5,000 entries · display run only</span>
+    </div>
+    <ul id="log-list" class="log-list" aria-live="polite"></ul>
+  </section>
+
+  <section id="panel-results" class="panel" role="tabpanel" aria-labelledby="tab-results" hidden>
+    <div id="results-body"></div>
+  </section>
+</main>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cat Game NEAT — Test Suite</title>
+  <!-- js-yaml 4.1.1 UMD, pinned + SRI (same pin as index.html) for config parity tests. -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.1/dist/js-yaml.min.js"
+          integrity="sha384-ZeqCzuWczURac3RacSufGD7oSbzeaX7xxnnOr3PTcYTLx4Av0qBj0kBq7AeCtHLA"
+          crossorigin="anonymous"></script>
+  <style>
+    body { font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; margin: 16px; background: #111; color: #ddd; }
+    #test-results { white-space: pre-wrap; }
+    .test-row { padding: 2px 4px; border-bottom: 1px solid #222; }
+    .test-row.pass .test-name { color: #6f6; }
+    .test-row.fail .test-name { color: #f66; }
+    .test-detail { color: #999; margin-left: 8px; }
+    .test-summary { margin-top: 12px; font-weight: bold; color: #ffd479; }
+  </style>
+</head>
+<body>
+  <h1>Cat Game NEAT — Tests</h1>
+  <pre id="test-results"></pre>
+
+  <script type="module">
+    import { runTests, test } from './src/tests/harness.js';
+
+    // Order: harness (above), then every src/tests/*.test.js, then runTests().
+    // NOTE: this is a MANUAL list — every new src/tests/*.test.js MUST be added here,
+    // otherwise its tests silently never run (there is no auto-discovery).
+    const testFiles = [
+      './src/tests/cost.test.js',
+      './src/tests/demand.test.js',
+      './src/tests/engine.test.js',
+      './src/tests/fitness.test.js',
+      './src/tests/controller.test.js',
+      './src/tests/inputs.test.js',
+      './src/tests/defaults.test.js',
+      './src/tests/batch-planner.test.js',
+      './src/tests/batch-quantizer.test.js',
+      './src/tests/time-aligner.test.js',
+      './src/tests/priority.test.js',
+      './src/tests/config.test.js',
+      './src/tests/security.test.js',
+      './src/tests/ui.test.js',
+      './src/tests/worker-bridge.test.js'
+    ];
+
+    for (const file of testFiles) {
+      try {
+        await import(file);
+      } catch (err) {
+        // Surface a load failure as a registered failing test so the suite
+        // still reports partial results instead of dying silently.
+        const message = (err && err.message) ? err.message : String(err);
+        test(`LOAD ${file}`, () => { throw new Error(message); });
+      }
+    }
+
+    await runTests();
+  </script>
+</body>
+</html>
