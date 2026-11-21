@@ -18,7 +18,7 @@ from cat_game_bot.detection import (
   ScreenDetector,
   is_loading,
 )
-from cat_game_bot.models import GameState, Match, Rect, Screen
+from cat_game_bot.models import ActionKind, GameState, Match, Rect, Screen
 from cat_game_bot.navigator import Memory, Navigator
 from cat_game_bot.vision import (
   TEMPLATE_SCORE_OVERRIDES,
@@ -30,10 +30,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = PROJECT_ROOT / 'templates' / 'manifest.json'
 FIXTURE_PATH = (
     Path(__file__).resolve().parent / 'fixtures' / 'coins_popup.png')
+FRESH_FRUIT_FIXTURE = (
+    Path(__file__).resolve().parent / 'fixtures' / 'fresh_fruit_popup.png')
+FRESH_FRUIT_BANNER = 'banner_fresh_fruit'
 F23_TEMPLATES = (
     'banner_coins', 'gift_collect', 'banner_flash_sale', 'banner_vip',
-    'banner_club_token', 'banner_harvest', 'close_dialog',
-    'crafting_marker', 'home_marker',
+    'banner_club_token', 'banner_harvest', FRESH_FRUIT_BANNER,
+    'close_dialog', 'crafting_marker', 'home_marker',
 )
 
 
@@ -85,6 +88,18 @@ def _real_detector(tmp_path):
   return ScreenDetector(matcher, now=lambda: 1.0), matcher, library
 
 
+def _committed_detector():
+  """Build a real detector from the full committed template directory.
+
+  Returns:
+    tuple: The detector, matcher and library built from all committed PNGs.
+  """
+  library = TemplateLibrary(str(PROJECT_ROOT / 'templates'))
+  library.load(str(MANIFEST_PATH))
+  matcher = TemplateMatcher(library)
+  return ScreenDetector(matcher, now=lambda: 1.0), matcher, library
+
+
 def test_state_rules_follow_the_locked_order():
   """STATE_RULES is ordered GIFT_DIALOG-first and HOME-last."""
   states = [state for state, _ in ScreenDetector.STATE_RULES]
@@ -104,7 +119,7 @@ def test_popup_beats_home_when_both_match():
 
 def test_every_banner_classifies_as_popup_or_dialog():
   """Each captured popup banner drives a dismissible modal state."""
-  assert len(BANNER_MARKERS) == 5
+  assert len(BANNER_MARKERS) == 6
   for name in BANNER_MARKERS:
     detector = _detector({name: [_match(name)]})
     assert detector.detect(_screen()).state in (
@@ -301,3 +316,55 @@ def test_is_loading_dark_screen():
 def test_is_loading_bright_screen():
   """is_loading reports False for a bright screen."""
   assert not is_loading(_screen(255))
+
+
+def test_fresh_fruit_banner_is_a_state_marker():
+  """The real FRESH FRUIT ribbon drives a dismissible modal state."""
+  assert FRESH_FRUIT_BANNER in BANNER_MARKERS
+  detector = _detector({FRESH_FRUIT_BANNER: [_match(FRESH_FRUIT_BANNER)]})
+  assert detector.detect(_screen()).state in (
+      GameState.POPUP, GameState.DIALOG)
+
+
+def test_manifest_registers_fresh_fruit_banner():
+  """The manifest keeps its 55 prior templates plus the new banner."""
+  manifest = json.loads(MANIFEST_PATH.read_text(encoding='utf-8'))
+  assert manifest['templates'][FRESH_FRUIT_BANNER] == (
+      f'{FRESH_FRUIT_BANNER}.png')
+  assert len(manifest['templates']) == 56
+  assert (PROJECT_ROOT / 'templates' /
+          f'{FRESH_FRUIT_BANNER}.png').is_file()
+
+
+def test_real_fresh_fruit_template_scores_high_on_source():
+  """The committed banner template matches the real popup at >= 0.85."""
+  _, _, library = _committed_detector()
+  image = cv2.imread(str(FRESH_FRUIT_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  template = library.get(FRESH_FRUIT_BANNER)
+  scores = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+  assert float(scores.max()) >= 0.85
+
+
+def test_real_fresh_fruit_popup_is_dismissed_through_real_rules():
+  """The real FRESH FRUIT screenshot is a BACK-dismissed POPUP/DIALOG."""
+  detector, _, _ = _committed_detector()
+  image = cv2.imread(str(FRESH_FRUIT_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  detection = detector.detect(Screen(image))
+  assert detection.state in (GameState.POPUP, GameState.DIALOG)
+  action = Navigator(detector).choose(detection, Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
+
+
+def test_fresh_fruit_banner_absent_from_normal_shelf():
+  """A craft shelf with the ribbon blanked is not a FRESH FRUIT POPUP."""
+  detector, matcher, _ = _committed_detector()
+  image = cv2.imread(str(FRESH_FRUIT_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  image[620:800, 100:960] = 200
+  screen = Screen(image)
+  assert not matcher.match(screen, FRESH_FRUIT_BANNER)
+  detection = detector.detect(screen)
+  assert detection.state not in (GameState.POPUP, GameState.DIALOG)

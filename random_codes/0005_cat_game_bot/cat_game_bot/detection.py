@@ -22,8 +22,11 @@ BANNER_COINS = 'banner_coins'
 BANNER_VIP = 'banner_vip'
 BANNER_CLUB_TOKEN = 'banner_club_token'
 BANNER_HARVEST = 'banner_harvest'
+# The FRESH FRUIT SPECIAL OFFER popup carries this distinctive ribbon, so it
+# joins the banner set (close_dialog_2..5 stay navigator-only close targets).
+BANNER_FRESH_FRUIT = 'banner_fresh_fruit'
 BANNER_MARKERS = (BANNER_FLASH_SALE, BANNER_COINS, BANNER_VIP,
-                  BANNER_CLUB_TOKEN, BANNER_HARVEST)
+                  BANNER_CLUB_TOKEN, BANNER_HARVEST, BANNER_FRESH_FRUIT)
 # The real COINS! gift popup carries banner_coins alongside its Collect
 # control. GIFT_DIALOG requires BOTH on the same screen so a bare COINS
 # promo without a Collect button stays a normal POPUP.
