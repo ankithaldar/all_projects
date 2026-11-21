@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "regions": {
+    "coins": {"x": 505, "y": 150, "w": 240, "h": 70},
+    "gift_timer": {"x": 940, "y": 620, "w": 135, "h": 70}
+  },
+  "offsets": {
+    "item_count.cotton": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.tree": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.rock": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.quartz": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.string": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.wood": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.metal": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.bronze": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.amethyst": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.orb": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.ribbon": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.needles": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.sparkles": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.silver": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.gold": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.pendant": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.water": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.necklace": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.fire": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.waterstone": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.firestone": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.elementstone": {"dx": 0, "dy": 140, "w": 120, "h": 64},
+    "item_count.artifact": {"dx": 0, "dy": 140, "w": 120, "h": 64}
+  }
+}

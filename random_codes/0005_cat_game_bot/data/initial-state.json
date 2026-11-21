@@ -1,0 +1,37 @@
+{
+  "targets": {
+    "silver": 12,
+    "gold": 13,
+    "pendant": 1,
+    "necklace": 15,
+    "orb": 20,
+    "water": 5,
+    "fire": 4,
+    "waterstone": 6,
+    "firestone": 5,
+    "elementstone": 10,
+    "artifact": 3
+  },
+  "initialCoins": 6423826,
+  "initialStash": {
+    "string": 86,
+    "wood": 69,
+    "ribbon": 59,
+    "metal": 18,
+    "needles": 33,
+    "sparkles": 2,
+    "bronze": 30,
+    "silver": 2,
+    "gold": 0,
+    "amethyst": 163,
+    "pendant": 6,
+    "necklace": 0,
+    "orb": 44,
+    "water": 0,
+    "fire": 1,
+    "waterstone": 1,
+    "firestone": 3,
+    "elementstone": 1,
+    "artifact": 0
+  }
+}

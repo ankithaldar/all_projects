@@ -1,0 +1,169 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""Tests for navigation memory and action selection (plan v11 section 7)."""
+
+from cat_game_bot.models import (
+  Action, ActionKind, Detection, GameState, Match, Point, Rect,
+)
+from cat_game_bot.navigator import Memory, Navigator
+from cat_game_bot.targets import TARGET_IDS, item_template
+
+
+def _detection(state, matches=()):
+  return Detection(state, tuple(matches), 0.0)
+
+
+def test_mark_visited_uses_key_and_does_not_reset_progress():
+  memory = Memory()
+  memory.no_progress = 5
+  assert memory.mark_visited('craft_tab', (3, 4)) is True
+  assert memory.mark_visited('craft_tab', (3, 4)) is False
+  assert ('craft_tab', 3, 4) in memory.visited
+  assert memory.no_progress == 5
+
+
+def test_reset_progress_clears_only_no_progress():
+  memory = Memory()
+  memory.no_progress = 7
+  memory.last_state = GameState.HOME
+  memory.mark_visited('craft_tab', (1, 2))
+  memory.reset_progress()
+  assert memory.no_progress == 0
+  assert ('craft_tab', 1, 2) in memory.visited
+  assert memory.last_state is GameState.HOME
+
+
+def test_action_for_template_returns_center_tap_or_none():
+  navigator = Navigator(object())
+  match = Match('close_dialog', Rect(10, 20, 16, 16), 0.9)
+  detection = _detection(GameState.DIALOG, [match])
+  action = navigator.action_for_template(detection, 'close_dialog')
+  assert action.kind is ActionKind.TAP
+  assert action.point == Point(18, 28)
+  assert action.reason == 'close_dialog'
+  assert navigator.action_for_template(detection, 'missing') is None
+
+
+def test_gift_dialog_choose_returns_single_collect_tap():
+  navigator = Navigator(object())
+  detection = _detection(GameState.GIFT_DIALOG)
+  action = navigator.choose(detection, Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'gift_collect'
+  assert action.point is not None
+
+  with_template = _detection(GameState.GIFT_DIALOG, [
+      Match('gift_collect', Rect(532, 1617, 16, 16), 0.9)])
+  action = navigator.choose(with_template, Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'gift_collect'
+
+
+def test_choose_prefers_supplied_planner_action():
+  navigator = Navigator(object())
+  planned = Action(ActionKind.TAP, Point(1, 2), None, 'planned')
+  chosen = navigator.choose(_detection(GameState.CRAFTING), Memory(),
+                            planned)
+  assert chosen is planned
+
+
+def test_choose_fallback_prefers_unvisited_target_match():
+  navigator = Navigator(object())
+  target = item_template(TARGET_IDS[0])
+  matches = [
+    Match('generic_icon', Rect(0, 0, 16, 16), 0.8),
+    Match(target, Rect(32, 48, 16, 16), 0.9),
+  ]
+  chosen = navigator.choose(_detection(GameState.HOME, matches), Memory(),
+                            None)
+  assert chosen.reason == target
+  assert chosen.kind is ActionKind.TAP
+
+
+def test_choose_does_not_prioritise_bare_target_ids():
+  """A bare item id is not a canonical target match name."""
+  navigator = Navigator(object())
+  matches = [
+    Match('generic_icon', Rect(0, 0, 16, 16), 0.8),
+    Match(TARGET_IDS[0], Rect(32, 48, 16, 16), 0.9),
+  ]
+  chosen = navigator.choose(_detection(GameState.HOME, matches), Memory(),
+                            None)
+  assert chosen.reason == 'generic_icon'
+
+
+def test_action_for_template_with_real_manifest_item_name(manifest_names):
+  """A canonical manifest item name yields a tap via action_for_template."""
+  name = item_template(TARGET_IDS[0])
+  assert name in manifest_names
+  navigator = Navigator(object())
+  match = Match(name, Rect(100, 200, 16, 16), 0.9)
+  detection = _detection(GameState.CRAFTING, [match])
+  action = navigator.action_for_template(detection, name)
+  assert action is not None
+  assert action.kind is ActionKind.TAP
+  assert action.reason == name
+  assert action.point == Point(108, 208)
+
+
+def test_choose_returns_wait_when_nothing_available():
+  navigator = Navigator(object())
+  chosen = navigator.choose(_detection(GameState.LOADING), Memory(), None)
+  assert chosen.kind is ActionKind.WAIT
+
+
+# --- F21 / F22: close targets, bag exit, collect tap ------------------------
+
+def test_choose_popup_uses_close_targets_as_dismiss_taps():
+  navigator = Navigator(object())
+  for name in ('close_dialog_2', 'close_dialog_3', 'close_dialog_4',
+               'close_dialog_5'):
+    close = Match(name, Rect(1000, 100, 16, 16), 0.9)
+    action = navigator.choose(_detection(GameState.POPUP, [close]),
+                              Memory(), None)
+    assert action.kind is ActionKind.TAP
+    assert action.reason == 'dismiss'
+    assert action.point == Point(1008, 108)
+
+
+def test_choose_dialog_dismisses_with_close_target():
+  navigator = Navigator(object())
+  close = Match('close_dialog_4', Rect(100, 200, 16, 16), 0.9)
+  action = navigator.choose(_detection(GameState.DIALOG, [close]),
+                            Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+
+
+def test_choose_popup_without_close_match_still_taps_a_real_match():
+  navigator = Navigator(object())
+  banner = Match('banner_flash_sale', Rect(0, 0, 16, 16), 0.9)
+  action = navigator.choose(_detection(GameState.POPUP, [banner]),
+                            Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+
+
+def test_choose_popup_with_no_matches_backs_out():
+  navigator = Navigator(object())
+  action = navigator.choose(_detection(GameState.POPUP), Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
+
+
+def test_choose_bag_dialog_returns_back():
+  navigator = Navigator(object())
+  action = navigator.choose(_detection(GameState.BAG_DIALOG), Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'close_bag'
+
+
+def test_action_for_template_exposes_craft_ready_collect_tap():
+  navigator = Navigator(object())
+  ready = Match('craft_ready_check', Rect(300, 400, 16, 16), 0.9)
+  detection = _detection(GameState.CRAFTING, [ready])
+  action = navigator.action_for_template(detection, 'craft_ready_check')
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'craft_ready_check'
+  assert action.point == Point(308, 408)
