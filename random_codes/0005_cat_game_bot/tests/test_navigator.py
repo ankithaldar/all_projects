@@ -115,34 +115,51 @@ def test_choose_returns_wait_when_nothing_available():
 
 # --- F21 / F22: close targets, bag exit, collect tap ------------------------
 
-def test_choose_popup_uses_close_targets_as_dismiss_taps():
+def test_choose_popup_dismisses_with_back_not_close_taps():
+  """POPUP dismisses with BACK even when a close X is matched."""
   navigator = Navigator(object())
-  for name in ('close_dialog_2', 'close_dialog_3', 'close_dialog_4',
-               'close_dialog_5'):
+  for name in ('close_dialog', 'close_dialog_2', 'close_dialog_3',
+               'close_dialog_4', 'close_dialog_5'):
     close = Match(name, Rect(1000, 100, 16, 16), 0.9)
     action = navigator.choose(_detection(GameState.POPUP, [close]),
                               Memory(), None)
-    assert action.kind is ActionKind.TAP
+    assert action.kind is ActionKind.BACK
     assert action.reason == 'dismiss'
-    assert action.point == Point(1008, 108)
+    assert action.point is None
+    assert action.end is None
 
 
-def test_choose_dialog_dismisses_with_close_target():
+def test_choose_dialog_dismisses_with_back():
+  """DIALOG dismisses with BACK even when a close X is matched."""
   navigator = Navigator(object())
   close = Match('close_dialog_4', Rect(100, 200, 16, 16), 0.9)
   action = navigator.choose(_detection(GameState.DIALOG, [close]),
                             Memory(), None)
-  assert action.kind is ActionKind.TAP
+  assert action.kind is ActionKind.BACK
   assert action.reason == 'dismiss'
+  assert action.point is None
 
 
-def test_choose_popup_without_close_match_still_taps_a_real_match():
+def test_choose_popup_without_close_match_still_dismisses_with_back():
+  """POPUP without a close X still dismisses with BACK, not a banner tap."""
   navigator = Navigator(object())
   banner = Match('banner_flash_sale', Rect(0, 0, 16, 16), 0.9)
   action = navigator.choose(_detection(GameState.POPUP, [banner]),
                             Memory(), None)
-  assert action.kind is ActionKind.TAP
+  assert action.kind is ActionKind.BACK
   assert action.reason == 'dismiss'
+
+
+def test_choose_popup_repeated_ticks_keep_dismissing_with_back():
+  """Repeated POPUP ticks keep returning BACK, never a close-screen tap."""
+  navigator = Navigator(object())
+  close = Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9)
+  detection = _detection(GameState.POPUP, [close])
+  memory = Memory()
+  for _ in range(3):
+    action = navigator.choose(detection, memory, None)
+    assert action.kind is ActionKind.BACK
+    assert action.reason == 'dismiss'
 
 
 def test_choose_popup_with_no_matches_backs_out():

@@ -6,9 +6,10 @@
 ``Memory`` tracks 16-pixel-quantified interactive matches so the session can
 detect repeated ticks.  ``Navigator`` turns a detection (plus an optional
 planner action) into the single action taken on a tick.  A gift dialog always
-yields exactly one Collect tap.  Popups and dialogs are dismissed by tapping a
-close-dialog target (never by treating that target as a state marker), and a
-Bag dialog is exited with a BACK action so a paused craft batch can resume.
+yields exactly one Collect tap.  Popups and dialogs are dismissed with BACK so
+the focused overlay closes without closing the screen beneath it; close-dialog
+targets are kept only as a fallback.  A Bag dialog is exited with BACK so a
+paused craft batch can resume.
 State priorities then favour the craft tab on HOME, an item tap or shelf
 scroll in CRAFTING, the gold craft button in RECIPE_DIALOG, and dismissal in
 CATALOG, before the generic unvisited-match fallback.
@@ -100,9 +101,9 @@ class Navigator:
     """Select the action for this tick.
 
     A gift dialog always produces the lone Collect tap.  POPUP/DIALOG states
-    are dismissed by tapping a close-dialog target (or BACK when none is
-    visible), and BAG_DIALOG is closed with BACK.  A supplied planner action
-    then wins.  Remaining states follow section-7 priorities: HOME taps the
+    are dismissed with BACK so the craft screen beneath them stays open, and
+    BAG_DIALOG is closed with BACK.  A supplied planner action then wins.
+    Remaining states follow section-7 priorities: HOME taps the
     craft tab, CRAFTING taps an item or scrolls the shelf, RECIPE_DIALOG taps
     the craft button, CATALOG dismisses, TAP_TO_START taps its marker, and
     LOADING/UNKNOWN wait.  Finally the generic first-unvisited-match fallback
@@ -123,7 +124,7 @@ class Navigator:
       return Action(ActionKind.TAP, _GIFT_COLLECT_POINT, None,
                     'gift_collect')
     if detection.state in (GameState.POPUP, GameState.DIALOG):
-      return self._dismiss(detection, memory)
+      return self._dismiss(detection, memory, back_first=True)
     if detection.state is GameState.BAG_DIALOG:
       return Action(ActionKind.BACK, None, None, _CLOSE_BAG)
     if planner_action is not None:
@@ -163,19 +164,26 @@ class Navigator:
                     chosen.name)
     return Action(ActionKind.WAIT, None, None, 'idle')
 
-  def _dismiss(self, detection: Detection, memory: Memory):
-    """Return a real dismiss action for a POPUP or DIALOG detection.
+  def _dismiss(self, detection: Detection, memory: Memory,
+               back_first: bool = False):
+    """Return a dismiss action for a POPUP or DIALOG detection.
 
+    Android BACK dismisses only the focused overlay and leaves the craft
+    screen beneath it intact, so POPUP/DIALOG use it as the primary action.
     Close-dialog names are action targets only; the state has already been
     classified by the detector, so these names never drive state selection.
+    Their taps remain only as a fallback when BACK is not requested.
 
     Args:
         detection: Current POPUP or DIALOG detection.
         memory: Session memory of visited matches.
+        back_first: Return BACK immediately when True (POPUP/DIALOG).
 
     Returns:
-        Action: A close-target tap, a tap on a visible match, or BACK.
+        Action: BACK, or a close-target/match tap when BACK is not primary.
     """
+    if back_first:
+      return Action(ActionKind.BACK, None, None, _DISMISS)
     for name in _CLOSE_TARGETS:
       close = self.action_for_template(detection, name)
       if close is not None:

@@ -83,10 +83,11 @@ and imports `config._json_default`, `models`, `navigator.Memory` and
    `ACTION_FAILURE` event.
 
 `Navigator.choose()` precedence: GIFT_DIALOG → exactly one Collect tap (matched
-`gift_collect`, else hardcoded `Point(540, 1625)`); POPUP/DIALOG → dismiss via
-`close_dialog*` tap, else first unvisited match, else BACK; BAG_DIALOG → BACK
-(`close_bag`); then supplied planner action; then first unvisited match with
-target items sorted first; finally WAIT (`idle`).
+`gift_collect`, else hardcoded `Point(540, 1625)`); POPUP/DIALOG → BACK
+(`dismiss`, so the screen beneath stays open); BAG_DIALOG → BACK
+(`close_bag`); RECIPE_DIALOG/CATALOG → `close_dialog*` tap, else first
+unvisited match, else BACK; then supplied planner action; then first
+unvisited match with target items sorted first; finally WAIT (`idle`).
 
 Gift protocol in `Session.run()`:
 
