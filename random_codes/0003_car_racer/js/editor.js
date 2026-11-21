@@ -77,17 +77,42 @@ function deepCopyPoints(pts) {
 
 function editorErrMsg(err) { return String((err && err.message) || err); }
 
-// Pointer event → canvas coordinate space (robust to CSS scaling of the canvas).
+// RESPONSIVE — mirror the CSS box into a DPR-sized bitmap and install the SAME
+// uniform world transform js/main.js uses. The editor shares the immutable
+// 1100×650 world space (EDITOR_CANVAS_W/H); nothing here changes world coords.
+function fitEditorCanvas() {
+  var canvas = editor.canvas;
+  if (!canvas || !editor.ctx) return false;
+  var rect = canvas.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) return false; // hidden tab
+  var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  var bw = Math.max(1, Math.round(rect.width * dpr));
+  var bh = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;   // clearing is intentional: render() repaints immediately
+    canvas.height = bh;
+  }
+  var scale = Math.min(bw / EDITOR_CANVAS_W, bh / EDITOR_CANVAS_H);
+  var ox = (bw - EDITOR_CANVAS_W * scale) / 2;
+  var oy = (bh - EDITOR_CANVAS_H * scale) / 2;
+  editor.ctx.setTransform(scale, 0, 0, scale, ox, oy);
+  editor.view = { bw: bw, bh: bh, scale: scale, ox: ox, oy: oy, dpr: dpr };
+  return true;
+}
+
+// Pointer event → WORLD coordinate. The old `canvas.width / rect.width` scale
+// now yields DEVICE pixels, so undo DPR and the centered uniform view transform
+// (letterbox offsets included). This is load-bearing for add/drag/delete.
 function eventPos(canvas, event) {
   if (!canvas) return null;
   var rect = canvas.getBoundingClientRect();
   if (!rect || rect.width <= 0 || rect.height <= 0) return null;
-  var scaleX = canvas.width / rect.width;
-  var scaleY = canvas.height / rect.height;
-  return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY,
-  };
+  fitEditorCanvas(); // view must match the current box (resize / first reveal)
+  var v = editor.view;
+  if (!v || !v.bw || !v.bh) return null;
+  var px = (event.clientX - rect.left) * (v.bw / rect.width);  // device px
+  var py = (event.clientY - rect.top) * (v.bh / rect.height);
+  return { x: (px - v.ox) / v.scale, y: (py - v.oy) / v.scale };
 }
 
 var editor = {
@@ -105,6 +130,7 @@ var editor = {
   widthGestureArmed: false, // one undo snapshot per width-drag gesture
   dirty: true,              // road needs rebuilding
   cachedTrack: null,
+  view: null,               // last fitted { bw, bh, scale, ox, oy, dpr }
 };
 
 function el(id) { return document.getElementById(id); }
@@ -165,6 +191,7 @@ function drawPoints(ctx) {
 }
 
 function render() {
+  fitEditorCanvas(); // re-fit on every render (cheap; no-op when nothing changed)
   var ctx = editor.ctx;
   if (!ctx) return;
   // The ONE deterministic grass pattern lives in js/track.js (shared with the
@@ -647,6 +674,7 @@ var api = {
   init: init,
   open: open,
   close: close,
+  redraw: render, // RESPONSIVE — host calls this after a resize / tab reveal
   getTrack: getTrack,
 };
 

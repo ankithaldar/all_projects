@@ -17,6 +17,12 @@
   --focus: #4cc9f0;
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* RESPONSIVE — the world is an immutable 1100x650 coordinate space. The
+     canvas is sized in CSS to the largest UNIFORM box that fits both the
+     available width and the viewport height, so circles stay circles and the
+     track uses screen real estate instead of stopping at the old 1100px cap. */
+  --canvas-ratio: 1.6923076923;
+  --canvas-viewport-inset: 200px;
 }
 
 * { box-sizing: border-box; }
@@ -173,8 +179,14 @@ section[hidden] { display: none; }
 }
 canvas {
   display: block;
-  width: 100%;
-  max-width: 1100px;
+  /* Width = min(fill the wrapper, the width whose 1100:650 height fits the
+     viewport). aspect-ratio pins the shape; max-width:none removes the old
+     1100px visual cap. JS mirrors this box into a DPR-sized bitmap + a uniform
+     world transform (see canvasContext in js/main.js and fitEditorCanvas in
+     js/editor.js) — no stretch, letterboxing centered. */
+  width: min(100%, calc((100vh - var(--canvas-viewport-inset)) * var(--canvas-ratio)));
+  max-width: none;
+  aspect-ratio: 1100 / 650;
   height: auto;
   background: #2a4a22;
   border-radius: 6px;
@@ -203,6 +215,24 @@ canvas {
 .blocking-note { color: #ffb3c1; font-weight: 600; }
 .inline-note { display: inline; margin: 0; }
 code { background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 0.85em; }
+
+/* ---------- training progress (compact; no layout shift) ---------- */
+.train-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.train-progress progress {
+  flex: 1 1 110px;
+  min-width: 90px;
+  height: 8px;
+  accent-color: var(--accent);
+}
+.train-progress-text { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 /* ---------- train layout ---------- */
 .train-mode-row {

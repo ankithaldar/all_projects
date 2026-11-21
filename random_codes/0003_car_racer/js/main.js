@@ -263,6 +263,13 @@ var state = {
   trainTrackHash: '',
   spectateTrack: null,
 
+  // RESPONSIVE — last successful render inputs, replayed after a resize / tab
+  // reveal so a resized (and therefore cleared) backing store is repainted.
+  lastTrainStatus: null,     // { text, track }
+  lastReplayFrame: null,     // last onFrame payload from js/replay.js
+  currentTrackLabel: 'default circuit',
+  canvasFitDpr: 0,           // last devicePixelRatio observed by canvasContext
+
   ticks: 0,
   fps: 60,
   manualAcc: 0,
@@ -299,7 +306,7 @@ function updateTrainUi() {
 
 function updateResumeInputBounds() {
   var maxGen = currentLatestGeneration();
-  state.latestGen = maxGen; // commit-path cache for updateStatusLine (reviewer #17-19)
+  state.latestGen = Math.max(state.latestGen || 0, maxGen); // never clobber a just-committed generation
   var input = el('resume-generation');
   input.max = String(Math.max(1, maxGen));
   if (Number(input.value) > maxGen) input.value = String(Math.max(1, maxGen));
@@ -319,7 +326,7 @@ function setReplayDisabledNote(message) {
 function refreshReplayBounds() {
   var R = replayApi();
   var maxGen = currentLatestGeneration();
-  state.latestGen = maxGen; // commit-path cache for updateStatusLine (reviewer #17-19)
+  state.latestGen = Math.max(state.latestGen || 0, maxGen); // commit-path cache — never regress mid-run
   var input = el('replay-generation');
   input.max = String(Math.max(1, maxGen));
   input.value = String(Math.max(1, Math.min(Math.max(1, Number(input.value) || 1), maxGen || 1)));
@@ -335,6 +342,11 @@ function refreshReplayBounds() {
   } else {
     setReplayDisabledNote(null);
   }
+  var replayEmpty = el('replay-empty');
+  if (replayEmpty) {
+    replayEmpty.hidden = !(state.dbAvailable && state.db && Math.max(maxGen, state.latestGen || 0) < 1);
+  }
+  updateCanvasLabels(); // keep accessible names truthful as generations arrive
 }
 
 function refreshPanels() {
@@ -437,6 +449,8 @@ function resetTrainStatsUi() {
   state.trainPinTrack = null;
   state.rotationSeed = 0;
   state.spectateTrack = null;
+  scheduleTrainProgress(0, el('max-generations').value); // UX — reset progress on new lineage
+  updateTrackLabel(0); // UX — back to the pinned/default circuit label
 }
 
 // clearLineageFaults — shared outcome reset after ANY fork wipe (the
@@ -674,9 +688,70 @@ function drawGrass(ctx) {
   globalThis.Track.drawTrackBackground(ctx, CANVAS_W, CANVAS_H);
 }
 
+// RESPONSIVE — one entry point for EVERY render path (manual, headless
+// placeholder, spectate, replay). The world stays 1100x650; this function
+// sizes the bitmap to the CSS box * DPR and installs a UNIFORM scale with
+// centered letterboxing so all existing drawing code is unchanged.
 function canvasContext(canvas) {
   if (!canvas || typeof canvas.getContext !== 'function') return null;
-  return canvas.getContext('2d');
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  var dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  state.canvasFitDpr = dpr;
+  var rect = canvas.getBoundingClientRect();
+  // A hidden tab has a zero-size box — keep the last bitmap/transform; nothing
+  // is drawn until the tab is revealed (activateTab then triggers a redraw).
+  if (!rect || rect.width <= 0 || rect.height <= 0) return ctx;
+  var bw = Math.max(1, Math.round(rect.width * dpr));
+  var bh = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;   // changing either dimension clears the backing store
+    canvas.height = bh;
+  }
+  var scale = Math.min(bw / CANVAS_W, bh / CANVAS_H);
+  var ox = (bw - CANVAS_W * scale) / 2;
+  var oy = (bh - CANVAS_H * scale) / 2;
+  ctx.setTransform(scale, 0, 0, scale, ox, oy);
+  return ctx;
+}
+
+// redrawAllCanvases() — re-paint the currently visible canvas(es) after a
+// resize, a tab reveal, or a DPR change. Uses the LAST render inputs so a
+// static (non-running) view still comes back after its bitmap was cleared.
+function redrawAllCanvases() {
+  if (state.activeTab === 'manual' && state.manualCar && state.activeTrack) {
+    renderManual();
+  } else if (state.activeTab === 'train') {
+    if (state.spectate && state.spectate.running && typeof drawSpectateFrame === 'function') {
+      drawSpectateFrame();
+    } else if (state.lastTrainStatus) {
+      drawTrainStatus(state.lastTrainStatus.text, state.lastTrainStatus.track);
+    }
+  } else if (state.activeTab === 'replay') {
+    if (state.lastReplayFrame) {
+      onReplayFrame(state.lastReplayFrame);
+    } else {
+      // No run yet — still fit the bitmap and show the (static) track behind
+      // the empty-state message so the canvas is never a stale 1100×650 blob.
+      var replayCtx = canvasContext(el('replay-canvas'));
+      if (replayCtx && state.activeTrack) {
+        drawGrass(replayCtx);
+        state.activeTrack.draw(replayCtx);
+      }
+    }
+  } else if (state.activeTab === 'editor' && globalThis.Editor && typeof globalThis.Editor.redraw === 'function') {
+    globalThis.Editor.redraw();
+  }
+}
+
+// One rAF-debounced resize listener for the whole app — never a rAF loop.
+var resizeRaf = 0;
+function onWindowResize() {
+  if (resizeRaf) return;
+  resizeRaf = requestAnimationFrame(function () {
+    resizeRaf = 0;
+    redrawAllCanvases();
+  });
 }
 
 // drawCarGlyph(ctx, x, y, heading) — the ONE rotated car glyph, shared by the
@@ -950,6 +1025,187 @@ function rotationLabelFor(generation) {
   return 'R ' + ri + ' · d ' + R.difficultyForRotation(ri);
 }
 
+/* ---- UX: truthful evaluation-track label + contextual canvas names ------- */
+// The HUD used to stay on "default circuit" forever even after rotation ≥ 1
+// switched the drivers onto a generated circuit. Resolve the SAME track the
+// rotation resolver uses and show its short hash. Rotation 0 keeps the pinned
+// track's label. Updates Manual/Train/Replay HUDs and all canvas aria-labels.
+function updateTrackLabel(generation) {
+  var R = globalThis.Rotation;
+  var ri = 0;
+  if (Number(generation) >= 1 && R && typeof R.rotationForGeneration === 'function') {
+    // rotationForGeneration refuses generation < 1; boot/reset call us with 0.
+    try { ri = R.rotationForGeneration(Number(generation)); } catch (err) { ri = 0; }
+  }
+  var label;
+  if (!ri || ri === 0) {
+    label = state.activeTrackName || 'default circuit';
+  } else {
+    if (state.trainTrackBlock !== ri || !state.trainTrackObj) {
+      // Best-effort: the session may not be pinned yet; the label still names
+      // the rotation, and gains the hash as soon as the resolver has run.
+      try { currentTrainingTrackFor(generation); } catch (err) { noop(); }
+    }
+    var hash = state.trainTrackHash || '';
+    label = 'generated · R' + ri + (hash ? ' · ' + hash.slice(0, 8) + '…' : '');
+  }
+  state.currentTrackLabel = label;
+  ['hud-track', 'train-track', 'replay-track'].forEach(function (id) {
+    var node = el(id);
+    if (node) node.textContent = label;
+  });
+  updateCanvasLabels();
+}
+
+// setCanvasLabel only writes when the text actually changed — avoids spamming
+// assistive tech with redundant accessible-name mutations every frame.
+function setCanvasLabel(id, text) {
+  var c = el(id);
+  if (c && c.getAttribute('aria-label') !== text) c.setAttribute('aria-label', text);
+}
+
+function updateCanvasLabels() {
+  var R = globalThis.Rotation;
+  var ri = state.trainTrackBlock >= 0 ? state.trainTrackBlock : 0;
+  if (ri === 0 && R && typeof R.rotationForGeneration === 'function' && state.latestGen >= 1) {
+    try { ri = R.rotationForGeneration(state.latestGen); } catch (err) { ri = 0; }
+  }
+  var diff = (R && typeof R.difficultyForRotation === 'function') ? R.difficultyForRotation(ri) : 0;
+  var detail = ri > 0
+    ? state.currentTrackLabel + ', rotation ' + ri + ', difficulty ' + diff
+    : (state.activeTrackName || 'default circuit');
+  setCanvasLabel('manual-canvas', 'Manual driving canvas: ' + detail);
+  setCanvasLabel('train-canvas', 'Training canvas: ' + detail);
+  setCanvasLabel('replay-canvas', 'Replay canvas: ' + detail);
+  var editorCanvas = el('editor-canvas');
+  if (editorCanvas) {
+    var base = 'Track editor canvas — click empty space to add a point (inserted where it fits the loop best), drag a point to move it, right-click a point to delete it';
+    setCanvasLabel('editor-canvas', base + ' Track: ' + detail);
+  }
+}
+
+/* ---- UX: compact, accessible training progress -------------------------- */
+var progressRaf = 0;
+var pendingProgress = null;
+function applyTrainProgress(gen, max) {
+  var prog = el('train-progress');
+  if (!prog) return;
+  max = Math.max(1, Number(max) || MAX_GENERATIONS_DEFAULT);
+  gen = Math.max(0, Number(gen) || 0);
+  if (Number(prog.max) !== max) prog.max = String(max);
+  prog.value = String(Math.min(gen, max));
+  var txt = el('train-progress-text');
+  if (txt) txt.textContent = gen + ' / ' + max;
+}
+function scheduleTrainProgress(gen, max) {
+  pendingProgress = { gen: gen, max: max };
+  if (progressRaf) return;
+  progressRaf = requestAnimationFrame(function () {
+    progressRaf = 0;
+    var p = pendingProgress;
+    pendingProgress = null;
+    if (p) applyTrainProgress(p.gen, p.max);
+  });
+}
+
+/* ---- UX: elements created from JS (index.html stays byte-pinned) --------- */
+function ensureUiExtras() {
+  if (el('train-progress')) return; // idempotent
+  var controls = document.querySelector('#tab-train .panel[aria-label="Training controls"]');
+  if (controls) {
+    var wrap = document.createElement('div');
+    wrap.className = 'train-progress';
+    wrap.id = 'train-progress-wrap';
+    var prog = document.createElement('progress');
+    prog.id = 'train-progress';
+    prog.max = String(MAX_GENERATIONS_DEFAULT);
+    prog.value = '0';
+    prog.setAttribute('aria-label', 'Training progress — generations committed');
+    var text = document.createElement('span');
+    text.id = 'train-progress-text';
+    text.className = 'train-progress-text';
+    text.textContent = '0 / ' + MAX_GENERATIONS_DEFAULT;
+    wrap.appendChild(prog);
+    wrap.appendChild(text);
+    controls.appendChild(wrap);
+  }
+  var stats = document.querySelector('#tab-train .stats-grid');
+  if (stats && !el('train-track')) {
+    var stat = document.createElement('div');
+    stat.className = 'stat';
+    var statLabel = document.createElement('span');
+    statLabel.className = 'hud-label';
+    statLabel.textContent = 'Evaluation track';
+    var statValue = document.createElement('span');
+    statValue.id = 'train-track';
+    statValue.className = 'stat-value';
+    stat.appendChild(statLabel);
+    stat.appendChild(statValue);
+    stats.appendChild(stat);
+  }
+  var replayHud = document.querySelector('#tab-replay .hud-row');
+  if (replayHud && !el('replay-track')) {
+    var cell = document.createElement('div');
+    cell.className = 'hud-cell';
+    var cellLabel = document.createElement('span');
+    cellLabel.className = 'hud-label';
+    cellLabel.textContent = 'Track';
+    var cellValue = document.createElement('span');
+    cellValue.id = 'replay-track';
+    cellValue.className = 'hud-value';
+    cell.appendChild(cellLabel);
+    cell.appendChild(cellValue);
+    replayHud.appendChild(cell);
+  }
+  var replaySection = el('tab-replay');
+  if (replaySection && !el('replay-empty')) {
+    var empty = document.createElement('p');
+    empty.id = 'replay-empty';
+    empty.className = 'subtle-note';
+    empty.textContent = 'No committed generations to replay yet — train first, then use Run replay.';
+    empty.hidden = true;
+    var controlsRow = replaySection.querySelector('.replay-controls');
+    if (controlsRow && controlsRow.parentNode) controlsRow.parentNode.insertBefore(empty, controlsRow.nextSibling);
+    else replaySection.insertBefore(empty, replaySection.firstChild);
+  }
+  var logsEmpty = el('logs-empty');
+  if (logsEmpty) logsEmpty.textContent = 'No generations committed yet — start training in the Train tab.';
+}
+
+/* ---- UX: WAI-ARIA APG tabs keyboard support (roving tabindex) ------------ */
+var TAB_ORDER = ['manual', 'train', 'replay', 'logs', 'editor'];
+function enabledTabNames() {
+  return TAB_ORDER.filter(function (name) {
+    var b = el('tab-btn-' + name);
+    return !!(b && !b.hidden && !b.disabled);
+  });
+}
+function onTabsKeydown(event) {
+  if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  var key = event.key;
+  if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return;
+  var tabs = enabledTabNames();
+  if (!tabs.length) return;
+  var focused = document.activeElement;
+  var current = null;
+  for (var i = 0; i < tabs.length; i++) {
+    if (focused === el('tab-btn-' + tabs[i])) { current = tabs[i]; break; }
+  }
+  if (!current) current = state.activeTab;
+  var idx = tabs.indexOf(current);
+  if (idx < 0) return;
+  var next;
+  if (key === 'ArrowRight') next = tabs[(idx + 1) % tabs.length];
+  else if (key === 'ArrowLeft') next = tabs[(idx - 1 + tabs.length) % tabs.length];
+  else if (key === 'Home') next = tabs[0];
+  else next = tabs[tabs.length - 1];
+  if (!next || next === current) return;
+  event.preventDefault();
+  var btn = el('tab-btn-' + next);
+  if (btn) btn.focus();
+  activateTab(next); // panels are preloaded ⇒ automatic activation is correct
+}
+
 function buildLogGenerationPayload(p) {
   // p.results[].distance carries FITNESS (net signed odometer + lap bonus;
   // may be negative) — the SAME value selectBest consumed and spectate/headless
@@ -1030,6 +1286,10 @@ function trainingBlockedReason(err) {
 function onTrainProgress(progress) {
   state.latestGen = Math.max(state.latestGen || 0, Number(progress.generation) || 0); // commit-path cache (reviewer #17-19)
   el('stat-generation').textContent = String(progress.generation);
+  // UX — the HUD must name the track the drivers were actually evaluated on,
+  // not the stale "default circuit", once rotation ≥ 1 takes over.
+  updateTrackLabel(progress.generation);
+  scheduleTrainProgress(progress.generation, el('max-generations').value);
   var rotationElProgress = el('stat-rotation');
   if (rotationElProgress) {
     var rTag = Number.isInteger(progress.rotationIndex) ? progress.rotationIndex : null;
@@ -1129,6 +1389,7 @@ function startHeadless() {
   var lin = resolveLineage();
   if (!lin) return;
   startRotationSession(lin); // FIT-V3 — pin the session to the lineage's seed + pin track; reset the block cache
+  updateTrackLabel(lin.kind === 'resume' ? (Number(lin.generation) || 0) + 1 : 1); // UX — evaluate-track label from the first generation
   var maxGenerations = clampInt(el('max-generations').value, 1, MAX_GENERATIONS_DEFAULT, MAX_GENERATIONS_DEFAULT);
   var lineage = lin.kind === 'fresh'
     ? { seed: lin.seed, rotationSeed: lin.rotationSeed, generatorVersion: state.generatorVersion, trackHash: lin.trackHash, expectedTrackHash: lin.trackHash }
@@ -1176,6 +1437,7 @@ function stopHeadless() {
     try { state.trainer.stop(); } catch (err) { noop(); }
   }
   state.headlessRunning = false;
+  scheduleTrainProgress(0, el('max-generations').value); // UX — reset on stop
   updateTrainUi();
 }
 
@@ -1183,6 +1445,7 @@ function stopHeadless() {
 // `track` optionally overrides state.activeTrack (spectate passes the
 // rotation block's track so the canvas always shows what the cars run on).
 function drawTrainStatus(text, track) {
+  state.lastTrainStatus = { text: text, track: track || null };
   var canvas = el('train-canvas');
   var ctx = canvasContext(canvas);
   var drawTrack = track || state.activeTrack;
@@ -1261,6 +1524,9 @@ function replayCanvasCtx() {
 }
 
 function onReplayFrame(frame) {
+  if (frame && Number.isFinite(frame.x) && Number.isFinite(frame.y)) {
+    state.lastReplayFrame = frame; // RESPONSIVE — replay after a resize/tab reveal
+  }
   var canvas = el('replay-canvas');
   var ctx = canvasContext(canvas);
   if (!ctx || !state.activeTrack) return;
@@ -1683,9 +1949,13 @@ function activateTab(name) {
     var btn = el('tab-btn-' + key);
     var section = el(TAB_SECTIONS[key]);
     var selected = key === name;
-    if (btn) btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+    if (btn) {
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+      btn.setAttribute('tabindex', selected ? '0' : '-1'); // APG roving tabindex
+    }
     if (section) section.hidden = !selected;
   }
+  redrawAllCanvases(); // a revealed canvas has a new CSS box / DPR-sized bitmap
   if (name === 'logs') refreshLogs();
   if (name === 'train') {
     if (state.spectate && state.spectate.running) {
@@ -1727,6 +1997,11 @@ function updateStatusLine() {
    ============================================================ */
 
 function wireStaticUi() {
+  ensureUiExtras(); // creates progress / track HUDs / empty states (JS-only, CSP-safe)
+  window.addEventListener('resize', onWindowResize); // single rAF-debounced listener
+  var tablist = document.querySelector('.tabs');
+  if (tablist) tablist.addEventListener('keydown', onTabsKeydown);
+
   // Header DB buttons
   el('btn-open-db').addEventListener('click', openDbPicker);
   el('btn-create-db').addEventListener('click', createDb);
@@ -1962,7 +2237,9 @@ function boot() {
   el('hud-speed').textContent = '0 px/s';
   el('hud-odometer').textContent = '0 px';
 
-  wireStaticUi();
+  wireStaticUi();       // ensureUiExtras() runs here, before any label/progress write
+  updateTrackLabel(0);  // UX — truthful initial track label + contextual canvas names
+  applyTrainProgress(0, el('max-generations').value);
   refreshBannerState(); // hides the banner until a source shows it
 
   // K — subtle-crypto absence (F-24 class): crypto.subtle (SHA-256) is
