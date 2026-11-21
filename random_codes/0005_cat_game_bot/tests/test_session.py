@@ -16,6 +16,7 @@ import pytest
 from cat_game_bot.config import Config
 from cat_game_bot.db import InteractionLog
 from cat_game_bot.errors import AdbError, DbError, VisionError
+from cat_game_bot.gift import GiftCollector
 from cat_game_bot.models import (
   Action, ActionKind, ActionResult, CraftStep, Detection, GameState,
   GiftResult, Match, Point, Rect, Screen, SessionStats,
@@ -685,12 +686,13 @@ def test_batch2_craft_collect_craft_collect_then_mark_placed_once():
   stats = env.session.run()
   assert _gift_actions(env.db) == [
       'item_silver', 'craft_ready_check', 'item_silver',
-      'craft_ready_check', 'idle']
+      'craft_ready_check', 'craft_scroll']
   env.planner.mark_placed.assert_called_once_with('silver')
   assert env.planner.next_step.call_count == 2
   assert stats.actions == 5
   assert stats.errors == 0
   assert env.adb.tap.call_count == 4
+  assert env.adb.swipe.call_count == 1
   assert stats.result == 'MAX_ACTIONS'
 
 
@@ -808,3 +810,41 @@ def test_batch_resumes_after_periodic_bag_visit_and_back():
   assert env.adb.back.call_count == 1
   assert stats.errors == 0
   assert stats.result == 'MAX_ACTIONS'
+
+
+def test_home_detection_taps_craft_tab_with_real_navigator():
+  """A real HOME detection yields a craft-tab tap, not the close X."""
+  craft = Match('craft_tab', Rect(600, 1700, 40, 40), 0.9)
+  close = Match('close_dialog_2', Rect(544, 1983, 16, 16), 0.9)
+  env = _make([(GameState.HOME, [close, craft])], max_actions=1)
+  _use_real_navigator(env)
+  stats = env.session.run()
+  assert _gift_actions(env.db) == ['craft_tab']
+  assert env.adb.tap.call_count == 1
+  assert env.adb.tap.call_args.args[0] == Point(620, 1720)
+  assert stats.errors == 0
+
+
+def test_splash_blank_timer_no_coins_yields_no_gift_action():
+  """A splash screen must navigate instead of opening a gift cycle."""
+
+  class SplashOcr:
+    """OCR stub returning blank text for every region on a splash."""
+
+    def read(self, unused_screen, unused_rect):
+      """Return no text, as on the TAP TO START splash screen."""
+      return ''
+
+  collector = GiftCollector(
+      SplashOcr(), {'coins': Rect(0, 0, 200, 50),
+                    'gift_timer': Rect(100, 100, 50, 50)})
+  start = Match('tap_to_start', Rect(400, 1200, 40, 40), 0.9)
+  env = _make([(GameState.TAP_TO_START, [start])], max_actions=1)
+  env.session.gift = collector
+  _use_real_navigator(env)
+  stats = env.session.run()
+  reasons = _gift_actions(env.db)
+  assert reasons == ['tap_to_start']
+  assert 'gift_icon' not in reasons
+  assert stats.errors == 0
+  assert env.adb.tap.call_count == 1

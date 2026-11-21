@@ -44,14 +44,22 @@ def test_is_ready_false_for_unparseable_timer_text(text):
   assert not _collector({_key(TIMER): text}).is_ready(_screen())
 
 
-def test_is_ready_true_for_blank_timer():
-  """No countdown text (timer absent) means the gift is ready."""
-  assert _collector({_key(TIMER): ''}).is_ready(_screen())
+def test_is_ready_false_for_blank_timer_with_unreadable_coins():
+  """A splash-like screen (blank timer, no coins) must not open a gift cycle."""
+  data = {_key(TIMER): '', _key(COINS): ''}
+  assert not _collector(data).is_ready(_screen())
 
 
-def test_is_ready_true_for_zero_clock_timer():
-  """An elapsed 00:00 countdown means the gift is ready."""
-  assert _collector({_key(TIMER): '00:00'}).is_ready(_screen())
+def test_is_ready_true_for_blank_timer_with_readable_coins():
+  """No countdown text with readable coins means the gift is ready."""
+  data = {_key(TIMER): '', _key(COINS): '1,234'}
+  assert _collector(data).is_ready(_screen())
+
+
+def test_is_ready_true_for_zero_clock_timer_with_readable_coins():
+  """An elapsed 00:00 countdown with readable coins means the gift is ready."""
+  data = {_key(TIMER): '00:00', _key(COINS): '1,234'}
+  assert _collector(data).is_ready(_screen())
 
 
 def test_is_ready_false_for_seconds_countdown():
@@ -66,7 +74,8 @@ def test_is_ready_false_for_clock_countdown():
 
 def test_plan_returns_tap_at_timer_center_when_ready():
   """plan produces the single icon-tap action when a gift is ready."""
-  action = _collector({_key(TIMER): ''}).plan(_screen())
+  data = {_key(TIMER): '', _key(COINS): '1,234'}
+  action = _collector(data).plan(_screen())
   assert isinstance(action, Action)
   assert action.kind is ActionKind.TAP
   assert action.point == TIMER.center()
@@ -88,7 +97,7 @@ def test_plan_reads_timer_itself_and_has_no_ready_parameter():
 
     def read(self, unused_screen, rect):
       calls.append(_key(rect))
-      return ''
+      return '1234' if _key(rect) == _key(COINS) else ''
 
   collector = GiftCollector(
     CountingOcr(), {'coins': COINS, 'gift_timer': TIMER})

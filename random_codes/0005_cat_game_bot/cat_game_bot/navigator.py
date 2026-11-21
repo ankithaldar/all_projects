@@ -9,6 +9,9 @@ planner action) into the single action taken on a tick.  A gift dialog always
 yields exactly one Collect tap.  Popups and dialogs are dismissed by tapping a
 close-dialog target (never by treating that target as a state marker), and a
 Bag dialog is exited with a BACK action so a paused craft batch can resume.
+State priorities then favour the craft tab on HOME, an item tap or shelf
+scroll in CRAFTING, the gold craft button in RECIPE_DIALOG, and dismissal in
+CATALOG, before the generic unvisited-match fallback.
 """
 
 from cat_game_bot.models import (
@@ -24,6 +27,10 @@ _CLOSE_TARGETS = (
 )
 _DISMISS = 'dismiss'
 _CLOSE_BAG = 'close_bag'
+_CRAFT_SCROLL = 'craft_scroll'
+_CRAFT_SCROLL_START = Point(540, 1900)
+_CRAFT_SCROLL_END = Point(540, 900)
+_ITEM_PREFIX = 'item_'
 
 
 class Memory:
@@ -94,9 +101,12 @@ class Navigator:
 
     A gift dialog always produces the lone Collect tap.  POPUP/DIALOG states
     are dismissed by tapping a close-dialog target (or BACK when none is
-    visible), and BAG_DIALOG is closed with BACK.  Otherwise a supplied planner
-    action wins; failing that, the first unvisited match is tapped (target
-    items first), and finally a wait is emitted.
+    visible), and BAG_DIALOG is closed with BACK.  A supplied planner action
+    then wins.  Remaining states follow section-7 priorities: HOME taps the
+    craft tab, CRAFTING taps an item or scrolls the shelf, RECIPE_DIALOG taps
+    the craft button, CATALOG dismisses, TAP_TO_START taps its marker, and
+    LOADING/UNKNOWN wait.  Finally the generic first-unvisited-match fallback
+    (target items first) applies, ending in a wait.
 
     Args:
         detection: Current screen detection.
@@ -118,6 +128,30 @@ class Navigator:
       return Action(ActionKind.BACK, None, None, _CLOSE_BAG)
     if planner_action is not None:
       return planner_action
+    state = detection.state
+    if state is GameState.HOME:
+      craft_tab = self.action_for_template(detection, 'craft_tab')
+      if craft_tab is not None:
+        return craft_tab
+    elif state is GameState.CRAFTING:
+      item = self._first_unvisited_item(detection, memory)
+      if item is not None:
+        return item
+      return Action(ActionKind.SWIPE, _CRAFT_SCROLL_START,
+                    _CRAFT_SCROLL_END, _CRAFT_SCROLL)
+    elif state is GameState.RECIPE_DIALOG:
+      craft = self.action_for_template(detection, 'craft_button')
+      if craft is not None:
+        return craft
+      return self._dismiss(detection, memory)
+    elif state is GameState.CATALOG:
+      return self._dismiss(detection, memory)
+    elif state is GameState.TAP_TO_START:
+      start = self.action_for_template(detection, 'tap_to_start')
+      if start is not None:
+        return start
+    elif state in (GameState.LOADING, GameState.UNKNOWN):
+      return Action(ActionKind.WAIT, None, None, 'idle')
     candidates = [
         match for match in detection.matches
         if self._is_unvisited(match, memory)
@@ -150,6 +184,23 @@ class Navigator:
       if self._is_unvisited(match, memory):
         return Action(ActionKind.TAP, match.rect.center(), None, _DISMISS)
     return Action(ActionKind.BACK, None, None, _DISMISS)
+
+  def _first_unvisited_item(self, detection: Detection, memory: Memory):
+    """Return a tap on the first unvisited item_* match, if any.
+
+    Args:
+        detection: Current CRAFTING detection.
+        memory: Session memory of visited matches.
+
+    Returns:
+        Action | None: A tap on an item match, or None when absent.
+    """
+    for match in detection.matches:
+      if (match.name.startswith(_ITEM_PREFIX)
+              and self._is_unvisited(match, memory)):
+        return Action(ActionKind.TAP, match.rect.center(), None,
+                      match.name)
+    return None
 
   @staticmethod
   def _is_unvisited(match: Match, memory: Memory):

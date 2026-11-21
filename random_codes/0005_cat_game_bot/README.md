@@ -185,8 +185,9 @@ success is decided only from Bag OCR via `goal_met()` over the 11 ids in
 ### Gift collection
 
 `GiftCollector.is_ready()` returns true only when the gift-timer region is
-blank or parses to zero; unparseable text blocks a gift cycle. `read_coins()`
-parses the coins region. In the session loop:
+blank or parses to zero **and** the coins region is readable; unparseable text
+or an unreadable coin counter blocks a gift cycle. `read_coins()` parses the
+coins region. In the session loop:
 
 1. **Open:** off the gift dialog, if a gift is ready, read coins; if readable,
    store the "before" value and tap the gift icon. If unreadable, log a

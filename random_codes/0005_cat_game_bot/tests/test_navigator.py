@@ -167,3 +167,160 @@ def test_action_for_template_exposes_craft_ready_collect_tap():
   assert action.kind is ActionKind.TAP
   assert action.reason == 'craft_ready_check'
   assert action.point == Point(308, 408)
+
+
+# --- Plan section 7: state-driven action priorities -------------------------
+
+def test_choose_home_prefers_craft_tab_over_other_matches():
+  """HOME taps the craft tab even when a close X is matched first."""
+  navigator = Navigator(object())
+  matches = [
+    Match('close_dialog_2', Rect(544, 1983, 16, 16), 0.9),
+    Match('craft_tab', Rect(600, 1700, 40, 40), 0.9),
+    Match('gift_icon', Rect(1020, 300, 32, 32), 0.9),
+    Match('home_marker', Rect(20, 20, 16, 16), 0.9),
+  ]
+  action = navigator.choose(_detection(GameState.HOME, matches), Memory(),
+                            None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'craft_tab'
+  assert action.point == Point(620, 1720)
+
+
+def test_choose_home_without_craft_tab_falls_back_to_generic():
+  """HOME without a craft tab uses the generic unvisited-match fallback."""
+  navigator = Navigator(object())
+  match = Match('generic_icon', Rect(0, 0, 16, 16), 0.8)
+  action = navigator.choose(_detection(GameState.HOME, [match]), Memory(),
+                            None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'generic_icon'
+
+
+def test_choose_crafting_taps_first_unvisited_item_match():
+  """CRAFTING taps the first unvisited item_* match, including materials."""
+  navigator = Navigator(object())
+  matches = [
+    Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9),
+    Match('item_string', Rect(200, 300, 32, 32), 0.9),
+    Match('item_silver', Rect(400, 500, 32, 32), 0.9),
+  ]
+  action = navigator.choose(_detection(GameState.CRAFTING, matches), Memory(),
+                            None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'item_string'
+  assert action.point == Point(216, 316)
+
+
+def test_choose_crafting_skips_visited_item_match():
+  """CRAFTING skips a visited item and taps the next unvisited item."""
+  navigator = Navigator(object())
+  first = Match('item_string', Rect(200, 300, 32, 32), 0.9)
+  second = Match('item_silver', Rect(400, 500, 32, 32), 0.9)
+  memory = Memory()
+  memory.mark_visited('item_string', (200 // 16, 300 // 16))
+  action = navigator.choose(
+    _detection(GameState.CRAFTING, [first, second]), memory, None)
+  assert action.reason == 'item_silver'
+
+
+def test_choose_crafting_scrolls_when_no_item_match():
+  """CRAFTING with no item match scrolls the shelf instead of tapping."""
+  navigator = Navigator(object())
+  matches = [Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9)]
+  action = navigator.choose(_detection(GameState.CRAFTING, matches), Memory(),
+                            None)
+  assert action.kind is ActionKind.SWIPE
+  assert action.point == Point(540, 1900)
+  assert action.end == Point(540, 900)
+  assert action.reason == 'craft_scroll'
+
+
+def test_choose_recipe_dialog_taps_craft_button():
+  """RECIPE_DIALOG taps the gold craft button when it is visible."""
+  navigator = Navigator(object())
+  matches = [
+    Match('close_dialog_2', Rect(1000, 100, 16, 16), 0.9),
+    Match('recipe_marker', Rect(100, 100, 16, 16), 0.9),
+    Match('craft_button', Rect(388, 1480, 302, 132), 0.9),
+  ]
+  action = navigator.choose(_detection(GameState.RECIPE_DIALOG, matches),
+                            Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'craft_button'
+  assert action.point == Point(539, 1546)
+
+
+def test_choose_recipe_dialog_without_button_dismisses():
+  """RECIPE_DIALOG without a craft button is dismissed via a close target."""
+  navigator = Navigator(object())
+  close = Match('close_dialog_5', Rect(100, 200, 16, 16), 0.9)
+  action = navigator.choose(
+    _detection(GameState.RECIPE_DIALOG, [close]), Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+
+
+def test_choose_recipe_dialog_with_no_matches_backs_out():
+  """RECIPE_DIALOG with no matches backs out like a dialog."""
+  navigator = Navigator(object())
+  action = navigator.choose(_detection(GameState.RECIPE_DIALOG), Memory(),
+                            None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
+
+
+def test_choose_catalog_dismisses_via_close_target():
+  """CATALOG is dismissed by tapping a visible close-dialog target."""
+  navigator = Navigator(object())
+  close = Match('close_dialog_5', Rect(1000, 100, 16, 16), 0.9)
+  action = navigator.choose(
+    _detection(GameState.CATALOG, [close]), Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+
+
+def test_choose_catalog_without_close_target_backs_out():
+  """CATALOG without a close target backs out."""
+  navigator = Navigator(object())
+  action = navigator.choose(_detection(GameState.CATALOG), Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
+
+
+def test_choose_tap_to_start_taps_its_marker_explicitly():
+  """TAP_TO_START taps tap_to_start even when another match comes first."""
+  navigator = Navigator(object())
+  matches = [
+    Match('generic_icon', Rect(0, 0, 16, 16), 0.9),
+    Match('tap_to_start', Rect(400, 1200, 40, 40), 0.9),
+  ]
+  action = navigator.choose(
+    _detection(GameState.TAP_TO_START, matches), Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'tap_to_start'
+  assert action.point == Point(420, 1220)
+
+
+def test_choose_loading_and_unknown_wait():
+  """LOADING and UNKNOWN states wait instead of tapping any match."""
+  navigator = Navigator(object())
+  for state in (GameState.LOADING, GameState.UNKNOWN):
+    action = navigator.choose(
+      _detection(state, [Match('generic_icon', Rect(0, 0, 16, 16), 0.9)]),
+      Memory(), None)
+    assert action.kind is ActionKind.WAIT
+    assert action.reason == 'idle'
+
+
+# --- Committed craft-button template wiring ---------------------------------
+
+def test_craft_button_template_is_registered_in_manifest(manifest_names):
+  """The recipe-dialog craft button has a committed manifest entry."""
+  assert 'craft_button' in manifest_names
+
+
+def test_craft_button_template_file_exists(project_root, manifest):
+  """The manifest craft button points at a real committed PNG file."""
+  filename = manifest['templates']['craft_button']
+  assert (project_root / 'templates' / filename).is_file()

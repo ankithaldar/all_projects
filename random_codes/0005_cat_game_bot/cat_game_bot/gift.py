@@ -30,25 +30,29 @@ class GiftCollector:
     self.regions = regions
 
   def is_ready(self, screen: Screen) -> bool:
-    """Return True only when the timer is absent or already at 00:00.
+    """Return True only when the timer is ready and coins are readable.
 
     Unparseable text (a popup or banner covering the timer) must not be
     mistaken for an absent timer, because that would open a gift cycle on a
-    screen whose coin counter is also covered.
+    screen whose coin counter is also covered. A blank timer on a splash
+    screen has no coin counter either, so it must not open a gift cycle.
 
     Args:
       screen: The current screen.
 
     Returns:
-      True when the timer region is blank or shows an elapsed countdown.
+      True when the timer region is blank or shows an elapsed countdown
+      and the coin counter is readable.
     """
     text = self.ocr.read(screen, self.regions['gift_timer']).strip()
     if not text:
-      return True
-    duration = parse_duration(text)
-    if duration is None:
-      return False
-    return duration == 0.0
+      timer_ready = True
+    else:
+      duration = parse_duration(text)
+      if duration is None:
+        return False
+      timer_ready = duration == 0.0
+    return timer_ready and self.read_coins(screen) is not None
 
   def plan(self, screen: Screen) -> Action | None:
     """Plan the single gift-icon tap when a gift is ready.
