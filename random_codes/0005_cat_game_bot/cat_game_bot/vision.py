@@ -27,10 +27,15 @@ __all__ = (
 # shelf and 1.000 on a completed tile, so it needs a stricter threshold to
 # avoid false COLLECT taps. The real COINS! gift popup scores 0.506 on
 # gift_collect, so its pinned 0.45 override lets the GIFT_DIALOG conjunction
-# fire while staying below false-positive scores on other banners.
+# fire while staying below false-positive scores on other banners. The real
+# CRAFT WOOD dialog scores 0.673 on recipe_marker and 0.760 on craft_button;
+# normal craft shelves score <= 0.44 and <= 0.36 on them, so 0.65/0.70 admits
+# the dialog without firing on a shelf.
 TEMPLATE_SCORE_OVERRIDES: dict[str, float] = {
   'craft_ready_check': 0.97,
   'gift_collect': 0.45,
+  'recipe_marker': 0.65,
+  'craft_button': 0.70,
 }
 
 

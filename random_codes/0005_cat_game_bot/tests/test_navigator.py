@@ -3,11 +3,19 @@
 
 """Tests for navigation memory and action selection (plan v11 section 7)."""
 
+from pathlib import Path
+
+import cv2
+
+from cat_game_bot.detection import ScreenDetector
 from cat_game_bot.models import (
-  Action, ActionKind, Detection, GameState, Match, Point, Rect,
+  Action, ActionKind, Detection, GameState, Match, Point, Rect, Screen,
 )
 from cat_game_bot.navigator import Memory, Navigator
 from cat_game_bot.targets import TARGET_IDS, item_template
+from cat_game_bot.vision import TemplateLibrary, TemplateMatcher
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _detection(state, matches=()):
@@ -388,3 +396,28 @@ def test_craft_button_template_file_exists(project_root, manifest):
   """The manifest craft button points at a real committed PNG file."""
   filename = manifest['templates']['craft_button']
   assert (project_root / 'templates' / filename).is_file()
+
+
+def _real_recipe_dialog_detection():
+  """Detect the committed real CRAFT WOOD dialog with the real matcher.
+
+  Returns:
+    tuple: The real detector and the detection for the captured screenshot.
+  """
+  library = TemplateLibrary(str(PROJECT_ROOT / 'templates'))
+  library.load(str(PROJECT_ROOT / 'templates' / 'manifest.json'))
+  detector = ScreenDetector(TemplateMatcher(library), now=lambda: 0.0)
+  path = PROJECT_ROOT / 'tests' / 'fixtures' / 'craft_wood_dialog.png'
+  image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  assert image is not None
+  return detector, detector.detect(Screen(image))
+
+
+def test_real_recipe_dialog_navigator_taps_craft_button():
+  """The real captured recipe dialog drives a real craft-button TAP."""
+  detector, detection = _real_recipe_dialog_detection()
+  assert detection.state is GameState.RECIPE_DIALOG
+  action = Navigator(detector).choose(detection, Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'craft_button'
+

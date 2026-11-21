@@ -34,6 +34,8 @@ FIXTURE_PATH = (
     Path(__file__).resolve().parent / 'fixtures' / 'coins_popup.png')
 FRESH_FRUIT_FIXTURE = (
     Path(__file__).resolve().parent / 'fixtures' / 'fresh_fruit_popup.png')
+RECIPE_DIALOG_FIXTURE = (
+    Path(__file__).resolve().parent / 'fixtures' / 'craft_wood_dialog.png')
 FRESH_FRUIT_BANNER = 'banner_fresh_fruit'
 F23_TEMPLATES = (
     'banner_coins', 'gift_collect', 'banner_flash_sale', 'banner_vip',
@@ -371,3 +373,61 @@ def test_fresh_fruit_banner_absent_from_normal_shelf():
   assert not matcher.match(screen, FRESH_FRUIT_BANNER)
   detection = detector.detect(screen)
   assert detection.state not in (GameState.POPUP, GameState.DIALOG)
+
+
+# --- Real CRAFT WOOD recipe dialog: lowered marker thresholds ---------------
+
+def test_real_dialog_scores_justify_the_marker_overrides():
+  """Real dialog markers score above overrides but below the global 0.8."""
+  _, matcher, library = _committed_detector()
+  image = cv2.imread(str(RECIPE_DIALOG_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  screen = Screen(image)
+  for name, override in (('recipe_marker', 0.65), ('craft_button', 0.70)):
+    scores = cv2.matchTemplate(
+        image, library.get(name), cv2.TM_CCOEFF_NORMED)
+    assert override < float(scores.max()) < 0.8
+    assert matcher.match(screen, name)
+
+
+def test_real_craft_wood_dialog_is_recipe_dialog_through_real_rules():
+  """The committed real CRAFT WOOD screenshot classifies RECIPE_DIALOG."""
+  detector, _, _ = _committed_detector()
+  image = cv2.imread(str(RECIPE_DIALOG_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  assert detector.detect(Screen(image)).state is GameState.RECIPE_DIALOG
+
+
+def test_real_craft_wood_dialog_taps_the_craft_button():
+  """The real recipe dialog emits a TAP on craft_button, not a WAIT."""
+  detector, _, _ = _committed_detector()
+  image = cv2.imread(str(RECIPE_DIALOG_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  detection = detector.detect(Screen(image))
+  action = Navigator(detector).choose(detection, Memory(), None)
+  assert action.kind is ActionKind.TAP
+  assert action.reason == 'craft_button'
+
+
+def test_craft_shelf_without_dialog_markers_is_not_recipe_dialog():
+  """With the dialog markers blanked, lowered thresholds do not fire."""
+  detector, matcher, library = _committed_detector()
+  image = cv2.imread(str(RECIPE_DIALOG_FIXTURE), cv2.IMREAD_COLOR)
+  assert image is not None
+  screen = Screen(image)
+  residual = {}
+  for name in ('recipe_marker', 'craft_button'):
+    template = library.get(name)
+    scores = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
+    _, _, _, (x, y) = cv2.minMaxLoc(scores)
+    height, width = template.shape[:2]
+    image[y:y + height, x:x + width] = 0
+    residual[name] = float(cv2.matchTemplate(
+        image, template, cv2.TM_CCOEFF_NORMED).max())
+  assert residual['recipe_marker'] < TEMPLATE_SCORE_OVERRIDES[
+      'recipe_marker']
+  assert residual['craft_button'] < TEMPLATE_SCORE_OVERRIDES['craft_button']
+  assert not matcher.match(screen, 'recipe_marker')
+  assert not matcher.match(screen, 'craft_button')
+  assert detector.detect(screen).state is not GameState.RECIPE_DIALOG
+
