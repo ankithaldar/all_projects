@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- CSP is LOAD-BEARING: WebAssembly (sql.js) is blocked by any default-src/script-src without 'wasm-unsafe-eval'. Do not loosen. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'none'; base-uri 'none'">
+<title>Car Racer — Evolutionary Neural-Network Car Racer</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <h1>Car Racer</h1>
+    <p class="tagline">Evolutionary neural-network drivers &middot; architecture 7-16-16-2</p>
+  </div>
+  <div class="db-controls" aria-label="Database actions">
+    <span id="db-status-pill" class="pill pill-unknown" role="status">DB: starting&hellip;</span>
+    <button id="btn-open-db" type="button" title="Open an existing .sqlite database file and adopt it as this session's database">Open DB</button>
+    <button id="btn-create-db" type="button" title="Create a brand-new, empty database file">Create DB</button>
+    <button id="btn-export-db" type="button" title="Download the current database as a .sqlite file">Export DB</button>
+    <button id="btn-import-db" type="button" title="Replace the current database with a picked .sqlite file (validated first)">Import DB</button>
+  </div>
+</header>
+
+<!-- THE one persistent banner. Every banner source in the app renders here. Never auto-hides.
+     The reconcile actions (Reload from disk / Export my copy / Fork new lineage / Restore from
+     browser cache) are created in JS via createElement in js/main-db.js — they are appended to
+     #persist-banner-actions (or mirror the static #btn-reconnect-db pattern). There is NO static
+     slot for them; adding hidden static markup would create dead controls. -->
+<div id="persist-banner" class="banner banner-hidden" role="alert" aria-live="assertive">
+  <span id="persist-banner-text" class="banner-text"></span>
+  <span id="persist-banner-actions" class="banner-actions"></span>
+  <button id="btn-reconnect-db" type="button" class="banner-button banner-hidden">Reconnect database</button>
+  <button id="persist-banner-close" type="button" class="banner-close" aria-label="Re-check banner state">&times;</button>
+</div>
+
+<!-- Boot contract failures land here (missing globals, wrong script order, etc.). -->
+<div id="boot-error" class="boot-error" hidden role="alert"></div>
+
+<nav class="tabs" role="tablist" aria-label="Game modes">
+  <button role="tab" id="tab-btn-manual" aria-selected="true"  aria-controls="tab-manual">Manual</button>
+  <button role="tab" id="tab-btn-train"  aria-selected="false" aria-controls="tab-train">Train</button>
+  <button role="tab" id="tab-btn-replay" aria-selected="false" aria-controls="tab-replay">Replay</button>
+  <button role="tab" id="tab-btn-logs"   aria-selected="false" aria-controls="tab-logs">Logs</button>
+  <button role="tab" id="tab-btn-editor" aria-selected="false" aria-controls="tab-editor" title="In-browser track editor — add/drag/delete control points, width, export/import, lineage-guarded training track">Editor</button>
+</nav>
+
+<main>
+
+  <!-- ================= MANUAL ================= -->
+  <section id="tab-manual" role="tabpanel" aria-labelledby="tab-btn-manual">
+    <div class="canvas-wrap">
+      <canvas id="manual-canvas" width="1100" height="650" aria-label="Manual driving canvas"></canvas>
+    </div>
+    <div class="hud-row">
+      <div class="hud-cell"><span class="hud-label">Speed</span><span id="hud-speed" class="hud-value">0 px/s</span></div>
+      <div class="hud-cell"><span class="hud-label">Odometer (net)</span><span id="hud-odometer" class="hud-value">0 px</span></div>
+      <div class="hud-cell"><span class="hud-label">Track</span><span id="hud-track" class="hud-value">default circuit</span></div>
+      <div class="hud-cell hud-hint"><span class="hud-label">Controls</span><span class="hud-value">ArrowUp gas &middot; ArrowDown brake &middot; ArrowLeft/ArrowRight steer</span></div>
+      <button id="btn-reset-car" type="button" class="hud-reset">Reset car</button>
+    </div>
+    <p id="manual-note" class="subtle-note" hidden></p>
+  </section>
+
+  <!-- ================= TRAIN ================= -->
+  <section id="tab-train" role="tabpanel" aria-labelledby="tab-btn-train" hidden>
+    <div class="canvas-wrap">
+      <canvas id="train-canvas" width="1100" height="650" aria-label="Training canvas"></canvas>
+    </div>
+
+    <div class="train-mode-row">
+      <span class="mode-label">Mode:</span>
+      <button id="btn-spectate" type="button" title="Main-thread live evaluation — 20 cars rendered live while the generation runs">Spectate (20 cars live)</button>
+      <button id="btn-next-generation" type="button" hidden title="Spawn generation N+1 from the elitism-mutated best driver">Next generation</button>
+      <span class="subtle-note inline-note" id="train-mode-hint">&ldquo;Start training&rdquo; runs headless (Web Worker, off the main thread); Spectate runs the same generation live on the main thread.</span>
+    </div>
+
+    <div class="train-grid">
+      <div class="panel" aria-label="Training controls">
+        <h2>Controls</h2>
+        <div class="field">
+          <label for="max-generations">Max generations</label>
+          <input id="max-generations" type="number" min="1" max="5000" step="1" value="5000">
+        </div>
+
+        <fieldset class="lineage-fieldset">
+          <legend>Lineage</legend>
+          <label class="radio-row"><input type="radio" name="lineage" id="lineage-fresh" value="fresh" checked> Fresh lineage (random seed)</label>
+          <label class="radio-row"><input type="radio" name="lineage" id="lineage-resume" value="resume"> Resume from generation
+            <input id="resume-generation" type="number" min="1" max="1" step="1" value="1" disabled aria-label="Resume from generation number">
+          </label>
+          <p class="subtle-note">Reset to generation 1 is the Logs-tab &ldquo;Wipe all generations — start a NEW lineage&rdquo; — never a resume.</p>
+          <p class="subtle-note">Resume always continues from the <strong>latest committed generation</strong>. Re-evaluating earlier generations would conflict with the committed prefix (UNIQUE) and is refused.</p>
+          <p class="subtle-note guard-note">Lineage guard: training refuses to run on a track whose hash does not match the database&rsquo;s <code>track_hash</code> pin. Same track &rArr; byte-resumable; different track &rArr; refused — fork to a new lineage instead.</p>
+        </fieldset>
+
+        <div class="button-row">
+          <button id="btn-start-training" type="button" class="primary" title="Headless run — Trainer + Web Worker (or the in-thread MessageChannel fallback), one DB transaction per generation">Start training</button>
+          <button id="btn-stop-training" type="button" disabled>Stop</button>
+        </div>
+        <p class="subtle-note" id="train-blocked-note" hidden>Database required — training is disabled; Manual still works.</p>
+      </div>
+
+      <div class="panel" aria-label="Live statistics">
+        <h2>Live stats</h2>
+        <div class="stats-grid">
+          <div class="stat"><span class="hud-label">Generation</span><span id="stat-generation" class="stat-value">0</span><span id="stat-rotation" class="rotation-tag">R 0 · d 0</span></div>
+          <div class="stat"><span class="hud-label">Best fitness</span><span id="stat-best" class="stat-value">&mdash; px</span></div>
+          <div class="stat"><span class="hud-label">Avg fitness</span><span id="stat-avg" class="stat-value">&mdash; px</span></div>
+          <div class="stat"><span class="hud-label">Worst fitness</span><span id="stat-worst" class="stat-value">&mdash; px</span></div>
+          <div class="stat"><span class="hud-label">Sim s / driver</span><span id="stat-sim-seconds" class="stat-value">&mdash; s</span></div>
+          <div class="stat"><span class="hud-label">Persist</span><span id="persist-pill" class="pill pill-unknown">idle</span></div>
+        </div>
+        <p id="logging-indicator" class="logging-indicator" hidden>LOGGING DISABLED — this session trains unlogged</p>
+        <div class="mini-log-wrap">
+          <span class="hud-label">Latest generations</span>
+          <ul id="mini-log" class="mini-log" aria-live="polite"></ul>
+        </div>
+        <div id="spectate-summary" class="spectate-summary" hidden>
+          <span class="hud-label">Generation complete</span>
+          <span id="sum-line" class="sum-line"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= REPLAY ================= -->
+  <section id="tab-replay" role="tabpanel" aria-labelledby="tab-btn-replay" hidden>
+    <p id="replay-disabled-note" class="subtle-note blocking-note" hidden></p>
+    <div class="replay-controls">
+      <label for="replay-generation">Generation</label>
+      <input id="replay-generation" type="number" min="1" max="1" step="1" value="1">
+      <label class="checkbox-row" for="replay-use-active">
+        <input id="replay-use-active" type="checkbox"> Use active track instead of the saved snapshot (results will differ)
+      </label>
+      <button id="btn-run-replay" type="button" class="primary">Run replay</button>
+      <button id="btn-stop-replay" type="button" disabled>Stop</button>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="replay-canvas" width="1100" height="650" aria-label="Replay canvas"></canvas>
+    </div>
+    <div class="hud-row">
+      <div class="hud-cell"><span class="hud-label">Speed</span><span id="replay-speed" class="hud-value">&mdash; px/s</span></div>
+      <div class="hud-cell"><span class="hud-label">Odometer (net)</span><span id="replay-odometer" class="hud-value">&mdash; px</span></div>
+      <div class="hud-cell"><span class="hud-label">Replaying generation</span><span id="replay-current-gen" class="hud-value">&mdash;</span></div>
+    </div>
+    <pre id="replay-stats" class="replay-stats" hidden></pre>
+  </section>
+
+  <!-- ================= LOGS ================= -->
+  <section id="tab-logs" role="tabpanel" aria-labelledby="tab-btn-logs" hidden>
+    <div class="logs-toolbar">
+      <button id="btn-refresh-logs" type="button">Refresh</button>
+      <button id="btn-export-db-file" type="button" title="Export working database as .sqlite">Export DB file</button>
+      <button id="btn-import-sqlite" type="button" title="Validated import (adoption battery) — replaces the working database">Import .sqlite</button>
+      <button id="btn-new-lineage" type="button" class="danger" title="Wipes EVERYTHING — one transaction: DELETE FROM generations (cascade) + re-pin rng_state/track_hash">Wipe all generations — start a NEW lineage</button>
+      <button id="btn-fork-track" type="button" title="Uses the CURRENT editor track (edit it in the Editor tab first) — same confirm flow as the editor's Use as training track button">Fork to new track</button>
+    </div>
+    <p id="logs-disabled-note" class="subtle-note blocking-note" hidden></p>
+    <p id="storage-line" class="subtle-note">storage: estimating&hellip;</p>
+    <div class="table-wrap">
+      <table class="logs-table" id="logs-table">
+        <caption class="sr-only">Committed generations — click a row to expand its per-driver results</caption>
+        <thead>
+          <tr>
+            <th scope="col">Generation</th>
+            <th scope="col">Best fitness (px)</th>
+            <th scope="col">Avg fitness (px)</th>
+            <th scope="col">Worst fitness (px)</th>
+            <th scope="col">Best idx</th>
+            <th scope="col">Crashes</th>
+            <th scope="col" title="rotation index — one per 50-generation block (0..99)">Rotation</th>
+            <th scope="col" title="difficulty of this generation's track — rotation-local monotone curve">Difficulty</th>
+            <th scope="col">Created</th>
+          </tr>
+        </thead>
+        <tbody id="logs-tbody"></tbody>
+      </table>
+    </div>
+    <p id="logs-empty" class="subtle-note" hidden>No generations committed yet.</p>
+  </section>
+
+  <!-- ================= EDITOR ================= -->
+  <!-- js/editor.js loads BEFORE js/main.js (see script order below); main.js calls
+       Editor.init() during boot when window.Editor exists. When js/editor.js is absent
+       or fails, main.js hides the Editor tab and disables the Logs "Fork to new track"
+       button — everything else keeps working. The editor auto-saves to localStorage
+       'car_racer.track' on every structural change; the ACTIVE track switches only via
+       "Use as training track" (lineage-guarded) or the next page load. -->
+  <section id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor" hidden>
+    <div class="editor-layout">
+      <div class="canvas-wrap editor-canvas-wrap">
+        <canvas id="editor-canvas" width="1100" height="650" role="application" aria-label="Track editor canvas — click empty space to add a point (inserted where it fits the loop best), drag a point to move it, right-click a point to delete it"></canvas>
+      </div>
+      <aside class="panel editor-panel" aria-label="Track editor controls">
+        <h2>Track editor</h2>
+        <p id="editor-points-count" class="editor-points-count">Points: 0 / 512</p>
+        <div class="field">
+          <label for="editor-halfwidth">Road half-width: <output id="editor-halfwidth-value" for="editor-halfwidth">70</output> px</label>
+          <input id="editor-halfwidth" type="range" min="1" max="2000" step="1" value="70" aria-describedby="editor-halfwidth-hint">
+          <p class="subtle-note" id="editor-halfwidth-hint">1–2000 px. Re-renders live.</p>
+        </div>
+        <div class="button-row editor-buttons">
+          <button id="editor-undo" type="button" disabled>Undo</button>
+          <button id="btn-editor-reset" type="button" class="btn-danger">Reset to default</button>
+        </div>
+        <div class="button-row editor-buttons">
+          <button id="btn-editor-export" type="button" title="Download the current editor track as .cartrack JSON">Export .cartrack</button>
+          <button id="btn-editor-import" type="button" title="Load a .cartrack JSON file (validated: ≤256 KB, ≤512 points, finite coordinates, halfWidth 1–2000, closed loop)">Import .cartrack</button>
+          <input id="import-track-input" type="file" accept=".cartrack,.json,application/json" hidden aria-hidden="true" tabindex="-1">
+        </div>
+        <button id="btn-editor-use-track" type="button" class="primary" title="Save to browser storage and make this the training track — wipes the committed lineage (with a confirm) when generations exist">Use as training track</button>
+        <p id="editor-status" class="editor-status" role="status" aria-live="polite"></p>
+        <p class="subtle-note editor-hint">Click empty space to add a point — it is inserted where it best fits the closed loop. Drag a point to move it. Right-click a point to delete it (at least 3 points are kept). Undo restores the last structural change (single level). Every change is cached in this browser (localStorage); &ldquo;Use as training track&rdquo; additionally switches the game to this track — forking a fresh lineage when generations are committed.</p>
+      </aside>
+    </div>
+  </section>
+
+</main>
+
+<footer id="status-line" class="status-line" role="status">booting&hellip;</footer>
+
+<input id="import-file-input" type="file" accept=".sqlite,.sqlite3,.db" hidden aria-hidden="true" tabindex="-1">
+
+<!-- Script order is LOAD-BEARING (architecture notes live in code comments):
+     vendor sql-wasm-binary.js (embedded base64 wasm — enables file:// with zero fetch) →
+     vendor sql.js → DriverSim → Track → Rotation → Car → Sensors → NN → Evolution → Db → Trainer → Replay →
+     MainDb → Spectate → DbSession →
+     Editor (optional — main.js calls Editor.init() at boot and hides the Editor tab when absent) → Main.
+     CSP pins script-src to 'self' + 'wasm-unsafe-eval' (sql.js needs it). -->
+<script src="vendor/sql-wasm-binary.js"></script>
+<script src="vendor/sql-wasm.js"></script>
+<script src="js/driver-sim.js"></script>
+<script src="js/track.js"></script>
+<script src="js/rotation.js"></script>
+<script src="js/car.js"></script>
+<script src="js/sensors.js"></script>
+<script src="js/nn.js"></script>
+<script src="js/evolution.js"></script>
+<script src="js/db.js"></script>
+<script src="js/trainer.js"></script>
+<script src="js/replay.js"></script>
+<script src="js/main-db.js"></script>
+<script src="js/spectate.js"></script>
+<script src="js/db-session.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
