@@ -7,9 +7,10 @@
 detect repeated ticks.  ``Navigator`` turns a detection (plus an optional
 planner action) into the single action taken on a tick.  A gift dialog always
 yields exactly one Collect tap.  Popups and dialogs are dismissed by tapping
-the highest-scored close-dialog X, which closes the overlay without touching
-the craft screen beneath it; BACK is the fallback when no close X is matched.
-A Bag dialog is exited with BACK so a paused craft batch can resume.
+the highest-scored close-dialog X inside the overlay-X band, so the
+higher-scored craft-screen X beneath the modal is never tapped; BACK is the
+fallback when no in-band close X is matched.  A Bag dialog is exited with
+BACK so a paused craft batch can resume.
 State priorities then favour the craft tab on HOME, an item tap or shelf
 scroll in CRAFTING, the gold craft button in RECIPE_DIALOG, and dismissal in
 CATALOG, before the generic unvisited-match fallback.
@@ -27,6 +28,9 @@ _CLOSE_TARGETS = (
   'close_dialog_4', 'close_dialog_5',
 )
 _DISMISS = 'dismiss'
+# Observed overlay X centers sit at y ~1865-2082; the craft-screen X beneath a
+# modal sits at y ~2310-2320.  This band separates them for every popup seen.
+_OVERLAY_X_MAX_Y = 2150
 _CLOSE_BAG = 'close_bag'
 _CRAFT_SCROLL = 'craft_scroll'
 _CRAFT_SCROLL_START = Point(540, 1900)
@@ -101,8 +105,8 @@ class Navigator:
     """Select the action for this tick.
 
     A gift dialog always produces the lone Collect tap.  POPUP/DIALOG states
-    tap the highest-scored close X (BACK only when none is matched), and
-    BAG_DIALOG is closed with BACK.  A supplied planner action then wins.
+    tap the highest-scored in-band close X (BACK only when none is in band),
+    and BAG_DIALOG is closed with BACK.  A supplied planner action then wins.
     Remaining states follow section-7 priorities: HOME taps the
     craft tab, CRAFTING taps an item or scrolls the shelf, RECIPE_DIALOG taps
     the craft button, CATALOG dismisses, TAP_TO_START taps its marker, and
@@ -168,22 +172,27 @@ class Navigator:
     """Return a dismiss action that closes the focused overlay only.
 
     Close-dialog names are action targets only; the detector has already
-    classified the state, so they never drive state selection.  Several
-    variants can match at once, but only the highest-scored one is the
-    overlay's own X: lower-scored variants point at the craft screen beneath
-    it.  That X is tapped to dismiss the overlay.  With no close X matched,
-    BACK closes the focused overlay as a fallback.
+    classified the state, so they never drive state selection.  All variants
+    are the same red-X crop, so score cannot identify the overlay's X: on a
+    real popup the craft-screen X beneath the modal scores higher.  Only
+    close targets inside the overlay-X band are candidates, and the
+    highest-scored of those is tapped.  With no in-band close X, BACK closes
+    the focused overlay so the craft X is never tapped from a popup state.
 
     Args:
         detection: Current POPUP, DIALOG, RECIPE_DIALOG or CATALOG detection.
 
     Returns:
-        Action: A tap on the best close target, or BACK when none matched.
+        Action: A tap on the highest-scored in-band close target, or BACK
+            when no close X is in band.
     """
-    closes = [match for match in detection.matches
-              if match.name in _CLOSE_TARGETS]
-    if closes:
-      chosen = max(closes, key=lambda match: match.score)
+    in_band = [
+        match for match in detection.matches
+        if match.name in _CLOSE_TARGETS
+        and match.rect.center().y <= _OVERLAY_X_MAX_Y
+    ]
+    if in_band:
+      chosen = max(in_band, key=lambda match: match.score)
       return Action(ActionKind.TAP, chosen.rect.center(), None, _DISMISS)
     return Action(ActionKind.BACK, None, None, _DISMISS)
 

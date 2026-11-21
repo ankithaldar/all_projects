@@ -129,11 +129,11 @@ def test_choose_popup_taps_any_close_target():
     assert action.end is None
 
 
-def test_choose_popup_taps_highest_scored_close_target():
-  """POPUP taps the popup X, not the lower-scored craft-screen X."""
+def test_choose_popup_prefers_in_band_x_over_higher_scored_craft_x():
+  """POPUP taps the in-band X even when the craft X scores higher."""
   navigator = Navigator(object())
-  craft_x = Match('close_dialog_2', Rect(532, 2067, 16, 16), 0.999)
-  popup_x = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.000)
+  craft_x = Match('close_dialog_4', Rect(490, 2270, 100, 100), 0.9999)
+  popup_x = Match('close_dialog_2', Rect(490, 1910, 100, 100), 0.9993)
   action = navigator.choose(
       _detection(GameState.POPUP, [craft_x, popup_x]), Memory(), None)
   assert action.kind is ActionKind.TAP
@@ -141,16 +141,27 @@ def test_choose_popup_taps_highest_scored_close_target():
   assert action.point == Point(540, 1960)
 
 
-def test_choose_dialog_taps_highest_scored_close_target():
-  """DIALOG taps the popup X, not the lower-scored craft-screen X."""
+def test_choose_dialog_prefers_in_band_x_over_higher_scored_craft_x():
+  """DIALOG taps the in-band X even when the craft X scores higher."""
   navigator = Navigator(object())
-  craft_x = Match('close_dialog_2', Rect(532, 2067, 16, 16), 0.999)
-  popup_x = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.000)
+  craft_x = Match('close_dialog_4', Rect(490, 2270, 100, 100), 0.9999)
+  popup_x = Match('close_dialog_2', Rect(490, 1910, 100, 100), 0.9993)
   action = navigator.choose(
       _detection(GameState.DIALOG, [craft_x, popup_x]), Memory(), None)
   assert action.kind is ActionKind.TAP
   assert action.reason == 'dismiss'
   assert action.point == Point(540, 1960)
+
+
+def test_choose_popup_out_of_band_close_falls_back_to_back():
+  """POPUP with only the craft-screen X falls back to BACK, not that X."""
+  navigator = Navigator(object())
+  craft_x = Match('close_dialog_4', Rect(490, 2270, 100, 100), 0.9999)
+  action = navigator.choose(
+      _detection(GameState.POPUP, [craft_x]), Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
+  assert action.point is None
 
 
 def test_choose_popup_without_close_match_still_dismisses_with_back():
@@ -166,7 +177,7 @@ def test_choose_popup_without_close_match_still_dismisses_with_back():
 def test_choose_popup_repeated_ticks_tap_close_each_time():
   """Repeated POPUP ticks keep producing one dismiss tap each."""
   navigator = Navigator(object())
-  close = Match('close_dialog_4', Rect(532, 1952, 16, 16), 1.0)
+  close = Match('close_dialog_2', Rect(490, 1910, 100, 100), 0.9993)
   detection = _detection(GameState.POPUP, [close])
   memory = Memory()
   for _ in range(3):
@@ -290,6 +301,17 @@ def test_choose_recipe_dialog_without_button_dismisses():
     _detection(GameState.RECIPE_DIALOG, [close]), Memory(), None)
   assert action.kind is ActionKind.TAP
   assert action.reason == 'dismiss'
+  assert action.point == Point(108, 208)
+
+
+def test_choose_recipe_dialog_out_of_band_close_falls_back_to_back():
+  """RECIPE_DIALOG with only the craft-screen X falls back to BACK."""
+  navigator = Navigator(object())
+  craft_x = Match('close_dialog_4', Rect(490, 2270, 100, 100), 0.9999)
+  action = navigator.choose(
+      _detection(GameState.RECIPE_DIALOG, [craft_x]), Memory(), None)
+  assert action.kind is ActionKind.BACK
+  assert action.reason == 'dismiss'
 
 
 def test_choose_recipe_dialog_with_no_matches_backs_out():
@@ -308,6 +330,17 @@ def test_choose_catalog_dismisses_via_close_target():
   action = navigator.choose(
     _detection(GameState.CATALOG, [close]), Memory(), None)
   assert action.kind is ActionKind.TAP
+  assert action.reason == 'dismiss'
+  assert action.point == Point(1008, 108)
+
+
+def test_choose_catalog_out_of_band_close_falls_back_to_back():
+  """CATALOG with only the craft-screen X falls back to BACK."""
+  navigator = Navigator(object())
+  craft_x = Match('close_dialog_4', Rect(490, 2270, 100, 100), 0.9999)
+  action = navigator.choose(
+      _detection(GameState.CATALOG, [craft_x]), Memory(), None)
+  assert action.kind is ActionKind.BACK
   assert action.reason == 'dismiss'
 
 

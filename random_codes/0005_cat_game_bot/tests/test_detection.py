@@ -18,7 +18,9 @@ from cat_game_bot.detection import (
   ScreenDetector,
   is_loading,
 )
-from cat_game_bot.models import ActionKind, GameState, Match, Rect, Screen
+from cat_game_bot.models import (
+  ActionKind, GameState, Match, Point, Rect, Screen,
+)
 from cat_game_bot.navigator import Memory, Navigator
 from cat_game_bot.vision import (
   TEMPLATE_SCORE_OVERRIDES,
@@ -347,7 +349,7 @@ def test_real_fresh_fruit_template_scores_high_on_source():
 
 
 def test_real_fresh_fruit_popup_is_dismissed_through_real_rules():
-  """The real FRESH FRUIT screenshot is a close-X TAP-dismissed POPUP/DIALOG."""
+  """The real FRESH FRUIT screenshot taps its own popup X to dismiss."""
   detector, _, _ = _committed_detector()
   image = cv2.imread(str(FRESH_FRUIT_FIXTURE), cv2.IMREAD_COLOR)
   assert image is not None
@@ -356,6 +358,7 @@ def test_real_fresh_fruit_popup_is_dismissed_through_real_rules():
   action = Navigator(detector).choose(detection, Memory(), None)
   assert action.kind is ActionKind.TAP
   assert action.reason == 'dismiss'
+  assert action.point == Point(540, 1960)
 
 
 def test_fresh_fruit_banner_absent_from_normal_shelf():
